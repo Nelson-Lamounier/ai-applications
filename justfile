@@ -35,6 +35,12 @@ audit *ARGS:
 test-stacks:
     cd infra && yarn test tests/unit/stacks --coverage
 
+# Run Step Functions TestState integration tests
+# Requires: TEST_SFN_ROLE_ARN env var, AWS credentials
+[group('quality')]
+test-sfn *ARGS:
+    cd infra && yarn jest --config jest.integration.config.js {{ARGS}}
+
 # Synthesise CDK stacks for CI validation (bedrock + self-healing, dev environment)
 [group('quality')]
 ci-synth-validate:
