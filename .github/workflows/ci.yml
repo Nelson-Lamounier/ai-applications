@@ -32,6 +32,7 @@ env:
 
 permissions:
   contents: read
+  packages: read           # Required to pull ghcr.io/nelson-lamounier/ai-applications/ci image
   security-events: write  # Required for SARIF upload (Checkov → GitHub Security tab)
 
 jobs:
