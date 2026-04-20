@@ -28,7 +28,6 @@ export {
 
 import {
   registerProject,
-  type Environment,
   type StackConfig,
 } from '@repo/script-utils/stacks.js';
 
