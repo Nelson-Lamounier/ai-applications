@@ -1,15 +1,17 @@
 # @format
 # @description Deploy Bedrock AI Infrastructure to Development
 #
-# Deploys the 8-stack Bedrock architecture in dependency order:
+# Deploys the 10-stack Bedrock architecture in dependency order:
 #   1. Bedrock-Data               — S3 bucket for Knowledge Base documents + drafts
 #   2. Bedrock-Kb                 — Bedrock Knowledge Base (Pinecone vector store)
 #   3. Bedrock-Agent              — Bedrock Agent, Knowledge Base, Guardrail
 #   4. Bedrock-Api                — API Gateway + Lambda for agent invocation
 #   5. Bedrock-Content            — DynamoDB table + legacy monolith publisher
-#   6. Bedrock-Pipeline           — Multi-agent Step Functions (Research → Writer → QA)
+#   6. Bedrock-Pipeline           — Multi-agent Step Functions (Research ~ Writer ~ QA)
 #   7. Bedrock-Strategist-Data    — Job Strategist DynamoDB table
 #   8. Bedrock-Strategist-Pipeline — Job Strategist (Analysis SM + Coaching SM)
+#   9. Bedrock-Aurora             — Aurora Serverless v2 + pgvector (replaces Pinecone)
+#  10. Bedrock-Public-Api         — BFF Hono Lambda (articles, chatbot proxy, resumes)
 #
 # For KB document syncing (without deploying stacks), use sync-kb-docs.yml.
 
@@ -196,6 +198,52 @@ jobs:
     uses: ./.github/workflows/_deploy-stack.yml
     with:
       stack-name: Bedrock-Strategist-Pipeline-development
+      project: bedrock
+      environment: development
+      aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
+      aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      require-approval: never
+      use-container: false
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+
+  # ===========================================================================
+  # Stack 9: Public API (BFF Hono Lambda — articles, chatbot proxy, resumes)
+  # Depends on: Content (DynamoDB), API (chatbot URL + secret), Strategist Data
+  #
+  # Hono app on Lambda. Proxies chatbot requests to Bedrock-Api (no SDK access).
+  # Reads articles from Bedrock-Content DynamoDB and resumes from Strategist Data.
+  # ===========================================================================
+  deploy-public-api:
+    name: Deploy Public API Stack
+    needs: [deploy-content, deploy-api, deploy-strategist-data]
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: Bedrock-Public-Api-development
+      project: bedrock
+      environment: development
+      aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
+      aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      require-approval: never
+      use-container: false
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+
+  # ===========================================================================
+  # Stack 10: Aurora (Serverless v2 + pgvector — replaces Pinecone)
+  # Depends on: Data (namePrefix convention; no CloudFormation cross-stack refs)
+  #
+  # Self-contained: own VPC, own cluster, schema bootstrapped via Data API.
+  # minAcu=0 — cluster pauses after inactivity (cold-start on first query).
+  # Can deploy in parallel with all other stacks; gated on deploy-data for
+  # a clean pipeline root, not for a hard dependency.
+  # ===========================================================================
+  deploy-aurora:
+    name: Deploy Aurora Stack
+    needs: [deploy-data]
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: Bedrock-Aurora-development
       project: bedrock
       environment: development
       aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}

@@ -474,6 +474,17 @@ export class AuroraPgVectorStack extends cdk.Stack {
         );
         step7.node.addDependency(step6);
 
+        // Suppress CDK-Nag on the auto-generated Aurora credentials secret.
+        // Automatic rotation via Lambda is not configured — the secret is consumed
+        // exclusively through the RDS Data API which fetches it at call time.
+        // The password is system-generated (not user-defined) and is not rotated
+        // manually. Rotation can be enabled when direct TCP connections are added.
+        NagSuppressions.addResourceSuppressionsByPath(
+            this,
+            `/${this.stackName}/Cluster/Secret/Resource`,
+            [{ id: 'AwsSolutions-SMG4', reason: 'Aurora credentials consumed via Data API only — no Lambda rotation required at this stage' }],
+        );
+
         // Suppress CDK-Nag on the singleton custom-resource Lambda runtime
         // (AWS679f53fac002430cb0da5b7982bd2287 — runtime managed by CDK framework)
         NagSuppressions.addResourceSuppressionsByPath(
