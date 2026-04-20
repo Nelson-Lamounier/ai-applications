@@ -17,12 +17,12 @@ import {
     BedrockAgentRuntimeClient,
     RetrieveCommand,
 } from '@aws-sdk/client-bedrock-agent-runtime';
-import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 
 import { runAgent, parseJsonResponse, InputSanitiser, log } from '@bedrock/shared';
 import type { PiiPattern } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
+import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
 
 /**
  * PII patterns specific to job description inputs.
@@ -77,15 +77,6 @@ const RESEARCH_THINKING_BUDGET = 4096;
 /** Knowledge Base ID for Pinecone retrieval */
 const KNOWLEDGE_BASE_ID = process.env.KNOWLEDGE_BASE_ID ?? '';
 
-/** wiki-mcp base URL — deterministic constraint retrieval (falls back to Pinecone if unset) */
-const WIKI_MCP_URL = process.env.WIKI_MCP_URL ?? '';
-
-/**
- * SSM path for the wiki-mcp BasicAuth SecureString (e.g. /wiki-mcp/basicauth-header).
- * Value is fetched at runtime — CloudFormation cannot resolve ssm-secure refs in Lambda env vars.
- */
-const WIKI_MCP_AUTH_SSM_PATH = process.env.WIKI_MCP_AUTH_SSM_PATH ?? '';
-
 /** Maximum KB passages to retrieve */
 const MAX_KB_PASSAGES = 15;
 
@@ -100,12 +91,17 @@ const bedrockAgentClient = new BedrockAgentRuntimeClient({});
 // =============================================================================
 
 /**
- * Execute a single KB retrieval query.
+ * Execute a single KB retrieval query filtered to a specific user's vectors.
+ *
+ * The `userId` metadata filter restricts results to documents indexed for
+ * this user — prevents cross-user data leakage and ensures KB evidence
+ * is grounded in the candidate's own portfolio, not a shared corpus.
  *
  * @param query - Search query text for the Knowledge Base
+ * @param userId - Authenticated user ID for metadata filtering
  * @returns Raw passages with source/score metadata prefix
  */
-async function querySingleKb(query: string): Promise<string[]> {
+async function querySingleKb(query: string, userId: string): Promise<string[]> {
     if (!KNOWLEDGE_BASE_ID) {
         return [];
     }
@@ -118,6 +114,9 @@ async function querySingleKb(query: string): Promise<string[]> {
         retrievalConfiguration: {
             vectorSearchConfiguration: {
                 numberOfResults: MAX_KB_PASSAGES,
+                filter: {
+                    equals: { key: 'userId', value: userId },
+                },
             },
         },
     });
@@ -165,74 +164,6 @@ function deduplicatePassages(passages: string[]): string {
     return unique.length > 0 ? unique.join('\n\n---\n\n') : '';
 }
 
-// Module-level cache — fetched once per Lambda execution context.
-let cachedWikiMcpAuth = '';
-
-/**
- * Resolve the wiki-mcp BasicAuth header.
- *
- * Fetches the SSM SecureString at `/wiki-mcp/basicauth-header` on first call
- * and caches the result for the lifetime of the Lambda execution context.
- * Returns empty string when WIKI_MCP_AUTH_SSM_PATH is not configured.
- */
-async function resolveWikiMcpAuth(): Promise<string> {
-    if (cachedWikiMcpAuth) return cachedWikiMcpAuth;
-    if (!WIKI_MCP_AUTH_SSM_PATH) return '';
-
-    const ssmClient = new SSMClient({});
-    const resp = await ssmClient.send(
-        new GetParameterCommand({ Name: WIKI_MCP_AUTH_SSM_PATH, WithDecryption: true }),
-    );
-    cachedWikiMcpAuth = resp.Parameter?.Value ?? '';
-    return cachedWikiMcpAuth;
-}
-
-/**
- * Fetch resume constraints from the wiki-mcp REST API.
- *
- * Calls GET /api/constraints which returns combined content from:
- *   - resume/agent-guide   — hard rules, confidence thresholds, ATS rules, banned verbs
- *   - resume/gap-awareness — what NOT to claim; absent/partial concepts with safe framing
- *   - resume/voice-library — authentic phrase anchors, banned AI terms, sentence variation
- *
- * Uses the REST endpoint (not MCP Streamable HTTP) as the server was designed for Lambda
- * to call /api/constraints directly — the /mcp SSE stream is for Claude Desktop/Code.
- *
- * @returns Combined constraint pages as plain text, or empty string if wiki-mcp is not configured
- */
-async function getWikiMcpConstraints(): Promise<string> {
-    const authHeader = await resolveWikiMcpAuth();
-    if (!WIKI_MCP_URL || !authHeader) {
-        return '';
-    }
-    log('INFO', 'Fetching resume constraints from wiki-mcp REST API', { agent: 'strategist-research' });
-    const base = WIKI_MCP_URL.endsWith('/') ? WIKI_MCP_URL : `${WIKI_MCP_URL}/`;
-    const url = new URL('api/constraints', base);
-    try {
-        const response = await fetch(url.toString(), {
-            headers: { Authorization: authHeader },
-            signal: AbortSignal.timeout(15_000),
-        });
-        if (!response.ok) {
-            log('WARN', 'wiki-mcp /api/constraints returned non-OK status — continuing without constraints', {
-                agent: 'strategist-research', statusCode: response.status,
-            });
-            return '';
-        }
-        // TypeScript wiki-mcp returns JSON { content: string } — extract the content field
-        const json = await response.json() as { content?: string };
-        const text = json.content ?? '';
-        log('INFO', 'wiki-mcp constraints fetched', {
-            agent: 'strategist-research', sizeKb: (text.length / 1024).toFixed(1),
-        });
-        return text;
-    } catch (err) {
-        log('WARN', 'wiki-mcp fetch failed — continuing without constraints', {
-            agent: 'strategist-research', error: (err as Error).message,
-        });
-        return '';
-    }
-}
 
 // =============================================================================
 // USER MESSAGE BUILDER
@@ -335,12 +266,15 @@ const RESEARCH_CONFIG: AgentConfig = {
  * Execute the Strategist Research Agent.
  *
  * 1. Sanitises the job description input
- * 2. Queries Pinecone (3 factual) + wiki-mcp (constraints) in parallel
- *    — falls back to 3 Pinecone constraint queries when wiki-mcp is not configured
+ * 2. Queries the Bedrock KB with userId metadata filter — 4 factual queries in parallel:
+ *    portfolio evidence, skill signals, work history, DORA outcome metrics.
+ *    Constraint documents (generation rules, honesty boundaries, writing voice, archetypes,
+ *    achievements) are injected statically from RESUME_CONSTRAINTS — not retrieved via
+ *    vector search, which cannot find system-level pages lacking userId metadata.
  * 3. Reads structured resume data from the pipeline context (fetched by trigger)
  * 4. Runs Haiku 4.5 to produce a structured research brief
  *
- * @param ctx - Pipeline context with job description and resumeData
+ * @param ctx - Pipeline context with job description, resumeData, and userId
  * @returns Research result with verified/partial/gap skill classification
  */
 export async function executeResearchAgent(
@@ -357,68 +291,50 @@ export async function executeResearchAgent(
         log('WARN', warning, { agent: 'strategist-research' });
     }
 
-    // 2. Query Knowledge Base + wiki-mcp constraints in parallel
+    // 2. Query Knowledge Base — factual portfolio evidence (4 queries, userId-scoped)
     //
-    //    Factual (Pinecone): 3 semantic queries for portfolio evidence & skill signals
-    //    Constraints (wiki-mcp): single deterministic GET /api/constraints
-    //      → agent-guide (hard rules) + gap-awareness (what NOT to claim)
-    //        + voice-library (authentic language anchors)
+    //    Constraint documents (agent-guide, gap-awareness, voice-library, role-archetypes,
+    //    achievements) are system-level pages with no userId attribute in the Pinecone index.
+    //    They CANNOT be retrieved via userId-filtered vector search — queries would return
+    //    zero results. These pages are embedded statically in RESUME_CONSTRAINTS and injected
+    //    directly, replicating the deterministic delivery that wiki-mcp previously provided.
     //
-    //    Fallback: if wiki-mcp is not configured, run 3 Pinecone constraint queries instead
+    //    Factual queries (4): portfolio evidence, skill signals, DORA outcome metrics.
+    //    These are userId-scoped because they must reflect this candidate's own projects.
     let kbContext = '';
-    let resumeConstraints = '';
+
+    // Constraint pages are always present — static embed, no KB lookup required.
+    const resumeConstraints = RESUME_CONSTRAINTS;
 
     const hasKb = Boolean(KNOWLEDGE_BASE_ID);
-    const hasWikiMcp = Boolean(WIKI_MCP_URL && WIKI_MCP_AUTH_SSM_PATH);
+    const { userId } = ctx;
 
-    if (hasKb || hasWikiMcp) {
-        // Factual KB queries + wiki-mcp constraint fetch — all in parallel
-        const [factual1, factual2, factual3, factual4, wikiConstraints] = await Promise.all([
+    if (hasKb) {
+        const [factual1, factual2, factual3, factual4] = await Promise.all([
             // Query 1 — full JD text: surfaces skill/tech matches from across the KB
-            hasKb ? querySingleKb(sanitised.substring(0, 1000)) : Promise.resolve([]),
+            querySingleKb(sanitised.substring(0, 1000), userId),
             // Query 2 — JD tail + experience signal: surfaces role-relevant work history
-            hasKb ? querySingleKb(`professional experience skills qualifications ${sanitised.substring(500, 1000)}`) : Promise.resolve([]),
+            querySingleKb(`professional experience skills qualifications ${sanitised.substring(500, 1000)}`, userId),
             // Query 3 — JD-aware project query: surfaces project templates matching this role
-            hasKb ? querySingleKb(`portfolio project implementation achievements ${sanitised.substring(0, 500)}`) : Promise.resolve([]),
+            querySingleKb(`portfolio project implementation achievements ${sanitised.substring(0, 500)}`, userId),
             // Query 4 — DORA metrics and outcome measurements: ensures every bullet can be
             // grounded in a concrete outcome (lead time, MTTR, CFR, deployment frequency).
             // Without this query the agent sees technical inventory but no outcome numbers.
-            hasKb ? querySingleKb('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance') : Promise.resolve([]),
-            getWikiMcpConstraints(),   // '' when WIKI_MCP_URL / WIKI_MCP_AUTH not set
+            querySingleKb('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId),
         ]);
 
         // Factual context — portfolio evidence for achievement bullet verification
         const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4];
         kbContext = deduplicatePassages(allFactualPassages);
 
-        resumeConstraints = wikiConstraints;
-
-        // Fallback: wiki-mcp not configured → retrieve constraints from Pinecone instead
-        if (!resumeConstraints && hasKb) {
-            log('INFO', 'wiki-mcp not configured — falling back to Pinecone for constraints', { agent: 'strategist-research' });
-            const [agentRules, gapBoundaries, voiceLibrary] = await Promise.all([
-                querySingleKb(
-                    'resume generation agent instructions confidence thresholds STRONG PARTIAL ABSENT hard rules',
-                ),
-                querySingleKb(
-                    'resume honest boundaries what not to claim gaps absent overclaim service mesh SLA',
-                ),
-                querySingleKb(
-                    'candidate writing voice authentic language personal phrases tone style',
-                ),
-            ]);
-            const allConstraintPassages = [...agentRules, ...gapBoundaries, ...voiceLibrary];
-            resumeConstraints = deduplicatePassages(allConstraintPassages);
-        }
-
         log('INFO', 'Retrieval complete', {
             agent: 'strategist-research',
+            userId,
             factualSizeKb: kbContext.length > 0 ? (kbContext.length / 1024).toFixed(1) : 'empty',
-            constraintsSizeKb: resumeConstraints.length > 0 ? (resumeConstraints.length / 1024).toFixed(1) : 'empty',
-            constraintSource: hasWikiMcp ? 'wiki-mcp' : 'pinecone',
+            constraintsSizeKb: (resumeConstraints.length / 1024).toFixed(1),
         });
     } else {
-        log('INFO', 'Retrieval skipped — no KNOWLEDGE_BASE_ID or WIKI_MCP_URL configured', { agent: 'strategist-research' });
+        log('INFO', 'Retrieval skipped — KNOWLEDGE_BASE_ID not configured', { agent: 'strategist-research' });
     }
 
     // 3. Read resume from pipeline context (fetched at trigger time)
