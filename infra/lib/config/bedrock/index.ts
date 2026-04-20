@@ -25,3 +25,7 @@ export * from './content-allocations';
 
 // Export content pipeline configurations
 export * from './content-configurations';
+
+// Export Aurora Serverless v2 + pgvector allocations and configurations
+export * from './aurora-allocations';
+export * from './aurora-configurations';

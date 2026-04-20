@@ -72,6 +72,11 @@ export const AnalyseRequestSchema = z
             .optional()
             .default(true)
             .describe('Whether to generate a cover letter (defaults to true)'),
+        userId: z
+            .string()
+            .min(1, 'User ID is required')
+            .max(200, 'User ID must be at most 200 characters')
+            .describe('Authenticated user ID for KB metadata filtering'),
     })
     .strict();
 

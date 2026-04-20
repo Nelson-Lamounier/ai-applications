@@ -216,7 +216,7 @@ export const STRATEGIST_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             `Execute this before touching the resume. The archetype choice governs Phase 4.`,
             ``,
             `1. Read the JD fully. Match against the Archetype Selector table in the KB`,
-            `   role-archetypes page (provided in KB constraints context if wiki-mcp is configured).`,
+            `   role-archetypes page (provided in KB constraints context).`,
             `   If not in context, use these trigger signals:`,
             `   - "IaC", "CDK", "Terraform", "platform team" → Archetype 1 (Platform/Infra)`,
             `   - "SRE", "reliability", "on-call", "DORA", "MTTR" → Archetype 2 (SRE)`,

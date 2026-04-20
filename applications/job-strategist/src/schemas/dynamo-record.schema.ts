@@ -145,6 +145,8 @@ export const ApplicationMetadataRecordSchema = z.object({
     targetRole: z.string().default(''),
     /** Resume ID used in the original analysis */
     resumeId: z.string().default(''),
+    /** Authenticated user ID — used for KB metadata filtering */
+    userId: z.string().default(''),
 });
 
 // =============================================================================

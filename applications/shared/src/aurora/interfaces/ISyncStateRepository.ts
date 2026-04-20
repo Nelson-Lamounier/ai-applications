@@ -1,0 +1,36 @@
+/**
+ * @format
+ * ISyncStateRepository — Repo Sync State Persistence Contract
+ *
+ * Tracks ingestion status per (userId, repoFullName) pair.
+ * The pipeline calls markStarted at the top of every run and
+ * markComplete / markError at the end, regardless of implementation.
+ */
+
+import type { RepoSyncState } from '../types.js';
+
+export interface ISyncStateRepository {
+    /** Fetch current sync state. Returns undefined if the repo has never been synced. */
+    get(userId: string, repoFullName: string): Promise<RepoSyncState | undefined>;
+
+    /** Write or overwrite sync state for a (userId, repoFullName) pair. */
+    upsert(state: RepoSyncState): Promise<void>;
+
+    /** Shorthand: set status to 'syncing', reset counts. */
+    markStarted(userId: string, repoFullName: string): Promise<void>;
+
+    /** Shorthand: set status to 'complete', record final file/chunk counts. */
+    markComplete(
+        userId: string,
+        repoFullName: string,
+        fileCount: number,
+        chunkCount: number,
+    ): Promise<void>;
+
+    /** Shorthand: set status to 'error', record the failure reason. */
+    markError(
+        userId: string,
+        repoFullName: string,
+        errorMessage: string,
+    ): Promise<void>;
+}

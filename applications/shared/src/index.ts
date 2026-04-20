@@ -179,6 +179,31 @@ export type {
     StrategistPipelineOutput,
 } from './strategist-types.js';
 
+// ─── Aurora pgvector (Vector Store) ──────────────────────────────────────────
+export type {
+    RawChunk,
+    DocumentChunk,
+    UpsertBatchResult,
+    ChunkIdentity,
+    HashCheckResult,
+    SimilarityResult,
+    QueryParams,
+    RepoSyncState,
+    SyncStatus,
+    IngestionReport,
+    IVectorStore,
+    ISyncStateRepository,
+    IEmbeddingProvider,
+    AuroraClientConfig,
+} from './aurora/index.js';
+
+export {
+    AuroraVectorStore,
+    AuroraSyncStateRepository,
+    TitanEmbeddingProvider,
+    IngestionPipeline,
+} from './aurora/index.js';
+
 // ─── Security (Input/Output Sanitisation) ────────────────────────────────────
 export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';
 export type { InputSanitiserConfig } from './security/input-sanitiser.js';

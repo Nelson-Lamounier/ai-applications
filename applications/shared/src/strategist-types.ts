@@ -236,6 +236,9 @@ export interface StrategistPipelineContext {
 
     /** Whether to generate a cover letter (defaults to true if omitted) */
     readonly includeCoverLetter?: boolean;
+
+    /** Authenticated user ID — used for KB metadata filtering (userId-scoped vector search) */
+    readonly userId: string;
 }
 
 // =============================================================================

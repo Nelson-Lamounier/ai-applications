@@ -24,3 +24,4 @@ export * from './pipeline-stack';
 export * from './strategist-data-stack';
 export * from './strategist-pipeline-stack';
 export * from './public-api-stack';
+export * from './aurora-pgvector-stack';

@@ -2,7 +2,7 @@
  * @format
  * Bedrock Project Factory
  *
- * Creates the Amazon Bedrock Agent infrastructure using a 9-stack architecture:
+ * Creates the Amazon Bedrock Agent infrastructure using a 10-stack architecture:
  * - DataStack: S3 bucket for content pipeline documents
  * - KbStack: Bedrock Knowledge Base backed by Pinecone
  * - AgentStack: Bedrock Agent, Guardrail, Action Group
@@ -12,6 +12,7 @@
  * - StrategistDataStack: Job strategist data layer (DynamoDB)
  * - StrategistPipelineStack: Job strategist pipeline (Research → Strategist → Coach)
  * - PublicApiStack: Public BFF API for Next.js frontend (articles, chatbot proxy, resumes)
+ * - AuroraStack: Aurora Serverless v2 + pgvector (replaces Pinecone as vector store)
  *
  * Stacks created:
  * - Bedrock-Data-{environment}
@@ -23,11 +24,14 @@
  * - Bedrock-Strategist-Data-{environment}
  * - Bedrock-Strategist-Pipeline-{environment}
  * - Bedrock-Public-Api-{environment}
+ * - Bedrock-Aurora-{environment}
  */
 
 import * as cdk from 'aws-cdk-lib/core';
 
 import { getBedrockAllocations } from '../../config/bedrock/allocations';
+import { getAuroraAllocations } from '../../config/bedrock/aurora-allocations';
+import { getAuroraConfigs } from '../../config/bedrock/aurora-configurations';
 import { getBedrockConfigs } from '../../config/bedrock/configurations';
 import { getContentConfigs } from '../../config/bedrock/content-configurations';
 import { getPipelineAllocations } from '../../config/bedrock/pipeline-allocations';
@@ -43,6 +47,7 @@ import {
     ProjectStackFamily,
 } from '../../factories/project-interfaces';
 import {
+    AuroraPgVectorStack,
     BedrockDataStack,
     BedrockKbStack,
     BedrockAgentStack,
@@ -95,6 +100,8 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
         const pipelineConfigs = getPipelineConfigs(this.environment);
         const strategistAllocs = getStrategistAllocations(this.environment);
         const strategistConfigs = getStrategistConfigs(this.environment);
+        const auroraAllocs = getAuroraAllocations(this.environment);
+        const auroraConfigs = getAuroraConfigs(this.environment);
 
         // CDK environment: resolved from env vars via config
         const env = cdkEnvironment(this.environment);
@@ -323,10 +330,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 strategistProfileArn: dataStack.strategistSonnetProfileArn,
                 resumeBuilderProfileArn: dataStack.strategistHaikuProfileArn,
                 coachProfileArn: dataStack.strategistHaikuProfileArn,
-                // wiki-mcp — deterministic resume constraint retrieval
-                // Falls back to Pinecone when not configured (staging / pre-deploy)
-                wikiMcpUrl: 'https://ops.nelsonlamounier.com/wiki-mcp',
-                wikiMcpAuthSsmPath: '/wiki-mcp/basicauth-header',
                 env,
             }
         );
@@ -366,6 +369,29 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
         publicApiStack.addDependency(apiStack);
         publicApiStack.addDependency(strategistDataStack);
 
+        // =================================================================
+        // Stack 10: Aurora Serverless v2 + pgvector (replaces Pinecone)
+        //
+        // Self-contained VPC + Aurora cluster with pgvector extension.
+        // Bootstrapped via Data API — no VPC Lambda required.
+        // minAcu=0 enables true scale-to-zero/pause (cold-start on first query).
+        // =================================================================
+        const auroraStack = new AuroraPgVectorStack(
+            scope,
+            stackId(this.namespace, 'Aurora', this.environment),
+            {
+                namePrefix,
+                minAcu: auroraAllocs.minAcu,
+                maxAcu: auroraAllocs.maxAcu,
+                databaseName: auroraConfigs.databaseName,
+                embeddingDimension: auroraConfigs.embeddingDimension,
+                logRetention: auroraConfigs.logRetention,
+                removalPolicy: auroraConfigs.removalPolicy,
+                environmentName: this.environment,
+                env,
+            }
+        );
+
         const stacks: cdk.Stack[] = [
             dataStack,
             kbStack,
@@ -376,6 +402,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             strategistDataStack,
             strategistPipelineStack,
             publicApiStack,
+            auroraStack,
         ];
 
         cdk.Annotations.of(scope).addInfo(
@@ -393,6 +420,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 pipeline: pipelineStack,
                 strategistData: strategistDataStack,
                 strategistPipeline: strategistPipelineStack,
+                aurora: auroraStack,
             },
         };
     }
