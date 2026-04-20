@@ -11,7 +11,7 @@
 import {
     bedrock,
 } from '@cdklabs/generative-ai-cdk-constructs';
-import type { IKnowledgeBase } from '@cdklabs/generative-ai-cdk-constructs/lib/cdk-lib/bedrock/knowledge-bases/knowledge-base';
+import { VectorStoreType } from '@cdklabs/generative-ai-cdk-constructs/lib/cdk-lib/bedrock/knowledge-bases/vector-knowledge-base';
 
 import * as cdkBedrock from 'aws-cdk-lib/aws-bedrock';
 import * as ssm from 'aws-cdk-lib/aws-ssm';

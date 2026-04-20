@@ -206,6 +206,34 @@ export class BedrockDataStack extends cdk.Stack {
             tier: ssm.ParameterTier.STANDARD,
         });
 
+        new ssm.StringParameter(this, 'ArticleHaikuProfileArnParam', {
+            parameterName: `/${namePrefix}/article-haiku-profile-arn`,
+            stringValue: this.articleHaikuProfileArn,
+            description: `Article pipeline Haiku 4.5 inference profile ARN for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        new ssm.StringParameter(this, 'ArticleSonnetProfileArnParam', {
+            parameterName: `/${namePrefix}/article-sonnet-profile-arn`,
+            stringValue: this.articleSonnetProfileArn,
+            description: `Article pipeline Sonnet 4.6 inference profile ARN for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        new ssm.StringParameter(this, 'StrategistHaikuProfileArnParam', {
+            parameterName: `/${namePrefix}/strategist-haiku-profile-arn`,
+            stringValue: this.strategistHaikuProfileArn,
+            description: `Strategist pipeline Haiku 4.5 inference profile ARN for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        new ssm.StringParameter(this, 'StrategistSonnetProfileArnParam', {
+            parameterName: `/${namePrefix}/strategist-sonnet-profile-arn`,
+            stringValue: this.strategistSonnetProfileArn,
+            description: `Strategist pipeline Sonnet 4.6 inference profile ARN for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
         // =================================================================
         // Monthly Budget Alarm — FinOps Guardrail (Gap C3)
         //

@@ -17,6 +17,11 @@
     ]
   },
   "context": {
+    "availability-zones:account=771826808455:region=eu-west-1": [
+      "eu-west-1a",
+      "eu-west-1b",
+      "eu-west-1c"
+    ],
     "@aws-cdk/aws-signer:signingProfileNamePassedToCfn": true,
     "@aws-cdk/aws-ecs-patterns:secGroupsDisablesImplicitOpenListener": true,
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,

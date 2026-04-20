@@ -47,8 +47,12 @@ export interface BedrockKbStackProps extends cdk.StackProps {
     readonly namePrefix: string;
     /** Embedding model ID (e.g. 'amazon.titan-embed-text-v2:0') */
     readonly embeddingsModel: string;
-    /** ARN of the S3 bucket containing Knowledge Base documents */
-    readonly dataBucketArn: string;
+    /**
+     * ARN of the S3 bucket containing Knowledge Base documents.
+     * When omitted the stack reads `/{namePrefix}/data-bucket-arn` from SSM.
+     * @deprecated Pass undefined and let the stack resolve via SSM.
+     */
+    readonly dataBucketArn?: string;
     /** Pinecone index connection string (e.g. 'https://portfolio-kb-xxx.svc.aped-xxx.pinecone.io') */
     readonly pineconeConnectionString: string;
     /** Name of the Secrets Manager secret containing the Pinecone API key */
@@ -184,7 +188,12 @@ export class BedrockKbStack extends cdk.Stack {
         // each ## section becomes a parent chunk with its paragraphs
         // as child chunks, preserving section-level context.
         // =================================================================
-        const dataBucket = s3.Bucket.fromBucketArn(this, 'ImportedDataBucket', props.dataBucketArn);
+        // Resolve bucket ARN from SSM when not provided directly.
+        // ssm.StringParameter.valueForStringParameter() returns a CF token —
+        // no synth-time lookup, resolves at deploy time.
+        const dataBucketArn = props.dataBucketArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/data-bucket-arn`);
+        const dataBucket = s3.Bucket.fromBucketArn(this, 'ImportedDataBucket', dataBucketArn);
 
         this.dataSource = this.knowledgeBase.addS3DataSource({
             bucket: dataBucket,
