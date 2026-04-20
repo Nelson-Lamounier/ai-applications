@@ -1,5 +1,5 @@
 {
-  "name": "@cdk-monitoring/bedrock-applications",
+  "name": "@bedrock/applications",
   "version": "1.0.0",
   "private": true,
   "description": "Centralised Bedrock application logic — article pipeline, self-healing agent, and chatbot handler",

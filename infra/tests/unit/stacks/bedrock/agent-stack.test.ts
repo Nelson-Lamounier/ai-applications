@@ -44,6 +44,7 @@ describe('BedrockAgentStack', () => {
                 blockedInputMessaging: 'Sorry, I cannot process that request.',
                 blockedOutputsMessaging: 'Sorry, I cannot provide that response.',
                 removalPolicy: cdk.RemovalPolicy.DESTROY,
+                knowledgeBaseDescription: 'Test knowledge base description',
                 env: TEST_ENV_EU,
             },
         );

@@ -115,33 +115,33 @@ describe('buildPrompt', () => {
 // =============================================================================
 
 describe('isDuplicate', () => {
-    it('should return false for the first occurrence', () => {
+    it('should return false for the first occurrence', async () => {
         const event = createAlarmEvent({
             time: `unique-${Date.now()}`,
         });
 
-        expect(isDuplicate(event)).toBe(false);
+        expect(await isDuplicate(event)).toBe(false);
     });
 
-    it('should return true for a repeated event within the window', () => {
+    it('should return true for a repeated event within the window', async () => {
         const uniqueTime = `dedup-test-${Date.now()}`;
         const event = createAlarmEvent({ time: uniqueTime });
 
         // First call registers the event
-        isDuplicate(event);
+        await isDuplicate(event);
 
         // Second call should detect the duplicate
-        expect(isDuplicate(event)).toBe(true);
+        expect(await isDuplicate(event)).toBe(true);
     });
 
-    it('should return false if alarmName is missing', () => {
+    it('should return false if alarmName is missing', async () => {
         const event: AlarmEvent = {
             source: 'aws.cloudwatch',
             time: EVENT_TIME,
             detail: {},
         };
 
-        expect(isDuplicate(event)).toBe(false);
+        expect(await isDuplicate(event)).toBe(false);
     });
 });
 

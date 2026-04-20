@@ -94,8 +94,8 @@ describe('BedrockKbStack', () => {
         });
 
         it('should create SSM parameters for KB outputs', () => {
-            // knowledgeBaseId, knowledgeBaseArn
-            template.resourceCountIs('AWS::SSM::Parameter', 2);
+            // knowledgeBaseId, knowledgeBaseArn, knowledge-base-execution-role-arn
+            template.resourceCountIs('AWS::SSM::Parameter', 3);
         });
 
         it('should create SSM parameter for KB ID', () => {
@@ -107,6 +107,12 @@ describe('BedrockKbStack', () => {
         it('should create SSM parameter for KB ARN', () => {
             template.hasResourceProperties('AWS::SSM::Parameter', {
                 Name: `/${NAME_PREFIX}/knowledge-base-arn`,
+            });
+        });
+
+        it('should create SSM parameter for KB execution role ARN', () => {
+            template.hasResourceProperties('AWS::SSM::Parameter', {
+                Name: `/${NAME_PREFIX}/knowledge-base-execution-role-arn`,
             });
         });
     });

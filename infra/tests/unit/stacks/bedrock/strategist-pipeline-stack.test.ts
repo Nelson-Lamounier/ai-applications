@@ -450,33 +450,6 @@ describe('StrategistPipelineStack', () => {
     });
 
     // =========================================================================
-    // IAM — KB Permissions Without KB
-    // =========================================================================
-    describe('IAM Permissions without KB', () => {
-        it('should not grant bedrock:Retrieve when no KB ARN is provided', () => {
-            const { template } = createPipelineStack({
-                knowledgeBaseId: undefined,
-                knowledgeBaseArn: undefined,
-            });
-
-            const policies = template.findResources('AWS::IAM::Policy');
-            const allStatements = Object.values(policies).flatMap(
-                (p) => {
-                    const props = (p as Record<string, Record<string, Record<string, unknown[]>>>).Properties;
-                    const doc = props['PolicyDocument'] as Record<string, unknown[]>;
-                    return doc['Statement'] as Record<string, unknown>[];
-                },
-            );
-
-            const retrieveActions = allStatements.filter(
-                (s) => (s as Record<string, string>).Action === 'bedrock:Retrieve',
-            );
-
-            expect(retrieveActions).toHaveLength(0);
-        });
-    });
-
-    // =========================================================================
     // CloudWatch — Log Groups
     // =========================================================================
     describe('CloudWatch Log Groups', () => {

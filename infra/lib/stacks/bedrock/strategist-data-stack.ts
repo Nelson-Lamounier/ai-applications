@@ -100,7 +100,7 @@ export class StrategistDataStack extends cdk.Stack {
                 type: dynamodb.AttributeType.STRING,
             },
             billing: dynamodb.Billing.onDemand(),
-            pointInTimeRecovery: true,
+            pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
             removalPolicy: props.removalPolicy,
         });
 
