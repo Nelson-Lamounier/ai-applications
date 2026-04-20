@@ -28,28 +28,6 @@ import { Project, getProjectConfig } from '../config/projects';
  * // Full stack name: NextJS-K8s-Compute-development
  */
 export const STACK_REGISTRY = {
-    shared: {
-        infra: 'Infra',
-    },
-    kubernetes: {
-        data: 'Data',
-        base: 'Base',
-        goldenAmi: 'GoldenAmi',
-        ssmAutomation: 'SsmAutomation',
-        controlPlane: 'ControlPlane',
-        appWorker: 'AppWorker',
-        monitoringWorker: 'MonitoringWorker',
-        argocdWorker: 'ArgocdWorker',
-        generalPool: 'GeneralPool',
-        monitoringPool: 'MonitoringPool',
-        appIam: 'AppIam',
-        api: 'Api',
-        edge: 'Edge',
-        observability: 'Observability',
-    },
-    org: {
-        dnsRole: 'DnsRole',
-    },
     bedrock: {
         data: 'Data',
         kb: 'Kb',
@@ -110,9 +88,6 @@ export function stackId(
  * already match the registry keys exactly.
  */
 const PROJECT_TO_REGISTRY: Record<Project, RegistryProject> = {
-    [Project.SHARED]: 'shared',
-    [Project.KUBERNETES]: 'kubernetes',
-    [Project.ORG]: 'org',
     [Project.BEDROCK]: 'bedrock',
     [Project.SELF_HEALING]: 'selfHealing',
 };
