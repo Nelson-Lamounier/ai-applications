@@ -86,8 +86,8 @@ export async function invokeChatbotAgent(
         // Gap A3: Inject caller context as session attributes so the agent
         // instruction can adapt response framing via:
         // $session.promptSessionAttributes.callerRole
-        promptSessionAttributes: callerContext
-            ? { callerRole: callerContext.callerRole }
+        sessionState: callerContext
+            ? { promptSessionAttributes: { callerRole: callerContext.callerRole } }
             : undefined,
     });
 
