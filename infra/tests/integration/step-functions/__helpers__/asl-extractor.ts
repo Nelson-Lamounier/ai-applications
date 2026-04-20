@@ -18,8 +18,8 @@
  *   If a CDK stack changes its state machine definition, these tests catch it.
  */
 
-import * as cdk from 'aws-cdk-lib/core';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as cdk from 'aws-cdk-lib/core';
 
 import { BedrockPipelineStack } from '../../../../lib/stacks/bedrock/pipeline-stack';
 import { StrategistPipelineStack } from '../../../../lib/stacks/bedrock/strategist-pipeline-stack';

@@ -33,7 +33,6 @@
  *   TEST_SFN_ROLE_ARN=arn:aws:iam::... just test-sfn
  */
 
-import { guardTestSuite, testState } from './__helpers__/sfn-test-client';
 import {
     extractStrategistPipelineDefinitions,
     isolateState,
@@ -41,6 +40,7 @@ import {
     TEST_QUEUE_URL,
     type StateMachineDefinition,
 } from './__helpers__/asl-extractor';
+import { guardTestSuite, testState } from './__helpers__/sfn-test-client';
 
 guardTestSuite();
 
@@ -81,7 +81,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
 
     // ── DynamoDB primary key ────────────────────────────────────────────
 
-    it('constructs pk as APPLICATION#{applicationSlug}', async () => {
+    it('should construct pk as APPLICATION#{applicationSlug}', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput({ applicationSlug: 'frontend-lead-at-vercel-2024' }),
@@ -94,7 +94,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
         expect(params.Key.pk.S).toBe('APPLICATION#frontend-lead-at-vercel-2024');
     });
 
-    it('targets the METADATA sort key (static — not version-based)', async () => {
+    it('should target the METADATA sort key (static — not version-based)', async () => {
         // Unlike the article pipeline (VERSION#v{n}), the strategist uses a
         // single METADATA record per application, overwritten on each failure.
         const result = await testState({
@@ -109,7 +109,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
 
     // ── GSI date extraction — the critical JsonPath ────────────────────
 
-    it('extracts date from ISO timestamp for gsi1sk (morning UTC)', async () => {
+    it('should extract date from ISO timestamp for gsi1sk (morning UTC)', async () => {
         // gsi1sk = States.Format('{}#{}',
         //   States.ArrayGetItem(States.StringSplit($$.State.EnteredTime, 'T'), 0),
         //   $.context.applicationSlug
@@ -137,7 +137,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
         expect(gsi1sk).toMatch(/^\d{4}-\d{2}-\d{2}#test-app$/);
     });
 
-    it('gsi1sk date portion is today (state just entered)', async () => {
+    it('should set gsi1sk date portion to today UTC', async () => {
         // $$.State.EnteredTime is set by Step Functions to the current timestamp.
         // The date portion should be today's date in UTC.
         const todayUtc = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
@@ -158,7 +158,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
         expect(datePart).toBe(todayUtc);
     });
 
-    it('gsi1sk slug portion matches applicationSlug', async () => {
+    it('should set gsi1sk slug portion from applicationSlug', async () => {
         const slug = 'staff-engineer-at-anthropic-2025-01';
 
         const result = await testState({
@@ -179,7 +179,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
 
     // ── GSI partition key ───────────────────────────────────────────────
 
-    it('sets gsi1pk to APP_STATUS#failed (static)', async () => {
+    it('should set gsi1pk to APP_STATUS#failed (static)', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput(),
@@ -194,7 +194,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
 
     // ── Error propagation ──────────────────────────────────────────────
 
-    it('propagates $.error.Cause to :error attribute', async () => {
+    it('should propagate $.error.Cause to :error attribute', async () => {
         const errorMessage = 'Step Functions execution timed out';
 
         const result = await testState({
@@ -211,7 +211,7 @@ describe('Analysis Pipeline — MarkAnalysisFailed state', () => {
 
     // ── Table targeting ────────────────────────────────────────────────
 
-    it('targets the strategist table (not the content table)', async () => {
+    it('should target the strategist table (not the content table)', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput(),
@@ -236,7 +236,7 @@ describe('Analysis Pipeline — SendAnalysisErrorToDlq state', () => {
         isolatedDefinition = isolateState(definition, 'SendAnalysisErrorToDlq');
     });
 
-    it('sends to the analysis DLQ URL', async () => {
+    it('should send to the analysis DLQ URL', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput(),
@@ -249,7 +249,7 @@ describe('Analysis Pipeline — SendAnalysisErrorToDlq state', () => {
         expect(params.QueueUrl).toBe(TEST_QUEUE_URL);
     });
 
-    it('includes pipeline name as "analysis" in message body', async () => {
+    it('should include pipeline name as "analysis" in message body', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput(),
@@ -262,7 +262,7 @@ describe('Analysis Pipeline — SendAnalysisErrorToDlq state', () => {
         expect(params.MessageBody.pipeline).toBe('analysis');
     });
 
-    it('includes applicationSlug in message body', async () => {
+    it('should include applicationSlug in message body', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput({ applicationSlug: 'my-application' }),
@@ -275,7 +275,7 @@ describe('Analysis Pipeline — SendAnalysisErrorToDlq state', () => {
         expect(params.MessageBody.applicationSlug).toBe('my-application');
     });
 
-    it('includes error and cause from $.error in message body', async () => {
+    it('should include error and cause from $.error in message body', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput({ cause: 'Lambda out of memory' }),
@@ -289,7 +289,7 @@ describe('Analysis Pipeline — SendAnalysisErrorToDlq state', () => {
         expect(params.MessageBody.cause).toBe('Lambda out of memory');
     });
 
-    it('resolves $$.StateMachine.Name from execution context', async () => {
+    it('should resolve $$.StateMachine.Name from execution context', async () => {
         // $$.StateMachine.Name is set by Step Functions at runtime.
         // TestState populates this from the execution context (non-empty string).
         const result = await testState({
@@ -305,7 +305,7 @@ describe('Analysis Pipeline — SendAnalysisErrorToDlq state', () => {
         expect(params.MessageBody.stateMachine.length).toBeGreaterThan(0);
     });
 
-    it('resolves $$.Execution.Name from execution context', async () => {
+    it('should resolve $$.Execution.Name from execution context', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput(),
@@ -319,7 +319,7 @@ describe('Analysis Pipeline — SendAnalysisErrorToDlq state', () => {
         expect(params.MessageBody.executionId.length).toBeGreaterThan(0);
     });
 
-    it('resolves $$.State.EnteredTime as ISO timestamp', async () => {
+    it('should resolve $$.State.EnteredTime as ISO timestamp', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput(),
@@ -347,7 +347,7 @@ describe('Coaching Pipeline — MarkCoachingFailed state', () => {
         isolatedDefinition = isolateState(definition, 'MarkCoachingFailed');
     });
 
-    it('constructs pk as APPLICATION#{applicationSlug}', async () => {
+    it('should construct pk as APPLICATION#{applicationSlug}', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput({ applicationSlug: 'stripe-eng-2024' }),
@@ -360,7 +360,7 @@ describe('Coaching Pipeline — MarkCoachingFailed state', () => {
         expect(params.Key.pk.S).toBe('APPLICATION#stripe-eng-2024');
     });
 
-    it('uses same date-extraction pattern as analysis pipeline', async () => {
+    it('should use same date-extraction pattern as analysis pipeline', async () => {
         // Both pipelines must use the same gsi1sk format (DATE#SLUG) so
         // admin GSI queries for APP_STATUS#failed return results from both.
         const result = await testState({
@@ -377,7 +377,7 @@ describe('Coaching Pipeline — MarkCoachingFailed state', () => {
         expect(gsi1sk).toMatch(/^\d{4}-\d{2}-\d{2}#coaching-test-app$/);
     });
 
-    it('sets gsi1pk to APP_STATUS#failed (same as analysis)', async () => {
+    it('should set gsi1pk to APP_STATUS#failed (same as analysis)', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeAnalysisErrorInput(),
@@ -403,7 +403,7 @@ describe('Strategist Pipelines — ASL structure (extracted from CDK)', () => {
         ({ analysis, coaching } = extractStrategistPipelineDefinitions());
     });
 
-    it('analysis SM has all required states', () => {
+    it('should have all required states in analysis SM', () => {
         const states = Object.keys(analysis.States);
         expect(states).toContain('ResearchTask');
         expect(states).toContain('StrategistTask');
@@ -413,7 +413,7 @@ describe('Strategist Pipelines — ASL structure (extracted from CDK)', () => {
         expect(states).toContain('AnalysisPipelineFailed');
     });
 
-    it('coaching SM has all required states', () => {
+    it('should have all required states in coaching SM', () => {
         const states = Object.keys(coaching.States);
         expect(states).toContain('CoachLoaderTask');
         expect(states).toContain('CoachTask');
@@ -422,7 +422,7 @@ describe('Strategist Pipelines — ASL structure (extracted from CDK)', () => {
         expect(states).toContain('CoachingPipelineFailed');
     });
 
-    it('all analysis Lambda tasks have retry on transient Lambda errors', () => {
+    it('should configure retry on all analysis Lambda tasks', () => {
         for (const taskName of ['ResearchTask', 'StrategistTask', 'ResumeBuilderTask']) {
             const state = analysis.States[taskName] as Record<string, unknown>;
             const retries = state['Retry'] as Array<{ ErrorEquals: string[]; MaxAttempts: number }>;
@@ -436,7 +436,7 @@ describe('Strategist Pipelines — ASL structure (extracted from CDK)', () => {
         }
     });
 
-    it('all analysis Lambda tasks catch States.ALL and route to MarkAnalysisFailed', () => {
+    it('should route all analysis task errors to MarkAnalysisFailed', () => {
         for (const taskName of ['ResearchTask', 'StrategistTask', 'ResumeBuilderTask']) {
             const state = analysis.States[taskName] as Record<string, unknown>;
             const catchClauses = state['Catch'] as Array<{ ErrorEquals: string[]; Next: string }>;
@@ -445,13 +445,13 @@ describe('Strategist Pipelines — ASL structure (extracted from CDK)', () => {
         }
     });
 
-    it('MarkAnalysisFailed routes to SendAnalysisErrorToDlq (two-phase error handling)', () => {
+    it('should route MarkAnalysisFailed to SendAnalysisErrorToDlq (two-phase error handling)', () => {
         const markFailed = analysis.States['MarkAnalysisFailed'] as Record<string, unknown>;
         // First persist failure to DynamoDB, then forward to DLQ for ops visibility
         expect(markFailed['Next']).toBe('SendAnalysisErrorToDlq');
     });
 
-    it('SendAnalysisErrorToDlq routes to AnalysisPipelineFailed', () => {
+    it('should route SendAnalysisErrorToDlq to AnalysisPipelineFailed', () => {
         const sendDlq = analysis.States['SendAnalysisErrorToDlq'] as Record<string, unknown>;
         expect(sendDlq['Next']).toBe('AnalysisPipelineFailed');
     });

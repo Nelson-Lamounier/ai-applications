@@ -21,13 +21,13 @@
  *   TEST_SFN_ROLE_ARN=arn:aws:iam::... just test-sfn
  */
 
-import { guardTestSuite, TEST_SFN_ROLE_ARN, testState } from './__helpers__/sfn-test-client';
 import {
     extractArticlePipelineDefinition,
     isolateState,
     TEST_CONTENT_TABLE_NAME,
     type StateMachineDefinition,
 } from './__helpers__/asl-extractor';
+import { guardTestSuite, testState } from './__helpers__/sfn-test-client';
 
 guardTestSuite();
 
@@ -74,7 +74,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
 
     // ── DynamoDB primary key ────────────────────────────────────────────
 
-    it('constructs pk as ARTICLE#{slug}', async () => {
+    it('should construct pk as ARTICLE#{slug}', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeErrorInput({ slug: 'my-article-slug' }),
@@ -87,7 +87,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
         expect(params.Key.pk.S).toBe('ARTICLE#my-article-slug');
     });
 
-    it('constructs sk as VERSION#v{version}', async () => {
+    it('should construct sk as VERSION#v{version}', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeErrorInput({ version: '7' }),
@@ -100,7 +100,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
 
     // ── GSI keys ───────────────────────────────────────────────────────
 
-    it('sets gsi1pk to STATUS#failed (static)', async () => {
+    it('should set gsi1pk to STATUS#failed (static)', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeErrorInput(),
@@ -113,7 +113,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
         expect(params.ExpressionAttributeValues[':gsi1pk'].S).toBe('STATUS#failed');
     });
 
-    it('constructs gsi1sk as {startedAt}#{slug}', async () => {
+    it('should construct gsi1sk as {startedAt}#{slug}', async () => {
         // gsi1sk is the sort key for the status+date GSI. It must concatenate
         // startedAt (ISO timestamp from context) and slug so the admin dashboard
         // can query articles by status ordered by creation date.
@@ -132,7 +132,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
 
     // ── Error propagation ──────────────────────────────────────────────
 
-    it('propagates $.error.Cause to :error attribute', async () => {
+    it('should propagate $.error.Cause to :error attribute', async () => {
         const errorMessage = 'Task timed out after 300.00 seconds';
         const result = await testState({
             definition: isolatedDefinition,
@@ -146,7 +146,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
         expect(params.ExpressionAttributeValues[':error'].S).toBe(errorMessage);
     });
 
-    it('sets :failed attribute to string "failed"', async () => {
+    it('should set :failed attribute to string "failed"', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeErrorInput(),
@@ -161,7 +161,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
 
     // ── Table targeting ────────────────────────────────────────────────
 
-    it('targets the content table', async () => {
+    it('should target the content table', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeErrorInput(),
@@ -174,7 +174,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
 
     // ── UpdateExpression ───────────────────────────────────────────────
 
-    it('writes all five attributes in UpdateExpression', async () => {
+    it('should write all five attributes in UpdateExpression', async () => {
         const result = await testState({
             definition: isolatedDefinition,
             input: makeErrorInput(),
@@ -192,7 +192,7 @@ describe('Article Pipeline — MarkArticleFailed state', () => {
 
     // ── ResultPath ─────────────────────────────────────────────────────
 
-    it('discards DynamoDB response (ResultPath: null)', async () => {
+    it('should discard DynamoDB response (ResultPath: null)', async () => {
         // ResultPath: null means the state output equals the state input.
         // This ensures the error context is not overwritten by the DynamoDB response.
         const input = makeErrorInput();
@@ -232,7 +232,7 @@ describe('Article Pipeline — ResearchTask error routing', () => {
         });
     });
 
-    it('routes Lambda errors to MarkArticleFailed via Catch', async () => {
+    it('should route Lambda errors to MarkArticleFailed via Catch', async () => {
         // When the Lambda invocation throws, the Catch block should route to MarkArticleFailed.
         // The error is placed at $.error (resultPath: '$.error' in the Catch config).
         const result = await testState({
@@ -259,7 +259,7 @@ describe('Article Pipeline — ResearchTask error routing', () => {
         expect(result.error).toBe('PipelineExecutionFailed');
     });
 
-    it('places error at $.error.Cause so MarkArticleFailed can read it', async () => {
+    it('should place error at $.error.Cause so MarkArticleFailed can read it', async () => {
         // The Catch block uses resultPath: '$.error', so the Lambda error
         // lands at $.error.Error and $.error.Cause.
         // MarkArticleFailed's expressionAttributeValues uses '$.error.Cause' — verify.
@@ -296,7 +296,7 @@ describe('Article Pipeline — ASL structure (extracted from CDK)', () => {
         definition = extractArticlePipelineDefinition();
     });
 
-    it('has all required states', () => {
+    it('should have all required states', () => {
         const stateNames = Object.keys(definition.States);
         expect(stateNames).toContain('ResearchTask');
         expect(stateNames).toContain('WriterTask');
@@ -305,17 +305,17 @@ describe('Article Pipeline — ASL structure (extracted from CDK)', () => {
         expect(stateNames).toContain('PipelineFailed');
     });
 
-    it('starts at ResearchTask', () => {
+    it('should start at ResearchTask', () => {
         expect(definition.StartAt).toBe('ResearchTask');
     });
 
-    it('MarkArticleFailed has no retry (immediate failure persistence)', () => {
+    it('should not retry MarkArticleFailed (immediate failure persistence)', () => {
         const state = definition.States['MarkArticleFailed'] as Record<string, unknown>;
         // DynamoDB writes should not retry — failure should be persisted immediately
         expect(state['Retry']).toBeUndefined();
     });
 
-    it('all Lambda tasks catch States.ALL and route to MarkArticleFailed', () => {
+    it('should route all Lambda task errors to MarkArticleFailed via Catch', () => {
         for (const taskName of ['ResearchTask', 'WriterTask', 'QaTask']) {
             const state = definition.States[taskName] as Record<string, unknown>;
             const catchClauses = state['Catch'] as Array<{ ErrorEquals: string[]; Next: string }>;

@@ -387,12 +387,28 @@ export default [
         },
     },
 
+    // Test helper modules — utility files under tests/**/__helpers__/
+    // These are not test files themselves so jest authoring rules don't apply.
+    {
+        files: ["tests/**/__helpers__/**/*.ts"],
+        rules: {
+            "jest/no-export": "off",
+            "jest/valid-title": "off",
+            "jest/no-disabled-tests": "off",
+            "jest/expect-expect": "off",
+            "jest/require-top-level-describe": "off",
+        },
+    },
+
     // CDK Integration/E2E tests - slightly different rules
     {
         files: ["tests/integration/**/*.ts", "tests/e2e/**/*.ts"],
         rules: {
             // Integration tests may need longer timeouts and conditional logic
             "jest/no-conditional-in-test": "warn",
+
+            // Conditional skips are expected when credentials are unavailable
+            "jest/no-disabled-tests": "off",
 
             // Integration tests use expect() in beforeAll for API response shape
             // validation (Rule 8: validate shape before accessing properties).
