@@ -1,5 +1,5 @@
 {
-  "name": "@repo/bedrock-self-healing",
+  "name": "@bedrock/self-healing",
   "version": "1.0.0",
   "type": "commonjs",
   "private": true,

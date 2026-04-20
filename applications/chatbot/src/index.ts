@@ -33,7 +33,7 @@ import type {
     APIGatewayProxyResult,
 } from 'aws-lambda';
 
-import { log, emitEmfMetric, InputSanitiser, OutputSanitiser } from '../../shared/src/index.js';
+import { log, emitEmfMetric, InputSanitiser, OutputSanitiser } from '@bedrock/shared';
 import { invokeChatbotAgent } from './agents/chatbot-agent.js';
 
 // Module-scoped sanitiser instances (default patterns — no domain-specific overrides)

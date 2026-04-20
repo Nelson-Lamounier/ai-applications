@@ -16,8 +16,8 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 
-import { log } from '../../../shared/src/index.js';
-import type { ArticleVersionRecord } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
+import type { ArticleVersionRecord } from '@bedrock/shared';
 
 // =============================================================================
 // TYPES

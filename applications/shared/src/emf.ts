@@ -19,7 +19,7 @@
  *
  * @example
  * ```typescript
- * import { emitEmfMetric } from '../../../shared/src/index.js';
+ * import { emitEmfMetric } from '@bedrock/shared';
  *
  * emitEmfMetric(
  *     'BedrockChatbot',

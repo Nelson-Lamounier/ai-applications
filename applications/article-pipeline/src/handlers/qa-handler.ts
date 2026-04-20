@@ -23,12 +23,12 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import { executeQaAgent, QA_PASS_THRESHOLD } from '../agents/qa-agent.js';
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 import type {
     ArticleStatus,
     PipelineOutput,
     QaHandlerInput,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
 // =============================================================================
 // CONFIGURATION

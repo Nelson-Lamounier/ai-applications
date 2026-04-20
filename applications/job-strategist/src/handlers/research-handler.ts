@@ -15,9 +15,9 @@ import { executeResearchAgent } from '../agents/research-agent.js';
 import type {
     StrategistResearchHandlerInput,
     StrategistWriterHandlerInput,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 
 /**
  * Lambda handler for the Strategist Research Agent.

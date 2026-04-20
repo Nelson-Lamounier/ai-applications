@@ -19,8 +19,8 @@ import {
 } from '@aws-sdk/client-bedrock-agent-runtime';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 
-import { runAgent, parseJsonResponse, InputSanitiser, log } from '../../../shared/src/index.js';
-import type { PiiPattern } from '../../../shared/src/index.js';
+import { runAgent, parseJsonResponse, InputSanitiser, log } from '@bedrock/shared';
+import type { PiiPattern } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 
@@ -46,7 +46,7 @@ import type {
     StructuredResumeData,
     StrategistPipelineContext,
     StrategistResearchResult,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
 // =============================================================================
 // CONFIGURATION

@@ -1,5 +1,5 @@
 {
-  "name": "@repo/bedrock-article-pipeline",
+  "name": "@bedrock/article-pipeline",
   "version": "1.0.0",
   "type": "commonjs",
   "private": true,

@@ -10,8 +10,8 @@
  *
  * @example
  * ```typescript
- * import { runAgent, parseJsonResponse } from '../../../shared/src/index.js';
- * import type { AgentConfig, PipelineContext } from '../../../shared/src/index.js';
+ * import { runAgent, parseJsonResponse } from '@bedrock/shared';
+ * import type { AgentConfig, PipelineContext } from '@bedrock/shared';
  * ```
  */
 

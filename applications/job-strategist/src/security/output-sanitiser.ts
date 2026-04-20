@@ -4,13 +4,13 @@
  *
  * ⚠️  DEPRECATED: This module is a compatibility shim. All consumers
  * should import `OutputSanitiser` from `@bedrock/shared`
- * (or `../../../shared/src/index.js`).
+ * (or `@bedrock/shared`).
  *
  * Preserved temporarily for any transient imports during migration.
  * Will be removed in the next cleanup pass.
  */
 
-import { OutputSanitiser } from '../../../shared/src/index.js';
+import { OutputSanitiser } from '@bedrock/shared';
 
 const _sanitiser = new OutputSanitiser();
 

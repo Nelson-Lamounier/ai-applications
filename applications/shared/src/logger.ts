@@ -19,11 +19,11 @@
  * @example
  * ```typescript
  * // Pattern 1: Simple stateless logger
- * import { log } from '../../../shared/src/index.js';
+ * import { log } from '@bedrock/shared';
  * log('INFO', 'Agent invoked', { sessionId, promptLength: 42 });
  *
  * // Pattern 2: Logger with persistent defaults
- * import { createLogger } from '../../../shared/src/index.js';
+ * import { createLogger } from '@bedrock/shared';
  * const log = createLogger({ correlationId: 'abc-123' });
  * log('INFO', 'Processing event');  // correlationId auto-included
  * ```

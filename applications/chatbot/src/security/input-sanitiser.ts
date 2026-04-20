@@ -3,14 +3,14 @@
  * Input Sanitiser — Deprecated Facade
  *
  * ⚠️  DEPRECATED: This module is a compatibility shim. All consumers
- * should import from `@bedrock/shared` (or `../../../shared/src/index.js`).
+ * should import from `@bedrock/shared` (or `@bedrock/shared`).
  *
  * Preserved temporarily for any transient imports during migration.
  * Will be removed in the next cleanup pass.
  */
 
-import { InputSanitiser } from '../../../shared/src/index.js';
-import type { SanitiseInputResult } from '../../../shared/src/index.js';
+import { InputSanitiser } from '@bedrock/shared';
+import type { SanitiseInputResult } from '@bedrock/shared';
 
 const _sanitiser = new InputSanitiser();
 

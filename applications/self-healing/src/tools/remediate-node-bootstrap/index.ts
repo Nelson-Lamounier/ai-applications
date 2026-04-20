@@ -32,7 +32,7 @@ import {
     GetParameterCommand,
 } from '@aws-sdk/client-ssm';
 
-import { log } from '../../../../shared/src/index.js';
+import { log } from '../@bedrock/shared';
 
 const sfnClient = new SFNClient({});
 const ssmClient = new SSMClient({});

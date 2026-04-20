@@ -21,9 +21,9 @@ import type {
     StrategistCoachHandlerInput,
     AgentResult,
     StrategistAnalysisResult,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 
 import { AnalysisRecordSchema } from '../schemas/dynamo-record.schema.js';
 import { DdbHandlerEnvSchema } from '../schemas/environment.schema.js';

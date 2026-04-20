@@ -28,9 +28,9 @@ import type {
     StrategistPipelineContext,
     StrategistResearchHandlerInput,
     StrategistCoachLoaderInput,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 
 import {
     TriggerRequestSchema,

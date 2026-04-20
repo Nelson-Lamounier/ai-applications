@@ -12,8 +12,8 @@
  */
 
 import { executeWriterAgent } from '../agents/writer-agent.js';
-import { log } from '../../../shared/src/index.js';
-import type { QaHandlerInput, WriterHandlerInput } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
+import type { QaHandlerInput, WriterHandlerInput } from '@bedrock/shared';
 
 /**
  * Lambda handler for the Writer Agent.

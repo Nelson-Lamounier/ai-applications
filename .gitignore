@@ -1,0 +1,95 @@
+# ── Compiled Output ──────────────────────────────────────────────────────────
+dist/
+tsconfig.tsbuildinfo
+*.js
+!jest.config.js
+!jest.integration.config.js
+!.eslint-local-rules.mjs
+!eslint.config.mjs
+!infra/tests/jest-worker-setup.js
+# CI patch files committed to .github/patches/ must be tracked despite *.js
+!.github/patches/*.js
+*.d.ts
+!lib/**/*.d.ts
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+
+# ── CDK ──────────────────────────────────────────────────────────────────────
+.cdk.staging
+cdk.out/
+cdk-outputs/
+cdk.context.json
+
+# ── Yarn 4+ ──────────────────────────────────────────────────────────────────
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# ── Testing ──────────────────────────────────────────────────────────────────
+coverage/
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Environment & Secrets ────────────────────────────────────────────────────
+.env
+.env.local
+.env.bootstrap
+.env.*.local
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+scripts/local/diagnostics/.troubleshoot-logs/*
+!scripts/local/diagnostics/.troubleshoot-logs/.gitkeep
+
+# ── Generated Docs & Reports ────────────────────────────────────────────────
+docs/
+security-reports/
+
+# ── AI Tooling ───────────────────────────────────────────────────────────────
+.gemini/
+.agent/
+.agents/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+venv/
+.venv/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.pyre_configuration
+.pyre/
+
+# ── Scratch / One-off Files ──────────────────────────────────────────────────
+*.txt
+!requirements.txt
+sample.*
+bedrock-generated.md
+
+# ── Draft Content & Internal Docs ────────────────────────────────────────────
+certification.md
+cognito_infrastructure_review.md
+PROMPT.md
+
+# ── Build Benchmarks ────────────────────────────────────────────────────────
+install-timer.*
+
+# ── MCP Development ─────────────────────────────────────────────────────────
+docker-compose.mcp.yml
+
+# ── MCP Server Build Artefacts ───────────────────────────────────────────────
+mcp-servers/*/dist/
+mcp-servers/*/build/
+CI-FrontEnd.yml

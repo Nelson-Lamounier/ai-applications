@@ -22,9 +22,9 @@ import { PersistHandlerEnvSchema } from '../schemas/environment.schema.js';
 import type {
     StrategistAnalysisPersistInput,
     StrategistAnalysisPipelineOutput,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 
 // =============================================================================
 // ENVIRONMENT VALIDATION (fail-fast at cold start)

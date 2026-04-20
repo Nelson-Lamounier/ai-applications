@@ -1,0 +1,25 @@
+{
+  "name": "ai-applications",
+  "private": true,
+  "description": "Bedrock AI applications — article pipeline, job strategist, chatbot, self-healing agent, and APIs",
+  "workspaces": [
+    "applications/shared",
+    "applications/article-pipeline",
+    "applications/job-strategist",
+    "applications/chatbot",
+    "applications/self-healing",
+    "api/admin-api",
+    "api/public-api",
+    "infra"
+  ],
+  "scripts": {
+    "typecheck": "yarn workspaces foreach -A run typecheck",
+    "test": "yarn workspaces foreach -A run test",
+    "build": "yarn workspaces foreach -A run build"
+  },
+  "packageManager": "yarn@4.12.0",
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "esbuild": "^0.27.3"
+  }
+}

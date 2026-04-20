@@ -12,7 +12,7 @@
  * Pipeline position: API → Research → Strategist → **Coach** → DynamoDB
  */
 
-import { BaseAgent, parseJsonResponse, log } from '../../../shared/src/index.js';
+import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { COACH_PERSONA_SYSTEM_PROMPT } from '../prompts/coach-persona.js';
 import type {
     AgentConfig,
@@ -20,7 +20,7 @@ import type {
     StrategistPipelineContext,
     StrategistAnalysisResult,
     InterviewCoachResult,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
 // =============================================================================
 // INPUT TYPE

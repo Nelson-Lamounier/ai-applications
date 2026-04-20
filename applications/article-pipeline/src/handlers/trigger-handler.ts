@@ -17,8 +17,8 @@ import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 
-import { log } from '../../../shared/src/index.js';
-import type { PipelineContext, ResearchHandlerInput } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
+import type { PipelineContext, ResearchHandlerInput } from '@bedrock/shared';
 
 // =============================================================================
 // CONFIGURATION

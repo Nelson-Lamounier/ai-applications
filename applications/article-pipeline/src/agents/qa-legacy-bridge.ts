@@ -16,7 +16,7 @@ import {
 
 import { QA_PERSONA_SYSTEM_PROMPT } from '../prompts/qa-persona.js';
 import { estimateInvocationCost } from '../../../shared/src/metrics.js';
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 import type { TokenUsage } from '../../../shared/src/metrics.js';
 
 // Re-export types for the monolith

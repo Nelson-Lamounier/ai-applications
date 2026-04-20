@@ -36,7 +36,7 @@ import {
     GetCommand,
 } from '@aws-sdk/lib-dynamodb';
 
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 
 // =============================================================================
 // TYPES

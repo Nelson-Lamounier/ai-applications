@@ -4,14 +4,14 @@
  *
  * ⚠️  DEPRECATED: This module is a compatibility shim. All consumers
  * should import `InputSanitiser` from `@bedrock/shared`
- * (or `../../../shared/src/index.js`).
+ * (or `@bedrock/shared`).
  *
  * Preserved temporarily for any transient imports during migration.
  * Will be removed in the next cleanup pass.
  */
 
-import { InputSanitiser, InputSanitisationError } from '../../../shared/src/index.js';
-import type { SanitisationResult, PiiPattern } from '../../../shared/src/index.js';
+import { InputSanitiser, InputSanitisationError } from '@bedrock/shared';
+import type { SanitisationResult, PiiPattern } from '@bedrock/shared';
 
 /**
  * PII patterns specific to job description inputs.

@@ -19,7 +19,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "paths": {
-      "@bedrock-apps/shared/*": ["./shared/src/*"]
+      "@bedrock/shared": ["./shared/src/index.ts"]
     }
   },
   "files": [],

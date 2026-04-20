@@ -20,7 +20,7 @@
  * Pipeline position: Research → Writer → **QA** → Review/Flagged
  */
 
-import { BaseAgent, parseJsonResponse, log } from '../../../shared/src/index.js';
+import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { QA_PERSONA_SYSTEM_PROMPT } from '../prompts/qa-persona.js';
 import type {
     AgentConfig,
@@ -31,7 +31,7 @@ import type {
     QaRecommendation,
     QaValidationResult,
     WriterResult,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
 // =============================================================================
 // INPUT TYPE

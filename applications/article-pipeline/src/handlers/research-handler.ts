@@ -12,8 +12,8 @@
  */
 
 import { executeResearchAgent } from '../agents/research-agent.js';
-import { log } from '../../../shared/src/index.js';
-import type { ResearchHandlerInput, WriterHandlerInput } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
+import type { ResearchHandlerInput, WriterHandlerInput } from '@bedrock/shared';
 
 /**
  * Lambda handler for the Research Agent.

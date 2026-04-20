@@ -12,7 +12,7 @@
  * Pipeline position: Research → **Writer** → QA → Review
  */
 
-import { BaseAgent, parseJsonResponse, log } from '../../../shared/src/index.js';
+import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { BLOG_PERSONA_SYSTEM_PROMPT } from '../prompts/blog-persona.js';
 import type {
     AgentConfig,
@@ -23,7 +23,7 @@ import type {
     ShotListItem,
     SuggestedReference,
     WriterResult,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
 // =============================================================================
 // INPUT TYPE

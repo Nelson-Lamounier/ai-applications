@@ -20,7 +20,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
-import { runAgent, parseJsonResponse, log } from '../../../shared/src/index.js';
+import { runAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 import type {
     AgentConfig,
@@ -33,7 +33,7 @@ import type {
     ResearchResult,
     SeoResearch,
     SuggestedReference,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
 // =============================================================================
 // CONFIGURATION

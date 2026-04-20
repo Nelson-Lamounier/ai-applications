@@ -12,7 +12,7 @@
  * Pipeline position: API → Research → **Strategist** → Coach → DynamoDB
  */
 
-import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '../../../shared/src/index.js';
+import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
 
@@ -35,7 +35,7 @@ import type {
     StrategistResearchResult,
     StrategistAnalysisResult,
     StructuredResumeData,
-} from '../../../shared/src/index.js';
+} from '@bedrock/shared';
 
 // =============================================================================
 // INPUT TYPE

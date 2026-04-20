@@ -27,7 +27,7 @@ import type {
     MetricDataResult,
 } from '@aws-sdk/client-cloudwatch';
 
-import { log } from '../../../../shared/src/index.js';
+import { log } from '../@bedrock/shared';
 
 const cw = new CloudWatchClient({});
 

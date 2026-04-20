@@ -24,7 +24,7 @@ import {
     UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
 
-import { log } from '../../../shared/src/index.js';
+import { log } from '@bedrock/shared';
 
 // =============================================================================
 // Configuration
