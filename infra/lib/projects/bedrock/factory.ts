@@ -148,7 +148,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             {
                 namePrefix,
                 embeddingsModel: allocs.knowledgeBase.embeddingsModel,
-                dataBucketArn: dataStack.dataBucket.bucketArn,
+                // dataBucketArn omitted — KbStack reads from SSM at deploy time
                 pineconeConnectionString: allocs.knowledgeBase.pineconeConnectionString,
                 pineconeSecretName: configs.knowledgeBase.pineconeSecretName,
                 pineconeNamespace: allocs.knowledgeBase.pineconeNamespace,
@@ -158,7 +158,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 env,
             }
         );
-        kbStack.addDependency(dataStack);
 
         // =================================================================
         // Stack 3: Agent (Bedrock Agent + Guardrail + KB)
@@ -179,12 +178,10 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 blockedInputMessaging: configs.guardrail.blockedInputMessaging,
                 blockedOutputsMessaging: configs.guardrail.blockedOutputMessaging,
                 removalPolicy: configs.removalPolicy,
-                knowledgeBase: kbStack.knowledgeBase,
+                // knowledgeBase omitted — AgentStack reads KB ID/ARN from SSM at deploy time
                 env,
             },
         );
-        agentStack.addDependency(dataStack);
-        agentStack.addDependency(kbStack);
 
         // =================================================================
         // Stack 4: API (API Gateway + Lambda for agent invocation)
@@ -208,7 +205,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 env,
             }
         );
-        apiStack.addDependency(agentStack);
 
         // =================================================================
         // Stack 5: Content (Data Layer — DynamoDB + SSM Exports)
@@ -225,7 +221,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             stackId(this.namespace, 'Content', this.environment),
             {
                 namePrefix,
-                assetsBucketName: dataStack.bucketName,
+                // assetsBucketName omitted — AiContentStack reads from SSM at deploy time
                 publishedPrefix: contentConfigs.s3.publishedPrefix,
                 contentPrefix: contentConfigs.s3.contentPrefix,
                 logRetention: contentConfigs.logRetention,
@@ -234,7 +230,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 env,
             }
         );
-        contentStack.addDependency(dataStack);
 
         // =================================================================
         // Stack 6: Pipeline (Multi-Agent Step Functions)
@@ -248,8 +243,8 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             stackId(this.namespace, 'Pipeline', this.environment),
             {
                 namePrefix,
-                assetsBucketName: dataStack.bucketName,
-                tableName: contentStack.tableName,
+                // assetsBucketName, tableName, profile ARNs, KB ID/ARN omitted —
+                // PipelineStack reads all from SSM at deploy time
                 researchModel: pipelineAllocs.research.modelId,
                 writerModel: pipelineAllocs.writer.modelId,
                 qaModel: pipelineAllocs.qa.modelId,
@@ -261,8 +256,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 publishLambdaMemoryMb: pipelineAllocs.lambda.publishMemoryMb,
                 logRetention: pipelineConfigs.logRetention,
                 removalPolicy: pipelineConfigs.removalPolicy,
-                knowledgeBaseId: kbStack.knowledgeBaseId,
-                knowledgeBaseArn: kbStack.knowledgeBaseArn,
                 environmentName: this.environment,
                 draftPrefix: pipelineConfigs.s3.draftPrefix,
                 publishedPrefix: pipelineConfigs.s3.publishedPrefix,
@@ -270,14 +263,9 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 reviewPrefix: pipelineConfigs.s3.reviewPrefix,
                 archivedPrefix: pipelineConfigs.s3.archivedPrefix,
                 isrEndpoint: pipelineConfigs.isrEndpoint,
-                researchProfileArn: dataStack.articleHaikuProfileArn,
-                writerProfileArn: dataStack.articleSonnetProfileArn,
-                qaProfileArn: dataStack.articleSonnetProfileArn,
                 env,
             }
         );
-        pipelineStack.addDependency(dataStack);
-        pipelineStack.addDependency(contentStack); // Uses contentStack's DynamoDB table
 
         // =================================================================
         // Stack 7: Strategist Data (DynamoDB for job applications)
@@ -290,13 +278,12 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             stackId(this.namespace, 'Strategist-Data', this.environment),
             {
                 namePrefix,
-                assetsBucketName: dataStack.bucketName,
+                // assetsBucketName omitted — prop unused in stack body
                 removalPolicy: strategistConfigs.removalPolicy,
                 environmentName: this.environment,
                 env,
             }
         );
-        strategistDataStack.addDependency(dataStack);
 
         // =================================================================
         // Stack 8: Strategist Pipeline (Multi-Agent Step Functions)
@@ -309,8 +296,8 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             stackId(this.namespace, 'Strategist-Pipeline', this.environment),
             {
                 namePrefix,
-                assetsBucketName: dataStack.bucketName,
-                tableName: strategistDataStack.tableName,
+                // assetsBucketName, tableName, profile ARNs, KB ID/ARN omitted —
+                // StrategistPipelineStack reads all from SSM at deploy time
                 researchModel: strategistAllocs.research.modelId,
                 strategistModel: strategistAllocs.strategist.modelId,
                 strategistMaxTokens: strategistAllocs.strategist.maxTokens,
@@ -323,18 +310,10 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 triggerLambdaMemoryMb: strategistAllocs.lambda.triggerMemoryMb,
                 logRetention: strategistConfigs.logRetention,
                 removalPolicy: strategistConfigs.removalPolicy,
-                knowledgeBaseId: kbStack.knowledgeBaseId,
-                knowledgeBaseArn: kbStack.knowledgeBaseArn,
                 environmentName: this.environment,
-                researchProfileArn: dataStack.strategistHaikuProfileArn,
-                strategistProfileArn: dataStack.strategistSonnetProfileArn,
-                resumeBuilderProfileArn: dataStack.strategistHaikuProfileArn,
-                coachProfileArn: dataStack.strategistHaikuProfileArn,
                 env,
             }
         );
-        strategistPipelineStack.addDependency(dataStack);
-        strategistPipelineStack.addDependency(strategistDataStack);
 
         // =================================================================
         // Stack 9: Public API (BFF for Next.js portfolio frontend)
@@ -349,12 +328,10 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             {
                 namePrefix,
                 environmentName: this.environment,
-                contentTable: contentStack.contentTable,
+                // contentTable, strategistTable, bedrockApiUrl, bedrockApiKeySecretArn omitted —
+                // PublicApiStack reads all from SSM at deploy time
                 dynamoGsi1Name: 'gsi1-status-date',
                 dynamoGsi2Name: 'gsi2-tag-date',
-                strategistTable: strategistDataStack.strategistTable,
-                bedrockApiUrl: apiStack.apiUrl,
-                bedrockApiKeySecretArn: apiStack.apiKeySecretArn ?? '',
                 allowedOrigins: configs.api.allowedOrigins,
                 lambdaMemoryMb: allocs.apiLambda.memoryMb,
                 lambdaTimeoutSeconds: allocs.apiLambda.timeoutSeconds,
@@ -365,9 +342,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 env,
             }
         );
-        publicApiStack.addDependency(contentStack);
-        publicApiStack.addDependency(apiStack);
-        publicApiStack.addDependency(strategistDataStack);
 
         // =================================================================
         // Stack 10: Aurora Serverless v2 + pgvector (replaces Pinecone)

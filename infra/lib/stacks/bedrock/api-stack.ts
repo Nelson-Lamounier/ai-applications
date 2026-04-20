@@ -301,18 +301,19 @@ export class BedrockApiStack extends cdk.Stack {
             usagePlan.addApiStage({
                 stage: this.api.deploymentStage,
             });
-
-            // Export secret ARN to SSM — consumed by deploy.py to populate
-            // the public-api ConfigMap with BEDROCK_API_KEY_SECRET_ARN.
-            new ssm.StringParameter(this, 'ApiKeySecretArnParam', {
-                parameterName: `/${namePrefix}/bedrock-api-key-secret-arn`,
-                stringValue: apiKeySecret.secretArn,
-                description: `Secrets Manager ARN for the Bedrock chatbot API key (${namePrefix})`,
-                tier: ssm.ParameterTier.STANDARD,
-            });
         }
 
         this.apiUrl = this.api.url;
+
+        // Always publish the secret ARN param so PublicApiStack can unconditionally
+        // read it from SSM. Empty string when API key is disabled — PublicApiStack
+        // handles the empty-string case at runtime (no secret lookup attempted).
+        new ssm.StringParameter(this, 'ApiKeySecretArnParam', {
+            parameterName: `/${namePrefix}/bedrock-api-key-secret-arn`,
+            stringValue: this.apiKeySecretArn ?? '',
+            description: `Secrets Manager ARN for the Bedrock chatbot API key (${namePrefix})`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
 
         // =================================================================
         // CDK-Nag Suppressions

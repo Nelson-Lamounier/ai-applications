@@ -60,10 +60,16 @@ import { Construct } from 'constructs';
 export interface StrategistPipelineStackProps extends cdk.StackProps {
     /** Name prefix for resources (e.g. 'bedrock-development') */
     readonly namePrefix: string;
-    /** Name of the shared S3 assets bucket (from BedrockDataStack) */
-    readonly assetsBucketName: string;
-    /** DynamoDB table for strategist data (from StrategistDataStack) */
-    readonly tableName: string;
+    /**
+     * Name of the shared S3 assets bucket (from BedrockDataStack).
+     * When omitted the stack reads `/{namePrefix}/data-bucket-name` from SSM.
+     */
+    readonly assetsBucketName?: string;
+    /**
+     * DynamoDB table for strategist data (from StrategistDataStack).
+     * When omitted the stack reads `/{namePrefix}/strategist-table-name` from SSM.
+     */
+    readonly tableName?: string;
     /** Research Agent model ID */
     readonly researchModel: string;
     /** Strategist Agent model ID */
@@ -94,14 +100,26 @@ export interface StrategistPipelineStackProps extends cdk.StackProps {
     readonly knowledgeBaseArn?: string;
     /** Runtime environment name */
     readonly environmentName: string;
-    /** Application Inference Profile ARN for Research agent */
-    readonly researchProfileArn: string;
-    /** Application Inference Profile ARN for Strategist agent */
-    readonly strategistProfileArn: string;
-    /** Application Inference Profile ARN for Resume Builder agent */
-    readonly resumeBuilderProfileArn: string;
-    /** Application Inference Profile ARN for Interview Coach agent */
-    readonly coachProfileArn: string;
+    /**
+     * Application Inference Profile ARN for Research agent.
+     * When omitted the stack reads `/{namePrefix}/strategist-haiku-profile-arn` from SSM.
+     */
+    readonly researchProfileArn?: string;
+    /**
+     * Application Inference Profile ARN for Strategist agent.
+     * When omitted the stack reads `/{namePrefix}/strategist-sonnet-profile-arn` from SSM.
+     */
+    readonly strategistProfileArn?: string;
+    /**
+     * Application Inference Profile ARN for Resume Builder agent.
+     * When omitted the stack reads `/{namePrefix}/strategist-haiku-profile-arn` from SSM.
+     */
+    readonly resumeBuilderProfileArn?: string;
+    /**
+     * Application Inference Profile ARN for Interview Coach agent.
+     * When omitted the stack reads `/{namePrefix}/strategist-haiku-profile-arn` from SSM.
+     */
+    readonly coachProfileArn?: string;
 }
 
 // =============================================================================
@@ -136,11 +154,29 @@ export class StrategistPipelineStack extends cdk.Stack {
 
         const { namePrefix } = props;
 
+        // Resolve shared resource identifiers — SSM deploy-time tokens when not passed directly.
+        const assetsBucketName = props.assetsBucketName
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/data-bucket-name`);
+        const tableName = props.tableName
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/strategist-table-name`);
+        const researchProfileArn = props.researchProfileArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/strategist-haiku-profile-arn`);
+        const strategistProfileArn = props.strategistProfileArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/strategist-sonnet-profile-arn`);
+        const resumeBuilderProfileArn = props.resumeBuilderProfileArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/strategist-haiku-profile-arn`);
+        const coachProfileArn = props.coachProfileArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/strategist-haiku-profile-arn`);
+        const knowledgeBaseId = props.knowledgeBaseId
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/knowledge-base-id`);
+        const knowledgeBaseArn = props.knowledgeBaseArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/knowledge-base-arn`);
+
         // Import shared resources
         const assetsBucket = s3.Bucket.fromBucketName(
             this,
             'ImportedAssetsBucket',
-            props.assetsBucketName,
+            assetsBucketName,
         );
 
         // Use Table.fromTableName (not TableV2) to avoid the `policyResource` deprecation
@@ -148,7 +184,7 @@ export class StrategistPipelineStack extends cdk.Stack {
         const strategistTable = dynamodb.Table.fromTableName(
             this,
             'ImportedStrategistTable',
-            props.tableName,
+            tableName,
         );
 
         // =================================================================
@@ -195,11 +231,11 @@ export class StrategistPipelineStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.agentLambdaTimeoutSeconds),
             environment: {
                 RESEARCH_MODEL: props.researchModel,
-                INFERENCE_PROFILE_ARN: props.researchProfileArn,
+                INFERENCE_PROFILE_ARN: researchProfileArn,
                 ASSETS_BUCKET: assetsBucket.bucketName,
                 TABLE_NAME: strategistTable.tableName,
                 ENVIRONMENT: props.environmentName,
-                ...(props.knowledgeBaseId ? { KNOWLEDGE_BASE_ID: props.knowledgeBaseId } : {}),
+                KNOWLEDGE_BASE_ID: knowledgeBaseId,
             },
             description: `Strategist Research Agent (${props.researchModel})`,
             logGroup: new logs.LogGroup(this, 'ResearchLogGroup', {
@@ -224,7 +260,7 @@ export class StrategistPipelineStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.agentLambdaTimeoutSeconds),
             environment: {
                 STRATEGIST_MODEL: props.strategistModel,
-                INFERENCE_PROFILE_ARN: props.strategistProfileArn,
+                INFERENCE_PROFILE_ARN: strategistProfileArn,
                 MAX_TOKENS: String(props.strategistMaxTokens),
                 THINKING_BUDGET_TOKENS: String(props.strategistThinkingBudgetTokens),
                 ASSETS_BUCKET: assetsBucket.bucketName,
@@ -305,7 +341,7 @@ export class StrategistPipelineStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.agentLambdaTimeoutSeconds),
             environment: {
                 COACH_MODEL: props.coachModel,
-                INFERENCE_PROFILE_ARN: props.coachProfileArn,
+                INFERENCE_PROFILE_ARN: coachProfileArn,
                 MAX_TOKENS: String(props.coachMaxTokens),
                 THINKING_BUDGET_TOKENS: String(props.coachThinkingBudgetTokens),
                 TABLE_NAME: strategistTable.tableName,
@@ -332,21 +368,19 @@ export class StrategistPipelineStack extends cdk.Stack {
         researchFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             resources: [
-                props.researchProfileArn,
+                researchProfileArn,
                 'arn:aws:bedrock:*::foundation-model/*',
             ],
         }));
-        if (props.knowledgeBaseArn) {
-            researchFn.addToRolePolicy(new iam.PolicyStatement({
-                actions: ['bedrock:Retrieve'],
-                resources: [props.knowledgeBaseArn],
-            }));
-        }
+        researchFn.addToRolePolicy(new iam.PolicyStatement({
+            actions: ['bedrock:Retrieve'],
+            resources: [knowledgeBaseArn],
+        }));
         // Strategist: Bedrock InvokeModel, DynamoDB write (persist analysis)
         strategistFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             resources: [
-                props.strategistProfileArn,
+                strategistProfileArn,
                 'arn:aws:bedrock:*::foundation-model/*',
             ],
         }));
@@ -369,7 +403,7 @@ export class StrategistPipelineStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.agentLambdaTimeoutSeconds),
             environment: {
                 RESUME_BUILDER_MODEL: props.researchModel, // Haiku 4.5 — same tier as research
-                INFERENCE_PROFILE_ARN: props.resumeBuilderProfileArn,
+                INFERENCE_PROFILE_ARN: resumeBuilderProfileArn,
                 TABLE_NAME: strategistTable.tableName,
                 ENVIRONMENT: props.environmentName,
             },
@@ -388,7 +422,7 @@ export class StrategistPipelineStack extends cdk.Stack {
         resumeBuilderFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             resources: [
-                props.resumeBuilderProfileArn,
+                resumeBuilderProfileArn,
                 'arn:aws:bedrock:*::foundation-model/*',
             ],
         }));
@@ -401,7 +435,7 @@ export class StrategistPipelineStack extends cdk.Stack {
         coachFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             resources: [
-                props.coachProfileArn,
+                coachProfileArn,
                 'arn:aws:bedrock:*::foundation-model/*',
             ],
         }));

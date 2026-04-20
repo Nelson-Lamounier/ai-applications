@@ -80,11 +80,11 @@ jobs:
 
   # ===========================================================================
   # Stack 3: Agent (Bedrock Agent, Knowledge Base, Guardrail, Action Group)
-  # Depends on: Data (S3 bucket for KB data source)
+  # Depends on: KB (knowledge-base-id + execution-role-arn SSM params)
   # ===========================================================================
   deploy-agent:
     name: Deploy Agent Stack
-    needs: [deploy-data]
+    needs: [deploy-data, deploy-kb]
     uses: ./.github/workflows/_deploy-stack.yml
     with:
       stack-name: Bedrock-Agent-development
@@ -140,7 +140,8 @@ jobs:
 
   # ===========================================================================
   # Stack 6: Pipeline (Multi-Agent Step Functions — Research → Writer → QA)
-  # Depends on: Data (S3 bucket) + Content (DynamoDB table for article metadata)
+  # Depends on: Content (content-table-name SSM) + KB (knowledge-base-id/arn SSM)
+  #             Data profile ARNs are created by DataStack (already in content chain)
   #
   # Deploys the Step Functions state machine and per-agent Lambdas.
   # Application code: applications/article-pipeline/
@@ -148,7 +149,7 @@ jobs:
   # ===========================================================================
   deploy-pipeline:
     name: Deploy Pipeline Stack
-    needs: [deploy-data, deploy-content]
+    needs: [deploy-content, deploy-kb]
     uses: ./.github/workflows/_deploy-stack.yml
     with:
       stack-name: Bedrock-Pipeline-development
@@ -185,7 +186,8 @@ jobs:
 
   # ===========================================================================
   # Stack 8: Strategist Pipeline (Iterative Two-Pipeline Step Functions)
-  # Depends on: Data (S3) + Strategist Data (DynamoDB) + Content (resume)
+  # Depends on: Strategist Data (strategist-table-name SSM) + KB (knowledge-base-id/arn SSM)
+  #             Data profile ARNs are created by DataStack (already in strategist-data chain)
   #
   # 2 state machines:
   #   Analysis SM: Research → Strategist → AnalysisPersist
@@ -194,7 +196,7 @@ jobs:
   # ===========================================================================
   deploy-strategist-pipeline:
     name: Deploy Strategist Pipeline Stack
-    needs: [deploy-data, deploy-strategist-data, deploy-content]
+    needs: [deploy-strategist-data, deploy-kb]
     uses: ./.github/workflows/_deploy-stack.yml
     with:
       stack-name: Bedrock-Strategist-Pipeline-development

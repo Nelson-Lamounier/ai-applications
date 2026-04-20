@@ -43,8 +43,11 @@ import { Construct } from 'constructs';
 export interface AiContentStackProps extends cdk.StackProps {
     /** Name prefix for resources (e.g. 'bedrock-development') */
     readonly namePrefix: string;
-    /** Name of the S3 bucket for content blobs (from DataStack) */
-    readonly assetsBucketName: string;
+    /**
+     * Name of the S3 bucket for content blobs (from DataStack).
+     * When omitted the stack reads `/{namePrefix}/data-bucket-name` from SSM.
+     */
+    readonly assetsBucketName?: string;
     /** S3 key prefix for published MDX output */
     readonly publishedPrefix: string;
     /** S3 key prefix for versioned content blobs (Metadata Brain) */
@@ -90,12 +93,15 @@ export class AiContentStack extends cdk.Stack {
         const { namePrefix } = props;
         this.contentPrefix = props.contentPrefix;
 
-        // Import the bucket by name to avoid cross-stack notification handler
-        // placement, which causes cyclic dependencies (Data ↔ Content).
+        // Resolve bucket name from SSM when not provided directly.
+        // Import by name to avoid cross-stack notification handler placement
+        // (cyclic dependency risk: Data ↔ Content).
+        const assetsBucketName = props.assetsBucketName
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/data-bucket-name`);
         const assetsBucket = s3.Bucket.fromBucketName(
             this,
             'ImportedAssetsBucket',
-            props.assetsBucketName,
+            assetsBucketName,
         );
         this.assetsBucket = assetsBucket;
 

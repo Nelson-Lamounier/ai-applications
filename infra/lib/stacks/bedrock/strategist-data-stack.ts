@@ -43,8 +43,11 @@ import { Construct } from 'constructs';
 export interface StrategistDataStackProps extends cdk.StackProps {
     /** Name prefix for resources (e.g. 'bedrock-development') */
     readonly namePrefix: string;
-    /** Name of the shared S3 assets bucket (from BedrockDataStack) */
-    readonly assetsBucketName: string;
+    /**
+     * Name of the shared S3 assets bucket (from BedrockDataStack).
+     * When omitted the stack reads `/{namePrefix}/data-bucket-name` from SSM.
+     */
+    readonly assetsBucketName?: string;
     /** Removal policy for stateful resources */
     readonly removalPolicy: cdk.RemovalPolicy;
     /** Runtime environment name (e.g. 'development') */

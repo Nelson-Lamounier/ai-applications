@@ -35,18 +35,10 @@ export interface PublicApiStackProps extends cdk.StackProps {
     readonly namePrefix: string;
     /** Runtime environment name */
     readonly environmentName: string;
-    /** DynamoDB content table (from BedrockDataStack) */
-    readonly contentTable: dynamodb.ITable;
     /** DynamoDB GSI1 index name */
     readonly dynamoGsi1Name: string;
     /** DynamoDB GSI2 index name */
     readonly dynamoGsi2Name: string;
-    /** DynamoDB strategist table for resumes (optional) */
-    readonly strategistTable?: dynamodb.ITable;
-    /** Bedrock chatbot API Gateway URL (from BedrockApiStack) */
-    readonly bedrockApiUrl: string;
-    /** Secrets Manager ARN for the Bedrock chatbot API key */
-    readonly bedrockApiKeySecretArn: string;
     /** Allowed CORS origins */
     readonly allowedOrigins: string[];
     /** Lambda memory in MB */
@@ -76,13 +68,29 @@ export class PublicApiStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props: PublicApiStackProps) {
         super(scope, id, props);
 
-        const {
-            namePrefix,
-            contentTable,
-            strategistTable,
-            bedrockApiUrl,
-            bedrockApiKeySecretArn,
-        } = props;
+        const { namePrefix } = props;
+
+        // Resolve cross-stack identifiers from SSM — no direct construct references.
+        const contentTableArn = ssm.StringParameter.valueForStringParameter(
+            this, `/${namePrefix}/content-table-arn`,
+        );
+        const strategistTableArn = ssm.StringParameter.valueForStringParameter(
+            this, `/${namePrefix}/strategist-table-arn`,
+        );
+        const bedrockApiUrl = ssm.StringParameter.valueForStringParameter(
+            this, `/${namePrefix}/api-url`,
+        );
+        const bedrockApiKeySecretArn = ssm.StringParameter.valueForStringParameter(
+            this, `/${namePrefix}/bedrock-api-key-secret-arn`,
+        );
+
+        // Reconstruct L2 table handles from ARNs — no CloudFormation cross-stack export.
+        const contentTable = dynamodb.Table.fromTableArn(
+            this, 'ImportedContentTable', contentTableArn,
+        );
+        const strategistTable = dynamodb.Table.fromTableArn(
+            this, 'ImportedStrategistTable', strategistTableArn,
+        );
 
         // =================================================================
         // Lambda — Hono BFF (public-api/src/lambda.ts)
@@ -99,7 +107,7 @@ export class PublicApiStack extends cdk.Stack {
                 DYNAMODB_TABLE_NAME: contentTable.tableName,
                 DYNAMODB_GSI1_NAME: props.dynamoGsi1Name,
                 DYNAMODB_GSI2_NAME: props.dynamoGsi2Name,
-                ...(strategistTable && { STRATEGIST_TABLE_NAME: strategistTable.tableName }),
+                STRATEGIST_TABLE_NAME: strategistTable.tableName,
                 BEDROCK_API_URL: bedrockApiUrl,
                 BEDROCK_API_KEY_SECRET_ARN: bedrockApiKeySecretArn,
                 ALLOWED_ORIGINS: props.allowedOrigins.join(','),
@@ -125,7 +133,7 @@ export class PublicApiStack extends cdk.Stack {
 
         // DynamoDB read permissions
         contentTable.grantReadData(this.apiFunction);
-        strategistTable?.grantReadData(this.apiFunction);
+        strategistTable.grantReadData(this.apiFunction);
 
         // Secrets Manager — read Bedrock chatbot API key
         const bedrockApiKeySecret = secretsmanager.Secret.fromSecretCompleteArn(

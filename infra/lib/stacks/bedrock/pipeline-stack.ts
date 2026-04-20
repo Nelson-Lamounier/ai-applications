@@ -52,10 +52,16 @@ import { Construct } from 'constructs';
 export interface BedrockPipelineStackProps extends cdk.StackProps {
     /** Name prefix for resources (e.g. 'bedrock-development') */
     readonly namePrefix: string;
-    /** Name of the S3 bucket for drafts and published output (from DataStack) */
-    readonly assetsBucketName: string;
-    /** DynamoDB table for article metadata (from AiContentStack) */
-    readonly tableName: string;
+    /**
+     * Name of the S3 bucket for drafts and published output (from DataStack).
+     * When omitted the stack reads `/{namePrefix}/data-bucket-name` from SSM.
+     */
+    readonly assetsBucketName?: string;
+    /**
+     * DynamoDB table for article metadata (from AiContentStack).
+     * When omitted the stack reads `/{namePrefix}/content-table-name` from SSM.
+     */
+    readonly tableName?: string;
     /** Research Agent model ID */
     readonly researchModel: string;
     /** Writer Agent model ID */
@@ -92,12 +98,21 @@ export interface BedrockPipelineStackProps extends cdk.StackProps {
     readonly archivedPrefix: string;
     /** ISR revalidation endpoint URL (optional) */
     readonly isrEndpoint?: string;
-    /** Application Inference Profile ARN for Research agent */
-    readonly researchProfileArn: string;
-    /** Application Inference Profile ARN for Writer agent */
-    readonly writerProfileArn: string;
-    /** Application Inference Profile ARN for QA agent */
-    readonly qaProfileArn: string;
+    /**
+     * Application Inference Profile ARN for Research agent.
+     * When omitted the stack reads `/{namePrefix}/article-haiku-profile-arn` from SSM.
+     */
+    readonly researchProfileArn?: string;
+    /**
+     * Application Inference Profile ARN for Writer agent.
+     * When omitted the stack reads `/{namePrefix}/article-sonnet-profile-arn` from SSM.
+     */
+    readonly writerProfileArn?: string;
+    /**
+     * Application Inference Profile ARN for QA agent.
+     * When omitted the stack reads `/{namePrefix}/article-sonnet-profile-arn` from SSM.
+     */
+    readonly qaProfileArn?: string;
 }
 
 // =============================================================================
@@ -128,11 +143,27 @@ export class BedrockPipelineStack extends cdk.Stack {
 
         const { namePrefix } = props;
 
+        // Resolve shared resource identifiers — SSM deploy-time tokens when not passed directly.
+        const assetsBucketName = props.assetsBucketName
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/data-bucket-name`);
+        const tableName = props.tableName
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/content-table-name`);
+        const researchProfileArn = props.researchProfileArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/article-haiku-profile-arn`);
+        const writerProfileArn = props.writerProfileArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/article-sonnet-profile-arn`);
+        const qaProfileArn = props.qaProfileArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/article-sonnet-profile-arn`);
+        const knowledgeBaseId = props.knowledgeBaseId
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/knowledge-base-id`);
+        const knowledgeBaseArn = props.knowledgeBaseArn
+            ?? ssm.StringParameter.valueForStringParameter(this, `/${namePrefix}/knowledge-base-arn`);
+
         // Import shared resources
         const assetsBucket = s3.Bucket.fromBucketName(
             this,
             'ImportedAssetsBucket',
-            props.assetsBucketName,
+            assetsBucketName,
         );
 
         // Use Table.fromTableName (not TableV2) to avoid the `policyResource` deprecation
@@ -140,7 +171,7 @@ export class BedrockPipelineStack extends cdk.Stack {
         const contentTable = dynamodb.Table.fromTableName(
             this,
             'ImportedContentTable',
-            props.tableName,
+            tableName,
         );
 
         // =================================================================
@@ -187,11 +218,11 @@ export class BedrockPipelineStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.agentLambdaTimeoutSeconds),
             environment: {
                 RESEARCH_MODEL: props.researchModel,
-                INFERENCE_PROFILE_ARN: props.researchProfileArn,
+                INFERENCE_PROFILE_ARN: researchProfileArn,
                 ASSETS_BUCKET: assetsBucket.bucketName,
                 PIPELINE_TABLE_NAME: contentTable.tableName,
                 ENVIRONMENT: props.environmentName,
-                ...(props.knowledgeBaseId ? { KNOWLEDGE_BASE_ID: props.knowledgeBaseId } : {}),
+                KNOWLEDGE_BASE_ID: knowledgeBaseId,
             },
             description: `Pipeline Research Agent (${props.researchModel})`,
             logGroup: new logs.LogGroup(this, 'ResearchLogGroup', {
@@ -215,7 +246,7 @@ export class BedrockPipelineStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.agentLambdaTimeoutSeconds),
             environment: {
                 FOUNDATION_MODEL: props.writerModel,
-                INFERENCE_PROFILE_ARN: props.writerProfileArn,
+                INFERENCE_PROFILE_ARN: writerProfileArn,
                 MAX_TOKENS: String(props.writerMaxTokens),
                 THINKING_BUDGET_TOKENS: String(props.writerThinkingBudgetTokens),
                 ENVIRONMENT: props.environmentName,
@@ -242,7 +273,7 @@ export class BedrockPipelineStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.agentLambdaTimeoutSeconds),
             environment: {
                 QA_MODEL: props.qaModel,
-                INFERENCE_PROFILE_ARN: props.qaProfileArn,
+                INFERENCE_PROFILE_ARN: qaProfileArn,
                 ASSETS_BUCKET: assetsBucket.bucketName,
                 PIPELINE_TABLE_NAME: contentTable.tableName,
                 REVIEW_PREFIX: props.reviewPrefix,
@@ -299,22 +330,20 @@ export class BedrockPipelineStack extends cdk.Stack {
         researchFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             resources: [
-                props.researchProfileArn,
+                researchProfileArn,
                 'arn:aws:bedrock:*::foundation-model/*',
             ],
         }));
-        if (props.knowledgeBaseArn) {
-            researchFn.addToRolePolicy(new iam.PolicyStatement({
-                actions: ['bedrock:Retrieve'],
-                resources: [props.knowledgeBaseArn],
-            }));
-        }
+        researchFn.addToRolePolicy(new iam.PolicyStatement({
+            actions: ['bedrock:Retrieve'],
+            resources: [knowledgeBaseArn],
+        }));
 
         // Writer: Bedrock InvokeModel only
         writerFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             resources: [
-                props.writerProfileArn,
+                writerProfileArn,
                 'arn:aws:bedrock:*::foundation-model/*',
             ],
         }));
@@ -325,7 +354,7 @@ export class BedrockPipelineStack extends cdk.Stack {
         qaFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             resources: [
-                props.qaProfileArn,
+                qaProfileArn,
                 'arn:aws:bedrock:*::foundation-model/*',
             ],
         }));

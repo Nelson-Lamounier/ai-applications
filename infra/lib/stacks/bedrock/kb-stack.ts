@@ -219,6 +219,13 @@ export class BedrockKbStack extends cdk.Stack {
             tier: ssm.ParameterTier.STANDARD,
         });
 
+        new ssm.StringParameter(this, 'KnowledgeBaseRoleArnParam', {
+            parameterName: `/${namePrefix}/knowledge-base-execution-role-arn`,
+            stringValue: this.knowledgeBase.role.roleArn,
+            description: `Bedrock Knowledge Base execution role ARN for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
         // =================================================================
         // Stack Outputs
         // =================================================================

@@ -17,6 +17,7 @@ import * as cdkBedrock from 'aws-cdk-lib/aws-bedrock';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 
+
 import { Construct } from 'constructs';
 
 /**
@@ -41,8 +42,13 @@ export interface BedrockAgentStackProps extends cdk.StackProps {
     readonly blockedOutputsMessaging: string;
     /** Removal policy for resources */
     readonly removalPolicy: cdk.RemovalPolicy;
-    /** Optional Knowledge Base to associate with the agent */
-    readonly knowledgeBase?: IKnowledgeBase;
+    /**
+     * Whether to associate a Knowledge Base with the agent.
+     * When true the stack reads `/{namePrefix}/knowledge-base-id` and
+     * `/{namePrefix}/knowledge-base-arn` from SSM at deploy time.
+     * @default true
+     */
+    readonly associateKnowledgeBase?: boolean;
 }
 
 /**
@@ -213,9 +219,24 @@ export class BedrockAgentStack extends cdk.Stack {
         // Wire Guardrail and Knowledge Base via methods
         this.agent.addGuardrail(this.guardrail);
 
-        // Associate Knowledge Base if provided
-        if (props.knowledgeBase) {
-            this.agent.addKnowledgeBase(props.knowledgeBase);
+        // Associate Knowledge Base via SSM-resolved IDs (no direct cross-stack ref).
+        // Reads KB ID + ARN from SSM at deploy time, reconstructs the L2 construct
+        // via fromKnowledgeBaseAttributes so addKnowledgeBase() can wire IAM grants.
+        if (props.associateKnowledgeBase !== false) {
+            const knowledgeBaseId = ssm.StringParameter.valueForStringParameter(
+                this, `/${namePrefix}/knowledge-base-id`,
+            );
+            const executionRoleArn = ssm.StringParameter.valueForStringParameter(
+                this, `/${namePrefix}/knowledge-base-execution-role-arn`,
+            );
+            const importedKb = bedrock.VectorKnowledgeBase.fromKnowledgeBaseAttributes(
+                this, 'ImportedKnowledgeBase', {
+                    knowledgeBaseId,
+                    executionRoleArn,
+                    vectorStoreType: VectorStoreType.PINECONE,
+                },
+            );
+            this.agent.addKnowledgeBase(importedKb);
         }
 
         // =================================================================
