@@ -41,7 +41,9 @@ ci-synth-validate:
     echo "==========================================="
     echo "Validating Bedrock Project (dev)"
     echo "==========================================="
-    if npx cdk synth -c project=bedrock -c environment=dev --no-lookups --quiet; then
+    # CDK_BUNDLING_STACKS=[] skips Lambda bundling — validates CloudFormation
+    # template structure only (imports/types caught by typecheck instead)
+    if CDK_BUNDLING_STACKS='[]' npx cdk synth -c project=bedrock -c environment=dev --no-lookups --quiet; then
       echo "✓ Bedrock synth passed"
     else
       echo "✗ Bedrock synth FAILED"
@@ -52,7 +54,7 @@ ci-synth-validate:
     echo "==========================================="
     echo "Validating Self-Healing Project (dev)"
     echo "==========================================="
-    if npx cdk synth -c project=self-healing -c environment=dev --no-lookups --quiet; then
+    if CDK_BUNDLING_STACKS='[]' npx cdk synth -c project=self-healing -c environment=dev --no-lookups --quiet; then
       echo "✓ Self-Healing synth passed"
     else
       echo "✗ Self-Healing synth FAILED"

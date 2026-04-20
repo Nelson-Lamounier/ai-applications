@@ -58,7 +58,6 @@ export interface Config {
  */
 export function loadConfig(): Config {
   const required = [
-    'AWS_DEFAULT_REGION',
     'DYNAMODB_TABLE_NAME',
     'DYNAMODB_GSI1_NAME',
     'DYNAMODB_GSI2_NAME',
@@ -73,7 +72,8 @@ export function loadConfig(): Config {
   }
 
   return Object.freeze({
-    awsRegion: process.env['AWS_DEFAULT_REGION'] as string,
+    // Lambda injects AWS_REGION automatically; AWS_DEFAULT_REGION kept for local dev
+    awsRegion: (process.env['AWS_REGION'] ?? process.env['AWS_DEFAULT_REGION'] ?? 'eu-west-1'),
     dynamoTableName: process.env['DYNAMODB_TABLE_NAME'] as string,
     dynamoGsi1Name: process.env['DYNAMODB_GSI1_NAME'] as string,
     dynamoGsi2Name: process.env['DYNAMODB_GSI2_NAME'] as string,

@@ -95,7 +95,7 @@ export class PublicApiStack extends cdk.Stack {
             memorySize: props.lambdaMemoryMb,
             timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
             environment: {
-                AWS_DEFAULT_REGION: this.region,
+                // AWS_DEFAULT_REGION is reserved — Lambda injects it automatically
                 DYNAMODB_TABLE_NAME: contentTable.tableName,
                 DYNAMODB_GSI1_NAME: props.dynamoGsi1Name,
                 DYNAMODB_GSI2_NAME: props.dynamoGsi2Name,
@@ -178,6 +178,20 @@ export class PublicApiStack extends cdk.Stack {
 
         this.api.root.addMethod('ANY', lambdaIntegration);
         proxyResource.addMethod('ANY', lambdaIntegration);
+
+        // CDK Nag: public-api is intentionally unauthenticated — read-only
+        // portfolio data (articles, tags, resumes) and chatbot proxy.
+        // CORS + throttling provide adequate protection for a public read API.
+        NagSuppressions.addResourceSuppressions(
+            this.api,
+            [
+                { id: 'AwsSolutions-APIG4', reason: 'Public read-only API — no auth required for portfolio data endpoints' },
+                { id: 'AwsSolutions-COG4', reason: 'Public read-only API — Cognito not applicable for unauthenticated portfolio endpoints' },
+                { id: 'AwsSolutions-APIG2', reason: 'Hono validates request shape internally — API Gateway request validation not applicable for Lambda proxy integration' },
+                { id: 'AwsSolutions-APIG3', reason: 'WAFv2 deferred — public read API with throttling; low-value target with no auth or mutation endpoints' },
+            ],
+            true,
+        );
 
         this.apiUrl = this.api.url;
 

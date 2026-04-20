@@ -32,7 +32,7 @@ import {
     GetCommandInvocationCommand,
 } from '@aws-sdk/client-ssm';
 
-import { log } from '../@bedrock/shared';
+import { log } from '@bedrock/shared';
 
 const ssm = new SSMClient({});
 
