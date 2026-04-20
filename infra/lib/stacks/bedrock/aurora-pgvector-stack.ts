@@ -13,10 +13,10 @@
  * Key design decisions:
  *
  *   Min ACU = 0 (true scale-to-zero / pause)
- *     The cluster pauses after inactivity. First query after pause takes
- *     5–15 s (cold start). For ingestion pipelines this is irrelevant.
- *     For interactive resume generation, set minAcu = 0.5 in config or
- *     add a keep-warm ping — this is a future concern, not day-one.
+ *     The cluster pauses after inactivity. Cold start on first query after
+ *     pause: 20–30 s. Acceptable for ingestion pipelines (batch, not
+ *     interactive). For resume generation, add a keep-warm mechanism once
+ *     real users exist — not before.
  *
  *   RDS Data API enabled
  *     Allows Lambda and custom-resource queries over HTTPS without
@@ -72,7 +72,9 @@ export interface AuroraPgVectorStackProps extends cdk.StackProps {
      * The AWS-enforced minimum is 0 — the CDK/CloudFormation default is 0.5
      * which still incurs cost. This must be set explicitly to 0.
      *
-     * Set to 0.5 if cold-start latency is unacceptable for the use case.
+     * Cold start penalty: 20–30 s on first query after a pause. Acceptable
+     * for ingestion pipelines. Add a keep-warm mechanism for interactive
+     * user-facing queries once real traffic warrants it.
      */
     readonly minAcu: number;
 

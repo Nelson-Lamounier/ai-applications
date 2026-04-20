@@ -9,9 +9,9 @@
  *   minAcu: 0  → cluster pauses after ~5 min inactivity (true zero cost)
  *   minAcu: 0.5 → always-on warm standby (~$43/month baseline)
  *
- * Cold-start penalty when minAcu=0: 5–15 s on first query after pause.
- * Acceptable for ingestion pipelines; a future keep-warm ping can address
- * resume generation latency if it becomes a concern.
+ * Cold-start penalty when minAcu=0: 20–30 s on first query after pause.
+ * Acceptable for ingestion pipelines (batch). Add a keep-warm mechanism
+ * for resume generation when real users exist.
  *
  * Usage:
  * ```typescript
@@ -51,7 +51,7 @@ const AURORA_ALLOCATIONS: Record<DeployableEnvironment, AuroraAllocation> = {
         maxAcu: 4,
     },
     [Environment.PRODUCTION]: {
-        minAcu: 0,  // pause by default; switch to 0.5 if cold-start is unacceptable
+        minAcu: 0,  // pause after inactivity — add keep-warm when real users warrant it
         maxAcu: 8,
     },
 };
