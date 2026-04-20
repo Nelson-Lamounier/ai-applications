@@ -619,7 +619,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aws-sdk/client-cloudwatch@npm:^3.0.0, @aws-sdk/client-cloudwatch@npm:^3.1012.0":
+"@aws-sdk/client-cloudwatch@npm:^3.1012.0":
   version: 3.1032.0
   resolution: "@aws-sdk/client-cloudwatch@npm:3.1032.0"
   dependencies:
@@ -715,54 +715,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aws-sdk/client-cost-explorer@npm:^3.0.0":
-  version: 3.1032.0
-  resolution: "@aws-sdk/client-cost-explorer@npm:3.1032.0"
-  dependencies:
-    "@aws-crypto/sha256-browser": "npm:5.2.0"
-    "@aws-crypto/sha256-js": "npm:5.2.0"
-    "@aws-sdk/core": "npm:^3.974.1"
-    "@aws-sdk/credential-provider-node": "npm:^3.972.32"
-    "@aws-sdk/middleware-host-header": "npm:^3.972.10"
-    "@aws-sdk/middleware-logger": "npm:^3.972.10"
-    "@aws-sdk/middleware-recursion-detection": "npm:^3.972.11"
-    "@aws-sdk/middleware-user-agent": "npm:^3.972.31"
-    "@aws-sdk/region-config-resolver": "npm:^3.972.12"
-    "@aws-sdk/types": "npm:^3.973.8"
-    "@aws-sdk/util-endpoints": "npm:^3.996.7"
-    "@aws-sdk/util-user-agent-browser": "npm:^3.972.10"
-    "@aws-sdk/util-user-agent-node": "npm:^3.973.17"
-    "@smithy/config-resolver": "npm:^4.4.16"
-    "@smithy/core": "npm:^3.23.15"
-    "@smithy/fetch-http-handler": "npm:^5.3.17"
-    "@smithy/hash-node": "npm:^4.2.14"
-    "@smithy/invalid-dependency": "npm:^4.2.14"
-    "@smithy/middleware-content-length": "npm:^4.2.14"
-    "@smithy/middleware-endpoint": "npm:^4.4.30"
-    "@smithy/middleware-retry": "npm:^4.5.3"
-    "@smithy/middleware-serde": "npm:^4.2.18"
-    "@smithy/middleware-stack": "npm:^4.2.14"
-    "@smithy/node-config-provider": "npm:^4.3.14"
-    "@smithy/node-http-handler": "npm:^4.5.3"
-    "@smithy/protocol-http": "npm:^5.3.14"
-    "@smithy/smithy-client": "npm:^4.12.11"
-    "@smithy/types": "npm:^4.14.1"
-    "@smithy/url-parser": "npm:^4.2.14"
-    "@smithy/util-base64": "npm:^4.3.2"
-    "@smithy/util-body-length-browser": "npm:^4.2.2"
-    "@smithy/util-body-length-node": "npm:^4.2.3"
-    "@smithy/util-defaults-mode-browser": "npm:^4.3.47"
-    "@smithy/util-defaults-mode-node": "npm:^4.2.52"
-    "@smithy/util-endpoints": "npm:^3.4.1"
-    "@smithy/util-middleware": "npm:^4.2.14"
-    "@smithy/util-retry": "npm:^4.3.2"
-    "@smithy/util-utf8": "npm:^4.2.2"
-    tslib: "npm:^2.6.2"
-  checksum: 10c0/97010564f0e88dc9ae5d7c02cd47afd070a16fb8916b4096f91e2d36574b7d2308f01a3618f61053c882d263c112b366d84b59c3020932fc1faf67cf6a4b6c8f
-  languageName: node
-  linkType: hard
-
-"@aws-sdk/client-dynamodb@npm:^3.0.0, @aws-sdk/client-dynamodb@npm:^3.1001.0, @aws-sdk/client-dynamodb@npm:^3.758.0":
+"@aws-sdk/client-dynamodb@npm:^3.1001.0, @aws-sdk/client-dynamodb@npm:^3.758.0":
   version: 3.1032.0
   resolution: "@aws-sdk/client-dynamodb@npm:3.1032.0"
   dependencies:
@@ -1194,7 +1147,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aws-sdk/client-lambda@npm:^3.0.0, @aws-sdk/client-lambda@npm:^3.1001.0":
+"@aws-sdk/client-lambda@npm:^3.1001.0":
   version: 3.1032.0
   resolution: "@aws-sdk/client-lambda@npm:3.1032.0"
   dependencies:
@@ -1342,7 +1295,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aws-sdk/client-s3@npm:^3.0.0, @aws-sdk/client-s3@npm:^3.1001.0":
+"@aws-sdk/client-s3@npm:^3.1001.0":
   version: 3.1032.0
   resolution: "@aws-sdk/client-s3@npm:3.1032.0"
   dependencies:
@@ -1939,7 +1892,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aws-sdk/lib-dynamodb@npm:^3.0.0, @aws-sdk/lib-dynamodb@npm:^3.1001.0, @aws-sdk/lib-dynamodb@npm:^3.758.0":
+"@aws-sdk/lib-dynamodb@npm:^3.1001.0, @aws-sdk/lib-dynamodb@npm:^3.758.0":
   version: 3.1032.0
   resolution: "@aws-sdk/lib-dynamodb@npm:3.1032.0"
   dependencies:
@@ -2258,7 +2211,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aws-sdk/s3-request-presigner@npm:^3.0.0, @aws-sdk/s3-request-presigner@npm:^3.1001.0":
+"@aws-sdk/s3-request-presigner@npm:^3.1001.0":
   version: 3.1032.0
   resolution: "@aws-sdk/s3-request-presigner@npm:3.1032.0"
   dependencies:
@@ -3235,7 +3188,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@hono/node-server@npm:^1.13.7, @hono/node-server@npm:^1.14.1, @hono/node-server@npm:^1.19.9":
+"@hono/node-server@npm:^1.14.1, @hono/node-server@npm:^1.19.9":
   version: 1.19.14
   resolution: "@hono/node-server@npm:1.19.14"
   peerDependencies:
@@ -3915,26 +3868,6 @@ __metadata:
   conditions: os=win32 & cpu=x64
   languageName: node
   linkType: hard
-
-"@repo/admin-api@workspace:api/admin-api":
-  version: 0.0.0-use.local
-  resolution: "@repo/admin-api@workspace:api/admin-api"
-  dependencies:
-    "@aws-sdk/client-cloudwatch": "npm:^3.0.0"
-    "@aws-sdk/client-cost-explorer": "npm:^3.0.0"
-    "@aws-sdk/client-dynamodb": "npm:^3.0.0"
-    "@aws-sdk/client-lambda": "npm:^3.0.0"
-    "@aws-sdk/client-s3": "npm:^3.0.0"
-    "@aws-sdk/lib-dynamodb": "npm:^3.0.0"
-    "@aws-sdk/s3-request-presigner": "npm:^3.0.0"
-    "@hono/node-server": "npm:^1.13.7"
-    "@types/node": "npm:^22.0.0"
-    hono: "npm:^4.6.14"
-    jose: "npm:^5.9.6"
-    tsx: "npm:^4.21.0"
-    typescript: "npm:^5.9.3"
-  languageName: unknown
-  linkType: soft
 
 "@repo/public-api@workspace:api/public-api":
   version: 0.0.0-use.local
@@ -7771,7 +7704,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"hono@npm:^4.11.4, hono@npm:^4.6.14, hono@npm:^4.7.7":
+"hono@npm:^4.11.4, hono@npm:^4.7.7":
   version: 4.12.14
   resolution: "hono@npm:4.12.14"
   checksum: 10c0/78de4c98a9a3da0f067e38dcc4bd27f0d82b45d146ac39f5ca688515ee482c0a2e704d2ac6c1ee91ad17596b7c52b3e4b9483acd9c238d42f6ebcb43414a71b6
@@ -8877,13 +8810,6 @@ __metadata:
   bin:
     jiti: lib/jiti-cli.mjs
   checksum: 10c0/79b2e96a8e623f66c1b703b98ec1b8be4500e1d217e09b09e343471bbb9c105381b83edbb979d01cef18318cc45ce6e153571b6c83122170eefa531c64b6789b
-  languageName: node
-  linkType: hard
-
-"jose@npm:^5.9.6":
-  version: 5.10.0
-  resolution: "jose@npm:5.10.0"
-  checksum: 10c0/e20d9fc58d7e402f2e5f04e824b8897d5579aae60e64cb88ebdea1395311c24537bf4892f7de413fab1acf11e922797fb1b42269bc8fc65089a3749265ccb7b0
   languageName: node
   linkType: hard
 

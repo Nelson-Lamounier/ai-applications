@@ -23,3 +23,4 @@ export * from './ai-content-stack';
 export * from './pipeline-stack';
 export * from './strategist-data-stack';
 export * from './strategist-pipeline-stack';
+export * from './public-api-stack';

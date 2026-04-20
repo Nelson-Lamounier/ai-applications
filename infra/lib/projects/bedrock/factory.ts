@@ -2,15 +2,16 @@
  * @format
  * Bedrock Project Factory
  *
- * Creates the Amazon Bedrock Agent infrastructure using an 8-stack architecture:
+ * Creates the Amazon Bedrock Agent infrastructure using a 9-stack architecture:
  * - DataStack: S3 bucket for content pipeline documents
  * - KbStack: Bedrock Knowledge Base backed by Pinecone
  * - AgentStack: Bedrock Agent, Guardrail, Action Group
- * - ApiStack: API Gateway + Lambda for agent invocation
+ * - ApiStack: API Gateway + Lambda for agent invocation (BFF-only, API key protected)
  * - ContentStack: Data layer (DynamoDB table + SSM exports)
  * - PipelineStack: Multi-agent Step Functions pipeline (Research → Writer → QA)
  * - StrategistDataStack: Job strategist data layer (DynamoDB)
  * - StrategistPipelineStack: Job strategist pipeline (Research → Strategist → Coach)
+ * - PublicApiStack: Public BFF API for Next.js frontend (articles, chatbot proxy, resumes)
  *
  * Stacks created:
  * - Bedrock-Data-{environment}
@@ -21,6 +22,7 @@
  * - Bedrock-Pipeline-{environment}
  * - Bedrock-Strategist-Data-{environment}
  * - Bedrock-Strategist-Pipeline-{environment}
+ * - Bedrock-Public-Api-{environment}
  */
 
 import * as cdk from 'aws-cdk-lib/core';
@@ -49,6 +51,7 @@ import {
     BedrockPipelineStack,
     StrategistDataStack,
     StrategistPipelineStack,
+    PublicApiStack,
 } from '../../stacks/bedrock';
 import { stackId, flatName } from '../../utilities/naming';
 
@@ -330,6 +333,39 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
         strategistPipelineStack.addDependency(dataStack);
         strategistPipelineStack.addDependency(strategistDataStack);
 
+        // =================================================================
+        // Stack 9: Public API (BFF for Next.js portfolio frontend)
+        //
+        // Hono app on Lambda — articles, chatbot proxy, tags, resumes.
+        // Proxies chatbot requests to the Bedrock ApiStack (no SDK access).
+        // Depends on: contentStack (DynamoDB), apiStack (chatbot URL + secret).
+        // =================================================================
+        const publicApiStack = new PublicApiStack(
+            scope,
+            stackId(this.namespace, 'Public-Api', this.environment),
+            {
+                namePrefix,
+                environmentName: this.environment,
+                contentTable: contentStack.contentTable,
+                dynamoGsi1Name: 'gsi1-status-date',
+                dynamoGsi2Name: 'gsi2-tag-date',
+                strategistTable: strategistDataStack.strategistTable,
+                bedrockApiUrl: apiStack.apiUrl,
+                bedrockApiKeySecretArn: apiStack.apiKeySecretArn ?? '',
+                allowedOrigins: configs.api.allowedOrigins,
+                lambdaMemoryMb: allocs.apiLambda.memoryMb,
+                lambdaTimeoutSeconds: allocs.apiLambda.timeoutSeconds,
+                logRetention: configs.logRetention,
+                removalPolicy: configs.removalPolicy,
+                throttlingRateLimit: allocs.apiGateway.throttlingRateLimit,
+                throttlingBurstLimit: allocs.apiGateway.throttlingBurstLimit,
+                env,
+            }
+        );
+        publicApiStack.addDependency(contentStack);
+        publicApiStack.addDependency(apiStack);
+        publicApiStack.addDependency(strategistDataStack);
+
         const stacks: cdk.Stack[] = [
             dataStack,
             kbStack,
@@ -339,6 +375,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             pipelineStack,
             strategistDataStack,
             strategistPipelineStack,
+            publicApiStack,
         ];
 
         cdk.Annotations.of(scope).addInfo(

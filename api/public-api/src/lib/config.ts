@@ -27,8 +27,10 @@ export interface Config {
    * Optional — if absent the /api/resumes/active endpoint returns 204.
    */
   readonly resumesTableName: string | undefined;
-  /** TCP port the HTTP server binds to. */
+  /** TCP port the HTTP server binds to (Node.js server only). */
   readonly port: number;
+  /** Allowed CORS origins — comma-separated from ALLOWED_ORIGINS env var. */
+  readonly allowedOrigins: string[];
   /**
    * Bedrock chatbot API Gateway URL (e.g. https://id.execute-api.eu-west-1.amazonaws.com/v1/).
    * Sourced from BEDROCK_API_URL (ConfigMap).
@@ -77,6 +79,7 @@ export function loadConfig(): Config {
     dynamoGsi2Name: process.env['DYNAMODB_GSI2_NAME'] as string,
     resumesTableName: process.env['STRATEGIST_TABLE_NAME'] ?? undefined,
     port: parseInt(process.env['PORT'] ?? '3001', 10),
+    allowedOrigins: (process.env['ALLOWED_ORIGINS'] ?? 'https://nelsonlamounier.com,http://localhost:3000').split(',').map(s => s.trim()),
     bedrockApiUrl: process.env['BEDROCK_API_URL'] ?? undefined,
     bedrockApiKeySecretArn: process.env['BEDROCK_API_KEY_SECRET_ARN'] ?? undefined,
   });
