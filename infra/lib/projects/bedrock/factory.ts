@@ -179,6 +179,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 blockedOutputsMessaging: configs.guardrail.blockedOutputMessaging,
                 removalPolicy: configs.removalPolicy,
                 // knowledgeBase omitted — AgentStack reads KB ID/ARN from SSM at deploy time
+                knowledgeBaseDescription: configs.knowledgeBase.description,
                 env,
             },
         );

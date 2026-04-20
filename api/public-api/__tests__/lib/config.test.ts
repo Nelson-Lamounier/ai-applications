@@ -78,9 +78,11 @@ describe('loadConfig()', () => {
   });
 
   describe('fail-fast validation', () => {
-    it('throws when AWS_DEFAULT_REGION is missing', () => {
+    it('does not throw when AWS_DEFAULT_REGION is missing — Lambda injects AWS_REGION', () => {
       delete process.env['AWS_DEFAULT_REGION'];
-      expect(() => loadConfig()).toThrow('AWS_DEFAULT_REGION');
+      // AWS_REGION is injected automatically by Lambda runtime; awsRegion falls
+      // back to 'eu-west-1' when both are absent (local dev default).
+      expect(() => loadConfig()).not.toThrow();
     });
 
     it('throws when DYNAMODB_TABLE_NAME is missing', () => {
@@ -96,8 +98,8 @@ describe('loadConfig()', () => {
       expect(() => loadConfig()).not.toThrow();
     });
 
-    it('includes the ConfigMap name in the error message', () => {
-      delete process.env['AWS_DEFAULT_REGION'];
+    it('includes the ConfigMap name in the error when a required DynamoDB var is missing', () => {
+      delete process.env['DYNAMODB_TABLE_NAME'];
       expect(() => loadConfig()).toThrow(/nextjs-config/);
     });
   });

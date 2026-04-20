@@ -45,10 +45,17 @@ export interface BedrockAgentStackProps extends cdk.StackProps {
     /**
      * Whether to associate a Knowledge Base with the agent.
      * When true the stack reads `/{namePrefix}/knowledge-base-id` and
-     * `/{namePrefix}/knowledge-base-arn` from SSM at deploy time.
+     * `/{namePrefix}/knowledge-base-execution-role-arn` from SSM at deploy time.
      * @default true
      */
     readonly associateKnowledgeBase?: boolean;
+    /**
+     * Description of the Knowledge Base, passed to addKnowledgeBase().
+     * Required when associateKnowledgeBase is true — the cdklabs library
+     * validates that the reconstructed KB has either description or
+     * instructionForAgents set before it can be associated with the agent.
+     */
+    readonly knowledgeBaseDescription?: string;
 }
 
 /**
@@ -234,6 +241,7 @@ export class BedrockAgentStack extends cdk.Stack {
                     knowledgeBaseId,
                     executionRoleArn,
                     vectorStoreType: VectorStoreType.PINECONE,
+                    description: props.knowledgeBaseDescription,
                 },
             );
             this.agent.addKnowledgeBase(importedKb);
