@@ -1,0 +1,234 @@
+# @format
+
+name: "Setup Environment and Dependencies"
+description: "Container-aware setup: installs Node.js/Yarn on bare runners, then restores dependency cache and runs yarn install on all environments."
+
+inputs:
+  node-version:
+    description: "Node.js version. Use 'auto' to read from .nvmrc (fallback: 22). Ignored when running in CI container."
+    required: false
+    default: "auto"
+  install-dependencies:
+    description: "Whether to install dependencies (default: true)"
+    required: false
+    default: "true"
+  cache-dependency-path:
+    description: "Path to package manager lockfile (default: yarn.lock)"
+    required: false
+    default: "yarn.lock"
+
+outputs:
+  cache-hit:
+    description: "Whether dependency cache was hit"
+    value: ${{ steps.cache-deps.outputs.cache-hit }}
+  cache-key:
+    description: "Dependency cache key used"
+    value: ${{ steps.cache-key.outputs.key }}
+  node-version:
+    description: "Node.js version installed (resolved from .nvmrc when auto)"
+    value: ${{ steps.resolve-node.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    # ─── Detect CI Container ──────────────────────────────────────────
+    - name: Detect Environment
+      id: detect-env
+      shell: bash
+      run: |
+        # The CI Docker image sets tools in /usr/local/bin and /opt/ci-tools
+        # If Node, Just, Helm, and AWS CLI are all already present, we're in the container
+        if command -v node &> /dev/null && \
+           command -v just &> /dev/null && \
+           command -v helm &> /dev/null && \
+           command -v aws &> /dev/null; then
+          echo "in-container=true" >> $GITHUB_OUTPUT
+          echo "✓ CI container detected — skipping tool installation"
+        else
+          echo "in-container=false" >> $GITHUB_OUTPUT
+          echo "○ Bare runner detected — will install tools"
+        fi
+
+    # ─── Node.js Setup (bare runner only) ─────────────────────────────
+    - name: Resolve Node.js Version
+      id: resolve-node
+      shell: bash
+      run: |
+        if [ "${{ steps.detect-env.outputs.in-container }}" = "true" ]; then
+          VERSION=$(node -v | tr -d 'v' | cut -d. -f1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Using container Node.js $VERSION"
+        else
+          INPUT_VERSION="${{ inputs.node-version }}"
+          if [ "$INPUT_VERSION" = "auto" ]; then
+            if [ -f .nvmrc ]; then
+              VERSION=$(cat .nvmrc | tr -d '[:space:]')
+              echo "Resolved Node.js $VERSION from .nvmrc"
+            else
+              VERSION="22"
+              echo "No .nvmrc found, using default Node.js $VERSION"
+            fi
+          else
+            VERSION="$INPUT_VERSION"
+            echo "Using explicit Node.js $VERSION"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Setup Node.js
+      if: steps.detect-env.outputs.in-container != 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ steps.resolve-node.outputs.version }}
+        # No built-in caching - we handle it explicitly below
+
+    - name: Enable Corepack for Yarn v4
+      if: steps.detect-env.outputs.in-container != 'true'
+      shell: bash
+      run: |
+        echo "Enabling Corepack for Yarn v4+ package manager..."
+        corepack enable
+        echo "✓ Corepack enabled"
+
+    - name: Install Just Task Runner
+      if: steps.detect-env.outputs.in-container != 'true'
+      shell: bash
+      run: |
+        if ! command -v just &> /dev/null; then
+          echo "Installing just via GitHub Releases..."
+          JUST_VERSION="1.46.0"
+          JUST_URL="https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          JUST_TMP="/tmp/just-${JUST_VERSION}.tar.gz"
+
+          for ATTEMPT in 1 2 3; do
+            echo "Download attempt ${ATTEMPT}/3..."
+            if curl -fSL --retry 2 -o "$JUST_TMP" "$JUST_URL"; then
+              tar xzf "$JUST_TMP" -C /usr/local/bin just
+              chmod +x /usr/local/bin/just
+              rm -f "$JUST_TMP"
+              break
+            else
+              echo "Download failed (attempt ${ATTEMPT}), retrying in 5s..."
+              sleep 5
+            fi
+            if [ "$ATTEMPT" -eq 3 ]; then
+              echo "::error::Failed to download just after 3 attempts"
+              exit 1
+            fi
+          done
+        fi
+        echo "Just version: $(just --version)"
+
+    # ─── Dependency Caching (always runs) ─────────────────────────────
+    - name: Generate Dependency Cache Key
+      id: cache-key
+      shell: bash
+      run: |
+        # Centralized lockfile: Yarn workspaces uses a single root yarn.lock.
+        # Hash root lockfile + all workspace package.json files for cache key.
+        LOCK_FILES="./yarn.lock"
+        for DIR in . infra infra-ami bedrock-publisher; do
+          [ -f "$DIR/package.json" ] && LOCK_FILES="$LOCK_FILES $DIR/package.json"
+        done
+
+        if [ ! -f "./yarn.lock" ]; then
+          echo "::warning::No root yarn.lock found — using fallback cache key"
+          HASH=$(echo "${{ github.sha }}" | sha256sum | cut -d' ' -f1)
+        else
+          echo "Hashing lockfiles:$LOCK_FILES"
+          HASH=$(cat $LOCK_FILES | sha256sum | cut -d' ' -f1)
+        fi
+
+        CACHE_KEY="deps-${{ runner.os }}-node${{ steps.resolve-node.outputs.version }}-$HASH"
+        echo "key=$CACHE_KEY" >> $GITHUB_OUTPUT
+        echo "Generated cache key: $CACHE_KEY"
+
+    - name: Cache Dependencies
+      id: cache-deps
+      uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      with:
+        path: |
+          node_modules
+          .yarn/cache
+          .yarn/unplugged
+          .yarn/install-state.gz
+          .pnp.cjs
+          .pnp.loader.mjs
+        key: ${{ steps.cache-key.outputs.key }}
+        restore-keys: |
+          deps-${{ runner.os }}-node${{ steps.resolve-node.outputs.version }}-
+
+    - name: Setup Turbo Cache
+      uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      with:
+        path: .turbo
+        key: ${{ runner.os }}-turbo-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-turbo-
+
+    # ─── Install Dependencies (always runs) ───────────────────────────
+    - name: Install Dependencies (with retry)
+      if: inputs.install-dependencies == 'true'
+      shell: bash
+      run: |
+        # Find the project root (directory containing package.json)
+        PROJECT_ROOT="."
+        if [ -f "package.json" ]; then
+          PROJECT_ROOT="."
+        elif [ -f "infra/package.json" ]; then
+          PROJECT_ROOT="infra"
+        else
+          echo "::warning::No package.json found — skipping dependency install"
+          exit 0
+        fi
+
+        cd "$PROJECT_ROOT"
+        echo "Installing dependencies in $(pwd)..."
+
+        if [ "${{ steps.cache-deps.outputs.cache-hit }}" = "true" ]; then
+          echo "Cache hit - running install to ensure binaries are linked..."
+        else
+          echo "Cache miss - installing dependencies..."
+        fi
+
+        # Retry logic for network resilience
+        MAX_ATTEMPTS=3
+        RETRY_WAIT=10
+        ATTEMPT=1
+
+        while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+          echo "Attempt $ATTEMPT of $MAX_ATTEMPTS..."
+          
+          # --immutable ensures lockfile consistency and prevents accidental dependency changes
+          if yarn install --immutable; then
+            echo "✓ Dependencies installed successfully"
+            break
+          else
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo "✗ Failed to install dependencies after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+            echo "Install failed, waiting ${RETRY_WAIT}s before retry..."
+            sleep $RETRY_WAIT
+            ATTEMPT=$((ATTEMPT + 1))
+          fi
+        done
+
+        echo "✓ Dependencies ready"
+
+    - name: Verify Installation
+      if: inputs.install-dependencies == 'true'
+      shell: bash
+      run: |
+        echo "Verifying installation..."
+        echo "Node version: $(node --version)"
+        echo "Yarn version: $(yarn --version)"
+        echo "NPM version: $(npm --version)"
+
+        # Verify CDK is available (critical for infrastructure workflows)
+        if command -v cdk &> /dev/null; then
+          echo "CDK version: $(cdk --version)"
+          echo "✓ CDK CLI available"
+        else
+          echo "WARNING: CDK CLI not found in PATH"
+        fi
