@@ -30,6 +30,11 @@ build:
 audit *ARGS:
     cd infra && yarn npm audit --all --recursive --no-deprecations --severity high {{ARGS}}
 
+# Run CDK stack unit tests (infra/tests/unit/stacks)
+[group('quality')]
+test-stacks:
+    cd infra && yarn test tests/unit/stacks --coverage
+
 # Synthesise CDK stacks for CI validation (bedrock + self-healing, dev environment)
 [group('quality')]
 ci-synth-validate:

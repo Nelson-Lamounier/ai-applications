@@ -267,6 +267,30 @@ jobs:
           NOTIFICATION_EMAIL: ci-validation@placeholder.local
 
   # ============================================================================
+  # CDK Stack Unit Tests (Jest — runs parallel to validate-cdk)
+  # ============================================================================
+  test-stacks:
+    name: Test CDK Stacks
+    needs: [setup, build, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 15
+    if: needs.detect-changes.outputs.infra == 'true' || needs.detect-changes.outputs.run-all == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      - name: Run CDK Stack Unit Tests
+        run: just test-stacks
+
+  # ============================================================================
   # IaC Security Scan (Checkov — Blocking on CRITICAL/HIGH)
   # ============================================================================
   iac-security-scan:
@@ -317,6 +341,7 @@ jobs:
       - lint
       - typecheck
       - build
+      - test-stacks
       - validate-cdk
       - iac-security-scan
     runs-on: ubuntu-latest
@@ -341,6 +366,7 @@ jobs:
 
           echo "### Build & Validation" >> $GITHUB_STEP_SUMMARY
           echo "- Build: ${{ needs.build.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- CDK Stack Tests: ${{ needs.test-stacks.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- CDK Validation: ${{ needs.validate-cdk.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- IaC Security Scan: ${{ needs.iac-security-scan.result }}" >> $GITHUB_STEP_SUMMARY
 
@@ -350,6 +376,7 @@ jobs:
             "lint:${{ needs.lint.result }}" \
             "typecheck:${{ needs.typecheck.result }}" \
             "build:${{ needs.build.result }}" \
+            "test-stacks:${{ needs.test-stacks.result }}" \
             "validate-cdk:${{ needs.validate-cdk.result }}" \
             "iac-security-scan:${{ needs.iac-security-scan.result }}"; do
             JOB_NAME="${job_result%%:*}"
