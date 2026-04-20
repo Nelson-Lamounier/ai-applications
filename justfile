@@ -3,6 +3,70 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# ── Code Quality ────────────────────────────────────────────────────────────
+
+# Lint all TypeScript source (infra + applications)
+[group('quality')]
+lint:
+    cd infra && yarn lint
+
+# Fix lint issues
+[group('quality')]
+lint-fix:
+    cd infra && yarn lint:fix
+
+# Type-check all workspaces
+[group('quality')]
+typecheck:
+    cd infra && yarn typecheck
+
+# Build TypeScript
+[group('quality')]
+build:
+    cd infra && yarn build
+
+# Security audit — high severity and above
+[group('quality')]
+audit *ARGS:
+    cd infra && yarn npm audit --all --recursive --no-deprecations --severity high {{ARGS}}
+
+# Synthesise CDK stacks for CI validation (bedrock + self-healing, dev environment)
+[group('quality')]
+ci-synth-validate:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd infra
+    FAILURES=0
+
+    echo "==========================================="
+    echo "Validating Bedrock Project (dev)"
+    echo "==========================================="
+    if npx cdk synth -c project=bedrock -c environment=dev --no-lookups --quiet; then
+      echo "✓ Bedrock synth passed"
+    else
+      echo "✗ Bedrock synth FAILED"
+      FAILURES=$((FAILURES + 1))
+    fi
+
+    echo ""
+    echo "==========================================="
+    echo "Validating Self-Healing Project (dev)"
+    echo "==========================================="
+    if npx cdk synth -c project=self-healing -c environment=dev --no-lookups --quiet; then
+      echo "✓ Self-Healing synth passed"
+    else
+      echo "✗ Self-Healing synth FAILED"
+      FAILURES=$((FAILURES + 1))
+    fi
+
+    if [[ "$FAILURES" -gt 0 ]]; then
+      echo ""
+      echo "✗ $FAILURES project(s) failed CDK synthesis"
+      exit 1
+    fi
+    echo ""
+    echo "✓ All CDK projects synthesised successfully"
+
 # ── CI Deploy Pipeline ──────────────────────────────────────────────────────
 
 # CI preflight: validate inputs, verify credentials and bootstrap

@@ -1,0 +1,368 @@
+# .github/workflows/ci.yml
+# CI pipeline for ai-applications
+#
+# JUSTFILE INTEGRATION:
+# All script execution goes through the justfile task runner so local
+# development and CI use identical execution paths.
+#
+# Recipe mapping (CI step → justfile recipe):
+#   - Security Audit    → just audit
+#   - IaC Security Scan → just ci-security-scan
+#   - ESLint            → just lint
+#   - Type Check        → just typecheck
+#   - Build             → just build
+#   - CDK Synthesis     → just ci-synth-validate
+#
+# Projects validated during CDK synthesis:
+#   1. bedrock      — Data, Kb, Agent, Api, Content, Pipeline,
+#                     Strategist-Data, Strategist-Pipeline, Public-Api
+#   2. self-healing — Gateway, Agent
+
+name: Continuous Integration
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+env:
+  NODE_VERSION: "22"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  security-events: write  # Required for SARIF upload (Checkov → GitHub Security tab)
+
+jobs:
+  # ============================================================================
+  # Change Detection (~10 seconds)
+  # ============================================================================
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      infra:      ${{ steps.filter.outputs.infra }}
+      apps:       ${{ steps.filter.outputs.apps }}
+      api:        ${{ steps.filter.outputs.api }}
+      ci-config:  ${{ steps.filter.outputs.ci-config }}
+      any-src:    ${{ steps.filter.outputs.any-src }}
+      any-tests:  ${{ steps.filter.outputs.any-tests }}
+      run-all:    ${{ steps.compute.outputs.run-all }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Detect Changed Paths
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            infra:
+              - 'infra/**/*.ts'
+              - 'infra/package.json'
+              - 'infra/tsconfig*.json'
+            apps:
+              - 'applications/**/*.ts'
+              - 'packages/**/*.ts'
+            api:
+              - 'api/**/*.ts'
+            ci-config:
+              - '.github/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'justfile'
+            any-src:
+              - 'infra/**/*.ts'
+              - 'applications/**/*.ts'
+              - 'api/**/*.ts'
+              - 'packages/**/*.ts'
+            any-tests:
+              - 'infra/tests/**/*.ts'
+
+      - name: Compute Run Flags
+        id: compute
+        run: |
+          if [[ "${{ steps.filter.outputs.ci-config }}" == "true" ]]; then
+            echo "run-all=true" >> $GITHUB_OUTPUT
+          else
+            echo "run-all=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Summary
+        run: |
+          echo "## Change Detection" >> $GITHUB_STEP_SUMMARY
+          echo "| Category | Changed |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Infra | ${{ steps.filter.outputs.infra }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Applications | ${{ steps.filter.outputs.apps }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| API | ${{ steps.filter.outputs.api }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CI Config | ${{ steps.filter.outputs.ci-config }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Run All** | ${{ steps.compute.outputs.run-all }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # Workflow Linting
+  # ============================================================================
+  lint-workflows:
+    name: Lint Workflows
+    needs: [detect-changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: needs.detect-changes.outputs.ci-config == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install actionlint
+        run: |
+          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+
+      - name: Run actionlint
+        run: |
+          ./actionlint -color \
+            -shellcheck="" \
+            .github/workflows/*.yml
+
+  # ============================================================================
+  # Dependency Installation
+  # ============================================================================
+  setup:
+    name: Setup Dependencies
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 10
+    outputs:
+      node-version: ${{ steps.setup-tools.outputs.node-version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        id: setup-tools
+        uses: ./.github/actions/setup-node-yarn
+
+  # ============================================================================
+  # Code Quality (Fast — run in parallel)
+  # ============================================================================
+  audit:
+    name: Security Packages Audit
+    needs: [setup, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 10
+    if: needs.detect-changes.outputs.any-src == 'true' || needs.detect-changes.outputs.run-all == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      - name: Run Audit
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: just audit
+
+  lint:
+    name: Lint Code
+    needs: [setup, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 10
+    if: needs.detect-changes.outputs.any-src == 'true' || needs.detect-changes.outputs.run-all == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      - name: Run ESLint
+        run: just lint
+
+  typecheck:
+    name: Type Check
+    needs: [setup, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 10
+    if: needs.detect-changes.outputs.any-src == 'true' || needs.detect-changes.outputs.run-all == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      - name: Run TypeScript Compiler
+        run: just typecheck
+
+  build:
+    name: Build TypeScript
+    needs: [setup, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 10
+    if: needs.detect-changes.outputs.any-src == 'true' || needs.detect-changes.outputs.run-all == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      - name: Build TypeScript
+        run: just build
+
+  # ============================================================================
+  # CDK Validation (Depends on Build)
+  # ============================================================================
+  validate-cdk:
+    name: Validate CDK Stacks
+    needs: [setup, build, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 15
+    if: needs.detect-changes.outputs.infra == 'true' || needs.detect-changes.outputs.run-all == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      - name: Synthesize CDK Stacks
+        run: just ci-synth-validate
+        env:
+          AWS_REGION: eu-west-1
+          NOTIFICATION_EMAIL: ci-validation@placeholder.local
+
+  # ============================================================================
+  # IaC Security Scan (Checkov — Blocking on CRITICAL/HIGH)
+  # ============================================================================
+  iac-security-scan:
+    name: IaC Security Scan
+    needs: [setup, build, validate-cdk, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 15
+    if: needs.validate-cdk.result == 'success'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      - name: Synthesise CDK Templates
+        run: just ci-synth-validate
+        env:
+          AWS_REGION: eu-west-1
+          NOTIFICATION_EMAIL: ci-validation@placeholder.local
+
+      - name: Run IaC Security Scan
+        id: checkov
+        run: just ci-security-scan
+
+      - name: Upload SARIF to GitHub Security
+        if: always() && hashFiles('security-reports/results_sarif.sarif') != ''
+        uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3.32.2
+        with:
+          sarif_file: security-reports/results_sarif.sarif
+          category: checkov-ci
+        continue-on-error: true
+
+  # ============================================================================
+  # CI Summary (Gate)
+  # ============================================================================
+  ci-success:
+    name: CI Complete
+    needs:
+      - detect-changes
+      - lint-workflows
+      - audit
+      - lint
+      - typecheck
+      - build
+      - validate-cdk
+      - iac-security-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+
+    steps:
+      - name: Check Results
+        run: |
+          echo "## CI Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Pipeline Quality" >> $GITHUB_STEP_SUMMARY
+          echo "- Workflow Lint: ${{ needs.lint-workflows.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Code Quality" >> $GITHUB_STEP_SUMMARY
+          echo "- Lint: ${{ needs.lint.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Type Check: ${{ needs.typecheck.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Security Audit: ${{ needs.audit.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Build & Validation" >> $GITHUB_STEP_SUMMARY
+          echo "- Build: ${{ needs.build.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- CDK Validation: ${{ needs.validate-cdk.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- IaC Security Scan: ${{ needs.iac-security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+
+          FAILED_JOBS=""
+          for job_result in \
+            "audit:${{ needs.audit.result }}" \
+            "lint:${{ needs.lint.result }}" \
+            "typecheck:${{ needs.typecheck.result }}" \
+            "build:${{ needs.build.result }}" \
+            "validate-cdk:${{ needs.validate-cdk.result }}" \
+            "iac-security-scan:${{ needs.iac-security-scan.result }}"; do
+            JOB_NAME="${job_result%%:*}"
+            JOB_STATUS="${job_result##*:}"
+            if [[ "$JOB_STATUS" == "failure" ]]; then
+              FAILED_JOBS="$FAILED_JOBS $JOB_NAME"
+            fi
+          done
+
+          if [[ -n "$FAILED_JOBS" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ CI failed — failing jobs:$FAILED_JOBS" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All CI checks passed" >> $GITHUB_STEP_SUMMARY
