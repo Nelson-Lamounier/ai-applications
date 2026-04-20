@@ -127,3 +127,12 @@ ci-security-scan *ARGS:
 [group('ci')]
 ci-synth project environment:
     npx tsx infra/scripts/ci/synthesize.ts {{project}} {{environment}}
+
+# ── GitHub Workflow Dispatch ─────────────────────────────────────────────────
+
+# Trigger a GitHub Actions workflow by file name
+# Usage: just gh-dispatch deploy-bedrock.yml
+#        just gh-dispatch deploy-bedrock.yml --ref main
+[group('ci')]
+gh-dispatch workflow *ARGS:
+    gh workflow run {{workflow}} --repo nelson-lamounier/ai-applications {{ARGS}}
