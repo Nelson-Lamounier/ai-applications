@@ -236,13 +236,14 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_runs   ON pipeline_runs (user_id, pipeli
 
 async function main(): Promise<void> {
     console.log('Platform RDS bootstrap starting...');
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         console.log('Running DDL...');
         await client.query(DDL);
         console.log('Bootstrap complete.');
     } finally {
-        client.release();
+        client?.release();
         await pool.end();
     }
 }
