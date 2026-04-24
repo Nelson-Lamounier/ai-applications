@@ -1,0 +1,20 @@
+{
+  "name": "@bedrock/platform-rds-bootstrap",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "private": true,
+  "description": "Platform RDS DDL bootstrap — runs CREATE EXTENSION + CREATE TABLE IF NOT EXISTS",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@types/pg": "^8.20.0",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}
