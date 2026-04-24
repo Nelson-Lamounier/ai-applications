@@ -232,6 +232,11 @@ CREATE INDEX IF NOT EXISTS idx_articles_tags   ON articles USING GIN (tags);
 CREATE INDEX IF NOT EXISTS idx_articles_tsv    ON articles USING GIN (content_tsv);
 CREATE INDEX IF NOT EXISTS idx_job_apps_user   ON job_applications (user_id, kanban_status);
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs   ON pipeline_runs (user_id, pipeline_type, status);
+
+-- Phase 2 schema patches (idempotent)
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS cover_image TEXT;
+ALTER TABLE job_applications ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE resumes ALTER COLUMN user_id DROP NOT NULL;
 `;
 
 async function main(): Promise<void> {
