@@ -86,12 +86,11 @@ async function migrateArticles(): Promise<number> {
     return count;
 }
 
-async function migrateApplications(): Promise<number> {
-    const strategistTable = process.env['STRATEGIST_TABLE'];
-    if (!strategistTable) { console.warn('STRATEGIST_TABLE not set — skipping applications'); return 0; }
-
-    const items = await scanAll(strategistTable);
-    const apps = items.filter(i => i['entityType'] === 'APPLICATION' || (i['company'] && i['role']));
+async function migrateApplications(items: Record<string, unknown>[]): Promise<number> {
+    const apps = items.filter(i =>
+        i['entityType'] === 'APPLICATION' ||
+        (!i['entityType'] && i['company'] && i['role'])
+    );
     let count = 0;
 
     for (const item of apps) {
@@ -120,11 +119,7 @@ async function migrateApplications(): Promise<number> {
     return count;
 }
 
-async function migrateResumes(): Promise<number> {
-    const strategistTable = process.env['STRATEGIST_TABLE'];
-    if (!strategistTable) { console.warn('STRATEGIST_TABLE not set — skipping resumes'); return 0; }
-
-    const items = await scanAll(strategistTable);
+async function migrateResumes(items: Record<string, unknown>[]): Promise<number> {
     const resumes = items.filter(i => i['entityType'] === 'RESUME');
     let count = 0;
 
@@ -154,11 +149,20 @@ async function migrateResumes(): Promise<number> {
 async function main(): Promise<void> {
     console.log('DynamoDB → PostgreSQL migration starting...');
     await migrateArticles();
-    await migrateApplications();
-    await migrateResumes();
+
+    const strategistTable = process.env['STRATEGIST_TABLE'];
+    if (!strategistTable) {
+        console.warn('STRATEGIST_TABLE not set — skipping applications and resumes');
+    } else {
+        const strategistItems = await scanAll(strategistTable);
+        await migrateApplications(strategistItems);
+        await migrateResumes(strategistItems);
+    }
+
     console.log('Migration complete.');
 }
 
 main()
-    .catch((err) => { console.error('Migration failed:', err); process.exit(1); })
-    .finally(() => pool.end());
+    .catch((err) => { console.error('Migration failed:', err); })
+    .finally(() => pool.end())
+    .catch(() => process.exit(1));
