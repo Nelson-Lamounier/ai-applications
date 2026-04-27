@@ -58,8 +58,18 @@ articles.get('/api/articles', async (c) => {
       ORDER BY published_at DESC NULLS LAST`,
   );
 
+  const items = result.rows.map((r) => ({
+    slug:        r.slug,
+    title:       r.title,
+    excerpt:     r.excerpt,
+    publishedAt: r.published_at,
+    tags:        r.tags ?? [],
+    coverImage:  r.cover_image,
+    // readingTime omitted — was a DynamoDB-only field. If the frontend depends on it,
+    // compute from content_md length or accept its absence.
+  }));
   c.header('Cache-Control', CACHE_CONTROL);
-  return c.json({ items: result.rows, count: result.rows.length });
+  return c.json({ items, count: items.length });
 });
 
 /**
@@ -87,8 +97,22 @@ articles.get('/api/articles/:slug', async (c) => {
     return c.json({ error: 'Article not found', slug }, 404);
   }
 
+  const row = result.rows[0]!;
+  const article = {
+    slug:        row.slug,
+    title:       row.title,
+    excerpt:     row.excerpt,
+    contentMd:   row.content_md,
+    tags:        row.tags ?? [],
+    aiGenerated: row.ai_generated,
+    aiModel:     row.ai_model,
+    coverImage:  row.cover_image,
+    publishedAt: row.published_at,
+    createdAt:   row.created_at,
+    updatedAt:   row.updated_at,
+  };
   c.header('Cache-Control', CACHE_CONTROL);
-  return c.json(result.rows[0]);
+  return c.json(article);
 });
 
 export default articles;

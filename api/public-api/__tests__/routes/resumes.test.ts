@@ -86,13 +86,16 @@ describe('GET /api/resumes/active', () => {
     expect(res.status).toBe(200);
   });
 
-  it('includes id, content_json and generated_at in the response', async () => {
+  it('includes resumeId, label, isActive, data, createdAt and updatedAt in the response', async () => {
     mockedQuery.mockResolvedValue({ rows: [ACTIVE_RESUME_ROW] });
     const res = await resumes.request('/api/resumes/active');
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body['id']).toBe(ACTIVE_RESUME_ROW.id);
-    expect(body['content_json']).toBeDefined();
-    expect(body['generated_at']).toBeDefined();
+    expect(body['resumeId']).toBe(ACTIVE_RESUME_ROW.id);
+    expect(body['label']).toBe('Senior Engineer CV');
+    expect(body['isActive']).toBe(true);
+    expect(body['data']).toEqual(ACTIVE_RESUME_ROW.content_json);
+    expect(body['createdAt']).toBeDefined();
+    expect(body['updatedAt']).toBeDefined();
   });
 
   it('sets Cache-Control with s-maxage and stale-while-revalidate', async () => {

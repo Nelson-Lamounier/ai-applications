@@ -63,8 +63,18 @@ resumes.get('/api/resumes/active', async (c) => {
     return c.body(null, 204);
   }
 
+  const row = result.rows[0]!;
+  const cj  = row.content_json as Record<string, unknown>;
+  const resume = {
+    resumeId:  row.id,
+    label:     (cj['label'] as string)      ?? '',
+    isActive:  (cj['is_active'] as boolean) ?? false,
+    data:      cj,                          // full structured resume data lives in content_json
+    createdAt: row.generated_at,
+    updatedAt: row.generated_at,
+  };
   c.header('Cache-Control', CACHE_CONTROL);
-  return c.json(result.rows[0]);
+  return c.json(resume);
 });
 
 export default resumes;
