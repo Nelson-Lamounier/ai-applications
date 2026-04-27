@@ -4,6 +4,7 @@
  * strategist-specific persistence (job_applications, resumes).
  */
 import type { Pool } from 'pg';
+import type { InterviewCoachResult } from '@bedrock/shared';
 
 import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
 
@@ -21,6 +22,65 @@ export async function updatePipelineRun(
     await pool.query(
         `UPDATE pipeline_runs SET status = $2, error_message = $3, updated_at = NOW() WHERE id = $1`,
         [id, status, errorMessage ?? null],
+    );
+}
+
+/**
+ * Update the metadata JSON column on a pipeline_runs row.
+ *
+ * Used by the strategist run to stash the analysis result so a downstream
+ * coach K8s Job can re-hydrate it without re-running the upstream agents.
+ */
+export async function updatePipelineRunMetadata(
+    pool: Pool,
+    id: string,
+    metadata: Record<string, unknown>,
+): Promise<void> {
+    await pool.query(
+        `UPDATE pipeline_runs SET metadata = $2, updated_at = NOW() WHERE id = $1`,
+        [id, JSON.stringify(metadata)],
+    );
+}
+
+/**
+ * Persist coaching content output by the Interview Coach Agent.
+ *
+ * coaching_content has a unique constraint on (job_application_id, stage_type),
+ * so we upsert to allow regeneration.
+ */
+export async function persistCoachingContent(
+    pool: Pool,
+    args: {
+        applicationId: string;
+        stageType:     string;
+        coaching:      InterviewCoachResult;
+    },
+): Promise<void> {
+    const coachingUnknown = args.coaching as unknown as Record<string, unknown>;
+    const personalHighlights =
+        (coachingUnknown['personalisationHighlights'] as unknown[] | undefined) ??
+        (coachingUnknown['personalHighlights']        as unknown[] | undefined) ??
+        [];
+
+    await pool.query(
+        `INSERT INTO coaching_content (job_application_id, stage_type, topics_to_study, expected_questions, personal_highlights)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (job_application_id, stage_type) DO UPDATE SET
+             topics_to_study     = EXCLUDED.topics_to_study,
+             expected_questions  = EXCLUDED.expected_questions,
+             personal_highlights = EXCLUDED.personal_highlights,
+             generated_at        = NOW()`,
+        [
+            args.applicationId,
+            args.stageType,
+            JSON.stringify(args.coaching),
+            JSON.stringify({
+                technical:   args.coaching.technicalQuestions   ?? [],
+                behavioural: args.coaching.behaviouralQuestions ?? [],
+                difficult:   args.coaching.difficultQuestions   ?? [],
+            }),
+            JSON.stringify(personalHighlights),
+        ],
     );
 }
 

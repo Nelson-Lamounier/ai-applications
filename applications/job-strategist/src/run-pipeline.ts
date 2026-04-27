@@ -21,6 +21,7 @@ import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import {
     updatePipelineRun,
+    updatePipelineRunMetadata,
     updateJobApplicationStatus,
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
@@ -84,6 +85,10 @@ async function main(): Promise<void> {
                 tailoredResume: tailoredResumeData,
               })
             : null;
+
+        // Stash the analysis on pipeline_runs.metadata so a downstream coach
+        // K8s Job can re-hydrate it without re-running Research+Strategist.
+        await updatePipelineRunMetadata(pool, env.pipelineRunId, { analysis: analysis.data });
 
         await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
