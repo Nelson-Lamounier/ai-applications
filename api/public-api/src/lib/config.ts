@@ -3,30 +3,30 @@
  * @description Runtime configuration for the public-api service.
  *
  * All values are sourced from environment variables injected by the
- * ``nextjs-config`` Kubernetes ConfigMap (via `envFrom.configMapRef`).
- * AWS credentials are NOT configured here — the default credential
- * provider chain resolves them automatically via the EC2 Instance Profile
- * (IMDS), which is attached to the node running this pod.
+ * ``nextjs-config`` Kubernetes ConfigMap (via `envFrom.configMapRef`) and
+ * the ``platform-rds-credentials`` External Secret (PG_HOST/PORT/DATABASE/
+ * USER/PASSWORD). AWS credentials for the chatbot Secrets Manager call are
+ * NOT configured here — the default credential provider chain resolves them
+ * automatically via the EC2 Instance Profile attached to the node running
+ * this pod.
  *
  * @throws {Error} If any required environment variable is missing at startup.
  */
 
 /** Validated, typed configuration for the public-api process. */
 export interface Config {
-  /** AWS region — sourced from AWS_DEFAULT_REGION (ConfigMap). */
+  /** AWS region — sourced from AWS_REGION / AWS_DEFAULT_REGION (ConfigMap). */
   readonly awsRegion: string;
-  /** DynamoDB content table name — sourced from ConfigMap. */
-  readonly dynamoTableName: string;
-  /** DynamoDB GSI1 index name for status+date queries. */
-  readonly dynamoGsi1Name: string;
-  /** DynamoDB GSI2 index name for tag+date queries. */
-  readonly dynamoGsi2Name: string;
-  /**
-   * DynamoDB table for resume entities (Strategist table).
-   * Sourced from STRATEGIST_TABLE_NAME env var.
-   * Optional — if absent the /api/resumes/active endpoint returns 204.
-   */
-  readonly resumesTableName: string | undefined;
+  /** Postgres host — sourced from PG_HOST (ESO secret). */
+  readonly pgHost: string;
+  /** Postgres port — sourced from PG_PORT (ESO secret), default 5432. */
+  readonly pgPort: number;
+  /** Postgres database name — sourced from PG_DATABASE (ESO secret). */
+  readonly pgDatabase: string;
+  /** Postgres user — sourced from PG_USER (ESO secret). */
+  readonly pgUser: string;
+  /** Postgres password — sourced from PG_PASSWORD (ESO secret). */
+  readonly pgPassword: string;
   /** TCP port the HTTP server binds to (Node.js server only). */
   readonly port: number;
   /** Allowed CORS origins — comma-separated from ALLOWED_ORIGINS env var. */
@@ -58,26 +58,28 @@ export interface Config {
  */
 export function loadConfig(): Config {
   const required = [
-    'DYNAMODB_TABLE_NAME',
-    'DYNAMODB_GSI1_NAME',
-    'DYNAMODB_GSI2_NAME',
+    'PG_HOST',
+    'PG_DATABASE',
+    'PG_USER',
+    'PG_PASSWORD',
   ] as const;
 
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length > 0) {
     throw new Error(
       `[public-api] Missing required environment variables: ${missing.join(', ')}. ` +
-        'Ensure the nextjs-config ConfigMap is mounted via envFrom.',
+        'Ensure the platform-rds-credentials External Secret is mounted via envFrom.',
     );
   }
 
   return Object.freeze({
     // Lambda injects AWS_REGION automatically; AWS_DEFAULT_REGION kept for local dev
     awsRegion: (process.env['AWS_REGION'] ?? process.env['AWS_DEFAULT_REGION'] ?? 'eu-west-1'),
-    dynamoTableName: process.env['DYNAMODB_TABLE_NAME'] as string,
-    dynamoGsi1Name: process.env['DYNAMODB_GSI1_NAME'] as string,
-    dynamoGsi2Name: process.env['DYNAMODB_GSI2_NAME'] as string,
-    resumesTableName: process.env['STRATEGIST_TABLE_NAME'] ?? undefined,
+    pgHost: process.env['PG_HOST'] as string,
+    pgPort: parseInt(process.env['PG_PORT'] ?? '5432', 10),
+    pgDatabase: process.env['PG_DATABASE'] as string,
+    pgUser: process.env['PG_USER'] as string,
+    pgPassword: process.env['PG_PASSWORD'] as string,
     port: parseInt(process.env['PORT'] ?? '3001', 10),
     allowedOrigins: (process.env['ALLOWED_ORIGINS'] ?? 'https://nelsonlamounier.com,http://localhost:3000').split(',').map(s => s.trim()),
     bedrockApiUrl: process.env['BEDROCK_API_URL'] ?? undefined,

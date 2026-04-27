@@ -14,9 +14,11 @@ import { loadConfig } from '../../src/lib/config.js';
 
 const VALID_ENV: Record<string, string> = {
   AWS_DEFAULT_REGION: 'eu-west-1',
-  DYNAMODB_TABLE_NAME: 'test-content-table',
-  DYNAMODB_GSI1_NAME: 'gsi1-status-date',
-  DYNAMODB_GSI2_NAME: 'gsi2-tag-date',
+  PG_HOST:     'pgbouncer.platform.svc.cluster.local',
+  PG_PORT:     '5432',
+  PG_DATABASE: 'platform',
+  PG_USER:     'public_api',
+  PG_PASSWORD: 'super-secret',
 };
 
 function setEnv(env: Record<string, string>): void {
@@ -37,16 +39,24 @@ function unsetEnv(keys: string[]): void {
 
 describe('loadConfig()', () => {
   beforeEach(() => setEnv(VALID_ENV));
-  afterEach(() => unsetEnv([...Object.keys(VALID_ENV), 'PORT', 'STRATEGIST_TABLE_NAME']));
+  afterEach(() => unsetEnv([...Object.keys(VALID_ENV), 'PORT']));
 
   describe('happy path', () => {
     it('returns typed config when all required vars are present', () => {
       const cfg = loadConfig();
 
       expect(cfg.awsRegion).toBe('eu-west-1');
-      expect(cfg.dynamoTableName).toBe('test-content-table');
-      expect(cfg.dynamoGsi1Name).toBe('gsi1-status-date');
-      expect(cfg.dynamoGsi2Name).toBe('gsi2-tag-date');
+      expect(cfg.pgHost).toBe('pgbouncer.platform.svc.cluster.local');
+      expect(cfg.pgPort).toBe(5432);
+      expect(cfg.pgDatabase).toBe('platform');
+      expect(cfg.pgUser).toBe('public_api');
+      expect(cfg.pgPassword).toBe('super-secret');
+    });
+
+    it('defaults pgPort to 5432 when PG_PORT is absent', () => {
+      delete process.env['PG_PORT'];
+      const cfg = loadConfig();
+      expect(cfg.pgPort).toBe(5432);
     });
 
     it('defaults port to 3001 when PORT is not set', () => {
@@ -60,17 +70,6 @@ describe('loadConfig()', () => {
       expect(cfg.port).toBe(9000);
     });
 
-    it('sets resumesTableName to undefined when STRATEGIST_TABLE_NAME is absent', () => {
-      const cfg = loadConfig();
-      expect(cfg.resumesTableName).toBeUndefined();
-    });
-
-    it('sets resumesTableName from STRATEGIST_TABLE_NAME when present', () => {
-      process.env['STRATEGIST_TABLE_NAME'] = 'strategist-table';
-      const cfg = loadConfig();
-      expect(cfg.resumesTableName).toBe('strategist-table');
-    });
-
     it('returns a frozen config object', () => {
       const cfg = loadConfig();
       expect(Object.isFrozen(cfg)).toBe(true);
@@ -80,27 +79,38 @@ describe('loadConfig()', () => {
   describe('fail-fast validation', () => {
     it('does not throw when AWS_DEFAULT_REGION is missing — Lambda injects AWS_REGION', () => {
       delete process.env['AWS_DEFAULT_REGION'];
-      // AWS_REGION is injected automatically by Lambda runtime; awsRegion falls
-      // back to 'eu-west-1' when both are absent (local dev default).
       expect(() => loadConfig()).not.toThrow();
     });
 
-    it('throws when DYNAMODB_TABLE_NAME is missing', () => {
-      delete process.env['DYNAMODB_TABLE_NAME'];
-      expect(() => loadConfig()).toThrow('DYNAMODB_TABLE_NAME');
+    it('throws when PG_HOST is missing', () => {
+      delete process.env['PG_HOST'];
+      expect(() => loadConfig()).toThrow('PG_HOST');
+    });
+
+    it('throws when PG_DATABASE is missing', () => {
+      delete process.env['PG_DATABASE'];
+      expect(() => loadConfig()).toThrow('PG_DATABASE');
+    });
+
+    it('throws when PG_USER is missing', () => {
+      delete process.env['PG_USER'];
+      expect(() => loadConfig()).toThrow('PG_USER');
+    });
+
+    it('throws when PG_PASSWORD is missing', () => {
+      delete process.env['PG_PASSWORD'];
+      expect(() => loadConfig()).toThrow('PG_PASSWORD');
     });
 
     it('lists all missing variables in a single error', () => {
-      unsetEnv(['DYNAMODB_GSI1_NAME', 'DYNAMODB_GSI2_NAME']);
-      const err = (): void => { loadConfig(); };
-      expect(err).toThrow(/DYNAMODB_GSI1_NAME/);
-      setEnv(VALID_ENV); // reset for second check
-      expect(() => loadConfig()).not.toThrow();
+      unsetEnv(['PG_USER', 'PG_PASSWORD']);
+      expect(() => loadConfig()).toThrow(/PG_USER/);
+      expect(() => loadConfig()).toThrow(/PG_PASSWORD/);
     });
 
-    it('includes the ConfigMap name in the error when a required DynamoDB var is missing', () => {
-      delete process.env['DYNAMODB_TABLE_NAME'];
-      expect(() => loadConfig()).toThrow(/nextjs-config/);
+    it('mentions the platform-rds-credentials secret in the error', () => {
+      delete process.env['PG_HOST'];
+      expect(() => loadConfig()).toThrow(/platform-rds-credentials/);
     });
   });
 });

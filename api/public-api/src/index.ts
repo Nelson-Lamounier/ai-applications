@@ -90,7 +90,7 @@ app.onError((err, c) => {
 
 console.log(`[public-api] Starting on port ${cfg.port}`);
 console.log(`[public-api] Region: ${cfg.awsRegion}`);
-console.log(`[public-api] Table: ${cfg.dynamoTableName}`);
+console.log(`[public-api] PG: ${cfg.pgUser}@${cfg.pgHost}:${cfg.pgPort}/${cfg.pgDatabase}`);
 
 serve({
   fetch: app.fetch,
