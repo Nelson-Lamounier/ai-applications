@@ -1,11 +1,11 @@
 /**
  * @format
- * Aurora Implementations — Barrel Export
+ * RDS Implementations — Barrel Export
  */
 
-export { AuroraVectorStore } from './AuroraVectorStore.js';
-export type { AuroraClientConfig } from './AuroraVectorStore.js';
+export { RdsVectorStore } from './RdsVectorStore.js';
+export type { RdsClientConfig } from './RdsVectorStore.js';
 
-export { AuroraSyncStateRepository } from './AuroraSyncStateRepository.js';
+export { RdsSyncStateRepository } from './RdsSyncStateRepository.js';
 
 export { TitanEmbeddingProvider } from './TitanEmbeddingProvider.js';

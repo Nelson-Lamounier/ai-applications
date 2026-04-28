@@ -58,11 +58,21 @@ export interface MarkdownChunkerConfig {
      * Default: 30
      */
     readonly minChunkChars: number;
+
+    /**
+     * Characters of text carried from the end of a flushed chunk into the
+     * start of the next. Improves retrieval of sentences that straddle chunk
+     * boundaries — the embedding for each chunk "sees" the tail of its predecessor.
+     * Set to 0 to disable overlap entirely.
+     * Default: 200
+     */
+    readonly overlapChars: number;
 }
 
 const DEFAULT_CONFIG: MarkdownChunkerConfig = {
     maxChunkChars: 2000,
     minChunkChars: 30,
+    overlapChars:  200,
 };
 
 // =============================================================================
@@ -201,7 +211,8 @@ export class MarkdownChunker implements IChunker {
      * Split a large section at double-newline paragraph boundaries.
      * The section heading is prepended to the first sub-chunk so the embedding
      * always has the heading context. Subsequent sub-chunks carry the heading
-     * as a suffix note to preserve retrieval context.
+     * as a continuation note plus an overlap tail from the previous chunk so
+     * the embedding "sees" text that spans the boundary.
      */
     private splitAtParagraphs(
         body: string,
@@ -221,8 +232,15 @@ export class MarkdownChunker implements IChunker {
                 if (buffer.trim().length >= this.config.minChunkChars) {
                     subChunks.push({ filePath, heading, content: buffer.trim(), fileType, tags });
                 }
-                // Start new buffer — carry heading context as a suffix note
-                buffer = heading ? `(continued from: ${heading})\n\n${paragraph}\n\n` : `${paragraph}\n\n`;
+                // Carry the tail of the flushed buffer into the next chunk so
+                // sentence fragments that cross the boundary appear in both.
+                const overlapTail = this.config.overlapChars > 0
+                    ? buffer.trimEnd().slice(-this.config.overlapChars)
+                    : '';
+                const continuationPrefix = heading ? `(continued from: ${heading})\n\n` : '';
+                buffer = overlapTail.length > 0
+                    ? `${continuationPrefix}...${overlapTail}\n\n${paragraph}\n\n`
+                    : `${continuationPrefix}${paragraph}\n\n`;
             } else {
                 buffer = candidate + '\n\n';
             }

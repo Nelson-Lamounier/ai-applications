@@ -100,6 +100,17 @@ export interface QueryParams {
     readonly limit?: number;
     /** Default 40. Only raise with measured evidence of recall degradation. */
     readonly efSearch?: number;
+    /**
+     * Plain-text query string for full-text search (BM25 via tsvector).
+     * Required when useHybrid is true — ignored otherwise.
+     */
+    readonly queryText?: string;
+    /**
+     * When true, combines HNSW vector search with BM25 full-text search using
+     * Reciprocal Rank Fusion (RRF, k=60). Requires queryText to be set.
+     * Falls back to vector-only if queryText is absent.
+     */
+    readonly useHybrid?: boolean;
 }
 
 // =============================================================================
@@ -128,6 +139,8 @@ export interface IngestionReport {
     readonly totalRawChunks: number;
     readonly embedded: number;
     readonly skipped: number;
+    /** Chunks deleted for file paths no longer present in the repo (Gap 6 GC). */
+    readonly pruned: number;
     readonly upsertResult: UpsertBatchResult;
     readonly durationMs: number;
 }

@@ -4,24 +4,18 @@
  *
  * Provides modular stacks for the Bedrock Agent infrastructure.
  *
- * **8-Stack Architecture**:
+ * **4-Stack Architecture** (post-Phase-5 cleanup):
  * - DataStack: S3 bucket for Knowledge Base documents
  * - KbStack: Bedrock Knowledge Base backed by Pinecone
  * - AgentStack: Bedrock Agent, Guardrail, Action Group
- * - ApiStack: API Gateway + Lambda for agent invocation
- * - AiContentStack: Article data layer (DynamoDB + SSM exports)
- * - PipelineStack: Multi-agent article pipeline (Step Functions)
- * - StrategistDataStack: Job strategist data layer (DynamoDB)
- * - StrategistPipelineStack: Job strategist pipeline (Step Functions)
+ * - ApiStack: API Gateway + Lambda for agent invocation (chatbot BFF)
+ *
+ * Article pipeline, job strategist pipeline, ingestion pipeline, RDS,
+ * DynamoDB data layers, and the public API have been migrated to
+ * Kubernetes (kubernetes-platform / kubernetes-bootstrap repos).
  */
 
 export * from './data-stack';
 export * from './kb-stack';
 export * from './agent-stack';
 export * from './api-stack';
-export * from './ai-content-stack';
-export * from './pipeline-stack';
-export * from './strategist-data-stack';
-export * from './strategist-pipeline-stack';
-export * from './public-api-stack';
-export * from './aurora-pgvector-stack';

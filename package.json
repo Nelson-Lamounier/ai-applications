@@ -9,6 +9,7 @@
     "applications/job-strategist",
     "applications/chatbot",
     "applications/self-healing",
+    "applications/ingestion",
     "api/public-api",
     "infra"
   ],

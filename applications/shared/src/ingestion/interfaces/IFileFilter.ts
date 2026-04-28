@@ -13,4 +13,11 @@ export interface IFileFilter {
 
     /** Convenience: filter an array of paths to only included ones. */
     filter(filePaths: string[]): string[];
+
+    /**
+     * Filter with size awareness — excludes files exceeding maxSizeBytes
+     * in addition to glob/extension rules. Prefer this over filter() when
+     * the adapter provides size metadata (e.g. GitHub tree API).
+     */
+    filterWithSize(files: Array<{ path: string; sizeBytes: number }>): string[];
 }

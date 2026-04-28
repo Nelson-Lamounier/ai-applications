@@ -4,7 +4,7 @@
  *
  * Coordinates hash-check → embed → upsert for a batch of raw document chunks.
  * Depends exclusively on interfaces — imports no concrete AWS clients, no
- * Aurora SQL, no Titan SDK. Swap any implementation without touching this class.
+ * SQL, no Titan SDK. Swap any implementation without touching this class.
  *
  * Flow:
  *   1. markStarted — record that ingestion is in progress
@@ -16,12 +16,10 @@
  *   7. Return IngestionReport
  *
  * Sequential embedding:
- *   Chunks are embedded one at a time. Aurora Serverless v2 (minAcu=0) uses
- *   an RDS Proxy connection pool; concurrent Data API calls during cold ACU
- *   scale-up can queue and timeout. Bedrock InvokeModel has its own per-model
- *   TPS limit — sequential calls are safe within those limits for portfolio
- *   workloads (< 10K chunks per repo). Introduce parallelism only after
- *   measuring that both Aurora and Bedrock stay stable under concurrent load.
+ *   Chunks are embedded one at a time. Bedrock InvokeModel has a per-model
+ *   TPS limit — sequential calls are safe for portfolio workloads (< 10K chunks
+ *   per repo). Introduce parallelism (p-limit 3–5) only after measuring that
+ *   both RDS pg Pool and Bedrock stay stable under concurrent load.
  */
 
 import { createHash } from 'crypto';
@@ -100,6 +98,9 @@ export class IngestionPipeline {
 
             // -----------------------------------------------------------------
             // Step 3: Embed missing + stale chunks (sequential)
+            // Context preamble prepended to embed text only — stored content
+            // stays clean. This gives the vector model repo/file/section signal
+            // without polluting retrieval results.
             // -----------------------------------------------------------------
             const chunksToEmbed = hashedChunks.filter(
                 ({ chunk, contentHash: _ }) =>
@@ -109,7 +110,8 @@ export class IngestionPipeline {
             const embeddedChunks: DocumentChunk[] = [];
 
             for (const { chunk, contentHash } of chunksToEmbed) {
-                const embedding = await this.embedder.embed(chunk.content);
+                const embedText = this.buildEmbedText(chunk.content, repoFullName, chunk.filePath, chunk.heading);
+                const embedding = await this.embedder.embed(embedText);
 
                 embeddedChunks.push({
                     ...chunk,
@@ -128,9 +130,15 @@ export class IngestionPipeline {
                 : { inserted: 0, updated: 0, skipped: 0, errors: 0 };
 
             // -----------------------------------------------------------------
-            // Step 5: Record completion
+            // Step 5: Prune chunks whose file no longer exists in the repo
             // -----------------------------------------------------------------
-            const uniqueFiles = new Set(rawChunks.map(c => c.filePath)).size;
+            const currentFilePaths = [...new Set(rawChunks.map(c => c.filePath))];
+            const pruned = await this.vectorStore.pruneDeletedFiles(userId, repoFullName, currentFilePaths);
+
+            // -----------------------------------------------------------------
+            // Step 6: Record completion
+            // -----------------------------------------------------------------
+            const uniqueFiles = currentFilePaths.length;
 
             await this.syncState.markComplete(
                 userId,
@@ -145,6 +153,7 @@ export class IngestionPipeline {
                 totalRawChunks: rawChunks.length,
                 embedded:       chunksToEmbed.length,
                 skipped:        unchanged.length,
+                pruned,
                 upsertResult,
                 durationMs:     Date.now() - startMs,
             };
@@ -154,6 +163,28 @@ export class IngestionPipeline {
             await this.syncState.markError(userId, repoFullName, errorMessage);
             throw err;
         }
+    }
+
+    // =========================================================================
+    // Context enrichment
+    // =========================================================================
+
+    /**
+     * Build the text that is actually sent to the embedding model.
+     * The preamble injects repository, file, and section metadata so the
+     * resulting vector captures structural context beyond the raw prose.
+     * The `content` field stored in the DB is kept clean (no preamble) so
+     * retrieval results are readable verbatim.
+     */
+    private buildEmbedText(
+        content: string,
+        repoFullName: string,
+        filePath: string,
+        heading?: string,
+    ): string {
+        const section  = heading ?? 'root';
+        const preamble = `[Repository: ${repoFullName} | File: ${filePath} | Section: ${section}]`;
+        return `${preamble}\n\n${content}`;
     }
 
     // =========================================================================

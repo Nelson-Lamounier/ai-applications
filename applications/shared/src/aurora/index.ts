@@ -31,10 +31,10 @@ export type { ISyncStateRepository }  from './interfaces/ISyncStateRepository.js
 export type { IEmbeddingProvider }    from './interfaces/IEmbeddingProvider.js';
 
 // Implementations
-export { AuroraVectorStore }          from './implementations/AuroraVectorStore.js';
-export type { AuroraClientConfig }    from './implementations/AuroraVectorStore.js';
-export { AuroraSyncStateRepository }  from './implementations/AuroraSyncStateRepository.js';
-export { TitanEmbeddingProvider }     from './implementations/TitanEmbeddingProvider.js';
+export { RdsVectorStore }            from './implementations/RdsVectorStore.js';
+export type { RdsClientConfig }      from './implementations/RdsVectorStore.js';
+export { RdsSyncStateRepository }    from './implementations/RdsSyncStateRepository.js';
+export { TitanEmbeddingProvider }    from './implementations/TitanEmbeddingProvider.js';
 
 // Pipeline
 export { IngestionPipeline }          from './pipeline/IngestionPipeline.js';

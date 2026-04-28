@@ -60,8 +60,10 @@ export class RepoIngestionOrchestrator {
 
         // -----------------------------------------------------------------
         // Step 2: Filter — exclude noise, apply size limit
+        // filterWithSize passes sizeBytes so files > maxSizeBytes are dropped
+        // before any content is fetched — saves GitHub API quota and bandwidth.
         // -----------------------------------------------------------------
-        const includedPaths = this.fileFilter.filter(allFiles.map(f => f.path));
+        const includedPaths = this.fileFilter.filterWithSize(allFiles);
 
         if (includedPaths.length === 0) {
             console.warn(
@@ -119,7 +121,7 @@ export class RepoIngestionOrchestrator {
         );
 
         const allFiles     = await this.repoAdapter.listFiles(repoFullName);
-        const includedPaths = this.fileFilter.filter(allFiles.map(f => f.path));
+        const includedPaths = this.fileFilter.filterWithSize(allFiles);
         const rawChunks    = [];
 
         for (const filePath of includedPaths) {

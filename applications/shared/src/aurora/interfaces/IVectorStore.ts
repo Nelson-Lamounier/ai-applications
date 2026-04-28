@@ -47,4 +47,16 @@ export interface IVectorStore {
      * Returns the number of deleted rows.
      */
     deleteChunksByRepo(userId: string, repoFullName: string): Promise<number>;
+
+    /**
+     * Delete chunks whose file_path is NOT in currentFilePaths for a given
+     * (userId, repoFullName). Called after every successful upsert to garbage-
+     * collect stale chunks left by deleted or renamed files.
+     * Returns the number of deleted rows.
+     */
+    pruneDeletedFiles(
+        userId: string,
+        repoFullName: string,
+        currentFilePaths: string[],
+    ): Promise<number>;
 }
