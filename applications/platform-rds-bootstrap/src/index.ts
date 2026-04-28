@@ -259,6 +259,12 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_skills
   ON document_embeddings USING GIN (skills);
 CREATE INDEX IF NOT EXISTS idx_embeddings_technologies
   ON document_embeddings USING GIN (technologies);
+
+-- KB quality scoring (pick #4): observable signal of how good a repo's
+-- ingestion is for resume generation. Computed at end of ingestion.
+ALTER TABLE repo_sync_state
+  ADD COLUMN IF NOT EXISTS kb_quality_score     NUMERIC(4,2),
+  ADD COLUMN IF NOT EXISTS kb_quality_breakdown JSONB;
 `;
 
 async function main(): Promise<void> {

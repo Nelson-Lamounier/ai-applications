@@ -42,3 +42,11 @@ export type { BedrockChunkEnricherConfig } from './implementations/BedrockChunkE
 // Pipeline
 export { IngestionPipeline }          from './pipeline/IngestionPipeline.js';
 export type { IngestionPipelineOptions } from './pipeline/IngestionPipeline.js';
+
+// Quality
+export { computeKbQuality } from './quality/computeKbQuality.js';
+export type {
+    KbQualityFactor,
+    KbQualityBreakdown,
+    KbQualityResult,
+} from './quality/computeKbQuality.js';

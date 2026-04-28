@@ -16,11 +16,13 @@ import { Pool } from 'pg';
 // =============================================================================
 
 interface SyncStateRow {
-    sync_status:   string;
-    last_synced_at: Date | null;
-    file_count:    number;
-    chunk_count:   number;
-    error_message: string | null;
+    sync_status:          string;
+    last_synced_at:       Date | null;
+    file_count:           number;
+    chunk_count:          number;
+    error_message:        string | null;
+    kb_quality_score:     string | number | null;        // pg returns NUMERIC as string
+    kb_quality_breakdown: Record<string, unknown> | null;
 }
 
 // =============================================================================
@@ -71,7 +73,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
 
     async get(userId: string, repoFullName: string): Promise<RepoSyncState | undefined> {
         const result = await this.pool.query<SyncStateRow>(
-            `SELECT sync_status, last_synced_at, file_count, chunk_count, error_message
+            `SELECT sync_status, last_synced_at, file_count, chunk_count, error_message,
+                    kb_quality_score, kb_quality_breakdown
              FROM repo_sync_state
              WHERE user_id = $1 AND repo_full_name = $2`,
             [userId, repoFullName],
@@ -80,14 +83,22 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         if (result.rows.length === 0) return undefined;
 
         const row = result.rows[0];
+        const score = row.kb_quality_score == null
+            ? undefined
+            : typeof row.kb_quality_score === 'string'
+                ? parseFloat(row.kb_quality_score)
+                : row.kb_quality_score;
+
         return {
             userId,
             repoFullName,
-            syncStatus:   row.sync_status as SyncStatus,
-            lastSyncedAt: row.last_synced_at ?? undefined,
-            fileCount:    row.file_count,
-            chunkCount:   row.chunk_count,
-            errorMessage: row.error_message ?? undefined,
+            syncStatus:         row.sync_status as SyncStatus,
+            lastSyncedAt:       row.last_synced_at ?? undefined,
+            fileCount:          row.file_count,
+            chunkCount:         row.chunk_count,
+            errorMessage:       row.error_message ?? undefined,
+            kbQualityScore:     score,
+            kbQualityBreakdown: row.kb_quality_breakdown ?? undefined,
         };
     }
 
@@ -99,15 +110,18 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         await this.pool.query(
             `INSERT INTO repo_sync_state (
                 user_id, repo_full_name, sync_status,
-                last_synced_at, file_count, chunk_count, error_message
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                last_synced_at, file_count, chunk_count, error_message,
+                kb_quality_score, kb_quality_breakdown
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
             ON CONFLICT (user_id, repo_full_name)
             DO UPDATE SET
-                sync_status    = EXCLUDED.sync_status,
-                last_synced_at = EXCLUDED.last_synced_at,
-                file_count     = EXCLUDED.file_count,
-                chunk_count    = EXCLUDED.chunk_count,
-                error_message  = EXCLUDED.error_message`,
+                sync_status          = EXCLUDED.sync_status,
+                last_synced_at       = EXCLUDED.last_synced_at,
+                file_count           = EXCLUDED.file_count,
+                chunk_count          = EXCLUDED.chunk_count,
+                error_message        = EXCLUDED.error_message,
+                kb_quality_score     = EXCLUDED.kb_quality_score,
+                kb_quality_breakdown = EXCLUDED.kb_quality_breakdown`,
             [
                 state.userId,
                 state.repoFullName,
@@ -116,6 +130,10 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 state.fileCount,
                 state.chunkCount,
                 state.errorMessage ?? null,
+                state.kbQualityScore ?? null,
+                state.kbQualityBreakdown == null
+                    ? null
+                    : JSON.stringify(state.kbQualityBreakdown),
             ],
         );
     }
@@ -139,14 +157,18 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         repoFullName: string,
         fileCount: number,
         chunkCount: number,
+        kbQualityScore?: number,
+        kbQualityBreakdown?: Record<string, unknown>,
     ): Promise<void> {
         return this.upsert({
             userId,
             repoFullName,
-            syncStatus:  'complete',
-            lastSyncedAt: new Date(),
+            syncStatus:    'complete',
+            lastSyncedAt:  new Date(),
             fileCount,
             chunkCount,
+            kbQualityScore,
+            kbQualityBreakdown,
         });
     }
 

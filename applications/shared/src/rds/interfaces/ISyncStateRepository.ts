@@ -19,12 +19,19 @@ export interface ISyncStateRepository {
     /** Shorthand: set status to 'syncing', reset counts. */
     markStarted(userId: string, repoFullName: string): Promise<void>;
 
-    /** Shorthand: set status to 'complete', record final file/chunk counts. */
+    /**
+     * Shorthand: set status to 'complete', record final file/chunk counts
+     * and (optionally) the computed KB quality score and per-factor
+     * breakdown. Both quality fields are nullable for back-compat with
+     * runs that pre-date pick #4 (KB quality scoring).
+     */
     markComplete(
         userId: string,
         repoFullName: string,
         fileCount: number,
         chunkCount: number,
+        kbQualityScore?: number,
+        kbQualityBreakdown?: Record<string, unknown>,
     ): Promise<void>;
 
     /** Shorthand: set status to 'error', record the failure reason. */

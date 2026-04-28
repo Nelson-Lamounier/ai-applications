@@ -148,6 +148,10 @@ export interface RepoSyncState {
     readonly fileCount: number;
     readonly chunkCount: number;
     readonly errorMessage?: string;
+    /** KB quality score in [0, 1], rounded to 2 decimals. */
+    readonly kbQualityScore?: number;
+    /** Per-factor breakdown matching `KbQualityBreakdown`. */
+    readonly kbQualityBreakdown?: Record<string, unknown>;
 }
 
 // =============================================================================
@@ -164,4 +168,15 @@ export interface IngestionReport {
     readonly pruned: number;
     readonly upsertResult: UpsertBatchResult;
     readonly durationMs: number;
+    /**
+     * KB quality score in [0, 1] (rounded to 2 decimals). Pure derivation
+     * over the ingested chunks — see `quality/computeKbQuality.ts`.
+     * Persisted to `repo_sync_state.kb_quality_score`.
+     */
+    readonly kbQualityScore?: number;
+    /**
+     * Per-factor breakdown matching `KbQualityBreakdown`. Persisted as JSONB
+     * so the UI can show *why* the score is what it is.
+     */
+    readonly kbQualityBreakdown?: Record<string, unknown>;
 }

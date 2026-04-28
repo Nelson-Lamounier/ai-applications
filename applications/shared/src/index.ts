@@ -218,6 +218,9 @@ export type {
     RdsClientConfig,
     BedrockChunkEnricherConfig,
     IngestionPipelineOptions,
+    KbQualityFactor,
+    KbQualityBreakdown,
+    KbQualityResult,
 } from './rds/index.js';
 
 export {
@@ -226,6 +229,7 @@ export {
     TitanEmbeddingProvider,
     BedrockChunkEnricher,
     IngestionPipeline,
+    computeKbQuality,
 } from './rds/index.js';
 
 // ─── Security (Input/Output Sanitisation) ────────────────────────────────────

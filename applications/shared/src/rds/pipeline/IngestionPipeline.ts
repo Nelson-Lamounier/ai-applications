@@ -28,6 +28,7 @@ import type { IChunkEnricher } from '../interfaces/IChunkEnricher.js';
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import { computeKbQuality } from '../quality/computeKbQuality.js';
 import type {
     DocumentChunk,
     IngestionReport,
@@ -183,6 +184,13 @@ export class IngestionPipeline {
             const pruned = await this.vectorStore.pruneDeletedFiles(userId, repoFullName, currentFilePaths);
 
             // -----------------------------------------------------------------
+            // Step 5.5: Compute KB quality score (pure derivation).
+            // Uses the raw chunks we built — captures everything an end-user
+            // sees, including hash-skipped unchanged chunks.
+            // -----------------------------------------------------------------
+            const quality = computeKbQuality(rawChunks);
+
+            // -----------------------------------------------------------------
             // Step 6: Record completion
             // -----------------------------------------------------------------
             const uniqueFiles = currentFilePaths.length;
@@ -192,17 +200,21 @@ export class IngestionPipeline {
                 repoFullName,
                 uniqueFiles,
                 rawChunks.length,
+                quality.score,
+                quality.breakdown as unknown as Record<string, unknown>,
             );
 
             return {
                 userId,
                 repoFullName,
-                totalRawChunks: rawChunks.length,
-                embedded:       chunksToEmbed.length,
-                skipped:        unchanged.length,
+                totalRawChunks:     rawChunks.length,
+                embedded:           chunksToEmbed.length,
+                skipped:            unchanged.length,
                 pruned,
                 upsertResult,
-                durationMs:     Date.now() - startMs,
+                durationMs:         Date.now() - startMs,
+                kbQualityScore:     quality.score,
+                kbQualityBreakdown: quality.breakdown as unknown as Record<string, unknown>,
             };
 
         } catch (err) {
