@@ -19,7 +19,7 @@
  *   DefaultChunker remains the safe fallback for any file type.
  */
 
-import type { RawChunk } from '../../aurora/types.js';
+import type { RawChunk } from '../../rds/types.js';
 import type { IChunker } from '../interfaces/IChunker.js';
 
 export interface DefaultChunkerConfig {

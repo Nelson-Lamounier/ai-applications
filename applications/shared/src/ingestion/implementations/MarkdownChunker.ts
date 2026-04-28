@@ -23,7 +23,7 @@
  *   ['docs', 'architecture']). The file extension is excluded.
  */
 
-import type { RawChunk } from '../../aurora/types.js';
+import type { RawChunk } from '../../rds/types.js';
 import type { IChunker } from '../interfaces/IChunker.js';
 
 // =============================================================================

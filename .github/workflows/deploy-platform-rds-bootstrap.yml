@@ -1,0 +1,180 @@
+# =============================================================================
+# Deploy Platform RDS Bootstrap Job Image (Development)
+# =============================================================================
+#
+# Builds the @bedrock/platform-rds-bootstrap container, pushes to ECR, and
+# publishes the new <repo>:<tag> URI to SSM at
+#   /k8s/{env}/job-images/platform-rds-bootstrap
+#
+# The image is the DDL runner consumed by the kubernetes-bootstrap
+# `platform-rds` Helm chart (charts/platform-rds/chart/templates/bootstrap-job.yaml).
+# It connects to the live RDS deployed by Nelson-Lamounier/cdk-monitoring
+# (PlatformRds-development), reading credentials and host coordinates from
+# ESO-synced secrets sourced from /k8s/{env}/platform-rds/*.
+#
+# Downstream:
+#   1. SSM /k8s/{env}/job-images/platform-rds-bootstrap   ← this workflow
+#   2. ArgoCD Image Updater (or ESO + chart values)       ← bumps Helm tag
+#   3. ArgoCD application 'platform-rds'                  ← redeploys Job
+#   4. Bootstrap Job runs idempotent DDL against RDS      ← schema converged
+#
+# Prerequisite: ECR repo must exist with its URI published at
+#   /shared/ecr-platform-rds-bootstrap/{env}/repository-uri
+# Provision in cdk-monitoring SharedVpcStack (mirroring ecr-ingestion).
+# This workflow fails fast if the SSM parameter is missing.
+# =============================================================================
+
+name: "Deploy Platform RDS Bootstrap (Dev)"
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "applications/platform-rds-bootstrap/**"
+      - ".github/workflows/deploy-platform-rds-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENVIRONMENT: development
+  AWS_REGION: "eu-west-1"
+  IMAGE_TAG: "${{ github.sha }}-r${{ github.run_attempt }}"
+
+concurrency:
+  group: deploy-platform-rds-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "[PlatformRdsBootstrap] Build Docker Image"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ vars.ENVIRONMENT || 'development' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image (platform-rds-bootstrap)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: applications/platform-rds-bootstrap/Dockerfile
+          push: false
+          load: false
+          tags: platform-rds-bootstrap:${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=platform-rds-bootstrap
+          cache-to: type=gha,mode=max,scope=platform-rds-bootstrap
+          provenance: false
+          outputs: type=docker,dest=/tmp/platform-rds-bootstrap-image.tar
+
+      - name: Cache Bootstrap Image
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/platform-rds-bootstrap-image.tar
+          key: platform-rds-bootstrap-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build Summary
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          IMAGE_SIZE=$(du -sh /tmp/platform-rds-bootstrap-image.tar | cut -f1)
+          {
+            echo "## [PlatformRdsBootstrap] Docker Build"
+            echo "- **Tag**: ${IMAGE_TAG}"
+            echo "- **Size**: ${IMAGE_SIZE}"
+            echo "- **Dockerfile**: applications/platform-rds-bootstrap/Dockerfile"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  push:
+    name: "[PlatformRdsBootstrap] Push to ECR"
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ vars.ENVIRONMENT || 'development' }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS Credentials
+        uses: ./.github/actions/configure-aws
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Restore Bootstrap Image from Cache
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/platform-rds-bootstrap-image.tar
+          key: platform-rds-bootstrap-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+
+      - name: Load Docker Image
+        run: docker load -i /tmp/platform-rds-bootstrap-image.tar
+
+      - name: Resolve ECR URL (platform-rds-bootstrap)
+        id: resolve-ecr
+        env:
+          ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+          SSM_NAME="/shared/ecr-platform-rds-bootstrap/${ENVIRONMENT}/repository-uri"
+          ECR_URL=$(aws ssm get-parameter \
+            --name "$SSM_NAME" \
+            --query 'Parameter.Value' \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$ECR_URL" ] || [ "$ECR_URL" = "None" ]; then
+            echo "::error::platform-rds-bootstrap ECR URL not found at $SSM_NAME — provision the ECR repo first (cdk-monitoring SharedVpcStack)"
+            exit 1
+          fi
+
+          echo "::add-mask::$ECR_URL"
+          echo "ecr-url=$ECR_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Push Bootstrap Image to ECR
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_URL"
+
+          docker tag "platform-rds-bootstrap:${IMAGE_TAG}" "${ECR_URL}:${IMAGE_TAG}"
+          docker push "${ECR_URL}:${IMAGE_TAG}"
+
+      - name: Publish image URI to SSM
+        # ArgoCD Image Updater (or chart value sync) consumes this SSM value
+        # to bump the platform-rds Helm chart's bootstrap.image.tag. The Job
+        # is idempotent (CREATE EXTENSION / TABLE IF NOT EXISTS), so re-runs
+        # against an already-bootstrapped DB are safe.
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+          aws ssm put-parameter \
+            --name "/k8s/${ENVIRONMENT}/job-images/platform-rds-bootstrap" \
+            --value "${ECR_URL}:${IMAGE_TAG}" \
+            --type String \
+            --overwrite
+
+      - name: Push Summary
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+          {
+            echo "## [PlatformRdsBootstrap] ECR Push"
+            echo "- **Tag**: ${IMAGE_TAG}"
+            echo "- **SSM**: \`/k8s/${ENVIRONMENT}/job-images/platform-rds-bootstrap\`"
+            echo "- **Path to chart**: SSM → ArgoCD Image Updater → Helm values → Job re-run (idempotent DDL)"
+          } >> "$GITHUB_STEP_SUMMARY"

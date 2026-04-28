@@ -10,7 +10,7 @@ import { ChunkerRegistry } from './ChunkerRegistry';
 import { DefaultChunker } from './DefaultChunker';
 import { MarkdownChunker } from './MarkdownChunker';
 import type { IChunker } from '../interfaces/IChunker';
-import type { RawChunk } from '../../aurora/types';
+import type { RawChunk } from '../../rds/types';
 
 // =============================================================================
 // Test double — a named chunker that only handles a specific extension

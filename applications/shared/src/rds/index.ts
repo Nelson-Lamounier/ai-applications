@@ -1,6 +1,6 @@
 /**
  * @format
- * Aurora pgvector — Public API
+ * RDS pgvector — Public API
  *
  * Consumers import from this barrel — never from sub-paths.
  *

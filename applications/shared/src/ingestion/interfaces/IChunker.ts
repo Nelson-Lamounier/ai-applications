@@ -10,7 +10,7 @@
  * This makes them trivially testable without any AWS calls.
  */
 
-import type { RawChunk } from '../../aurora/types.js';
+import type { RawChunk } from '../../rds/types.js';
 
 export interface IChunker {
     /**

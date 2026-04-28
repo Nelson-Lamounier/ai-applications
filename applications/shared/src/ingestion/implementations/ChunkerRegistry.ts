@@ -10,7 +10,7 @@
  * true is used. Register specialised chunkers before the DefaultChunker.
  */
 
-import type { RawChunk } from '../../aurora/types.js';
+import type { RawChunk } from '../../rds/types.js';
 import type { IChunker } from '../interfaces/IChunker.js';
 import { DefaultChunker } from './DefaultChunker.js';
 import { MarkdownChunker } from './MarkdownChunker.js';

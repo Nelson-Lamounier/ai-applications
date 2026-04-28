@@ -25,7 +25,7 @@ describe('FileFilter', () => {
 
         it('matches **/*.ts at any depth', () => {
             expect(filter.shouldInclude('src/index.ts')).toBe(true);
-            expect(filter.shouldInclude('src/aurora/types.ts')).toBe(true);
+            expect(filter.shouldInclude('src/rds/types.ts')).toBe(true);
         });
 
         it('matches exact filename at root', () => {
@@ -69,7 +69,7 @@ describe('FileFilter', () => {
 
         it('includes non-excluded .ts files', () => {
             expect(filter.shouldInclude('src/index.ts')).toBe(true);
-            expect(filter.shouldInclude('src/aurora/types.ts')).toBe(true);
+            expect(filter.shouldInclude('src/rds/types.ts')).toBe(true);
         });
     });
 
@@ -112,7 +112,7 @@ describe('FileFilter', () => {
         it('directory prefix with **', () => {
             const filter = new FileFilter({ include: ['src/**'], exclude: [] });
             expect(filter.shouldInclude('src/index.ts')).toBe(true);
-            expect(filter.shouldInclude('src/aurora/types.ts')).toBe(true);
+            expect(filter.shouldInclude('src/rds/types.ts')).toBe(true);
             expect(filter.shouldInclude('test/utils.ts')).toBe(false);
         });
     });

@@ -206,14 +206,14 @@ export type {
     ISyncStateRepository,
     IEmbeddingProvider,
     RdsClientConfig,
-} from './aurora/index.js';
+} from './rds/index.js';
 
 export {
     RdsVectorStore,
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
     IngestionPipeline,
-} from './aurora/index.js';
+} from './rds/index.js';
 
 // ─── Security (Input/Output Sanitisation) ────────────────────────────────────
 export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';

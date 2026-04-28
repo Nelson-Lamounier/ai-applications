@@ -18,8 +18,8 @@
  *   concurrency limit of 3–5 parallel fetchFile() calls using a semaphore.
  */
 
-import type { IngestionReport } from '../../aurora/types.js';
-import { IngestionPipeline } from '../../aurora/pipeline/IngestionPipeline.js';
+import type { IngestionReport } from '../../rds/types.js';
+import { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
 import type { IFileFilter }   from '../interfaces/IFileFilter.js';
 import type { IRepoAdapter }  from '../interfaces/IRepoAdapter.js';
 import { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
