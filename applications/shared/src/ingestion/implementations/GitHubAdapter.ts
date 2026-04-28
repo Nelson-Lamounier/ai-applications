@@ -26,7 +26,12 @@
 
 import https from 'https';
 
-import type { IRepoAdapter, RepoFile } from '../interfaces/IRepoAdapter.js';
+import type {
+    IRepoAdapter,
+    ListCommitsOptions,
+    RepoCommit,
+    RepoFile,
+} from '../interfaces/IRepoAdapter.js';
 
 // =============================================================================
 // INTERNAL TYPES — GitHub API response shapes
@@ -54,6 +59,21 @@ interface GitHubTreeResponse {
 interface GitHubBlobResponse {
     content:  string;   // base64-encoded
     encoding: 'base64' | 'utf-8';
+}
+
+/**
+ * Subset of GitHub's commit-list-item shape we consume.
+ * `author` is the GitHub user (may be null for unattributed/email-only commits);
+ * `commit.author` is the git author block from the commit object itself.
+ */
+interface GitHubCommitListItem {
+    sha:    string;
+    author: { login: string } | null;
+    commit: {
+        message:   string;
+        author?:   { name?: string; email?: string; date?: string };
+        committer?:{ name?: string; email?: string; date?: string };
+    };
 }
 
 // =============================================================================
@@ -202,6 +222,72 @@ export class GitHubAdapter implements IRepoAdapter {
         }
 
         return blob.content;
+    }
+
+    // =========================================================================
+    // IRepoAdapter.listCommits
+    // =========================================================================
+
+    /**
+     * List commits on the default branch in reverse chronological order.
+     *
+     * Uses only the list endpoint (`/commits`) — does NOT fetch per-commit
+     * detail (`/commits/{sha}`). The list endpoint omits affected file lists
+     * and additions/deletions counts. A future per-file-timeline feature can
+     * opt into the per-commit detail cost separately.
+     *
+     * Pagination: 100 commits per page (GitHub's max). Stops on first empty
+     * page or when `maxCommits` is reached.
+     *
+     * @param repoFullName - "owner/repo"
+     * @param opts.maxCommits - default 500
+     * @param opts.since      - ISO 8601 timestamp; only commits at/after included
+     */
+    async listCommits(
+        repoFullName: string,
+        opts: ListCommitsOptions = {},
+    ): Promise<RepoCommit[]> {
+        const max   = opts.maxCommits ?? 500;
+        const since = opts.since;
+
+        // Resolve default branch to scope listing strictly to the trunk.
+        const repoInfo = await this.get<{ default_branch: string }>(
+            `/repos/${repoFullName}`,
+        );
+
+        const out: RepoCommit[] = [];
+        const perPage = 100;
+
+        for (let page = 1; out.length < max; page++) {
+            const qs: string[] = [
+                `sha=${encodeURIComponent(repoInfo.default_branch)}`,
+                `per_page=${perPage}`,
+                `page=${page}`,
+            ];
+            if (since) qs.push(`since=${encodeURIComponent(since)}`);
+
+            const batch = await this.get<GitHubCommitListItem[]>(
+                `/repos/${repoFullName}/commits?${qs.join('&')}`,
+            );
+
+            if (batch.length === 0) break;
+
+            for (const c of batch) {
+                if (out.length >= max) break;
+                out.push({
+                    sha:         c.sha,
+                    authorLogin: c.author?.login,
+                    authorName:  c.commit.author?.name ?? '(unknown)',
+                    authoredAt:  c.commit.author?.date ?? c.commit.committer?.date ?? '',
+                    message:     c.commit.message ?? '',
+                });
+            }
+
+            // GitHub returned fewer than perPage → last page reached.
+            if (batch.length < perPage) break;
+        }
+
+        return out;
     }
 
     // =========================================================================

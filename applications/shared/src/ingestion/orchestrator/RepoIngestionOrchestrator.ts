@@ -18,28 +18,49 @@
  *   concurrency limit of 3–5 parallel fetchFile() calls using a semaphore.
  */
 
-import type { IngestionReport } from '../../rds/types.js';
+import type { IngestionReport, RawChunk } from '../../rds/types.js';
 import { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
 import type { IFileFilter }   from '../interfaces/IFileFilter.js';
 import type { IRepoAdapter }  from '../interfaces/IRepoAdapter.js';
 import { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
+import { CommitChunker }      from '../implementations/CommitChunker.js';
+
+export interface OrchestratorOptions {
+    /**
+     * When provided, the orchestrator pulls the last N commits from the
+     * repo (default 500), groups them by ISO week via this chunker, and
+     * ingests the resulting chunks alongside file content. Pass `null` to
+     * disable commit-history ingestion entirely.
+     */
+    readonly commitChunker?: CommitChunker | null;
+    /** Hard cap on commits pulled per ingestion. Default 500. */
+    readonly maxCommits?:    number;
+}
 
 export class RepoIngestionOrchestrator {
     private readonly repoAdapter:       IRepoAdapter;
     private readonly fileFilter:        IFileFilter;
     private readonly chunkerRegistry:   ChunkerRegistry;
     private readonly ingestionPipeline: IngestionPipeline;
+    private readonly commitChunker:     CommitChunker | null;
+    private readonly maxCommits:        number;
 
     constructor(
         repoAdapter:       IRepoAdapter,
         fileFilter:        IFileFilter,
         chunkerRegistry:   ChunkerRegistry,
         ingestionPipeline: IngestionPipeline,
+        options:           OrchestratorOptions = {},
     ) {
         this.repoAdapter       = repoAdapter;
         this.fileFilter        = fileFilter;
         this.chunkerRegistry   = chunkerRegistry;
         this.ingestionPipeline = ingestionPipeline;
+        // Default ON: caller passes `null` to opt out.
+        this.commitChunker     = options.commitChunker === null
+            ? null
+            : (options.commitChunker ?? new CommitChunker());
+        this.maxCommits        = options.maxCommits ?? 500;
     }
 
     // =========================================================================
@@ -102,9 +123,45 @@ export class RepoIngestionOrchestrator {
         );
 
         // -----------------------------------------------------------------
+        // Step 3.5: Pull commits + chunk by ISO week.
+        // Independent of file ingestion — failures here log and continue
+        // so a token-scope problem does not abort the whole run.
+        // -----------------------------------------------------------------
+        const commitChunks = await this.fetchAndChunkCommits(repoFullName);
+        rawChunks.push(...commitChunks);
+
+        // -----------------------------------------------------------------
         // Step 4: Hand off to IngestionPipeline (hash-check → embed → upsert)
         // -----------------------------------------------------------------
         return this.ingestionPipeline.ingestChunks(userId, repoFullName, rawChunks);
+    }
+
+    /**
+     * Pull commit history and produce weekly RawChunks.
+     * Best-effort: any failure (auth, rate limit) logs and returns []
+     * so file-content ingestion still completes.
+     */
+    private async fetchAndChunkCommits(repoFullName: string): Promise<RawChunk[]> {
+        if (!this.commitChunker) return [];
+
+        try {
+            const commits = await this.repoAdapter.listCommits(
+                repoFullName,
+                { maxCommits: this.maxCommits },
+            );
+            const chunks = this.commitChunker.chunkWeekly(commits);
+            console.info(
+                `[RepoIngestionOrchestrator] ${repoFullName}: ` +
+                `${commits.length} commits → ${chunks.length} commit-history chunks`,
+            );
+            return chunks;
+        } catch (err) {
+            console.error(
+                `[RepoIngestionOrchestrator] commit history unavailable for ${repoFullName}:`,
+                err,
+            );
+            return [];
+        }
     }
 
     // =========================================================================
@@ -135,6 +192,9 @@ export class RepoIngestionOrchestrator {
                 );
             }
         }
+
+        // Mirror Step 3.5 from ingestRepo — re-ingest commit history too.
+        rawChunks.push(...await this.fetchAndChunkCommits(repoFullName));
 
         return this.ingestionPipeline.forceReindex(userId, repoFullName, rawChunks);
     }

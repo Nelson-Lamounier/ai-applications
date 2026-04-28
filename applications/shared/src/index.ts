@@ -183,10 +183,18 @@ export type {
 export { GitHubAdapter }            from './ingestion/implementations/GitHubAdapter.js';
 export { FileFilter, DEFAULT_FILTER_CONFIG } from './ingestion/implementations/FileFilter.js';
 export { ChunkerRegistry }          from './ingestion/implementations/ChunkerRegistry.js';
+export { CommitChunker, isoWeek }   from './ingestion/implementations/CommitChunker.js';
 export { RepoIngestionOrchestrator } from './ingestion/orchestrator/RepoIngestionOrchestrator.js';
 
 export type { FileFilterConfig }    from './ingestion/implementations/FileFilter.js';
-export type { IRepoAdapter, RepoFile } from './ingestion/interfaces/IRepoAdapter.js';
+export type { CommitChunkerConfig } from './ingestion/implementations/CommitChunker.js';
+export type { OrchestratorOptions } from './ingestion/orchestrator/RepoIngestionOrchestrator.js';
+export type {
+    IRepoAdapter,
+    RepoFile,
+    RepoCommit,
+    ListCommitsOptions,
+} from './ingestion/interfaces/IRepoAdapter.js';
 export type { IFileFilter }         from './ingestion/interfaces/IFileFilter.js';
 export type { IChunker }            from './ingestion/interfaces/IChunker.js';
 
