@@ -132,18 +132,13 @@ jobs:
           docker tag "article-pipeline:${TAG}" "${ECR_URL}:${TAG}"
           docker push "${ECR_URL}:${TAG}"
 
-      - name: Update SSM image-uri parameter
-        run: |
-          ECR_URL="${{ steps.resolve-ecr.outputs.ecr-url }}"
-          TAG="${{ env.IMAGE_TAG }}"
-          aws ssm put-parameter \
-            --name "/article-pipeline/${{ env.ENVIRONMENT }}/image-uri" \
-            --value "${ECR_URL}:${TAG}" \
-            --type String \
-            --overwrite
+      # No SSM image-uri write — ArgoCD Image Updater watches the ECR repo
+      # directly (see kubernetes-bootstrap argocd-apps/admin-api.yaml
+      # `image-list: article-pipeline=...`) and writes the new tag to
+      # .argocd-source-admin-api.yaml on each push.
 
       - name: Push Summary
         run: |
           echo "## [Article-Pipeline] ECR Push" >> $GITHUB_STEP_SUMMARY
           echo "- **Tag**: ${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **SSM**: \`/article-pipeline/${{ env.ENVIRONMENT }}/image-uri\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Picked up by**: ArgoCD Image Updater on admin-api app" >> $GITHUB_STEP_SUMMARY
