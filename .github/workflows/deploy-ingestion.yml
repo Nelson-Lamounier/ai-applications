@@ -2,13 +2,20 @@
 # Deploy Ingestion Job Image (Development)
 # =============================================================================
 #
-# Builds the @bedrock/ingestion container and pushes to ECR.
+# Builds the @bedrock/ingestion container, pushes to ECR, and publishes
+# the new <repo>:<tag> URI to SSM at /k8s/{env}/job-images/ingestion.
 #
-# Downstream: ArgoCD Image Updater (configured on the admin-api ArgoCD
-# Application in kubernetes-bootstrap) watches this ECR repo and writes
-# the new tag to .argocd-source-admin-api.yaml. ArgoCD then re-renders
-# the admin-api Helm chart, which projects the URI as INGESTION_IMAGE
-# on the admin-api pod via the Deployment env block.
+# Downstream:
+#   1. SSM /k8s/{env}/job-images/ingestion           ← this workflow
+#   2. ESO ClusterSecretStore aws-ssm                ← syncs ↓
+#   3. K8s Secret admin-api-job-images               ← key 'ingestion'
+#   4. Mounted file in admin-api pod                 ← /etc/admin-api/images/ingestion
+#   5. admin-api reads file on each Job creation     ← zero pod restart
+#
+# This decouples ingestion image updates from admin-api Rollouts: pushing
+# a new ingestion image does NOT trigger a Blue/Green rollout of admin-api.
+# Mounted Secret files are auto-updated by the kubelet (~60s eventual
+# consistency) when ESO refreshes the upstream Secret.
 #
 # Prerequisite: ECR repo must exist with its URI published at
 #   /shared/ecr-ingestion/{env}/repository-uri
@@ -136,13 +143,25 @@ jobs:
           docker tag "ingestion:${TAG}" "${ECR_URL}:${TAG}"
           docker push "${ECR_URL}:${TAG}"
 
-      # No SSM image-uri write — ArgoCD Image Updater watches the ECR repo
-      # directly (see kubernetes-bootstrap argocd-apps/admin-api.yaml
-      # `image-list: ingestion=...`) and writes the new tag to
-      # .argocd-source-admin-api.yaml on each push.
+      - name: Publish image URI to SSM
+        # Decoupled from admin-api Rollout: ESO syncs this SSM value into
+        # the admin-api-job-images Secret in the admin-api namespace, mounted
+        # as a file at /etc/admin-api/images/ingestion. The admin-api process
+        # reads the file on each Job creation — no pod restart needed when
+        # this image updates. See kubernetes-bootstrap charts/admin-api/
+        # external-secrets/admin-api-job-images.yaml.
+        run: |
+          ECR_URL="${{ steps.resolve-ecr.outputs.ecr-url }}"
+          TAG="${{ env.IMAGE_TAG }}"
+          aws ssm put-parameter \
+            --name "/k8s/${{ env.ENVIRONMENT }}/job-images/ingestion" \
+            --value "${ECR_URL}:${TAG}" \
+            --type String \
+            --overwrite
 
       - name: Push Summary
         run: |
           echo "## [Ingestion] ECR Push" >> $GITHUB_STEP_SUMMARY
           echo "- **Tag**: ${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Picked up by**: ArgoCD Image Updater on admin-api app" >> $GITHUB_STEP_SUMMARY
+          echo "- **SSM**: \`/k8s/${{ env.ENVIRONMENT }}/job-images/ingestion\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Path to admin-api**: SSM → ESO → Secret → file mount (no pod restart)" >> $GITHUB_STEP_SUMMARY
