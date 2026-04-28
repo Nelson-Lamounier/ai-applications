@@ -253,4 +253,109 @@ The content is long enough to pass the minimum character threshold for embedding
             expect(chunks[0].totalChunks).toBe(1);
         });
     });
+
+    // =========================================================================
+    // chunk — frontmatter parsing (tags merge + metadata flow)
+    // =========================================================================
+    describe('chunk() — frontmatter parsing', () => {
+        it('merges frontmatter tags with directory tags, lowercased + deduped', () => {
+            const md = `---
+title: Traefik
+tags: [Kubernetes, ingress, NETWORKING]
+---
+
+# Traefik
+
+Body content with enough length to pass the minimum embed threshold.
+`.trim();
+            const chunks = chunker.chunk(md, 'wiki/Tools/traefik.md');
+            // Directory: ['wiki','Tools'] → lowercased → ['wiki','tools']
+            // Frontmatter: ['Kubernetes','ingress','NETWORKING'] → ['kubernetes','ingress','networking']
+            // Set semantics + lowercase guarantees no duplicates.
+            expect(chunks[0].tags).toEqual(
+                expect.arrayContaining(['wiki', 'tools', 'kubernetes', 'ingress', 'networking']),
+            );
+            expect(chunks[0].tags?.length).toBe(5);
+        });
+
+        it('flows non-tag frontmatter keys into chunk metadata', () => {
+            const md = `---
+title: Architecture Overview
+type: concept
+sources: ['raw/foo.md', 'raw/bar.md']
+created: 2026-04-15
+---
+
+# Architecture
+
+Body content that is long enough to be embedded as a chunk.
+`.trim();
+            const chunks = chunker.chunk(md, 'docs/arch.md');
+            const meta = chunks[0].metadata as Record<string, unknown>;
+            expect(meta.title).toBe('Architecture Overview');
+            expect(meta.type).toBe('concept');
+            expect(meta.sources).toEqual(['raw/foo.md', 'raw/bar.md']);
+            expect(meta.created).toBe('2026-04-15');
+            // tags should not appear in metadata — they live on the chunk's tags field
+            expect(meta.tags).toBeUndefined();
+        });
+
+        it('emits empty metadata object when no frontmatter is present', () => {
+            const md = '# Title\n\nBody content long enough to embed properly.';
+            const chunks = chunker.chunk(md, 'docs/x.md');
+            expect(chunks[0].metadata).toEqual({});
+        });
+
+        it('does not emit frontmatter scalar values inside chunk content', () => {
+            const md = `---
+title: Hidden
+type: concept
+---
+
+# Visible
+
+Body content long enough for embedding.
+`.trim();
+            const chunks = chunker.chunk(md, 'docs/x.md');
+            chunks.forEach(c => {
+                expect(c.content).not.toContain('title:');
+                expect(c.content).not.toContain('Hidden');
+            });
+        });
+    });
+
+    // =========================================================================
+    // chunk — wikilink stripping (preserves noun, drops syntax)
+    // =========================================================================
+    describe('chunk() — wikilink stripping', () => {
+        it('replaces [[page]] with page', () => {
+            const md = '# T\n\nSee [[admin-api]] for details. Plenty of content here.';
+            const chunks = chunker.chunk(md, 'docs/x.md');
+            expect(chunks[0].content).toContain('See admin-api for details');
+            expect(chunks[0].content).not.toContain('[[');
+        });
+
+        it('replaces [[folder/page]] with page', () => {
+            const md = '# T\n\nLink to [[projects/admin-api]] is critical context here.';
+            const chunks = chunker.chunk(md, 'docs/x.md');
+            expect(chunks[0].content).toContain('Link to admin-api');
+            expect(chunks[0].content).not.toContain('projects/');
+        });
+
+        it('replaces [[page|alias]] with alias', () => {
+            const md = '# T\n\nThe [[admin-api|BFF service]] handles the request lifecycle.';
+            const chunks = chunker.chunk(md, 'docs/x.md');
+            expect(chunks[0].content).toContain('The BFF service handles');
+            expect(chunks[0].content).not.toContain('admin-api');
+            expect(chunks[0].content).not.toContain('|');
+        });
+
+        it('replaces [[folder/page|alias]] with alias', () => {
+            const md = '# T\n\nThe [[projects/admin-api|BFF]] is the gateway. More body content.';
+            const chunks = chunker.chunk(md, 'docs/x.md');
+            expect(chunks[0].content).toContain('The BFF is the gateway');
+            expect(chunks[0].content).not.toContain('projects/');
+            expect(chunks[0].content).not.toContain('admin-api');
+        });
+    });
 });

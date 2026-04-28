@@ -150,14 +150,14 @@ export class RdsVectorStore implements IVectorStore {
         const result = await this.execute<UpsertRow>(
             `INSERT INTO document_embeddings (
                 user_id, repo_full_name, file_path, heading,
-                content, file_type, tags,
+                content, file_type, tags, metadata,
                 chunk_index, total_chunks, content_hash,
                 embedding, last_synced_at
             ) VALUES (
                 $1, $2, $3, $4,
-                $5, $6, $7::text[],
-                $8, $9, $10,
-                $11::vector, NOW()
+                $5, $6, $7::text[], $8::jsonb,
+                $9, $10, $11,
+                $12::vector, NOW()
             )
             ON CONFLICT (user_id, repo_full_name, file_path, chunk_index)
             DO UPDATE SET
@@ -165,6 +165,7 @@ export class RdsVectorStore implements IVectorStore {
                 content        = EXCLUDED.content,
                 file_type      = EXCLUDED.file_type,
                 tags           = EXCLUDED.tags,
+                metadata       = EXCLUDED.metadata,
                 total_chunks   = EXCLUDED.total_chunks,
                 content_hash   = EXCLUDED.content_hash,
                 embedding      = EXCLUDED.embedding,
@@ -179,6 +180,7 @@ export class RdsVectorStore implements IVectorStore {
                 chunk.content,
                 chunk.fileType ?? null,
                 toPostgresArray(chunk.tags ?? []),
+                JSON.stringify(chunk.metadata ?? {}),
                 chunk.chunkIndex,
                 chunk.totalChunks,
                 chunk.contentHash,

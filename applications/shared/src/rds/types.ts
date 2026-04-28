@@ -1,6 +1,6 @@
 /**
  * @format
- * Aurora pgvector — Domain Types
+ * RDS pgvector — Domain Types
  *
  * Value types shared across interfaces, implementations, and the pipeline.
  * No business logic — pure data shapes.
@@ -24,6 +24,13 @@ export interface RawChunk {
     readonly tags?: string[];
     readonly chunkIndex: number;
     readonly totalChunks: number;
+    /**
+     * Structured per-chunk metadata. Persisted to `document_embeddings.metadata`
+     * (JSONB). Populated by the chunker (e.g. parsed YAML frontmatter from
+     * markdown files) and by future enrichment stages (skills, metrics, timeline).
+     * Always present in the DB as `'{}'::jsonb` when no signal is available.
+     */
+    readonly metadata?: Record<string, unknown>;
 }
 
 // =============================================================================

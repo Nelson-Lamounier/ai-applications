@@ -237,6 +237,14 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_runs   ON pipeline_runs (user_id, pipeli
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS cover_image TEXT;
 ALTER TABLE job_applications ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE resumes ALTER COLUMN user_id DROP NOT NULL;
+
+-- KB enrichment: per-chunk structured metadata (frontmatter, future enrichment).
+-- Pick #1 in the Tucaken-product roadmap (frontmatter + wikilinks).
+ALTER TABLE document_embeddings
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_metadata
+  ON document_embeddings USING GIN (metadata jsonb_path_ops);
 `;
 
 async function main(): Promise<void> {
