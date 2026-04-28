@@ -205,13 +205,18 @@ export type {
     IVectorStore,
     ISyncStateRepository,
     IEmbeddingProvider,
+    IChunkEnricher,
+    ChunkEnrichment,
     RdsClientConfig,
+    BedrockChunkEnricherConfig,
+    IngestionPipelineOptions,
 } from './rds/index.js';
 
 export {
     RdsVectorStore,
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
+    BedrockChunkEnricher,
     IngestionPipeline,
 } from './rds/index.js';
 

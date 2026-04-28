@@ -245,6 +245,20 @@ ALTER TABLE document_embeddings
 
 CREATE INDEX IF NOT EXISTS idx_embeddings_metadata
   ON document_embeddings USING GIN (metadata jsonb_path_ops);
+
+-- KB skill-evidence enrichment columns. Pick #2 in the roadmap.
+-- skills:        domain capabilities the chunk evidences (e.g. "kubernetes networking")
+-- technologies:  named tools/products in use (e.g. "calico", "traefik")
+-- Both flat TEXT[] for fast facet via GIN — richer evidence (level, quote)
+-- continues to live in metadata JSONB.
+ALTER TABLE document_embeddings
+  ADD COLUMN IF NOT EXISTS skills       TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS technologies TEXT[] NOT NULL DEFAULT '{}';
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_skills
+  ON document_embeddings USING GIN (skills);
+CREATE INDEX IF NOT EXISTS idx_embeddings_technologies
+  ON document_embeddings USING GIN (technologies);
 `;
 
 async function main(): Promise<void> {

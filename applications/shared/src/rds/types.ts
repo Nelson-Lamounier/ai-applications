@@ -27,10 +27,24 @@ export interface RawChunk {
     /**
      * Structured per-chunk metadata. Persisted to `document_embeddings.metadata`
      * (JSONB). Populated by the chunker (e.g. parsed YAML frontmatter from
-     * markdown files) and by future enrichment stages (skills, metrics, timeline).
-     * Always present in the DB as `'{}'::jsonb` when no signal is available.
+     * markdown files) and by future enrichment stages (skill_details, metrics,
+     * timeline). Always present in the DB as `'{}'::jsonb` when no signal is
+     * available.
      */
     readonly metadata?: Record<string, unknown>;
+    /**
+     * Domain capabilities the chunk evidences (e.g. "kubernetes networking",
+     * "iac with cdk"). Lowercased, deduplicated. Persisted to
+     * `document_embeddings.skills TEXT[]` (GIN-indexed). Populated by the
+     * `IChunkEnricher` stage of the pipeline; absent or `[]` when no signal.
+     */
+    readonly skills?: string[];
+    /**
+     * Named tools, frameworks, services, and products in use within the chunk
+     * (e.g. "calico", "traefik", "step functions"). Lowercased, deduplicated.
+     * Persisted to `document_embeddings.technologies TEXT[]` (GIN-indexed).
+     */
+    readonly technologies?: string[];
 }
 
 // =============================================================================

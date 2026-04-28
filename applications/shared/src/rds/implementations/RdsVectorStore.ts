@@ -151,13 +151,15 @@ export class RdsVectorStore implements IVectorStore {
             `INSERT INTO document_embeddings (
                 user_id, repo_full_name, file_path, heading,
                 content, file_type, tags, metadata,
+                skills, technologies,
                 chunk_index, total_chunks, content_hash,
                 embedding, last_synced_at
             ) VALUES (
                 $1, $2, $3, $4,
                 $5, $6, $7::text[], $8::jsonb,
-                $9, $10, $11,
-                $12::vector, NOW()
+                $9::text[], $10::text[],
+                $11, $12, $13,
+                $14::vector, NOW()
             )
             ON CONFLICT (user_id, repo_full_name, file_path, chunk_index)
             DO UPDATE SET
@@ -166,6 +168,8 @@ export class RdsVectorStore implements IVectorStore {
                 file_type      = EXCLUDED.file_type,
                 tags           = EXCLUDED.tags,
                 metadata       = EXCLUDED.metadata,
+                skills         = EXCLUDED.skills,
+                technologies   = EXCLUDED.technologies,
                 total_chunks   = EXCLUDED.total_chunks,
                 content_hash   = EXCLUDED.content_hash,
                 embedding      = EXCLUDED.embedding,
@@ -181,6 +185,8 @@ export class RdsVectorStore implements IVectorStore {
                 chunk.fileType ?? null,
                 toPostgresArray(chunk.tags ?? []),
                 JSON.stringify(chunk.metadata ?? {}),
+                toPostgresArray(chunk.skills ?? []),
+                toPostgresArray(chunk.technologies ?? []),
                 chunk.chunkIndex,
                 chunk.totalChunks,
                 chunk.contentHash,

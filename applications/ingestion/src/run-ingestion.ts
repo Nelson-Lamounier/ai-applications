@@ -22,6 +22,7 @@ import {
     RdsVectorStore,
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
+    BedrockChunkEnricher,
     IngestionPipeline,
     FileFilter,
     ChunkerRegistry,
@@ -53,7 +54,14 @@ async function main(): Promise<void> {
     const repoAdapter  = new GitHubAdapter(env.githubToken);
     const fileFilter   = new FileFilter();
     const chunkerReg   = ChunkerRegistry.withDefaults();
-    const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder);
+
+    // Skill-evidence enricher. Disable per ingestion via ENRICHMENT_DISABLED=1.
+    // Cap per-run cost via MAX_ENRICHMENT_PER_INGESTION (default 2000).
+    const enricher = process.env.ENRICHMENT_DISABLED === '1'
+        ? undefined
+        : BedrockChunkEnricher.fromEnvironment();
+
+    const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher });
     const orchestrator = new RepoIngestionOrchestrator(repoAdapter, fileFilter, chunkerReg, pipeline);
 
     try {

@@ -29,12 +29,16 @@ export type {
 export type { IVectorStore }          from './interfaces/IVectorStore.js';
 export type { ISyncStateRepository }  from './interfaces/ISyncStateRepository.js';
 export type { IEmbeddingProvider }    from './interfaces/IEmbeddingProvider.js';
+export type { IChunkEnricher, ChunkEnrichment } from './interfaces/IChunkEnricher.js';
 
 // Implementations
 export { RdsVectorStore }            from './implementations/RdsVectorStore.js';
 export type { RdsClientConfig }      from './implementations/RdsVectorStore.js';
 export { RdsSyncStateRepository }    from './implementations/RdsSyncStateRepository.js';
 export { TitanEmbeddingProvider }    from './implementations/TitanEmbeddingProvider.js';
+export { BedrockChunkEnricher }      from './implementations/BedrockChunkEnricher.js';
+export type { BedrockChunkEnricherConfig } from './implementations/BedrockChunkEnricher.js';
 
 // Pipeline
 export { IngestionPipeline }          from './pipeline/IngestionPipeline.js';
+export type { IngestionPipelineOptions } from './pipeline/IngestionPipeline.js';
