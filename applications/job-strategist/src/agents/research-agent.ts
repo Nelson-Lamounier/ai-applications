@@ -18,8 +18,8 @@ import {
     RetrieveCommand,
 } from '@aws-sdk/client-bedrock-agent-runtime';
 
-import { runAgent, parseJsonResponse, InputSanitiser, log } from '@bedrock/shared';
-import type { PiiPattern } from '@bedrock/shared';
+import { runAgent, parseJsonResponse, InputSanitiser, BedrockReranker, log } from '@bedrock/shared';
+import type { IReranker, PiiPattern, RerankCandidate } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
@@ -77,14 +77,39 @@ const RESEARCH_THINKING_BUDGET = 4096;
 /** Knowledge Base ID for Pinecone retrieval */
 const KNOWLEDGE_BASE_ID = process.env.KNOWLEDGE_BASE_ID ?? '';
 
-/** Maximum KB passages to retrieve */
+/**
+ * Final number of KB passages handed to the LLM. With reranking enabled,
+ * we over-fetch this many × RETRIEVE_OVERFETCH from the KB and let the
+ * cross-encoder pick the best slice.
+ */
 const MAX_KB_PASSAGES = 15;
+
+/**
+ * Multiplier applied to MAX_KB_PASSAGES when fetching from the KB so the
+ * reranker has a richer candidate pool to choose from. 50 candidates is
+ * the industry baseline; 15 × 4 = 60 trims to 50 inside the rerank call
+ * to stay under the Bedrock Rerank per-call cap of 100.
+ */
+const RETRIEVE_OVERFETCH = 4;
+const MAX_RERANK_CANDIDATES = 50;
+
+/**
+ * Reranking is best-effort: a thrown rerank call falls back to the
+ * pre-rerank top-MAX_KB_PASSAGES of the KB result set. Set
+ * RERANKER_DISABLED=1 to bypass entirely (e.g. for cost-controlled runs
+ * or when the rerank model is unavailable in the deployment region).
+ */
+const RERANKER_DISABLED = process.env.RERANKER_DISABLED === '1';
 
 // =============================================================================
 // CLIENTS
 // =============================================================================
 
 const bedrockAgentClient = new BedrockAgentRuntimeClient({});
+
+const reranker: IReranker | null = RERANKER_DISABLED
+    ? null
+    : BedrockReranker.fromEnvironment();
 
 // =============================================================================
 // KNOWLEDGE BASE RETRIEVAL
@@ -97,6 +122,14 @@ const bedrockAgentClient = new BedrockAgentRuntimeClient({});
  * this user — prevents cross-user data leakage and ensures KB evidence
  * is grounded in the candidate's own portfolio, not a shared corpus.
  *
+ * Retrieval flow (pick #5 in the Tucaken-product roadmap):
+ *   1. Over-fetch up to RETRIEVE_OVERFETCH × MAX_KB_PASSAGES candidates
+ *      (capped at MAX_RERANK_CANDIDATES) from the KB by cosine similarity.
+ *   2. Rerank with a Bedrock cross-encoder against the original query.
+ *   3. Take the top MAX_KB_PASSAGES from the reranked order.
+ *   4. On any rerank failure, fall back to the cosine-only top-K so the
+ *      strategist pipeline never breaks because of a rerank-time error.
+ *
  * @param query - Search query text for the Knowledge Base
  * @param userId - Authenticated user ID for metadata filtering
  * @returns Raw passages with source/score metadata prefix
@@ -106,14 +139,22 @@ async function querySingleKb(query: string, userId: string): Promise<string[]> {
         return [];
     }
 
-    log('INFO', 'Querying KB', { agent: 'strategist-research', queryPreview: query.substring(0, 80) });
+    const overfetch = Math.min(MAX_KB_PASSAGES * RETRIEVE_OVERFETCH, MAX_RERANK_CANDIDATES);
+
+    log('INFO', 'Querying KB', {
+        agent:        'strategist-research',
+        queryPreview: query.substring(0, 80),
+        retrieveK:    overfetch,
+        finalK:       MAX_KB_PASSAGES,
+        rerank:       reranker !== null,
+    });
 
     const command = new RetrieveCommand({
         knowledgeBaseId: KNOWLEDGE_BASE_ID,
         retrievalQuery: { text: query },
         retrievalConfiguration: {
             vectorSearchConfiguration: {
-                numberOfResults: MAX_KB_PASSAGES,
+                numberOfResults: overfetch,
                 filter: {
                     equals: { key: 'userId', value: userId },
                 },
@@ -123,19 +164,88 @@ async function querySingleKb(query: string, userId: string): Promise<string[]> {
 
     const response = await bedrockAgentClient.send(command);
     const results = response.retrievalResults ?? [];
-    const passages: string[] = [];
 
-    for (const result of results) {
-        if (result.content?.text) {
-            const source = result.location?.s3Location?.uri ?? 'unknown';
-            const score = result.score ?? 0;
-            passages.push(
-                `[Source: ${source}, Score: ${score.toFixed(3)}]\n${result.content.text}`,
-            );
+    /** Tagged candidate set so we can map rerank IDs → original passages. */
+    const passages = results
+        .filter(r => Boolean(r.content?.text))
+        .map((r, i) => ({
+            id:     String(i),
+            source: r.location?.s3Location?.uri ?? 'unknown',
+            cosineScore: r.score ?? 0,
+            text:   r.content!.text!,
+        }));
+
+    if (passages.length === 0) return [];
+
+    const reranked = await rerankPassages(query, passages);
+
+    return reranked.map(p =>
+        `[Source: ${p.source}, Score: ${p.score.toFixed(3)}]\n${p.text}`,
+    );
+}
+
+interface RawPassage {
+    id:          string;
+    source:      string;
+    cosineScore: number;
+    text:        string;
+}
+
+interface RankedPassage {
+    source: string;
+    /** Cosine score if no rerank, otherwise rerank relevance. */
+    score:  number;
+    text:   string;
+}
+
+/**
+ * Rerank candidates with the configured Bedrock reranker, falling back to
+ * cosine top-K on any failure so the strategist pipeline survives rerank
+ * outages, throttling, or model-availability gaps.
+ */
+async function rerankPassages(
+    query:     string,
+    passages:  RawPassage[],
+): Promise<RankedPassage[]> {
+    const cosineTopK: RankedPassage[] = passages
+        .slice(0, MAX_KB_PASSAGES)
+        .map(p => ({ source: p.source, score: p.cosineScore, text: p.text }));
+
+    if (!reranker || passages.length <= 1) return cosineTopK;
+
+    const candidates: RerankCandidate[] = passages.map(p => ({
+        id:   p.id,
+        text: p.text,
+    }));
+
+    try {
+        const ranked = await reranker.rerank(query, candidates, { topK: MAX_KB_PASSAGES });
+
+        // Map rerank IDs back to passage objects in rerank order.
+        const byId = new Map(passages.map(p => [p.id, p] as const));
+        const out: RankedPassage[] = [];
+        for (const r of ranked) {
+            const passage = byId.get(r.id);
+            if (!passage) continue;
+            out.push({
+                source: passage.source,
+                score:  r.relevanceScore,
+                text:   passage.text,
+            });
         }
+        log('INFO', 'Reranked passages', {
+            agent: 'strategist-research',
+            input: passages.length,
+            output: out.length,
+        });
+        return out.length > 0 ? out : cosineTopK;
+    } catch (err) {
+        log('WARN', 'Rerank failed; falling back to cosine top-K', {
+            agent: 'strategist-research',
+            error: err instanceof Error ? err.message : String(err),
+        });
+        return cosineTopK;
     }
-
-    return passages;
 }
 
 /**

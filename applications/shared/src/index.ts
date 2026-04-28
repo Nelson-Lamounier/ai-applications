@@ -232,6 +232,17 @@ export {
     computeKbQuality,
 } from './rds/index.js';
 
+// ─── Retrieval (Reranking) ──────────────────────────────────────────────────
+export type {
+    IReranker,
+    RerankCandidate,
+    RerankResult,
+    RerankOptions,
+    BedrockRerankerConfig,
+} from './retrieval/index.js';
+
+export { BedrockReranker } from './retrieval/index.js';
+
 // ─── Security (Input/Output Sanitisation) ────────────────────────────────────
 export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';
 export type { InputSanitiserConfig } from './security/input-sanitiser.js';
