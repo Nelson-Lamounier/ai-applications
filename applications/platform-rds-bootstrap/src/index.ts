@@ -265,6 +265,16 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_technologies
 ALTER TABLE repo_sync_state
   ADD COLUMN IF NOT EXISTS kb_quality_score     NUMERIC(4,2),
   ADD COLUMN IF NOT EXISTS kb_quality_breakdown JSONB;
+
+-- GitHub App integration (pick #5): store installation_id per OAuth connection
+-- so the server can generate short-lived installation tokens on demand.
+-- installation_id is the numeric ID GitHub assigns when a user installs the App.
+ALTER TABLE oauth_connections
+  ADD COLUMN IF NOT EXISTS installation_id TEXT;
+
+-- default_branch tracks which branch the ingestion Job targets per connected repo.
+ALTER TABLE repositories
+  ADD COLUMN IF NOT EXISTS default_branch TEXT NOT NULL DEFAULT 'main';
 `;
 
 async function main(): Promise<void> {
