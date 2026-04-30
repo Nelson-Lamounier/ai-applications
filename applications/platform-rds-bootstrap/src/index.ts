@@ -2,7 +2,8 @@
  * @format
  * Platform RDS Bootstrap — DDL runner
  *
- * Runs idempotent DDL: pgvector extension, all platform tables, indexes.
+ * Runs idempotent DDL: pgvector extension, all platform tables, indexes,
+ * and all numbered migration files in src/migrations/ (in lexical order).
  * Exits 0 on success, non-zero on error (K8s Job backoffLimit handles retries).
  *
  * Connects directly to RDS (not via PgBouncer) — PgBouncer may not be ready
@@ -16,6 +17,9 @@
  *   PGPASSWORD  — auto-generated (from platform-rds-credentials)
  */
 import { Pool } from 'pg';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const pool = new Pool({
     host:     process.env.PGHOST,
@@ -277,13 +281,38 @@ ALTER TABLE repositories
   ADD COLUMN IF NOT EXISTS default_branch TEXT NOT NULL DEFAULT 'main';
 `;
 
+function loadMigrations(): { name: string; sql: string }[] {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const migrationsDir = path.resolve(__dirname, '../../migrations');
+    if (!fs.existsSync(migrationsDir)) return [];
+    return fs
+        .readdirSync(migrationsDir)
+        .filter((f) => f.endsWith('.sql'))
+        .sort()
+        .map((f) => ({
+            name: f,
+            sql:  fs.readFileSync(path.join(migrationsDir, f), 'utf8'),
+        }));
+}
+
 async function main(): Promise<void> {
     console.log('Platform RDS bootstrap starting...');
     let client;
     try {
         client = await pool.connect();
-        console.log('Running DDL...');
+
+        console.log('Running base DDL...');
         await client.query(DDL);
+
+        const migrations = loadMigrations();
+        if (migrations.length > 0) {
+            console.log(`Running ${migrations.length} migration(s)...`);
+            for (const { name, sql } of migrations) {
+                console.log(`  → ${name}`);
+                await client.query(sql);
+            }
+        }
+
         console.log('Bootstrap complete.');
     } finally {
         client?.release();
