@@ -19,7 +19,6 @@
 import { Pool } from 'pg';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const pool = new Pool({
     host:     process.env.PGHOST,
@@ -282,7 +281,6 @@ ALTER TABLE repositories
 `;
 
 function loadMigrations(): { name: string; sql: string }[] {
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const migrationsDir = path.resolve(__dirname, '../../migrations');
     if (!fs.existsSync(migrationsDir)) return [];
     return fs
