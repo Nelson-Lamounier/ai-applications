@@ -65,7 +65,7 @@ export class BedrockDataStack extends cdk.Stack {
     public readonly dataBucket: s3.Bucket;
 
     /** The S3 bucket for user-uploaded resume files (presigned PUT) */
-    public readonly assetsBucket: s3.Bucket;
+    public readonly assetsBucket: s3.IBucket;
 
     /** S3 bucket for server access logs */
     public readonly accessLogsBucket: s3.Bucket;
@@ -147,36 +147,16 @@ export class BedrockDataStack extends cdk.Stack {
         // =================================================================
         // S3 Bucket — Resume Upload Assets
         //
-        // Receives presigned PUT uploads from the browser (resume PDFs/DOCX).
-        // CORS allows PUT from any origin so the presigned URL works from the
-        // tucaken-app frontend regardless of deployment domain.
-        // Separate from dataBucket: different IAM surface, shorter lifecycle,
-        // and CORS is scoped here only.
+        // Bucket `${namePrefix}-assets` was pre-provisioned outside CDK.
+        // We import it by name so CloudFormation does not attempt to create
+        // or delete it, then publish its name to SSM for cross-service
+        // discovery (ESO → admin-api-bedrock secret → ASSETS_BUCKET_NAME).
         // =================================================================
-        this.assetsBucket = new s3.Bucket(this, 'AssetsBucket', {
-            bucketName: `${namePrefix}-assets`,
-            encryption: s3.BucketEncryption.S3_MANAGED,
-            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-            enforceSSL: true,
-            removalPolicy,
-            autoDeleteObjects: removalPolicy === cdk.RemovalPolicy.DESTROY,
-            serverAccessLogsBucket: this.accessLogsBucket,
-            serverAccessLogsPrefix: 'assets-bucket/',
-            cors: [
-                {
-                    allowedMethods: [s3.HttpMethods.PUT],
-                    allowedOrigins: ['*'],
-                    allowedHeaders: ['Content-Type', 'Content-Length'],
-                    maxAge: 3000,
-                },
-            ],
-            lifecycleRules: [
-                {
-                    // Uploaded resumes are processed within minutes; expire raw files after 7 days
-                    expiration: cdk.Duration.days(7),
-                },
-            ],
-        });
+        this.assetsBucket = s3.Bucket.fromBucketName(
+            this,
+            'AssetsBucket',
+            `${namePrefix}-assets`,
+        );
 
         // =================================================================
         // Application Inference Profiles — FinOps Cost Attribution
