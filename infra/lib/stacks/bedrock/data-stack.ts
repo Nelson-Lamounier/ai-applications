@@ -64,6 +64,9 @@ export class BedrockDataStack extends cdk.Stack {
     /** The S3 bucket for Knowledge Base documents */
     public readonly dataBucket: s3.Bucket;
 
+    /** The S3 bucket for user-uploaded resume files (presigned PUT) */
+    public readonly assetsBucket: s3.Bucket;
+
     /** S3 bucket for server access logs */
     public readonly accessLogsBucket: s3.Bucket;
 
@@ -142,6 +145,40 @@ export class BedrockDataStack extends cdk.Stack {
         this.bucketName = this.dataBucket.bucketName;
 
         // =================================================================
+        // S3 Bucket — Resume Upload Assets
+        //
+        // Receives presigned PUT uploads from the browser (resume PDFs/DOCX).
+        // CORS allows PUT from any origin so the presigned URL works from the
+        // tucaken-app frontend regardless of deployment domain.
+        // Separate from dataBucket: different IAM surface, shorter lifecycle,
+        // and CORS is scoped here only.
+        // =================================================================
+        this.assetsBucket = new s3.Bucket(this, 'AssetsBucket', {
+            bucketName: `${namePrefix}-assets`,
+            encryption: s3.BucketEncryption.S3_MANAGED,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            enforceSSL: true,
+            removalPolicy,
+            autoDeleteObjects: removalPolicy === cdk.RemovalPolicy.DESTROY,
+            serverAccessLogsBucket: this.accessLogsBucket,
+            serverAccessLogsPrefix: 'assets-bucket/',
+            cors: [
+                {
+                    allowedMethods: [s3.HttpMethods.PUT],
+                    allowedOrigins: ['*'],
+                    allowedHeaders: ['Content-Type', 'Content-Length'],
+                    maxAge: 3000,
+                },
+            ],
+            lifecycleRules: [
+                {
+                    // Uploaded resumes are processed within minutes; expire raw files after 7 days
+                    expiration: cdk.Duration.days(7),
+                },
+            ],
+        });
+
+        // =================================================================
         // Application Inference Profiles — FinOps Cost Attribution
         //
         // Each profile wraps a system-defined inference profile with
@@ -196,6 +233,13 @@ export class BedrockDataStack extends cdk.Stack {
             parameterName: `/${namePrefix}/data-bucket-name`,
             stringValue: this.dataBucket.bucketName,
             description: `Knowledge Base data bucket name for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        new ssm.StringParameter(this, 'AssetsBucketNameParam', {
+            parameterName: `/${namePrefix}/assets-bucket-name`,
+            stringValue: this.assetsBucket.bucketName,
+            description: `Resume upload assets bucket name for ${namePrefix}`,
             tier: ssm.ParameterTier.STANDARD,
         });
 
