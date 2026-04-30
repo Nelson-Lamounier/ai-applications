@@ -29,6 +29,7 @@
     { "path": "self-healing" },
     { "path": "chatbot" },
     { "path": "job-strategist" },
-    { "path": "ingestion" }
+    { "path": "ingestion" },
+    { "path": "resume-import-processor" }
   ]
 }

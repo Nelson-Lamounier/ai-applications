@@ -146,6 +146,49 @@ export interface AgentConfig {
 
     /** System prompt content blocks for the Converse API */
     readonly systemPrompt: SystemContentBlock[];
+
+    /**
+     * Logical pipeline name — written to prompt_invocations.pipeline.
+     * e.g. 'job-strategist' | 'article-pipeline' | 'resume-import'
+     */
+    readonly pipeline?: string;
+
+    /**
+     * Logical prompt identifier for version tracking.
+     * e.g. 'strategist-persona-v3' | 'resume-builder-v1'
+     * Written to prompt_invocations.prompt_id.
+     */
+    readonly promptId?: string;
+}
+
+// =============================================================================
+// PROMPT OBSERVABILITY
+// =============================================================================
+
+/**
+ * Flat log record produced by runAgent() after each successful Bedrock call.
+ * Passed to onInvocationComplete so each pipeline can persist it to PostgreSQL.
+ */
+export interface AgentInvocationLog {
+    readonly pipeline:           string;
+    readonly agent:              AgentName;
+    readonly modelId:            string;
+    readonly promptVersion:      string | undefined;
+    readonly promptId:           string | undefined;
+    readonly systemPromptHash:   string;
+    readonly outputHash:         string;
+    readonly systemPromptTokens: number;
+    readonly userMessageTokens:  number;
+    readonly outputTokens:       number;
+    readonly cacheTokensSaved:   number;
+    readonly inputCostCents:     number;
+    readonly outputCostCents:    number;
+    readonly totalCostCents:     number;
+    readonly latencyMs:          number;
+    readonly cacheHit:           boolean;
+    readonly traceId:            string | undefined;
+    readonly userId:             string | undefined;
+    readonly resumeGenerationId: string | undefined;
 }
 
 // =============================================================================

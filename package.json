@@ -10,6 +10,7 @@
     "applications/chatbot",
     "applications/self-healing",
     "applications/ingestion",
+    "applications/resume-import-processor",
     "api/public-api",
     "infra"
   ],

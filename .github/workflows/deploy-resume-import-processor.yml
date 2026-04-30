@@ -1,0 +1,158 @@
+# =============================================================================
+# Deploy Resume-Import-Processor Image (Development)
+# =============================================================================
+#
+# Builds the resume-import-processor K8s Job container, pushes to ECR,
+# and updates /k8s/{env}/job-images/resume-import-processor in SSM.
+#
+# The admin-api reads the image URI from the SSM-backed Secret file mount
+# (/etc/admin-api/images/resume-import-processor) with a 30s in-process
+# cache — no pod restart required after an image update.
+#
+# Triggers:
+#   - Push to develop touching applications/resume-import-processor/**
+#   - Push to develop touching applications/shared/** (shared package change)
+#   - Manual workflow_dispatch
+#
+# Prerequisite: ECR repo must exist with its URI at
+#   /shared/ecr-resume-import-processor/{env}/repository-uri
+# =============================================================================
+
+name: "Deploy Resume-Import-Processor (Dev)"
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "applications/resume-import-processor/**"
+      - "applications/shared/**"
+      - ".github/workflows/deploy-resume-import-processor.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENVIRONMENT: development
+  AWS_REGION: "eu-west-1"
+  IMAGE_TAG: "${{ github.sha }}-r${{ github.run_attempt }}"
+
+concurrency:
+  group: deploy-resume-import-processor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "[Resume-Import-Processor] Build Docker Image"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ vars.ENVIRONMENT || 'development' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image (resume-import-processor)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: applications/resume-import-processor/Dockerfile
+          push: false
+          load: false
+          tags: resume-import-processor:${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=resume-import-processor
+          cache-to: type=gha,mode=max,scope=resume-import-processor
+          provenance: false
+          outputs: type=docker,dest=/tmp/resume-import-processor-image.tar
+
+      - name: Cache Resume-Import-Processor Image
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/resume-import-processor-image.tar
+          key: resume-import-processor-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build Summary
+        run: |
+          IMAGE_SIZE=$(du -sh /tmp/resume-import-processor-image.tar | cut -f1)
+          echo "## [Resume-Import-Processor] Docker Build" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: $IMAGE_SIZE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dockerfile**: applications/resume-import-processor/Dockerfile" >> $GITHUB_STEP_SUMMARY
+
+  push:
+    name: "[Resume-Import-Processor] Push to ECR"
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ vars.ENVIRONMENT || 'development' }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS Credentials
+        uses: ./.github/actions/configure-aws
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Restore Resume-Import-Processor Image from Cache
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/resume-import-processor-image.tar
+          key: resume-import-processor-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+
+      - name: Load Docker Image
+        run: docker load -i /tmp/resume-import-processor-image.tar
+
+      - name: Resolve ECR URL (resume-import-processor)
+        id: resolve-ecr
+        run: |
+          ECR_URL=$(aws ssm get-parameter \
+            --name "/shared/ecr-resume-import-processor/$ENVIRONMENT/repository-uri" \
+            --query 'Parameter.Value' \
+            --output text)
+
+          if [ -z "$ECR_URL" ] || [ "$ECR_URL" = "None" ]; then
+            echo "::error::resume-import-processor ECR URL not found at /shared/ecr-resume-import-processor/$ENVIRONMENT/repository-uri — provision the ECR repo first"
+            exit 1
+          fi
+
+          echo "::add-mask::$ECR_URL"
+          echo "ecr-url=$ECR_URL" >> $GITHUB_OUTPUT
+
+      - name: Push Resume-Import-Processor Image to ECR
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_URL"
+
+          docker tag "resume-import-processor:$IMAGE_TAG" "$ECR_URL:$IMAGE_TAG"
+          docker push "$ECR_URL:$IMAGE_TAG"
+
+      - name: Publish image URI to SSM
+        # Decoupled from admin-api Rollout — admin-api reads from file mount
+        # (/etc/admin-api/images/resume-import-processor) with a 30s cache.
+        # ESO syncs the Secret when this SSM param changes (~60s). No restart.
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+        run: |
+          aws ssm put-parameter \
+            --name "/k8s/$ENVIRONMENT/job-images/resume-import-processor" \
+            --value "$ECR_URL:$IMAGE_TAG" \
+            --type String \
+            --overwrite
+
+      - name: Push Summary
+        run: |
+          echo "## [Resume-Import-Processor] ECR Push" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "- **SSM**: \`/k8s/$ENVIRONMENT/job-images/resume-import-processor\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Path to admin-api**: SSM → ESO → Secret → file mount (no pod restart)" >> $GITHUB_STEP_SUMMARY

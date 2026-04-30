@@ -27,6 +27,8 @@
  * ```
  */
 
+import crypto from 'node:crypto';
+
 import {
     BedrockRuntimeClient,
     ConverseCommand,
@@ -34,7 +36,7 @@ import {
 
 import { estimateInvocationCost } from './metrics.js';
 import type { TokenUsage } from './metrics.js';
-import type { AgentConfig, AgentResult } from './types.js';
+import type { AgentConfig, AgentResult, AgentInvocationLog } from './types.js';
 import type { BasePipelineContext } from './base-agent.js';
 
 // =============================================================================
@@ -71,6 +73,25 @@ export interface RunAgentOptions<T> {
 
     /** Pipeline context for token/cost accumulation */
     readonly pipelineContext: BasePipelineContext;
+
+    /**
+     * Optional callback invoked after each successful agent call.
+     * Receives a flat log record for persistence to prompt_invocations.
+     * Errors thrown here are caught and logged — they do not abort the pipeline.
+     */
+    readonly onInvocationComplete?: (log: AgentInvocationLog) => Promise<void>;
+
+    /**
+     * Optional user ID to associate with this invocation (prompt_invocations.user_id).
+     * Pass when the pipeline is scoped to a specific authenticated user.
+     */
+    readonly userId?: string;
+
+    /**
+     * Optional resume/tailored-resume ID for feedback correlation.
+     * Written to prompt_invocations.resume_generation_id.
+     */
+    readonly resumeGenerationId?: string;
 }
 
 /**
@@ -131,17 +152,36 @@ function extractTextFromResponse(
 }
 
 /**
+ * Extended token usage including Bedrock prompt-cache fields.
+ * Not exported — internal to agent-runner for building the invocation log.
+ */
+interface ExtendedTokenUsage extends TokenUsage {
+    readonly cacheReadInputTokens: number;
+}
+
+/**
  * Extract token usage from a Bedrock Converse API response.
+ * Captures cache read tokens when Bedrock prompt caching is active.
  *
  * @param usage - The usage object from the Converse response
  * @returns Normalised token usage with defaults for missing fields
  */
-function extractTokenUsage(usage?: { inputTokens?: number; outputTokens?: number }): TokenUsage {
+function extractTokenUsage(usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadInputTokens?: number;
+}): ExtendedTokenUsage {
     return {
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
         thinkingTokens: 0, // Thinking tokens not separately reported in current API
+        cacheReadInputTokens: usage?.cacheReadInputTokens ?? 0,
     };
+}
+
+/** SHA-256 hex digest of an arbitrary string. */
+function sha256(value: string): string {
+    return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 /**
@@ -238,8 +278,8 @@ function emitAgentMetrics(
  * @throws AgentExecutionError wrapping the original error with agent context
  */
 export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentResult<T>> {
-    const { config, userMessage, parseResponse, pipelineContext } = options;
-    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt } = config;
+    const { config, userMessage, parseResponse, pipelineContext, onInvocationComplete, userId, resumeGenerationId } = options;
+    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, pipeline, promptId } = config;
 
     // =========================================================================
     // VALIDATION: Extended Thinking requires maxTokens > budget_tokens
@@ -337,6 +377,44 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             `[${agentName}] Complete — cost=$${costUsd.toFixed(6)}, ` +
             `cumulativeCost=$${pipelineContext.cumulativeCostUsd.toFixed(6)}`,
         );
+
+        // Build and dispatch the invocation log (non-blocking — errors are swallowed)
+        if (onInvocationComplete) {
+            const systemPromptHash = sha256(JSON.stringify(systemPrompt));
+            const outputHash       = sha256(textContent);
+            const cacheHit         = tokenUsage.cacheReadInputTokens > 0;
+
+            // Convert USD cost to integer cents (avoids float drift in PG)
+            const inputCostCents  = Math.round(costUsd * 0.6 * 100);  // ~60% of cost is input
+            const outputCostCents = Math.round(costUsd * 0.4 * 100);
+            const totalCostCents  = Math.round(costUsd * 100);
+
+            const log: AgentInvocationLog = {
+                pipeline:           pipeline ?? pipelineContext.pipelineId,
+                agent:              agentName,
+                modelId,
+                promptVersion:      process.env['PROMPT_VERSION'],
+                promptId,
+                systemPromptHash,
+                outputHash,
+                systemPromptTokens: tokenUsage.inputTokens,
+                userMessageTokens:  0,   // Converse API doesn't split system vs user
+                outputTokens:       tokenUsage.outputTokens,
+                cacheTokensSaved:   tokenUsage.cacheReadInputTokens,
+                inputCostCents,
+                outputCostCents,
+                totalCostCents,
+                latencyMs:          durationMs,
+                cacheHit,
+                traceId:            process.env['_X_AMZN_TRACE_ID'],
+                userId,
+                resumeGenerationId,
+            };
+
+            onInvocationComplete(log).catch((err) => {
+                console.warn(`[${agentName}] onInvocationComplete failed (non-fatal)`, err);
+            });
+        }
 
         return {
             data,
