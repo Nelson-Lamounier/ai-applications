@@ -147,16 +147,37 @@ export class BedrockDataStack extends cdk.Stack {
         // =================================================================
         // S3 Bucket — Resume Upload Assets
         //
-        // Bucket `${namePrefix}-assets` was pre-provisioned outside CDK.
-        // We import it by name so CloudFormation does not attempt to create
-        // or delete it, then publish its name to SSM for cross-service
-        // discovery (ESO → admin-api-bedrock secret → ASSETS_BUCKET_NAME).
+        // Stores PDF/DOCX files uploaded by users before the K8s Job
+        // processes them. Name is CDK-generated (no hardcoded string) to
+        // guarantee global uniqueness. CORS allows browser-direct PUT via
+        // presigned URL from all allowed origins.
         // =================================================================
-        this.assetsBucket = s3.Bucket.fromBucketName(
-            this,
-            'AssetsBucket',
-            `${namePrefix}-assets`,
-        );
+        this.assetsBucket = new s3.Bucket(this, 'AssetsBucket', {
+            encryption: s3.BucketEncryption.S3_MANAGED,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            enforceSSL: true,
+            removalPolicy,
+            autoDeleteObjects: removalPolicy === cdk.RemovalPolicy.DESTROY,
+            serverAccessLogsBucket: this.accessLogsBucket,
+            serverAccessLogsPrefix: 'assets-bucket/',
+            cors: [
+                {
+                    allowedOrigins: [
+                        'http://localhost:5001',
+                        'https://tucaken.com',
+                        'https://www.tucaken.com',
+                    ],
+                    allowedMethods: [
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.GET,
+                        s3.HttpMethods.HEAD,
+                    ],
+                    allowedHeaders: ['*'],
+                    exposedHeaders: ['ETag'],
+                    maxAge: 3000,
+                },
+            ],
+        });
 
         // =================================================================
         // Application Inference Profiles — FinOps Cost Attribution
