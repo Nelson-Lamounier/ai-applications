@@ -281,7 +281,7 @@ ALTER TABLE repositories
 `;
 
 function loadMigrations(): { name: string; sql: string }[] {
-    const migrationsDir = path.resolve(__dirname, '../../migrations');
+    const migrationsDir = path.resolve(__dirname, '../migrations');
     if (!fs.existsSync(migrationsDir)) return [];
     return fs
         .readdirSync(migrationsDir)
