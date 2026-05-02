@@ -1,12 +1,18 @@
 # @format
-# @description Deploy Bedrock AI Infrastructure to Development
+# @description Deploy Bedrock + Self-Healing AI Infrastructure to Development
 #
-# Deploys the 4-stack Bedrock architecture (post-Phase-5 cleanup) in
-# dependency order:
-#   1. Bedrock-Data   — S3 bucket for Knowledge Base source documents
-#   2. Bedrock-Kb     — Bedrock Knowledge Base (Pinecone vector store)
-#   3. Bedrock-Agent  — Bedrock Agent + Guardrail (KB associated)
-#   4. Bedrock-Api    — API Gateway + Lambda for agent invocation
+# Deploys the 4-stack Bedrock architecture then the 2-stack Self-Healing
+# system in dependency order:
+#   1. Bedrock-Data              — S3 bucket for Knowledge Base source documents
+#   2. Bedrock-Kb                — Bedrock Knowledge Base (Pinecone vector store)
+#   3. Bedrock-Agent             — Bedrock Agent + Guardrail (KB associated)
+#   4. Bedrock-Api               — API Gateway + Lambda for agent invocation
+#   5. SelfHealing-Gateway       — AgentCore MCP Gateway with cluster inspection tools
+#   6. SelfHealing-Agent         — Bedrock agentic loop + SNS report topic
+#
+# Prerequisites for self-healing stacks:
+#   - SSM param /k8s/development/ops-email must exist (creates SNS subscription)
+#   - SelfHealing-Gateway must deploy before SelfHealing-Agent (exports gateway URL)
 #
 # RDS (Postgres + pgvector) is owned by the Nelson-Lamounier/cdk-monitoring
 # repo (PlatformRds-development stack). Application code reads RDS coords
@@ -18,7 +24,7 @@
 #
 # For KB document syncing without redeploying stacks, use sync-kb-docs.yml.
 
-name: Deploy Bedrock (Dev)
+name: Deploy Bedrock + Self-Healing (Dev)
 
 on:
   workflow_dispatch: {}
@@ -28,6 +34,10 @@ on:
   #     - "infra/lib/stacks/bedrock/**"
   #     - "infra/lib/config/bedrock/**"
   #     - "infra/lib/projects/bedrock/**"
+  #     - "infra/lib/stacks/self-healing/**"
+  #     - "infra/lib/config/self-healing/**"
+  #     - "infra/lib/projects/self-healing/**"
+  #     - "applications/self-healing/src/**"
   #     - "infra/bin/app.ts"
   #     - ".github/workflows/deploy-bedrock.yml"
   #     - ".github/workflows/_deploy-stack.yml"
@@ -115,3 +125,191 @@ jobs:
       use-container: false
     secrets:
       AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+
+  # ===========================================================================
+  # Stack 5: Self-Healing Gateway (AgentCore MCP + cluster inspection tools)
+  # Depends on: API (ensures Bedrock stacks are stable before self-healing)
+  # ===========================================================================
+  deploy-self-healing-gateway:
+    name: Deploy Self-Healing Gateway
+    needs: [deploy-api]
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: SelfHealing-Gateway-development
+      project: self-healing
+      environment: development
+      aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
+      aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      require-approval: never
+      use-container: false
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+
+  # ===========================================================================
+  # Stack 6: Self-Healing Agent (Bedrock agentic loop + SNS report topic)
+  # Depends on: Gateway (exports MCP gateway URL consumed by agent Lambda)
+  # Prereq:     SSM /k8s/development/ops-email must exist → SNS subscription
+  # ===========================================================================
+  deploy-self-healing-agent:
+    name: Deploy Self-Healing Agent
+    needs: [deploy-self-healing-gateway]
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: SelfHealing-Agent-development
+      project: self-healing
+      environment: development
+      aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
+      aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      require-approval: never
+      use-container: false
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+
+  # ===========================================================================
+  # Smoke Test: Verify SNS subscriptions are in place
+  # Checks both topics; agent-reports is required, bootstrap-alarm is optional
+  # (expected absent until K8s-SsmAutomation-development is deployed).
+  # ===========================================================================
+  smoke-test-subscriptions:
+    name: Smoke Test — SNS Subscriptions
+    needs: [deploy-self-healing-agent]
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS Credentials
+        uses: ./.github/actions/configure-aws
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+
+      - name: Resolve AWS Account ID
+        id: resolve-account
+        shell: bash
+        run: |
+          ACCOUNT_ID="${INPUT_ACCOUNT_ID:-$VARS_ACCOUNT_ID}"
+          if [ -z "$ACCOUNT_ID" ]; then
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "")
+          fi
+          if [ -z "$ACCOUNT_ID" ]; then
+            echo "ERROR: Could not resolve AWS Account ID"
+            exit 1
+          fi
+          echo "::add-mask::$ACCOUNT_ID"
+          echo "account_id=$ACCOUNT_ID" >> "$GITHUB_OUTPUT"
+          echo "[OK] Resolved AWS Account ID"
+        env:
+          INPUT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          VARS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+
+      - name: Verify SNS Subscriptions
+        shell: bash
+        run: |
+          REGION="$AWS_REGION"
+          ACCOUNT_ID="$RESOLVED_ACCOUNT_ID"
+
+          # check_topic <topic-name> <required: true|false>
+          # Looks up all subscriptions for a topic, masks endpoint values,
+          # and prints protocol + confirmation status only.
+          check_topic() {
+            local topic_name="$1"
+            local required="$2"
+            local topic_arn="arn:aws:sns:${REGION}:${ACCOUNT_ID}:${topic_name}"
+
+            echo ""
+            echo "─── $topic_name ───────────────────────────────────────"
+
+            # Check topic exists
+            if ! aws sns get-topic-attributes \
+                --topic-arn "$topic_arn" \
+                --query 'Attributes.TopicArn' \
+                --output text > /dev/null 2>&1; then
+              if [ "$required" = "true" ]; then
+                echo "FAIL: Topic $topic_name not found. Deploy SelfHealing-Agent-development first."
+                return 1
+              else
+                echo "SKIP: Topic $topic_name not found (expected — deploy K8s-SsmAutomation-development to create it)."
+                return 0
+              fi
+            fi
+
+            # List subscriptions
+            local subs
+            subs=$(aws sns list-subscriptions-by-topic \
+              --topic-arn "$topic_arn" \
+              --query 'Subscriptions[*].{Protocol:Protocol,Endpoint:Endpoint,Status:SubscriptionArn}' \
+              --output json 2>/dev/null || echo "[]")
+
+            local count
+            count=$(echo "$subs" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+
+            if [ "$count" -eq 0 ]; then
+              if [ "$required" = "true" ]; then
+                echo "FAIL: Topic exists but has 0 subscriptions."
+                echo "      Ensure SSM /k8s/development/ops-email exists before deploying SelfHealing-Agent."
+                return 1
+              else
+                echo "WARN: Topic exists but has 0 subscriptions."
+                return 0
+              fi
+            fi
+
+            # Print each subscription — mask endpoint, show protocol + status only
+            echo "$subs" | python3 - << 'PYEOF'
+          import sys, json
+
+          data = json.loads(sys.stdin.read())
+          for sub in data:
+              protocol = sub.get("Protocol", "unknown")
+              endpoint = sub.get("Endpoint", "")
+              status_arn = sub.get("Status", "")
+
+              # Emit mask command for this endpoint value
+              if endpoint:
+                  print(f"::add-mask::{endpoint}")
+
+              # Derive human-readable status from SubscriptionArn field
+              if status_arn == "PendingConfirmation":
+                  status = "PendingConfirmation — check inbox and confirm the email"
+              elif status_arn.startswith("arn:"):
+                  status = "Confirmed"
+              else:
+                  status = status_arn
+
+              print(f"  [{protocol}] {status}")
+          PYEOF
+
+            echo "  Total: $count subscription(s)"
+            return 0
+          }
+
+          OVERALL_STATUS=0
+
+          # Required: agent reports topic (self-healing agent → ops email)
+          check_topic "self-healing-dev-agent-reports" "true" || OVERALL_STATUS=1
+
+          # Optional: bootstrap alarm topic (k8s SSM automation → ops email)
+          # Expected absent until K8s-SsmAutomation-development is deployed
+          check_topic "k8s-dev-bootstrap-alarm" "false"
+
+          echo ""
+          if [ "$OVERALL_STATUS" -ne 0 ]; then
+            echo "═══ SMOKE TEST FAILED ════════════════════════════════"
+            echo "Next steps:"
+            echo "  1. Verify SSM param exists:  aws ssm get-parameter --name /k8s/development/ops-email"
+            echo "  2. Re-deploy:                gh workflow run deploy-bedrock.yml"
+            echo "  3. Confirm subscription email in your inbox"
+            exit 1
+          else
+            echo "═══ SMOKE TEST PASSED ════════════════════════════════"
+            echo "Next steps:"
+            echo "  1. Confirm any PendingConfirmation emails in your inbox"
+            echo "  2. Deploy K8s-SsmAutomation-development (kubernetes-bootstrap repo)"
+            echo "     to create the bootstrap alarm topic and complete the alert chain"
+          fi
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          RESOLVED_ACCOUNT_ID: ${{ steps.resolve-account.outputs.account_id }}
