@@ -94,6 +94,12 @@ export interface SelfHealingAgentStackProps extends cdk.StackProps {
     readonly monthlyTokenBudget?: number;
     /** Application Inference Profile ARN for FinOps cost attribution */
     readonly inferenceProfileArn: string;
+    /**
+     * ASG name prefix used to scope the node-lifecycle EventBridge rule.
+     * Only ASGs whose names start with this prefix trigger the agent.
+     * Example: 'k8s-' matches k8s-dev-asg, k8s-dev-general-pool-asg, etc.
+     */
+    readonly k8sAsgPrefix: string;
 }
 
 /**
@@ -476,6 +482,31 @@ export class SelfHealingAgentStack extends cdk.Stack {
 
         alarmRule.addTarget(new targets.SqsQueue(this.triggerQueue, {
             messageGroupId: events.EventField.fromPath('$.detail.alarmName'),
+        }));
+
+        // =================================================================
+        // EventBridge Rule — K8s Node Termination → SQS FIFO (SH-S6b)
+        //
+        // Fires when a k8s ASG terminates an instance (CP replacement,
+        // worker replacement, AMI refresh, health-check failure).
+        // Routes to the same FIFO trigger queue as CW alarms, serialised
+        // under the static group 'node-lifecycle' so concurrent
+        // terminations queue up rather than race.
+        // =================================================================
+        const nodeLifecycleRule = new events.Rule(this, 'NodeLifecycleRule', {
+            ruleName: `${namePrefix}-node-lifecycle-trigger`,
+            description: `Routes k8s node termination events to SQS FIFO for ${namePrefix}`,
+            eventPattern: {
+                source: ['aws.autoscaling'],
+                detailType: ['EC2 Instance Terminate Successful'],
+                detail: {
+                    AutoScalingGroupName: [{ prefix: props.k8sAsgPrefix }],
+                },
+            },
+        });
+
+        nodeLifecycleRule.addTarget(new targets.SqsQueue(this.triggerQueue, {
+            messageGroupId: 'node-lifecycle',
         }));
 
         // SQS → Lambda event source (batch size 1 for serial processing)
