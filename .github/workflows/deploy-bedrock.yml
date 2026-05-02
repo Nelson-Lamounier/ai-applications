@@ -293,7 +293,7 @@ jobs:
 
           # Optional: bootstrap alarm topic (k8s SSM automation → ops email)
           # Expected absent until K8s-SsmAutomation-development is deployed
-          check_topic "k8s-dev-bootstrap-alarm" "false"
+          check_topic "k8s-bootstrap-alarm" "false"
 
           echo ""
           if [ "$OVERALL_STATUS" -ne 0 ]; then
