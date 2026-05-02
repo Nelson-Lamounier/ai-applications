@@ -233,9 +233,9 @@ describe('isDuplicate', () => {
 // =============================================================================
 
 describe('getDefaultTools', () => {
-    it('should return nine default tools', () => {
+    it('should return ten default tools', () => {
         const tools = getDefaultTools();
-        expect(tools).toHaveLength(9);
+        expect(tools).toHaveLength(10);
     });
 
     it('should include diagnose_alarm tool', () => {
@@ -300,6 +300,14 @@ describe('getDefaultTools', () => {
         expect(tool).toBeDefined();
         expect(tool?.description).toContain('ArgoCD');
     });
+
+    it('should include check_security_group_rules tool', () => {
+        const tools = getDefaultTools();
+        const tool = tools.find(t => t.name === 'check_security_group_rules');
+
+        expect(tool).toBeDefined();
+        expect(tool?.description).toContain('Security Group');
+    });
 });
 
 // =============================================================================
@@ -312,7 +320,7 @@ describe('buildToolConfig', () => {
         const config = buildToolConfig(tools);
 
         expect(config.tools).toBeDefined();
-        expect(config.tools).toHaveLength(9);
+        expect(config.tools).toHaveLength(10);
     });
 
     it('should produce toolSpec entries with correct names', () => {

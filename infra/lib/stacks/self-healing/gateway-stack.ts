@@ -904,6 +904,50 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             }]),
         });
 
+        // =================================================================
+        // Tool Lambda 11: Check Security Group Rules
+        //
+        // Queries EC2 SGs tagged Project=kubernetes for port 443 ingress
+        // rules. Detects the pattern where ALLOW_IPV4 was not set at CDK
+        // synth → IPv4 admin access missing from SG. READ-ONLY — reports
+        // but never modifies SG rules. Fix = CDK redeploy with ALLOW_IPV4.
+        // =================================================================
+        const checkSgRulesFn = new lambdaNode.NodejsFunction(this, 'CheckSgRulesFunction', {
+            functionName: `${namePrefix}-tool-check-sg-rules`,
+            runtime: lambda.Runtime.NODEJS_22_X,
+            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'self-healing', 'src', 'tools', 'check-security-group-rules', 'index.ts'),
+            handler: 'handler',
+            memorySize: 256,
+            timeout: cdk.Duration.seconds(30),
+            logGroup: new logs.LogGroup(this, 'CheckSgRulesLogGroup', {
+                logGroupName: `/aws/lambda/${namePrefix}-tool-check-sg-rules`,
+                retention: props.logRetention,
+                removalPolicy: props.removalPolicy,
+            }),
+            tracing: lambda.Tracing.ACTIVE,
+            description: `MCP tool: inspect k8s SG port-443 ingress rules for ${namePrefix}`,
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+        });
+
+        checkSgRulesFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'DescribeSecurityGroups',
+            effect: iam.Effect.ALLOW,
+            actions: ['ec2:DescribeSecurityGroups'],
+            resources: ['*'],
+        }));
+
+        NagSuppressions.addResourceSuppressions(
+            checkSgRulesFn,
+            [{
+                id: 'AwsSolutions-IAM5',
+                reason: 'ec2:DescribeSecurityGroups has no resource-level filtering — requires wildcard.',
+            }, {
+                id: 'AwsSolutions-L1',
+                reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime',
+            }],
+            true,
+        );
+
         this.gateway.addLambdaTarget('CheckIngressRoutesTarget', {
             gatewayTargetName: 'check-ingress-routes',
             description: 'Verify Traefik IngressRoute and Middleware resources after bootstrap',
@@ -980,6 +1024,38 @@ export class SelfHealingGatewayStack extends cdk.Stack {
                         healthy: { type: SchemaDefinitionType.BOOLEAN, description: 'True when all apps are Synced and Healthy' },
                         applications: { type: SchemaDefinitionType.ARRAY, description: 'Per-app sync and health status', items: { type: SchemaDefinitionType.OBJECT } },
                         issues: { type: SchemaDefinitionType.ARRAY, description: 'Apps that are OutOfSync, Degraded, or Progressing', items: { type: SchemaDefinitionType.STRING } },
+                    },
+                },
+            }]),
+        });
+
+        this.gateway.addLambdaTarget('CheckSgRulesTarget', {
+            gatewayTargetName: 'check-sg-rules',
+            description: 'Inspect k8s EC2 Security Group port-443 ingress rules (read-only)',
+            lambdaFunction: checkSgRulesFn,
+            toolSchema: ToolSchema.fromInline([{
+                name: 'check_security_group_rules',
+                description: 'Inspect EC2 Security Group ingress rules for the k8s cluster (tagged Project=kubernetes). Use when the cluster is healthy but admin endpoints are unreachable from outside — this detects the pattern where ALLOW_IPV4 was not set at CDK synth time and only the IPv6 ingress rule was added. READ-ONLY: reports missing CIDRs and the CDK env vars needed to fix, but never modifies SG rules.',
+                inputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        adminCidr: {
+                            type: SchemaDefinitionType.STRING,
+                            description: 'Optional: expected admin IPv4 CIDR to explicitly check (e.g. "37.228.224.56/32")',
+                        },
+                        port: {
+                            type: SchemaDefinitionType.NUMBER,
+                            description: 'Port to check ingress rules for (default: 443)',
+                        },
+                    },
+                },
+                outputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        securityGroups: { type: SchemaDefinitionType.ARRAY, description: 'Per-SG details with ingress rules for the target port', items: { type: SchemaDefinitionType.OBJECT } },
+                        missingAdminCidr: { type: SchemaDefinitionType.BOOLEAN, description: 'True when adminCidr was provided and not found in any SG' },
+                        issues: { type: SchemaDefinitionType.ARRAY, description: 'Detected problems (missing CIDRs, no rules for port)', items: { type: SchemaDefinitionType.STRING } },
+                        remediationNote: { type: SchemaDefinitionType.STRING, description: 'CDK env vars and steps needed to permanently fix the SG' },
                     },
                 },
             }]),

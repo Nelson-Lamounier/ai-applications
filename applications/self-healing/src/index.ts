@@ -882,6 +882,17 @@ function getDefaultTools(): AgentTool[] {
                 },
             },
         },
+        {
+            name: 'check_security_group_rules',
+            description: 'Inspect EC2 Security Group ingress rules for the k8s cluster (tagged Project=kubernetes). Use when the cluster is healthy but admin endpoints (/argocd, /grafana, /prometheus) are unreachable from outside. This tool is READ-ONLY — it reports missing CIDRs but cannot fix them. Fix requires CDK redeploy with ALLOW_IPV4/ALLOW_IPV6 env vars set.',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    adminCidr: { type: 'string', description: 'Optional: expected admin IPv4 CIDR to check (e.g. "37.228.224.56/32"). If provided, explicitly flags it as missing.' },
+                    port: { type: 'number', description: 'Port to check ingress rules for (default: 443)' },
+                },
+            },
+        },
     ];
 }
 
