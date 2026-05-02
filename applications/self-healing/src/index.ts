@@ -476,6 +476,55 @@ function buildPrompt(event: AlarmEvent): string {
         ].filter(Boolean).join('\n');
     }
 
+    // AWS Auto Scaling node termination / launch failure
+    if (source === 'aws.autoscaling') {
+        const asgName = sanitiseEventField(String(detail['AutoScalingGroupName'] ?? 'unknown'), 256);
+        const instanceId = sanitiseEventField(String(detail['EC2InstanceId'] ?? 'unknown'), 64);
+        const cause = sanitiseEventField(String(detail['Cause'] ?? 'no cause provided'), 1024);
+        const detailTypeSafe = sanitiseEventField(String(detailType), 128);
+
+        // ASG name convention: '-general-pool-' or '-monitoring-pool-' → worker; otherwise CP
+        const isWorker = asgName.includes('-general-pool-') || asgName.includes('-monitoring-pool-');
+        const role = isWorker ? 'worker' : 'control-plane';
+
+        if (role === 'control-plane') {
+            return [
+                'A Kubernetes control plane node has been terminated.',
+                `ASG: ${asgName}`,
+                `Instance: ${instanceId}`,
+                `Event: ${detailTypeSafe}`,
+                `Cause: ${cause}`,
+                '',
+                dryRunNote,
+                '',
+                'DIAGNOSTIC WORKFLOW:',
+                '1. Use inspect_workloads to check overall cluster health — node status, pod restarts, NotReady nodes.',
+                '2. Monitor until a new control plane node appears and transitions to Ready.',
+                '3. Verify all worker nodes have successfully rejoined (check node list and pod scheduling).',
+                '4. Report overall cluster health status, any issues found, and remediation actions taken.',
+                '',
+                `Full event detail:\n${JSON.stringify(detail, null, 2)}`,
+            ].filter(Boolean).join('\n');
+        }
+
+        return [
+            'A Kubernetes worker node has been terminated.',
+            `ASG: ${asgName}`,
+            `Instance: ${instanceId}`,
+            `Event: ${detailTypeSafe}`,
+            `Cause: ${cause}`,
+            '',
+            dryRunNote,
+            '',
+            'DIAGNOSTIC WORKFLOW:',
+            '1. Use inspect_workloads to verify a replacement node has joined and is Ready.',
+            '2. Check for any pods that failed to reschedule after the termination.',
+            '3. Report node join status, scheduling issues, and overall worker pool health.',
+            '',
+            `Full event detail:\n${JSON.stringify(detail, null, 2)}`,
+        ].filter(Boolean).join('\n');
+    }
+
     // Generic EventBridge event
     return [
         'An infrastructure event has occurred.',
@@ -1360,7 +1409,14 @@ export async function handler(event: AlarmEvent): Promise<AgentResult> {
     const handlerStart = Date.now();
     correlationId = `sh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const alarmName = event.detail?.alarmName ?? 'unknown';
+    // For CW alarms use alarmName; for ASG events use ASG name so each ASG
+    // gets its own S3 session memory rather than all sharing 'unknown'.
+    const alarmName =
+        event.detail?.alarmName ??
+        (event.source === 'aws.autoscaling'
+            ? (event.detail?.['AutoScalingGroupName'] as string | undefined)
+            : undefined) ??
+        'unknown';
 
     log('INFO', 'Self-healing agent invoked', {
         source: event.source,
