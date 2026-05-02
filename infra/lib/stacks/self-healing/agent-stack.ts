@@ -78,7 +78,15 @@ export interface SelfHealingAgentStackProps extends cdk.StackProps {
     readonly cognitoClientId: string;
     /** OAuth2 scope strings (space-separated) for client credentials flow */
     readonly cognitoScopes: string;
-    /** Email address for SNS remediation report notifications */
+    /**
+     * SSM parameter prefix (e.g. '/k8s/development').
+     * Used to read `{ssmPrefix}/ops-email` when `notificationEmail` is not set.
+     */
+    readonly ssmPrefix: string;
+    /**
+     * Email address for SNS remediation report notifications.
+     * When provided, overrides the `{ssmPrefix}/ops-email` SSM parameter.
+     */
     readonly notificationEmail?: string;
     /** Retention in days for S3 session memory objects */
     readonly memoryRetentionDays?: number;
@@ -231,11 +239,14 @@ export class SelfHealingAgentStack extends cdk.Stack {
             masterKey: kms.Alias.fromAliasName(this, 'SnsKmsAlias', 'alias/aws/sns'),
         });
 
-        if (props.notificationEmail) {
-            this.reportsTopic.addSubscription(
-                new sns_subscriptions.EmailSubscription(props.notificationEmail),
-            );
-        }
+        // Prefer explicit prop (CI override); fall back to SSM parameter so
+        // deployments without NOTIFICATION_EMAIL still subscribe correctly.
+        const reportEmail: string =
+            props.notificationEmail ??
+            ssm.StringParameter.valueForStringParameter(this, `${props.ssmPrefix}/ops-email`);
+        this.reportsTopic.addSubscription(
+            new sns_subscriptions.EmailSubscription(reportEmail),
+        );
 
         // =================================================================
         // S3 — Conversation Session Memory
