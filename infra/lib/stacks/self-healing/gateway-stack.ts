@@ -409,6 +409,14 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             },
         });
 
+        // Resolve the real ASG name for a given instance ID (avoids convention guessing).
+        remediateNodeBootstrapFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'DescribeAsgInstances',
+            effect: iam.Effect.ALLOW,
+            actions: ['autoscaling:DescribeAutoScalingInstances'],
+            resources: ['*'],
+        }));
+
         // Grant states:StartExecution + DescribeExecution on the bootstrap state machine.
         // The tool re-triggers the orchestrator as the self-healing remediation action.
         remediateNodeBootstrapFn.addToRolePolicy(new iam.PolicyStatement({
@@ -428,6 +436,75 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             actions: ['ssm:GetParameter'],
             resources: [`arn:aws:ssm:${this.region}:${this.account}:parameter/k8s/*`],
         }));
+
+        // =================================================================
+        // Tool Lambda 7: Inspect Workloads
+        //
+        // Runs five parallel kubectl queries (nodes, daemonsets, deployments,
+        // statefulsets, events) in a single SSM command. Returns a unified
+        // snapshot covering DaemonSet coverage (e.g. Traefik), Deployment
+        // replicas, StatefulSet readiness, and recent Warning events.
+        // =================================================================
+        const inspectWorkloadsFn = new lambdaNode.NodejsFunction(this, 'InspectWorkloadsFunction', {
+            functionName: `${namePrefix}-tool-inspect-workloads`,
+            runtime: lambda.Runtime.NODEJS_22_X,
+            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'self-healing', 'src', 'tools', 'inspect-workloads', 'index.ts'),
+            handler: 'handler',
+            memorySize: 256,
+            timeout: cdk.Duration.seconds(90),
+            logGroup: new logs.LogGroup(this, 'InspectWorkloadsLogGroup', {
+                logGroupName: `/aws/lambda/${namePrefix}-tool-inspect-workloads`,
+                retention: props.logRetention,
+                removalPolicy: props.removalPolicy,
+            }),
+            tracing: lambda.Tracing.ACTIVE,
+            description: `MCP tool: unified DaemonSet/Deployment/node/event inspection for ${namePrefix}`,
+            bundling: {
+                minify: true,
+                sourceMap: true,
+                externalModules: ['@aws-sdk/*'],
+            },
+        });
+
+        // Resolve control plane by tag
+        inspectWorkloadsFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'DescribeInstances',
+            effect: iam.Effect.ALLOW,
+            actions: ['ec2:DescribeInstances'],
+            resources: ['*'],
+        }));
+
+        // SSM SendCommand (tag-scoped to k8s-tagged instances) + GetCommandInvocation
+        inspectWorkloadsFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmSendCommand',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:SendCommand'],
+            resources: [
+                `arn:aws:ssm:${this.region}::document/AWS-RunShellScript`,
+                `arn:aws:ec2:${this.region}:${this.account}:instance/*`,
+            ],
+            conditions: {
+                StringEquals: { 'ssm:resourceTag/Project': 'kubernetes' },
+            },
+        }));
+        inspectWorkloadsFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmGetCommandInvocation',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:GetCommandInvocation'],
+            resources: ['*'],
+        }));
+
+        NagSuppressions.addResourceSuppressions(
+            inspectWorkloadsFn,
+            [{
+                id: 'AwsSolutions-IAM5',
+                reason: 'EC2 DescribeInstances requires wildcard (dynamic instance IDs). SSM SendCommand is tag-scoped (Project=kubernetes). ssm:GetCommandInvocation requires wildcard.',
+            }, {
+                id: 'AwsSolutions-L1',
+                reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime',
+            }],
+            true,
+        );
 
         // =================================================================
         // Register Tools with AgentCore Gateway
@@ -611,6 +688,43 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             }]),
         });
 
+        this.gateway.addLambdaTarget('InspectWorkloadsTarget', {
+            gatewayTargetName: 'inspect-workloads',
+            description: 'Unified cluster workload inspection: nodes, DaemonSets, Deployments, StatefulSets, Warning events',
+            lambdaFunction: inspectWorkloadsFn,
+            toolSchema: ToolSchema.fromInline([{
+                name: 'inspect_workloads',
+                description: 'Run a comprehensive cluster health inspection in a single call. Returns node readiness, DaemonSet coverage (e.g. Traefik on all nodes), Deployment and StatefulSet replica status, and recent Warning events (CrashLoopBackOff, OOMKilled, ImagePullBackOff, FailedScheduling). Use this as the first tool when diagnosing cluster-level failures, pod crashes, or missing workloads. Faster than running check_node_health and analyse_cluster_health separately.',
+                inputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        namespaces: {
+                            type: SchemaDefinitionType.ARRAY,
+                            description: 'Optional list of namespaces to limit results (e.g. ["kube-system", "traefik"]). Omit for cluster-wide inspection.',
+                            items: { type: SchemaDefinitionType.STRING },
+                        },
+                        maxEvents: {
+                            type: SchemaDefinitionType.NUMBER,
+                            description: 'Maximum number of Warning events to return (default 50)',
+                        },
+                    },
+                },
+                outputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        controlPlaneInstanceId: { type: SchemaDefinitionType.STRING, description: 'EC2 instance used for inspection' },
+                        clusterHealthy: { type: SchemaDefinitionType.BOOLEAN, description: 'True only when all nodes Ready and all workloads at desired capacity' },
+                        nodes: { type: SchemaDefinitionType.OBJECT, description: 'Node totals and per-node detail' },
+                        daemonSets: { type: SchemaDefinitionType.ARRAY, description: 'DaemonSet desired/ready/misscheduled per entry', items: { type: SchemaDefinitionType.OBJECT } },
+                        deployments: { type: SchemaDefinitionType.ARRAY, description: 'Deployment desired/available per entry', items: { type: SchemaDefinitionType.OBJECT } },
+                        statefulSets: { type: SchemaDefinitionType.ARRAY, description: 'StatefulSet desired/ready per entry', items: { type: SchemaDefinitionType.OBJECT } },
+                        events: { type: SchemaDefinitionType.ARRAY, description: 'Recent Warning events (most recent first)', items: { type: SchemaDefinitionType.OBJECT } },
+                        summary: { type: SchemaDefinitionType.ARRAY, description: 'Human-readable bullet list of key findings', items: { type: SchemaDefinitionType.STRING } },
+                    },
+                },
+            }]),
+        });
+
         // =================================================================
         // CDK-Nag Suppressions
         // =================================================================
@@ -685,7 +799,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             remediateNodeBootstrapFn,
             [{
                 id: 'AwsSolutions-IAM5',
-                reason: 'ssm:GetParameter requires wildcard path prefix for fallback ARN resolution. states:StartExecution is scoped to the specific bootstrap state machine ARN.',
+                reason: 'ssm:GetParameter requires wildcard path prefix for fallback ARN resolution. states:StartExecution is scoped to the specific bootstrap state machine ARN. autoscaling:DescribeAutoScalingInstances has no resource-level filtering.',
             }, {
                 id: 'AwsSolutions-L1',
                 reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime',

@@ -138,6 +138,7 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
  * tool invocation before allowing the final response.
  */
 const VERIFICATION_TOOLS: ReadonlySet<string> = new Set([
+    'inspect_workloads',
     'check_node_health',
     'analyse_cluster_health',
 ]);
@@ -726,6 +727,21 @@ async function invokeTool(toolName: string, toolInput: Record<string, unknown>):
 function getDefaultTools(): AgentTool[] {
     return [
         {
+            name: 'inspect_workloads',
+            description: 'Run a comprehensive cluster health inspection in a single call. Returns node readiness, DaemonSet coverage (e.g. Traefik on all nodes), Deployment and StatefulSet replica status, and recent Warning events (CrashLoopBackOff, OOMKilled, ImagePullBackOff, FailedScheduling). Use this FIRST for any cluster or workload failure — faster than calling check_node_health and analyse_cluster_health separately.',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    namespaces: {
+                        type: 'array',
+                        description: 'Optional namespaces to limit results (e.g. ["kube-system", "traefik"]). Omit for cluster-wide.',
+                        items: { type: 'string' },
+                    },
+                    maxEvents: { type: 'number', description: 'Maximum Warning events to return (default 50)' },
+                },
+            },
+        },
+        {
             name: 'diagnose_alarm',
             description: 'Analyse a CloudWatch Alarm and return diagnostic information about the affected resource',
             inputSchema: {
@@ -737,10 +753,9 @@ function getDefaultTools(): AgentTool[] {
                 required: ['alarmName'],
             },
         },
-        // SH-S3: ebs_detach phantom tool removed — no corresponding Lambda exists
         {
             name: 'check_node_health',
-            description: 'Check whether Kubernetes worker nodes have joined the cluster and are in Ready state via SSM on the control plane',
+            description: 'Check Kubernetes node readiness and per-node conditions (DiskPressure, MemoryPressure, PIDPressure) via kubectl. Use when inspect_workloads shows NotReady nodes and you need full condition detail.',
             inputSchema: {
                 type: 'object',
                 properties: {
@@ -750,7 +765,7 @@ function getDefaultTools(): AgentTool[] {
         },
         {
             name: 'analyse_cluster_health',
-            description: 'Analyse Kubernetes cluster health using K8sGPT. Diagnoses workload issues such as failing pods, misconfigured services, and unhealthy deployments. Falls back to kubectl if K8sGPT is not installed.',
+            description: 'Analyse Kubernetes cluster health using K8sGPT. Use as a follow-up to inspect_workloads when the root cause of pod failures is unclear. Falls back to kubectl if K8sGPT is not installed.',
             inputSchema: {
                 type: 'object',
                 properties: {
@@ -765,7 +780,7 @@ function getDefaultTools(): AgentTool[] {
         },
         {
             name: 'get_node_diagnostic_json',
-            description: 'Fetch the machine-readable run_summary.json from a Kubernetes node via SSM. Returns the bootstrap step status, failure classification code (AMI_MISMATCH, S3_FORBIDDEN, KUBEADM_FAIL, CALICO_TIMEOUT, ARGOCD_SYNC_FAIL, CW_AGENT_FAIL), and per-step timing. Use this FIRST when diagnosing bootstrap failures.',
+            description: 'Fetch the machine-readable run_summary.json from a Kubernetes node via SSM. Returns the bootstrap step status and failure classification code (AMI_MISMATCH, S3_FORBIDDEN, KUBEADM_FAIL, CALICO_TIMEOUT). Use this when a bootstrap alarm fires and you have the instance ID.',
             inputSchema: {
                 type: 'object',
                 properties: {
@@ -776,7 +791,7 @@ function getDefaultTools(): AgentTool[] {
         },
         {
             name: 'remediate_node_bootstrap',
-            description: 'Trigger the SSM Automation Document to re-run the bootstrap sequence on a failed Kubernetes node. Resolves the correct Document name and IAM role from SSM Parameter Store. Use this AFTER diagnosing the failure with get_node_diagnostic_json and confirming the failure is transient.',
+            description: 'Trigger the Step Functions bootstrap orchestrator to re-run the full bootstrap sequence on a failed node. Use AFTER confirming the failure is TRANSIENT via get_node_diagnostic_json.',
             inputSchema: {
                 type: 'object',
                 properties: {
@@ -831,21 +846,26 @@ function buildBootstrapDiagnosticGuidance(): string {
         'This alarm relates to the Kubernetes node bootstrap pipeline.',
         'Follow this diagnostic workflow:',
         '',
-        '1. DIAGNOSE: Use `get_node_diagnostic_json` to fetch the run_summary.json',
-        '   from the affected instance. This reveals the exact failed step and',
-        '   failure code (e.g., AMI_MISMATCH, S3_FORBIDDEN, KUBEADM_FAIL).',
+        '1. INSPECT CLUSTER: Use `inspect_workloads` to get a full cluster snapshot.',
+        '   This reveals which nodes are NotReady and any workload impact',
+        '   (e.g., Traefik DaemonSet down, ArgoCD deployments under-replicated).',
         '',
-        '2. CLASSIFY: Determine if the failure is:',
+        '2. DIAGNOSE NODE: Use `get_node_diagnostic_json` with the failed instance ID',
+        '   to fetch run_summary.json — reveals the exact failed step and failure code',
+        '   (AMI_MISMATCH, S3_FORBIDDEN, KUBEADM_FAIL, CALICO_TIMEOUT, etc.).',
+        '',
+        '3. CLASSIFY the failure:',
         '   - TRANSIENT: Network timeouts, S3 eventual consistency, NLB propagation',
         '     → Safe to retry by triggering `remediate_node_bootstrap`.',
         '   - PERMANENT: AMI mismatch, IAM permission denied, corrupted certificates',
         '     → Report to operator; do NOT retry automatically.',
         '',
-        '3. REMEDIATE (transient only): Use `remediate_node_bootstrap` with the',
-        '   correct role (control-plane or worker) to re-trigger the SSM Document.',
+        '4. REMEDIATE (transient only): Use `remediate_node_bootstrap` with the',
+        '   correct role (control-plane or worker) to re-trigger the SM-A.',
         '',
-        '4. VERIFY: After remediation, use `check_node_health` to confirm the node',
-        '   joined the cluster, then `analyse_cluster_health` for workload health.',
+        '5. VERIFY: After remediation, call `inspect_workloads` again to confirm:',
+        '   - The node joined (nodes.ready increased)',
+        '   - Workloads recovered (daemonSets[].healthy = true, clusterHealthy = true)',
         '───────────────────────────────────────',
         '',
     ].join('\n');
