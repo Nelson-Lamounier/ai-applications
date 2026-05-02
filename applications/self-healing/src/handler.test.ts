@@ -233,9 +233,9 @@ describe('isDuplicate', () => {
 // =============================================================================
 
 describe('getDefaultTools', () => {
-    it('should return six default tools', () => {
+    it('should return nine default tools', () => {
         const tools = getDefaultTools();
-        expect(tools).toHaveLength(6);
+        expect(tools).toHaveLength(9);
     });
 
     it('should include diagnose_alarm tool', () => {
@@ -276,6 +276,30 @@ describe('getDefaultTools', () => {
         expect(clusterHealth).toBeDefined();
         expect(clusterHealth?.description).toContain('K8sGPT');
     });
+
+    it('should include check_ingress_routes tool', () => {
+        const tools = getDefaultTools();
+        const tool = tools.find(t => t.name === 'check_ingress_routes');
+
+        expect(tool).toBeDefined();
+        expect(tool?.description).toContain('IngressRoute');
+    });
+
+    it('should include check_cert_manager tool', () => {
+        const tools = getDefaultTools();
+        const tool = tools.find(t => t.name === 'check_cert_manager');
+
+        expect(tool).toBeDefined();
+        expect(tool?.description).toContain('ClusterIssuer');
+    });
+
+    it('should include check_argocd_sync tool', () => {
+        const tools = getDefaultTools();
+        const tool = tools.find(t => t.name === 'check_argocd_sync');
+
+        expect(tool).toBeDefined();
+        expect(tool?.description).toContain('ArgoCD');
+    });
 });
 
 // =============================================================================
@@ -288,7 +312,7 @@ describe('buildToolConfig', () => {
         const config = buildToolConfig(tools);
 
         expect(config.tools).toBeDefined();
-        expect(config.tools).toHaveLength(6);
+        expect(config.tools).toHaveLength(9);
     });
 
     it('should produce toolSpec entries with correct names', () => {

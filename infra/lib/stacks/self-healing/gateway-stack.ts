@@ -507,6 +507,185 @@ export class SelfHealingGatewayStack extends cdk.Stack {
         );
 
         // =================================================================
+        // Tool Lambda 8: Check Ingress Routes
+        //
+        // Queries Traefik IngressRoute and Middleware resources via SSM.
+        // Used after bootstrap step 7 (applyIngress) failures or when
+        // applications return 404. Also surfaces empty IPAllowList
+        // sourceRanges (expected right after bootstrap — PostSync fills them).
+        // =================================================================
+        const checkIngressRoutesFn = new lambdaNode.NodejsFunction(this, 'CheckIngressRoutesFunction', {
+            functionName: `${namePrefix}-tool-check-ingress-routes`,
+            runtime: lambda.Runtime.NODEJS_22_X,
+            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'self-healing', 'src', 'tools', 'check-ingress-routes', 'index.ts'),
+            handler: 'handler',
+            memorySize: 256,
+            timeout: cdk.Duration.seconds(45),
+            logGroup: new logs.LogGroup(this, 'CheckIngressRoutesLogGroup', {
+                logGroupName: `/aws/lambda/${namePrefix}-tool-check-ingress-routes`,
+                retention: props.logRetention,
+                removalPolicy: props.removalPolicy,
+            }),
+            tracing: lambda.Tracing.ACTIVE,
+            description: `MCP tool: verify Traefik IngressRoutes and Middlewares for ${namePrefix}`,
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+        });
+
+        checkIngressRoutesFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'DescribeInstances',
+            effect: iam.Effect.ALLOW,
+            actions: ['ec2:DescribeInstances'],
+            resources: ['*'],
+        }));
+        checkIngressRoutesFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmSendCommand',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:SendCommand'],
+            resources: [
+                `arn:aws:ssm:${this.region}::document/AWS-RunShellScript`,
+                `arn:aws:ec2:${this.region}:${this.account}:instance/*`,
+            ],
+            conditions: { StringEquals: { 'ssm:resourceTag/Project': 'kubernetes' } },
+        }));
+        checkIngressRoutesFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmGetCommandInvocation',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:GetCommandInvocation'],
+            resources: ['*'],
+        }));
+
+        NagSuppressions.addResourceSuppressions(
+            checkIngressRoutesFn,
+            [{
+                id: 'AwsSolutions-IAM5',
+                reason: 'EC2 DescribeInstances requires wildcard. SSM SendCommand is tag-scoped (Project=kubernetes). ssm:GetCommandInvocation requires wildcard.',
+            }, {
+                id: 'AwsSolutions-L1',
+                reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime',
+            }],
+            true,
+        );
+
+        // =================================================================
+        // Tool Lambda 9: Check Cert-Manager
+        //
+        // Queries cert-manager ClusterIssuer and Certificate resources via
+        // SSM. Used after bootstrap step 5d (applyCertManagerIssuer) fails
+        // or when TLS is broken. Surfaces the known SSM path mismatch issue
+        // (edge/hosted-zone-id vs public-hosted-zone-id).
+        // =================================================================
+        const checkCertManagerFn = new lambdaNode.NodejsFunction(this, 'CheckCertManagerFunction', {
+            functionName: `${namePrefix}-tool-check-cert-manager`,
+            runtime: lambda.Runtime.NODEJS_22_X,
+            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'self-healing', 'src', 'tools', 'check-cert-manager', 'index.ts'),
+            handler: 'handler',
+            memorySize: 256,
+            timeout: cdk.Duration.seconds(45),
+            logGroup: new logs.LogGroup(this, 'CheckCertManagerLogGroup', {
+                logGroupName: `/aws/lambda/${namePrefix}-tool-check-cert-manager`,
+                retention: props.logRetention,
+                removalPolicy: props.removalPolicy,
+            }),
+            tracing: lambda.Tracing.ACTIVE,
+            description: `MCP tool: verify cert-manager ClusterIssuer and Certificate health for ${namePrefix}`,
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+        });
+
+        checkCertManagerFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'DescribeInstances',
+            effect: iam.Effect.ALLOW,
+            actions: ['ec2:DescribeInstances'],
+            resources: ['*'],
+        }));
+        checkCertManagerFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmSendCommand',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:SendCommand'],
+            resources: [
+                `arn:aws:ssm:${this.region}::document/AWS-RunShellScript`,
+                `arn:aws:ec2:${this.region}:${this.account}:instance/*`,
+            ],
+            conditions: { StringEquals: { 'ssm:resourceTag/Project': 'kubernetes' } },
+        }));
+        checkCertManagerFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmGetCommandInvocation',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:GetCommandInvocation'],
+            resources: ['*'],
+        }));
+
+        NagSuppressions.addResourceSuppressions(
+            checkCertManagerFn,
+            [{
+                id: 'AwsSolutions-IAM5',
+                reason: 'EC2 DescribeInstances requires wildcard. SSM SendCommand is tag-scoped (Project=kubernetes). ssm:GetCommandInvocation requires wildcard.',
+            }, {
+                id: 'AwsSolutions-L1',
+                reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime',
+            }],
+            true,
+        );
+
+        // =================================================================
+        // Tool Lambda 10: Check ArgoCD Sync
+        //
+        // Queries ArgoCD Application sync and health status via SSM kubectl.
+        // Used after bootstrap step 7 failures to confirm whether Helm charts
+        // (argocd-ingress, monitoring) were applied by the GitOps loop.
+        // =================================================================
+        const checkArgoCDSyncFn = new lambdaNode.NodejsFunction(this, 'CheckArgoCDSyncFunction', {
+            functionName: `${namePrefix}-tool-check-argocd-sync`,
+            runtime: lambda.Runtime.NODEJS_22_X,
+            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'self-healing', 'src', 'tools', 'check-argocd-sync', 'index.ts'),
+            handler: 'handler',
+            memorySize: 256,
+            timeout: cdk.Duration.seconds(45),
+            logGroup: new logs.LogGroup(this, 'CheckArgoCDSyncLogGroup', {
+                logGroupName: `/aws/lambda/${namePrefix}-tool-check-argocd-sync`,
+                retention: props.logRetention,
+                removalPolicy: props.removalPolicy,
+            }),
+            tracing: lambda.Tracing.ACTIVE,
+            description: `MCP tool: verify ArgoCD application sync status for ${namePrefix}`,
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+        });
+
+        checkArgoCDSyncFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'DescribeInstances',
+            effect: iam.Effect.ALLOW,
+            actions: ['ec2:DescribeInstances'],
+            resources: ['*'],
+        }));
+        checkArgoCDSyncFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmSendCommand',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:SendCommand'],
+            resources: [
+                `arn:aws:ssm:${this.region}::document/AWS-RunShellScript`,
+                `arn:aws:ec2:${this.region}:${this.account}:instance/*`,
+            ],
+            conditions: { StringEquals: { 'ssm:resourceTag/Project': 'kubernetes' } },
+        }));
+        checkArgoCDSyncFn.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'SsmGetCommandInvocation',
+            effect: iam.Effect.ALLOW,
+            actions: ['ssm:GetCommandInvocation'],
+            resources: ['*'],
+        }));
+
+        NagSuppressions.addResourceSuppressions(
+            checkArgoCDSyncFn,
+            [{
+                id: 'AwsSolutions-IAM5',
+                reason: 'EC2 DescribeInstances requires wildcard. SSM SendCommand is tag-scoped (Project=kubernetes). ssm:GetCommandInvocation requires wildcard.',
+            }, {
+                id: 'AwsSolutions-L1',
+                reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime',
+            }],
+            true,
+        );
+
+        // =================================================================
         // Register Tools with AgentCore Gateway
         //
         // Each tool is registered via addLambdaTarget() with an inline
@@ -720,6 +899,87 @@ export class SelfHealingGatewayStack extends cdk.Stack {
                         statefulSets: { type: SchemaDefinitionType.ARRAY, description: 'StatefulSet desired/ready per entry', items: { type: SchemaDefinitionType.OBJECT } },
                         events: { type: SchemaDefinitionType.ARRAY, description: 'Recent Warning events (most recent first)', items: { type: SchemaDefinitionType.OBJECT } },
                         summary: { type: SchemaDefinitionType.ARRAY, description: 'Human-readable bullet list of key findings', items: { type: SchemaDefinitionType.STRING } },
+                    },
+                },
+            }]),
+        });
+
+        this.gateway.addLambdaTarget('CheckIngressRoutesTarget', {
+            gatewayTargetName: 'check-ingress-routes',
+            description: 'Verify Traefik IngressRoute and Middleware resources after bootstrap',
+            lambdaFunction: checkIngressRoutesFn,
+            toolSchema: ToolSchema.fromInline([{
+                name: 'check_ingress_routes',
+                description: 'Verify Traefik IngressRoute and Middleware resources on the cluster. Use after bootstrap step 7 (applyIngress) failures or when applications return 404. Also surfaces empty IPAllowList sourceRanges — note that empty sourceRanges immediately after bootstrap is expected behaviour (PostSync ArgoCD patcher fills them in after sync completes).',
+                inputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        namespace: {
+                            type: SchemaDefinitionType.STRING,
+                            description: 'Optional: scope to a single namespace (e.g. "argocd", "monitoring"). Omit for cluster-wide.',
+                        },
+                    },
+                },
+                outputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        controlPlaneInstanceId: { type: SchemaDefinitionType.STRING, description: 'EC2 instance used' },
+                        healthy: { type: SchemaDefinitionType.BOOLEAN, description: 'True when all IngressRoutes have routes and no critical issues' },
+                        ingressRoutes: { type: SchemaDefinitionType.ARRAY, description: 'Per-IngressRoute details', items: { type: SchemaDefinitionType.OBJECT } },
+                        middlewares: { type: SchemaDefinitionType.ARRAY, description: 'Per-Middleware details including sourceRanges', items: { type: SchemaDefinitionType.OBJECT } },
+                        issues: { type: SchemaDefinitionType.ARRAY, description: 'Detected problems (missing routes, empty sourceRanges)', items: { type: SchemaDefinitionType.STRING } },
+                    },
+                },
+            }]),
+        });
+
+        this.gateway.addLambdaTarget('CheckCertManagerTarget', {
+            gatewayTargetName: 'check-cert-manager',
+            description: 'Verify cert-manager ClusterIssuer and Certificate health',
+            lambdaFunction: checkCertManagerFn,
+            toolSchema: ToolSchema.fromInline([{
+                name: 'check_cert_manager',
+                description: 'Verify cert-manager ClusterIssuer and Certificate resources. Use after bootstrap step 5d (applyCertManagerIssuer) failures or when TLS is broken. If no ClusterIssuers are found, the SSM path mismatch is the likely cause: CDK stores them at edge/hosted-zone-id and edge/cross-account-role-arn (NOT public-hosted-zone-id).',
+                inputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {},
+                },
+                outputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        controlPlaneInstanceId: { type: SchemaDefinitionType.STRING, description: 'EC2 instance used' },
+                        healthy: { type: SchemaDefinitionType.BOOLEAN, description: 'True when all ClusterIssuers Ready and no certificates in Failed state' },
+                        clusterIssuers: { type: SchemaDefinitionType.ARRAY, description: 'Per-issuer status', items: { type: SchemaDefinitionType.OBJECT } },
+                        certificates: { type: SchemaDefinitionType.ARRAY, description: 'Per-certificate status and expiry', items: { type: SchemaDefinitionType.OBJECT } },
+                        issues: { type: SchemaDefinitionType.ARRAY, description: 'Detected problems (missing issuer, not-ready, expiring certs)', items: { type: SchemaDefinitionType.STRING } },
+                    },
+                },
+            }]),
+        });
+
+        this.gateway.addLambdaTarget('CheckArgoCDSyncTarget', {
+            gatewayTargetName: 'check-argocd-sync',
+            description: 'Verify ArgoCD application sync and health status',
+            lambdaFunction: checkArgoCDSyncFn,
+            toolSchema: ToolSchema.fromInline([{
+                name: 'check_argocd_sync',
+                description: 'Verify ArgoCD application sync and health status. Use after bootstrap step 7 (applyIngress) failures to confirm whether Helm charts were deployed by the GitOps loop, or when applications are missing resources that should have been applied by ArgoCD.',
+                inputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        appName: {
+                            type: SchemaDefinitionType.STRING,
+                            description: 'Optional: filter to a specific ArgoCD app name (e.g. "argocd-ingress", "monitoring")',
+                        },
+                    },
+                },
+                outputSchema: {
+                    type: SchemaDefinitionType.OBJECT,
+                    properties: {
+                        controlPlaneInstanceId: { type: SchemaDefinitionType.STRING, description: 'EC2 instance used' },
+                        healthy: { type: SchemaDefinitionType.BOOLEAN, description: 'True when all apps are Synced and Healthy' },
+                        applications: { type: SchemaDefinitionType.ARRAY, description: 'Per-app sync and health status', items: { type: SchemaDefinitionType.OBJECT } },
+                        issues: { type: SchemaDefinitionType.ARRAY, description: 'Apps that are OutOfSync, Degraded, or Progressing', items: { type: SchemaDefinitionType.STRING } },
                     },
                 },
             }]),
