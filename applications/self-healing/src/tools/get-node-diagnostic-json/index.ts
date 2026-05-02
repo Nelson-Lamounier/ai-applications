@@ -37,7 +37,7 @@ import { log } from '@bedrock/shared';
 const ssm = new SSMClient({});
 
 /** Path to the run_summary.json file on the node */
-const RUN_SUMMARY_PATH = '/opt/k8s-bootstrap/run_summary.json';
+const RUN_SUMMARY_PATH = '/var/lib/k8s-bootstrap/run_summary.json';
 
 /** Maximum time to wait for SSM command completion (milliseconds) */
 const SSM_POLL_TIMEOUT_MS = 20_000;
@@ -57,27 +57,27 @@ interface DiagnosticInput {
 }
 
 /**
- * Per-step status from the Python bootstrap StepRunner
+ * Per-step status written by makeRunStep in common.ts
  */
 interface BootstrapStepSummary {
-    readonly step_name: string;
-    readonly status: string;
-    readonly started_at: string;
-    readonly completed_at: string;
-    readonly duration_seconds: number;
-    readonly error: string;
-    readonly details: Record<string, unknown>;
+    readonly step: string;
+    readonly status: 'success' | 'failed' | 'skipped' | 'degraded';
+    readonly startedAt: string;
+    readonly finishedAt: string;
+    readonly elapsedMs: number;
+    readonly error?: string;
 }
 
 /**
- * Parsed run_summary.json shape
+ * Parsed run_summary.json shape — matches appendRunSummary in common.ts
  */
 interface RunSummary {
-    readonly updated_at: string;
-    readonly overall_status: string;
-    readonly failure_code: string | null;
-    readonly total_steps: number;
-    readonly failed_steps: string[];
+    readonly updatedAt: string;
+    readonly overallStatus: string;
+    readonly failureCode: string | null;
+    readonly totalSteps: number;
+    readonly failedSteps: string[];
+    readonly degradedSteps: string[];
     readonly steps: BootstrapStepSummary[];
 }
 
@@ -211,18 +211,18 @@ export async function handler(event: DiagnosticInput): Promise<DiagnosticReport>
 
         log('INFO', 'Diagnostic summary retrieved', {
             instanceId,
-            overallStatus: summary.overall_status,
-            failureCode: summary.failure_code,
-            totalSteps: summary.total_steps,
-            failedSteps: summary.failed_steps,
+            overallStatus: summary.overallStatus,
+            failureCode: summary.failureCode,
+            totalSteps: summary.totalSteps,
+            failedSteps: summary.failedSteps,
         });
 
         return {
             instanceId,
             found: true,
             summary,
-            failureCode: summary.failure_code ?? undefined,
-            failedSteps: summary.failed_steps,
+            failureCode: summary.failureCode ?? undefined,
+            failedSteps: summary.failedSteps,
         };
     } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
