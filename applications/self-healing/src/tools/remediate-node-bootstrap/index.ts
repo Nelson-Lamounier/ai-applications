@@ -24,6 +24,10 @@
  */
 
 import {
+    AutoScalingClient,
+    DescribeAutoScalingInstancesCommand,
+} from '@aws-sdk/client-auto-scaling';
+import {
     SFNClient,
     StartExecutionCommand,
 } from '@aws-sdk/client-sfn';
@@ -34,6 +38,7 @@ import {
 
 import { log } from '@bedrock/shared';
 
+const asgClient = new AutoScalingClient({});
 const sfnClient = new SFNClient({});
 const ssmClient = new SSMClient({});
 
@@ -119,6 +124,21 @@ async function resolveParameter(name: string): Promise<string> {
     return value;
 }
 
+/**
+ * Look up the ASG name for a given EC2 instance via the AutoScaling API.
+ * This avoids hard-coding the ASG naming convention across environments.
+ */
+async function resolveAsgName(instanceId: string): Promise<string> {
+    const result = await asgClient.send(
+        new DescribeAutoScalingInstancesCommand({ InstanceIds: [instanceId] }),
+    );
+    const instance = result.AutoScalingInstances?.[0];
+    if (!instance?.AutoScalingGroupName) {
+        throw new Error(`Instance ${instanceId} is not in any Auto Scaling Group`);
+    }
+    return instance.AutoScalingGroupName;
+}
+
 
 
 // =============================================================================
@@ -172,11 +192,9 @@ export async function handler(event: RemediateInput): Promise<RemediationReport>
             stateMachineArn = await resolveParameter(arnParamPath);
         }
 
-        // Derive the ASG name from the SSM prefix + role so the router
-        // can resolve ASG tags and identify which pool to bootstrap.
-        // Convention: {env}-{role}-asg (matches the ASG configured in compute stack).
-        const envSuffix = SSM_PREFIX.replace('/k8s/', ''); // e.g. 'development'
-        const asgName = `${envSuffix}-${role}-asg`;
+        // Resolve the actual ASG name for this instance via the AutoScaling API.
+        // Hard-coding a naming convention would break across environments and pool names.
+        const asgName = await resolveAsgName(instanceId);
 
         // Build an EventBridge-style payload matching the exact shape the
         // router Lambda uses for ASG instance launch events.
