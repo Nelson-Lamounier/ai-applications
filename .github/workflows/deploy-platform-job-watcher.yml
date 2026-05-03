@@ -1,0 +1,140 @@
+# =============================================================================
+# Deploy Platform-Job-Watcher Image (Development)
+# =============================================================================
+#
+# Builds the platform-job-watcher K8s Deployment container, pushes to ECR.
+#
+# ArgoCD Image Updater monitors the ECR repo and automatically rolls out
+# the new image to the Deployment — no SSM/ESO step needed.
+#
+# Triggers:
+#   - Push to develop touching applications/platform-job-watcher/**
+#   - Manual workflow_dispatch
+#
+# Prerequisite: ECR repo must exist with its URI at
+#   /shared/ecr-platform-job-watcher/{env}/repository-uri
+# =============================================================================
+
+name: "Deploy Platform-Job-Watcher (Dev)"
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "applications/platform-job-watcher/**"
+      - ".github/workflows/deploy-platform-job-watcher.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENVIRONMENT: development
+  AWS_REGION: "eu-west-1"
+  IMAGE_TAG: "${{ github.sha }}-r${{ github.run_attempt }}"
+
+concurrency:
+  group: deploy-platform-job-watcher-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "[Platform-Job-Watcher] Build Docker Image"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ vars.ENVIRONMENT || 'development' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image (platform-job-watcher)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: applications/platform-job-watcher/Dockerfile
+          push: false
+          load: false
+          tags: platform-job-watcher:${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=platform-job-watcher
+          cache-to: type=gha,mode=max,scope=platform-job-watcher
+          provenance: false
+          outputs: type=docker,dest=/tmp/platform-job-watcher-image.tar
+
+      - name: Cache Platform-Job-Watcher Image
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/platform-job-watcher-image.tar
+          key: platform-job-watcher-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build Summary
+        run: |
+          IMAGE_SIZE=$(du -sh /tmp/platform-job-watcher-image.tar | cut -f1)
+          echo "## [Platform-Job-Watcher] Docker Build" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: $IMAGE_SIZE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dockerfile**: applications/platform-job-watcher/Dockerfile" >> $GITHUB_STEP_SUMMARY
+
+  push:
+    name: "[Platform-Job-Watcher] Push to ECR"
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ vars.ENVIRONMENT || 'development' }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS Credentials
+        uses: ./.github/actions/configure-aws
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Restore Platform-Job-Watcher Image from Cache
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/platform-job-watcher-image.tar
+          key: platform-job-watcher-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+
+      - name: Load Docker Image
+        run: docker load -i /tmp/platform-job-watcher-image.tar
+
+      - name: Resolve ECR URL (platform-job-watcher)
+        id: resolve-ecr
+        run: |
+          ECR_URL=$(aws ssm get-parameter \
+            --name "/shared/ecr-platform-job-watcher/$ENVIRONMENT/repository-uri" \
+            --query 'Parameter.Value' \
+            --output text)
+
+          if [ -z "$ECR_URL" ] || [ "$ECR_URL" = "None" ]; then
+            echo "::error::platform-job-watcher ECR URL not found at /shared/ecr-platform-job-watcher/$ENVIRONMENT/repository-uri — provision the ECR repo first"
+            exit 1
+          fi
+
+          echo "::add-mask::$ECR_URL"
+          echo "ecr-url=$ECR_URL" >> $GITHUB_OUTPUT
+
+      - name: Push Platform-Job-Watcher Image to ECR
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_URL"
+
+          docker tag "platform-job-watcher:$IMAGE_TAG" "$ECR_URL:$IMAGE_TAG"
+          docker push "$ECR_URL:$IMAGE_TAG"
+
+      - name: Push Summary
+        run: |
+          echo "## [Platform-Job-Watcher] ECR Push" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "- **Next**: ArgoCD Image Updater picks up new tag → rolls out Deployment" >> $GITHUB_STEP_SUMMARY
