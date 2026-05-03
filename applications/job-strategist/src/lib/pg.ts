@@ -3,7 +3,8 @@
  * Postgres connection pool singleton for the Strategist analysis K8s Job.
  *
  * Mirrors the pattern used by platform-rds-bootstrap: small max pool,
- * permissive SSL (RDS in-VPC), bounded connect timeout.
+ * no client SSL (pgbouncer has client_tls_sslmode=disable; it handles
+ * server-side TLS to RDS), bounded connect timeout.
  */
 import { Pool } from 'pg';
 
@@ -25,7 +26,7 @@ export function getPool(cfg: PgConfig): Pool {
             database:                cfg.database,
             user:                    cfg.user,
             password:                cfg.password,
-            ssl:                     { rejectUnauthorized: false },
+            ssl:                     false,
             max:                     3,
             connectionTimeoutMillis: 10_000,
         });

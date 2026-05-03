@@ -178,7 +178,7 @@ async function main(): Promise<void> {
     password:           env.pg.password,
     max:                5,
     idleTimeoutMillis:  30_000,
-    ssl:                { rejectUnauthorized: false },
+    ssl:                false,
   });
 
   const s3 = new S3Client({ region: env.awsRegion });
