@@ -1,0 +1,44 @@
+{
+  "name": "@platform/job-watcher",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --passWithNoTests",
+    "start": "node dist/run-watcher.js"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^0.22.3",
+    "js-yaml": "^4.1.0",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@jest/globals": "^29.7.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.6",
+    "typescript": "^5.7.3"
+  },
+  "jest": {
+    "preset": "ts-jest/presets/default/jest-preset",
+    "testEnvironment": "node",
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "transform": {
+      "^.+\\.tsx?$": [
+        "ts-jest",
+        {
+          "useESM": true
+        }
+      ]
+    }
+  }
+}

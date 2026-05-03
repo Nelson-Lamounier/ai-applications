@@ -11,6 +11,7 @@
     "applications/self-healing",
     "applications/ingestion",
     "applications/resume-import-processor",
+    "applications/platform-job-watcher",
     "api/public-api",
     "infra"
   ],
