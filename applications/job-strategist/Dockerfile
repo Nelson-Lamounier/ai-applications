@@ -17,7 +17,9 @@ COPY applications/job-strategist/package.json   ./applications/job-strategist/
 COPY applications/article-pipeline/package.json ./applications/article-pipeline/
 COPY applications/ingestion/package.json        ./applications/ingestion/
 COPY applications/chatbot/package.json          ./applications/chatbot/
-COPY applications/self-healing/package.json     ./applications/self-healing/
+COPY applications/self-healing/package.json          ./applications/self-healing/
+COPY applications/resume-import-processor/package.json ./applications/resume-import-processor/
+COPY applications/platform-job-watcher/package.json  ./applications/platform-job-watcher/
 COPY api/public-api/package.json                ./api/public-api/
 COPY packages/script-utils/package.json         ./packages/script-utils/
 COPY infra/package.json                         ./infra/

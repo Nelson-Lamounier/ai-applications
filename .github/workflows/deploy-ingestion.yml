@@ -1,27 +1,7 @@
-# =============================================================================
-# Deploy Ingestion Job Image (Development)
-# =============================================================================
-#
-# Builds the @bedrock/ingestion container, pushes to ECR, and publishes
-# the new <repo>:<tag> URI to SSM at /k8s/{env}/job-images/ingestion.
-#
-# Downstream:
-#   1. SSM /k8s/{env}/job-images/ingestion           ← this workflow
-#   2. ESO ClusterSecretStore aws-ssm                ← syncs ↓
-#   3. K8s Secret admin-api-job-images               ← key 'ingestion'
-#   4. Mounted file in admin-api pod                 ← /etc/admin-api/images/ingestion
-#   5. admin-api reads file on each Job creation     ← zero pod restart
-#
-# This decouples ingestion image updates from admin-api Rollouts: pushing
-# a new ingestion image does NOT trigger a Blue/Green rollout of admin-api.
-# Mounted Secret files are auto-updated by the kubelet (~60s eventual
-# consistency) when ESO refreshes the upstream Secret.
-#
-# Prerequisite: ECR repo must exist with its URI published at
-#   /shared/ecr-ingestion/{env}/repository-uri
-# Provisioned by cdk-monitoring SharedVpcStack (Phase 5 E1). This workflow
-# fails fast if the SSM parameter is missing.
-# =============================================================================
+# @format
+# Deploy Ingestion Worker (Development)
+# Builds the ingestion container, pushes to ECR, writes image URI to SSM.
+# Prerequisite: ECR repo provisioned via shared-infra CDK stack.
 
 name: "Deploy Ingestion (Dev)"
 
@@ -30,7 +10,6 @@ on:
     branches: [develop]
     paths:
       - "applications/ingestion/**"
-      - "applications/shared/**"
       - ".github/workflows/deploy-ingestion.yml"
   workflow_dispatch:
 
@@ -38,130 +17,17 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  ENVIRONMENT: development
-  AWS_REGION: "eu-west-1"
-  IMAGE_TAG: "${{ github.sha }}-r${{ github.run_attempt }}"
-
 concurrency:
   group: deploy-ingestion-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: "[Ingestion] Build Docker Image"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: ${{ vars.ENVIRONMENT || 'development' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker Image (ingestion)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: applications/ingestion/Dockerfile
-          push: false
-          load: false
-          tags: ingestion:${{ env.IMAGE_TAG }}
-          cache-from: type=gha,scope=ingestion
-          cache-to: type=gha,mode=max,scope=ingestion
-          provenance: false
-          outputs: type=docker,dest=/tmp/ingestion-image.tar
-
-      - name: Cache Ingestion Image
-        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        with:
-          path: /tmp/ingestion-image.tar
-          key: ingestion-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Build Summary
-        run: |
-          IMAGE_SIZE=$(du -sh /tmp/ingestion-image.tar | cut -f1)
-          echo "## [Ingestion] Docker Build" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: ${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Size**: $IMAGE_SIZE" >> $GITHUB_STEP_SUMMARY
-          echo "- **Dockerfile**: applications/ingestion/Dockerfile" >> $GITHUB_STEP_SUMMARY
-
-  push:
-    name: "[Ingestion] Push to ECR"
-    needs: [build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: ${{ vars.ENVIRONMENT || 'development' }}
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Configure AWS Credentials
-        uses: ./.github/actions/configure-aws
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Restore Ingestion Image from Cache
-        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        with:
-          path: /tmp/ingestion-image.tar
-          key: ingestion-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
-          fail-on-cache-miss: true
-
-      - name: Load Docker Image
-        run: docker load -i /tmp/ingestion-image.tar
-
-      - name: Resolve ECR URL (ingestion)
-        id: resolve-ecr
-        run: |
-          ECR_URL=$(aws ssm get-parameter \
-            --name "/shared/ecr-ingestion/${{ env.ENVIRONMENT }}/repository-uri" \
-            --query 'Parameter.Value' \
-            --output text)
-
-          if [ -z "$ECR_URL" ] || [ "$ECR_URL" = "None" ]; then
-            echo "::error::ingestion ECR URL not found at /shared/ecr-ingestion/${{ env.ENVIRONMENT }}/repository-uri — provision the ECR repo first"
-            exit 1
-          fi
-
-          echo "::add-mask::$ECR_URL"
-          echo "ecr-url=$ECR_URL" >> $GITHUB_OUTPUT
-
-      - name: Push Ingestion Image to ECR
-        run: |
-          ECR_URL="${{ steps.resolve-ecr.outputs.ecr-url }}"
-          TAG="${{ env.IMAGE_TAG }}"
-
-          aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
-            | docker login --username AWS --password-stdin "$ECR_URL"
-
-          docker tag "ingestion:${TAG}" "${ECR_URL}:${TAG}"
-          docker push "${ECR_URL}:${TAG}"
-
-      - name: Publish image URI to SSM
-        # Decoupled from admin-api Rollout: ESO syncs this SSM value into
-        # the admin-api-job-images Secret in the admin-api namespace, mounted
-        # as a file at /etc/admin-api/images/ingestion. The admin-api process
-        # reads the file on each Job creation — no pod restart needed when
-        # this image updates. See kubernetes-bootstrap charts/admin-api/
-        # external-secrets/admin-api-job-images.yaml.
-        run: |
-          ECR_URL="${{ steps.resolve-ecr.outputs.ecr-url }}"
-          TAG="${{ env.IMAGE_TAG }}"
-          aws ssm put-parameter \
-            --name "/k8s/${{ env.ENVIRONMENT }}/job-images/ingestion" \
-            --value "${ECR_URL}:${TAG}" \
-            --type String \
-            --overwrite
-
-      - name: Push Summary
-        run: |
-          echo "## [Ingestion] ECR Push" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: ${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **SSM**: \`/k8s/${{ env.ENVIRONMENT }}/job-images/ingestion\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Path to admin-api**: SSM → ESO → Secret → file mount (no pod restart)" >> $GITHUB_STEP_SUMMARY
+  deploy:
+    uses: ./.github/workflows/_build-push-image.yml
+    with:
+      app-name: ingestion
+      dockerfile: applications/ingestion/Dockerfile
+      ecr-ssm-path: /shared/ecr-ingestion/development/repository-uri
+      image-ssm-path: /k8s/development/job-images/ingestion
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}

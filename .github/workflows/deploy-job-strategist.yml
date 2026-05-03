@@ -1,20 +1,8 @@
-# =============================================================================
-# Deploy Job-Strategist Image (Development)
-# =============================================================================
-#
-# Builds the @bedrock/job-strategist container (carries both the analysis
-# pipeline and coach entrypoints), pushes to ECR, and updates the
-# /job-strategist/{env}/image-uri SSM parameter consumed by the K8s
-# manifests (via admin-api ConfigMap or ArgoCD Image Updater).
-#
-# The K8s Job spec selects between `dist/run-pipeline.js` (default) and
-# `dist/run-coach.js` via its `command:` field.
-#
-# Prerequisite: ECR repo must exist with its URI published at
-#   /shared/ecr-job-strategist/{env}/repository-uri
-# Provision via the shared-infra CDK stack (or AWS console) BEFORE first run.
-# This workflow does NOT create the ECR repository.
-# =============================================================================
+# @format
+# Deploy Job-Strategist (Development)
+# Builds @bedrock/job-strategist (carries run-pipeline.js + run-coach.js),
+# pushes to ECR, writes image URI to SSM.
+# Prerequisite: ECR repo provisioned via shared-infra CDK stack.
 
 name: "Deploy Job-Strategist (Dev)"
 
@@ -31,125 +19,17 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  ENVIRONMENT: development
-  AWS_REGION: "eu-west-1"
-  IMAGE_TAG: "${{ github.sha }}-r${{ github.run_attempt }}"
-
 concurrency:
   group: deploy-job-strategist-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: "[Job-Strategist] Build Docker Image"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: ${{ vars.ENVIRONMENT || 'development' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker Image (job-strategist)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: applications/job-strategist/Dockerfile
-          push: false
-          load: false
-          tags: job-strategist:${{ env.IMAGE_TAG }}
-          cache-from: type=gha,scope=job-strategist
-          cache-to: type=gha,mode=max,scope=job-strategist
-          provenance: false
-          outputs: type=docker,dest=/tmp/job-strategist-image.tar
-
-      - name: Cache Job-Strategist Image
-        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        with:
-          path: /tmp/job-strategist-image.tar
-          key: job-strategist-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Build Summary
-        run: |
-          IMAGE_SIZE=$(du -sh /tmp/job-strategist-image.tar | cut -f1)
-          echo "## [Job-Strategist] Docker Build" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: ${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Size**: $IMAGE_SIZE" >> $GITHUB_STEP_SUMMARY
-          echo "- **Dockerfile**: applications/job-strategist/Dockerfile" >> $GITHUB_STEP_SUMMARY
-
-  push:
-    name: "[Job-Strategist] Push to ECR"
-    needs: [build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: ${{ vars.ENVIRONMENT || 'development' }}
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Configure AWS Credentials
-        uses: ./.github/actions/configure-aws
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Restore Job-Strategist Image from Cache
-        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        with:
-          path: /tmp/job-strategist-image.tar
-          key: job-strategist-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
-          fail-on-cache-miss: true
-
-      - name: Load Docker Image
-        run: docker load -i /tmp/job-strategist-image.tar
-
-      - name: Resolve ECR URL (job-strategist)
-        id: resolve-ecr
-        run: |
-          ECR_URL=$(aws ssm get-parameter \
-            --name "/shared/ecr-job-strategist/${{ env.ENVIRONMENT }}/repository-uri" \
-            --query 'Parameter.Value' \
-            --output text)
-
-          if [ -z "$ECR_URL" ] || [ "$ECR_URL" = "None" ]; then
-            echo "::error::job-strategist ECR URL not found at /shared/ecr-job-strategist/${{ env.ENVIRONMENT }}/repository-uri — provision the ECR repo first"
-            exit 1
-          fi
-
-          echo "::add-mask::$ECR_URL"
-          echo "ecr-url=$ECR_URL" >> $GITHUB_OUTPUT
-
-      - name: Push Job-Strategist Image to ECR
-        run: |
-          ECR_URL="${{ steps.resolve-ecr.outputs.ecr-url }}"
-          TAG="${{ env.IMAGE_TAG }}"
-
-          aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
-            | docker login --username AWS --password-stdin "$ECR_URL"
-
-          docker tag "job-strategist:${TAG}" "${ECR_URL}:${TAG}"
-          docker push "${ECR_URL}:${TAG}"
-
-      - name: Publish image URI to SSM
-        # Decoupled from admin-api Rollout — see deploy-ingestion.yml header.
-        run: |
-          ECR_URL="${{ steps.resolve-ecr.outputs.ecr-url }}"
-          TAG="${{ env.IMAGE_TAG }}"
-          aws ssm put-parameter \
-            --name "/k8s/${{ env.ENVIRONMENT }}/job-images/job-strategist" \
-            --value "${ECR_URL}:${TAG}" \
-            --type String \
-            --overwrite
-
-      - name: Push Summary
-        run: |
-          echo "## [Job-Strategist] ECR Push" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: ${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **SSM**: \`/k8s/${{ env.ENVIRONMENT }}/job-images/job-strategist\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Path to admin-api**: SSM → ESO → Secret → file mount (no pod restart)" >> $GITHUB_STEP_SUMMARY
+  deploy:
+    uses: ./.github/workflows/_build-push-image.yml
+    with:
+      app-name: job-strategist
+      dockerfile: applications/job-strategist/Dockerfile
+      ecr-ssm-path: /shared/ecr-job-strategist/development/repository-uri
+      image-ssm-path: /k8s/development/job-images/job-strategist
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}

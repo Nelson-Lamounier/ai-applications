@@ -1,0 +1,193 @@
+# @format
+# =============================================================================
+# Build and Push Image (Reusable)
+# =============================================================================
+#
+# Reusable workflow: builds a Docker image from the monorepo, pushes to ECR,
+# and optionally writes the image URI to SSM (for ESO-backed apps).
+#
+# Usage:
+#   jobs:
+#     deploy:
+#       uses: ./.github/workflows/_build-push-image.yml
+#       with:
+#         app-name: article-pipeline
+#         dockerfile: applications/article-pipeline/Dockerfile
+#         ecr-ssm-path: /shared/ecr-article-pipeline/development/repository-uri
+#         image-ssm-path: /k8s/development/job-images/article-pipeline   # omit for ArgoCD Image Updater apps
+#       secrets:
+#         AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+# =============================================================================
+
+name: Build and Push Image (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        description: "App slug — used in job names, image tags, and cache keys (e.g. article-pipeline)"
+        required: true
+        type: string
+      dockerfile:
+        description: "Path to Dockerfile relative to repo root (e.g. applications/article-pipeline/Dockerfile)"
+        required: true
+        type: string
+      ecr-ssm-path:
+        description: "SSM parameter path holding the ECR repository URI"
+        required: true
+        type: string
+      image-ssm-path:
+        description: "SSM parameter path to write the full image URI after push. Leave empty for ArgoCD Image Updater apps."
+        required: false
+        type: string
+        default: ""
+      build-timeout:
+        description: "Build job timeout in minutes"
+        required: false
+        type: number
+        default: 20
+      environment:
+        description: "GitHub Actions environment name for secrets/variables"
+        required: false
+        type: string
+        default: development
+      aws-region:
+        description: "AWS region"
+        required: false
+        type: string
+        default: eu-west-1
+    secrets:
+      AWS_OIDC_ROLE:
+        required: true
+
+jobs:
+  build:
+    name: "[${{ inputs.app-name }}] Build"
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.build-timeout }}
+    environment: ${{ inputs.environment }}
+    env:
+      IMAGE_TAG: "${{ github.sha }}-r${{ github.run_attempt }}"
+      APP_NAME: ${{ inputs.app-name }}
+      DOCKERFILE: ${{ inputs.dockerfile }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: false
+          load: false
+          tags: ${{ inputs.app-name }}:${{ github.sha }}-r${{ github.run_attempt }}
+          cache-from: type=gha,scope=${{ inputs.app-name }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.app-name }}
+          provenance: false
+          outputs: type=docker,dest=/tmp/${{ inputs.app-name }}-image.tar
+
+      - name: Cache Image
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/${{ inputs.app-name }}-image.tar
+          key: ${{ inputs.app-name }}-image-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build Summary
+        run: |
+          IMAGE_SIZE=$(du -sh "/tmp/${APP_NAME}-image.tar" | cut -f1)
+          echo "## [${APP_NAME}] Docker Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tag**: ${IMAGE_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Size**: ${IMAGE_SIZE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Dockerfile**: ${DOCKERFILE}" >> "$GITHUB_STEP_SUMMARY"
+
+  push:
+    name: "[${{ inputs.app-name }}] Push to ECR"
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      IMAGE_TAG: "${{ github.sha }}-r${{ github.run_attempt }}"
+      APP_NAME: ${{ inputs.app-name }}
+      ECR_SSM_PATH: ${{ inputs.ecr-ssm-path }}
+      IMAGE_SSM_PATH: ${{ inputs.image-ssm-path }}
+      AWS_REGION: ${{ inputs.aws-region }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS Credentials
+        uses: ./.github/actions/configure-aws
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Restore Image from Cache
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: /tmp/${{ inputs.app-name }}-image.tar
+          key: ${{ inputs.app-name }}-image-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+
+      - name: Load Docker Image
+        run: docker load -i "/tmp/${APP_NAME}-image.tar"
+
+      - name: Resolve ECR URL
+        id: resolve-ecr
+        run: |
+          ECR_URL=$(aws ssm get-parameter \
+            --name "$ECR_SSM_PATH" \
+            --query 'Parameter.Value' \
+            --output text)
+
+          if [ -z "$ECR_URL" ] || [ "$ECR_URL" = "None" ]; then
+            echo "::error::ECR URL not found at ${ECR_SSM_PATH} — provision the ECR repo first"
+            exit 1
+          fi
+
+          echo "::add-mask::$ECR_URL"
+          echo "ecr-url=$ECR_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Push to ECR
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_URL"
+
+          docker tag "${APP_NAME}:${IMAGE_TAG}" "${ECR_URL}:${IMAGE_TAG}"
+          docker push "${ECR_URL}:${IMAGE_TAG}"
+
+      - name: Publish image URI to SSM
+        # Only runs when image-ssm-path is provided (ESO-backed apps).
+        # ArgoCD Image Updater apps (e.g. platform-job-watcher) leave this empty.
+        if: ${{ inputs.image-ssm-path != '' }}
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+        run: |
+          aws ssm put-parameter \
+            --name "$IMAGE_SSM_PATH" \
+            --value "${ECR_URL}:${IMAGE_TAG}" \
+            --type String \
+            --overwrite
+
+      - name: Push Summary
+        env:
+          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
+        run: |
+          echo "## [${APP_NAME}] ECR Push" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tag**: ${IMAGE_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Image**: ${ECR_URL}:${IMAGE_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$IMAGE_SSM_PATH" ]; then
+            echo "- **SSM**: \`${IMAGE_SSM_PATH}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Rollout**: SSM → ESO → Secret → file mount (no pod restart)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Rollout**: ArgoCD Image Updater detects new ECR tag → rolls out Deployment" >> "$GITHUB_STEP_SUMMARY"
+          fi
