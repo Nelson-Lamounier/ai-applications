@@ -24,7 +24,11 @@ export async function runReconciliation(
         });
       }
     } catch (err) {
-      console.error('[reconciler] sweep failed', { table: entry.dbTable, err });
+      console.error('[reconciler] sweep failed', {
+        table: entry.dbTable,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
     }
   }
 }

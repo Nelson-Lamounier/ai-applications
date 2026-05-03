@@ -35,6 +35,7 @@ async function main(): Promise<void> {
     console.info('[run-watcher] shutting down', { signal });
     clearInterval(reconcileTimer);
     stopFns.forEach((fn) => fn());
+    await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
     await closePool();
     process.exit(0);
   }

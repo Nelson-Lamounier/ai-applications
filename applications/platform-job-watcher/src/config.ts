@@ -18,6 +18,20 @@ function required(name: string): string {
   return v;
 }
 
+function validateTableName(name: string): string {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+    throw new Error(`Invalid table name: "${name}" — must match /^[a-zA-Z_][a-zA-Z0-9_]*$/`);
+  }
+  return name;
+}
+
+function validateNamespace(ns: string): string {
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(ns)) {
+    throw new Error(`Invalid Kubernetes namespace: "${ns}" — must match DNS label format`);
+  }
+  return ns;
+}
+
 export function loadConfig(): WatcherConfig {
   const configPath = process.env['WATCHER_CONFIG_PATH'] ?? '/etc/watcher/config.yaml';
   const raw = fs.readFileSync(configPath, 'utf8');
@@ -29,8 +43,8 @@ export function loadConfig(): WatcherConfig {
 
   return {
     watchers: parsed.watchers.map((w) => ({
-      namespace:         w.namespace,
-      dbTable:           w.dbTable,
+      namespace:         validateNamespace(w.namespace),
+      dbTable:           validateTableName(w.dbTable),
       staleAfterMinutes: w.staleAfterMinutes ?? 15,
     })),
   };

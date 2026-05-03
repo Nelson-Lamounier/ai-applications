@@ -32,10 +32,10 @@ export function watchNamespace(
   entry: WatcherEntry,
 ): () => void {
   let stopped = false;
-  const watch  = new k8s.Watch(kc);
 
   async function startWatch(): Promise<void> {
     if (stopped) return;
+    const watch = new k8s.Watch(kc);
 
     try {
       await watch.watch(
