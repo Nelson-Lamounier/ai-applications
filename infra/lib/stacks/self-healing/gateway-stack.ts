@@ -44,6 +44,7 @@ import * as cdk from 'aws-cdk-lib/core';
 import { Construct } from 'constructs';
 
 import { ApplicationInferenceProfile } from '../../constructs/observability/application-inference-profile';
+import { addLambdaObservabilityToAll, OBSERVABILITY_EXTERNAL_MODULES } from '../../utilities/lambda-observability';
 
 
 /**
@@ -179,7 +180,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             bundling: {
                 minify: true,
                 sourceMap: true,
-                externalModules: ['@aws-sdk/*'],
+                externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES],
             },
         });
 
@@ -219,7 +220,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             bundling: {
                 minify: true,
                 sourceMap: true,
-                externalModules: ['@aws-sdk/*'],
+                externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES],
             },
         });
 
@@ -282,7 +283,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             bundling: {
                 minify: true,
                 sourceMap: true,
-                externalModules: ['@aws-sdk/*'],
+                externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES],
             },
         });
 
@@ -345,7 +346,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             bundling: {
                 minify: true,
                 sourceMap: true,
-                externalModules: ['@aws-sdk/*'],
+                externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES],
             },
         });
 
@@ -405,7 +406,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             bundling: {
                 minify: true,
                 sourceMap: true,
-                externalModules: ['@aws-sdk/*'],
+                externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES],
             },
         });
 
@@ -462,7 +463,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             bundling: {
                 minify: true,
                 sourceMap: true,
-                externalModules: ['@aws-sdk/*'],
+                externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES],
             },
         });
 
@@ -528,7 +529,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             }),
             tracing: lambda.Tracing.ACTIVE,
             description: `MCP tool: verify Traefik IngressRoutes and Middlewares for ${namePrefix}`,
-            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES] },
         });
 
         checkIngressRoutesFn.addToRolePolicy(new iam.PolicyStatement({
@@ -588,7 +589,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             }),
             tracing: lambda.Tracing.ACTIVE,
             description: `MCP tool: verify cert-manager ClusterIssuer and Certificate health for ${namePrefix}`,
-            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES] },
         });
 
         checkCertManagerFn.addToRolePolicy(new iam.PolicyStatement({
@@ -647,7 +648,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             }),
             tracing: lambda.Tracing.ACTIVE,
             description: `MCP tool: verify ArgoCD application sync status for ${namePrefix}`,
-            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES] },
         });
 
         checkArgoCDSyncFn.addToRolePolicy(new iam.PolicyStatement({
@@ -926,7 +927,7 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             }),
             tracing: lambda.Tracing.ACTIVE,
             description: `MCP tool: inspect k8s SG port-443 ingress rules for ${namePrefix}`,
-            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*'] },
+            bundling: { minify: true, sourceMap: true, externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES] },
         });
 
         checkSgRulesFn.addToRolePolicy(new iam.PolicyStatement({
@@ -1166,6 +1167,20 @@ export class SelfHealingGatewayStack extends cdk.Stack {
             ],
         });
         this.agentProfileArn = agentProfile.profileArn;
+
+        // =================================================================
+        // Observability — wire ADOT + DEPLOY_ENV onto every tool Lambda
+        // in this stack. Single call covers all 10+ AgentCore tool
+        // Functions; each becomes a distinct service in Tempo / X-Ray:
+        //   <namePrefix>-gateway-diagnoseAlarm
+        //   <namePrefix>-gateway-checkNodeHealth
+        //   <namePrefix>-gateway-remediateNodeBootstrap
+        //   ... etc. (derived from each Function's CDK logical id)
+        // =================================================================
+        addLambdaObservabilityToAll(this, {
+            serviceNamePrefix: `${namePrefix}-gateway`,
+            environment:       props.environmentName,
+        });
 
         // =================================================================
         // SSM Parameter Exports

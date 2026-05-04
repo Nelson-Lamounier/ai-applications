@@ -40,12 +40,21 @@ import * as cdk from 'aws-cdk-lib/core';
 
 import { Construct } from 'constructs';
 
+import { addLambdaObservability, OBSERVABILITY_EXTERNAL_MODULES } from '../../utilities/lambda-observability';
+
+
 /**
  * Props for SelfHealingAgentStack
  */
 export interface SelfHealingAgentStackProps extends cdk.StackProps {
     /** Name prefix for resources (e.g. 'self-healing-dev') */
     readonly namePrefix: string;
+    /**
+     * Runtime environment full name ('development' / 'staging' / 'production').
+     * Stamped onto every Lambda span + log line via DEPLOY_ENV and
+     * OTEL_RESOURCE_ATTRIBUTES — see addLambdaObservability().
+     */
+    readonly environmentName: string;
     /** Lambda memory in MB */
     readonly lambdaMemoryMb: number;
     /** Lambda timeout in seconds */
@@ -315,6 +324,8 @@ export class SelfHealingAgentStack extends cdk.Stack {
                 externalModules: [
                     // AWS SDK v3 is included in the Lambda runtime
                     '@aws-sdk/*',
+                    // K8s-only deps reached via @bedrock/shared barrel.
+                    ...OBSERVABILITY_EXTERNAL_MODULES,
                 ],
             },
             deadLetterQueue: agentLambdaDlq,
@@ -398,6 +409,15 @@ export class SelfHealingAgentStack extends cdk.Stack {
         // to the underlying foundation model in ANY EU region. IAM must
         // cover both the inference profile and the foundation model.
         // =================================================================
+        // ADOT layer + OTel env. tracing: ACTIVE above already enables
+        // X-Ray on the Function role; ADOT adds W3C traceparent ingestion
+        // so traces from upstream (EventBridge alarms, Step Functions)
+        // continue rather than starting a new root.
+        addLambdaObservability(this, this.agentFunction, {
+            serviceName: `${namePrefix}-self-healing`,
+            environment: props.environmentName,
+        });
+
         const baseModelId = props.foundationModel.replace(/^eu\./, '');
         this.agentFunction.addToRolePolicy(new iam.PolicyStatement({
             sid: 'InvokeBedrockModel',
@@ -547,8 +567,16 @@ export class SelfHealingAgentStack extends cdk.Stack {
             bundling: {
                 minify: true,
                 sourceMap: true,
-                externalModules: ['@aws-sdk/*'],
+                externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES],
             },
+        });
+
+        // Same observability wiring as agentFunction — ADOT layer + DEPLOY_ENV.
+        // Outcome tracker fires from agent SQS → its trace continues the
+        // agent's parent trace via W3C tracecontext propagator.
+        addLambdaObservability(this, outcomeTracker, {
+            serviceName: `${namePrefix}-outcome-tracker`,
+            environment: props.environmentName,
         });
 
         this.outcomesTable.grantReadWriteData(outcomeTracker);

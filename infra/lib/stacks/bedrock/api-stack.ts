@@ -28,6 +28,9 @@ import * as cdk from 'aws-cdk-lib/core';
 
 import { Construct } from 'constructs';
 
+import { addLambdaObservability, OBSERVABILITY_EXTERNAL_MODULES } from '../../utilities/lambda-observability';
+
+
 /**
  * Props for BedrockApiStack
  */
@@ -126,6 +129,8 @@ export class BedrockApiStack extends cdk.Stack {
                 externalModules: [
                     // AWS SDK v3 is included in the Lambda runtime
                     '@aws-sdk/*',
+                    // K8s-only deps reached via @bedrock/shared barrel.
+                    ...OBSERVABILITY_EXTERNAL_MODULES,
                 ],
             },
         });
@@ -137,6 +142,15 @@ export class BedrockApiStack extends cdk.Stack {
             [{ id: 'AwsSolutions-L1', reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime' }],
             true,
         );
+
+        // ADOT layer + OTel env vars → X-Ray. The handler is also wrapped
+        // with withSpan() in source code as a belt-and-braces — a top-level
+        // span is guaranteed even if auto-instrumentation misses the ESM
+        // entrypoint.
+        addLambdaObservability(this, this.invokeFunction, {
+            serviceName: `${namePrefix}-chatbot`,
+            environment: props.environmentName,
+        });
 
         // Grant Bedrock Agent invoke permissions
         this.invokeFunction.addToRolePolicy(new iam.PolicyStatement({

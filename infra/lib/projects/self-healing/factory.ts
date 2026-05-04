@@ -119,7 +119,8 @@ export class SelfHealingProjectFactory implements IProjectFactory<SelfHealingFac
             stackId(this.namespace, 'Agent', this.environment),
             {
                 namePrefix,
-                lambdaMemoryMb: allocs.agentLambda.memoryMb,
+                environmentName:      this.environment,
+                lambdaMemoryMb:       allocs.agentLambda.memoryMb,
                 lambdaTimeoutSeconds: allocs.agentLambda.timeoutSeconds,
                 logRetention: configs.logRetention,
                 removalPolicy: configs.removalPolicy,
