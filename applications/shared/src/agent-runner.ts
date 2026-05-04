@@ -36,6 +36,7 @@ import {
 
 import { estimateInvocationCost } from './metrics.js';
 import type { TokenUsage } from './metrics.js';
+import { recordBedrockUsage } from './observability/bedrock.js';
 import type { AgentConfig, AgentResult, AgentInvocationLog } from './types.js';
 import type { BasePipelineContext } from './base-agent.js';
 
@@ -363,7 +364,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
         // Accumulate onto pipeline context
         accumulateContext(pipelineContext, tokenUsage, costUsd);
 
-        // Emit per-agent EMF metrics
+        // Emit per-agent EMF metrics (CloudWatch — Lambda-friendly path).
         emitAgentMetrics(
             agentName,
             pipelineContext.environment,
@@ -372,6 +373,19 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             costUsd,
             modelId,
         );
+
+        // Emit Prometheus counters (Pushgateway path for K8s pipelines, no-op
+        // on Lambdas where the registry isn't bound). Same data as EMF, but
+        // joinable with http_requests_total / ssr_requests_total in PromQL —
+        // this is what `dev-triage.json` reads to plot Bedrock call-rate.
+        recordBedrockUsage({
+            model:    modelId,
+            service:  process.env['OTEL_SERVICE_NAME'] ?? agentName,
+            route:    agentName,
+            usage:    tokenUsage,
+            costUsd,
+            outcome:  'success',
+        });
 
         console.log(
             `[${agentName}] Complete — cost=$${costUsd.toFixed(6)}, ` +

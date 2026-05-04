@@ -29,6 +29,25 @@ export { BaseAgent } from './base-agent.js';
 
 export type { BasePipelineContext } from './base-agent.js';
 
+// ─── Observability (K8s + Lambda) ────────────────────────────────────────────
+// Lazily-loaded so Lambdas don't pay for K8s-only deps (prom-client, pino,
+// pyroscope) and K8s pods don't ship Lambda-only helpers unused.
+export {
+    bootstrapK8sObservability,
+    pushFinalMetrics,
+    activeTraceContext,
+    withSpan,
+    recordBedrockUsage,
+    setBedrockMetricsRegistry,
+} from './observability/index.js';
+
+export type {
+    ObservabilityHandle,
+    BootstrapOptions,
+    BedrockUsage,
+    RecordBedrockUsageArgs,
+} from './observability/index.js';
+
 // ─── Metrics & Cost Estimation ───────────────────────────────────────────────
 export {
     estimateInvocationCost,

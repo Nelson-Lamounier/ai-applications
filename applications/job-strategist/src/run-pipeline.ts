@@ -14,6 +14,8 @@
  * (Option A) is validated and persisted to platform RDS resumes.
  */
 import type { StrategistPipelineContext } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent }   from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
@@ -26,9 +28,30 @@ import {
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
 
+// Shared registry across both run-pipeline (analyse) and run-coach so
+// dashboard rollups can be done service-wide.
+const obs = bootstrapK8sObservability({ serviceName: 'job-strategist' });
+const log = obs.logger;
+
+const strategistRuns = new Counter({
+    name:       'job_strategist_runs_total',
+    help:       'Strategist Job runs by operation and outcome.',
+    labelNames: ['operation', 'outcome'] as const,
+    registers:  [obs.registry],
+});
+const strategistDuration = new Histogram({
+    name:       'job_strategist_duration_seconds',
+    help:       'End-to-end Strategist Job duration in seconds.',
+    labelNames: ['operation', 'outcome'] as const,
+    buckets:    [10, 30, 60, 120, 300, 600, 1200, 1800],
+    registers:  [obs.registry],
+});
+
 async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
+    const start = process.hrtime.bigint();
+    let outcome: 'success' | 'failed' = 'failed';
 
     // Construct the StrategistPipelineContext required by the agents.
     //
@@ -92,28 +115,32 @@ async function main(): Promise<void> {
 
         await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
+        outcome = 'success';
 
-        console.log(JSON.stringify({
-            event:         'strategist_pipeline_complete',
+        log.info({
             pipelineRunId: env.pipelineRunId,
             applicationId: env.applicationId,
             resumeId:      persisted?.resumeId ?? null,
-        }));
+        }, 'strategist_pipeline_complete');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         await updatePipelineRun(pool, env.pipelineRunId, 'failed', message)
             .catch(() => { /* swallow — already failing */ });
         await updateJobApplicationStatus(pool, env.applicationId, 'failed')
             .catch(() => { /* swallow — already failing */ });
-        console.error(JSON.stringify({
-            event:         'strategist_pipeline_failed',
+        log.error({
             pipelineRunId: env.pipelineRunId,
             applicationId: env.applicationId,
-            error:         message,
-        }));
+            err: message,
+        }, 'strategist_pipeline_failed');
         throw err;
     } finally {
         await closePool();
+        const duration = Number(process.hrtime.bigint() - start) / 1e9;
+        strategistRuns.inc({ operation: 'analyse', outcome });
+        strategistDuration.observe({ operation: 'analyse', outcome }, duration);
+        await pushFinalMetrics(obs.registry, 'job-strategist', env.pipelineRunId);
+        await obs.shutdown();
     }
 }
 

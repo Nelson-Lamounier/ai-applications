@@ -25,7 +25,45 @@
  */
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
+import { Counter, Histogram } from 'prom-client';
+import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
 import { parseEnv } from './env.js';
+
+// One-shot K8s Job — bootstrap observability before any AWS / pg client
+// loads so OTel auto-instrumentation picks them up. Metrics push to
+// Pushgateway in `finally` because the pod dies before scrape.
+const obs = bootstrapK8sObservability({ serviceName: 'resume-import-processor' });
+const log = obs.logger;
+
+const importsTotal = new Counter({
+  name:       'resume_import_runs_total',
+  help:       'Resume import Job runs by terminal outcome.',
+  labelNames: ['outcome', 'error_code'] as const,
+  registers:  [obs.registry],
+});
+
+const importDurationSeconds = new Histogram({
+  name:       'resume_import_duration_seconds',
+  help:       'End-to-end Job duration in seconds.',
+  labelNames: ['outcome'] as const,
+  buckets:    [1, 5, 15, 30, 60, 120, 300, 600],
+  registers:  [obs.registry],
+});
+
+const stepDurationSeconds = new Histogram({
+  name:       'resume_import_step_duration_seconds',
+  help:       'Per-pipeline-step duration in seconds.',
+  labelNames: ['step'] as const,
+  buckets:    [0.1, 0.5, 1, 5, 15, 30, 60, 120],
+  registers:  [obs.registry],
+});
+
+const enrichmentEntriesTotal = new Counter({
+  name:       'resume_import_enrichment_entries_total',
+  help:       'Career entries processed by enrichment outcome.',
+  labelNames: ['outcome'] as const,
+  registers:  [obs.registry],
+});
 import { extractTextFromPdf } from './parsers/pdf.js';
 import { extractTextFromDocx } from './parsers/docx.js';
 import { extractCareerData } from './bedrock/extract-career.js';
@@ -162,13 +200,16 @@ async function countEnrichedEntries(pool: Pool, userId: string): Promise<number>
 
 async function main(): Promise<void> {
   const env = parseEnv();
+  const jobStart = process.hrtime.bigint();
+  let outcome: 'success' | 'failed' = 'failed';
+  let errorCode = '';
 
-  console.info('[run-import] starting', {
+  log.info({
     importId:    env.importId,
     userId:      env.userId,
     s3Key:       env.s3Key,
     contentType: env.contentType,
-  });
+  }, 'starting');
 
   const pool = new Pool({
     host:               env.pg.host,
@@ -324,12 +365,13 @@ async function main(): Promise<void> {
       completedAt: new Date(),
     });
 
-    console.info('[run-import] completed', { totalEmbeddings });
+    log.info({ totalEmbeddings }, 'completed');
+    outcome = 'success';
 
     await pool.end();
-    process.exit(0);
   } catch (err) {
-    console.error('[run-import] fatal error', err);
+    errorCode = 'PIPELINE_ERROR';
+    log.error({ err }, 'fatal error');
     await pool.query(
       `UPDATE resume_imports
           SET status = 'failed',
@@ -340,7 +382,18 @@ async function main(): Promise<void> {
       [JSON.stringify({ message: (err as Error).message }), env.importId],
     ).catch(() => {}); // best-effort — don't mask the original error
     await pool.end().catch(() => {});
-    process.exit(1);
+  } finally {
+    // Record terminal counters BEFORE pushing — these are the ones that
+    // matter for Prometheus alerting and dashboards.
+    const duration = Number(process.hrtime.bigint() - jobStart) / 1e9;
+    importsTotal.inc({ outcome, error_code: errorCode });
+    importDurationSeconds.observe({ outcome }, duration);
+
+    // Push final metrics keyed by importId so successive runs replace
+    // (Pushgateway groups by URL path = job + groupings).
+    await pushFinalMetrics(obs.registry, 'resume-import-processor', env.importId);
+    await obs.shutdown();
+    process.exit(outcome === 'success' ? 0 : 1);
   }
 }
 

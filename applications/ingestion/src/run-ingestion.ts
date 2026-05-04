@@ -27,18 +27,49 @@ import {
     FileFilter,
     ChunkerRegistry,
     RepoIngestionOrchestrator,
+    bootstrapK8sObservability,
+    pushFinalMetrics,
 } from '@bedrock/shared';
+import { Counter, Histogram } from 'prom-client';
 
 import { parseEnv } from './env.js';
 
+// Bootstrap observability before any pg / bedrock client constructs so
+// auto-instrumentation can hook them. K8s Job — no /metrics server;
+// metrics are pushed to Pushgateway in finally{}.
+const obs = bootstrapK8sObservability({ serviceName: 'ingestion' });
+const log = obs.logger;
+
+const ingestionRuns = new Counter({
+    name:       'ingestion_runs_total',
+    help:       'Repo ingestion Job runs by terminal outcome.',
+    labelNames: ['outcome'] as const,
+    registers:  [obs.registry],
+});
+const ingestionDuration = new Histogram({
+    name:       'ingestion_duration_seconds',
+    help:       'End-to-end Job duration in seconds.',
+    labelNames: ['outcome'] as const,
+    buckets:    [5, 15, 30, 60, 120, 300, 600, 1800],
+    registers:  [obs.registry],
+});
+const chunksProcessed = new Counter({
+    name:       'ingestion_chunks_total',
+    help:       'Chunks processed during ingestion by phase.',
+    labelNames: ['phase'] as const,
+    registers:  [obs.registry],
+});
+
 async function main(): Promise<void> {
     const env = parseEnv();
+    const start = process.hrtime.bigint();
+    let outcome: 'success' | 'failed' = 'failed';
 
-    console.info('[run-ingestion] starting', {
+    log.info({
         userId:       env.userId,
         repoFullName: env.repoFullName,
         forceReindex: env.forceReindex,
-    });
+    }, 'starting');
 
     const rdsConfig = {
         host:     env.pg.host,
@@ -69,7 +100,12 @@ async function main(): Promise<void> {
             ? await orchestrator.forceReindex(env.userId, env.repoFullName)
             : await orchestrator.ingestRepo(env.userId, env.repoFullName);
 
-        console.info('[run-ingestion] complete', {
+        chunksProcessed.inc({ phase: 'embedded' }, report.embedded);
+        chunksProcessed.inc({ phase: 'skipped' },  report.skipped);
+        chunksProcessed.inc({ phase: 'pruned' },   report.pruned);
+        outcome = 'success';
+
+        log.info({
             userId:         env.userId,
             repoFullName:   env.repoFullName,
             totalRawChunks: report.totalRawChunks,
@@ -80,13 +116,19 @@ async function main(): Promise<void> {
             updated:        report.upsertResult.updated,
             errors:         report.upsertResult.errors,
             durationMs:     report.durationMs,
-        });
+        }, 'complete');
     } finally {
         await Promise.allSettled([vectorStore.end(), syncState.end()]);
+        const duration = Number(process.hrtime.bigint() - start) / 1e9;
+        ingestionRuns.inc({ outcome });
+        ingestionDuration.observe({ outcome }, duration);
+        // Group by repoFullName so dashboards show "last run per repo".
+        await pushFinalMetrics(obs.registry, 'ingestion', `${env.userId}_${env.repoFullName.replace('/', '_')}`);
+        await obs.shutdown();
     }
 }
 
 main().catch((err) => {
-    console.error('[run-ingestion] failed', err);
+    log.error({ err }, 'failed');
     process.exit(1);
 });

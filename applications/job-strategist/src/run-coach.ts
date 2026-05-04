@@ -15,6 +15,8 @@
  */
 import type { Pool } from 'pg';
 import type { StrategistPipelineContext, StrategistAnalysisResult } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import { Counter, Histogram } from 'prom-client';
 
 import { executeCoachAgent }   from './agents/coach-agent.js';
 import { parseCoachEnv }       from './env-coach.js';
@@ -36,9 +38,30 @@ async function loadAnalysis(pool: Pool, strategistPipelineRunId: string): Promis
     return analysis;
 }
 
+// Same registry shape as run-pipeline.ts so dashboards can SUM across
+// operations on `job_strategist_runs_total{operation=~"analyse|coach"}`.
+const obs = bootstrapK8sObservability({ serviceName: 'job-strategist' });
+const log = obs.logger;
+
+const strategistRuns = new Counter({
+    name:       'job_strategist_runs_total',
+    help:       'Strategist Job runs by operation and outcome.',
+    labelNames: ['operation', 'outcome'] as const,
+    registers:  [obs.registry],
+});
+const strategistDuration = new Histogram({
+    name:       'job_strategist_duration_seconds',
+    help:       'End-to-end Strategist Job duration in seconds.',
+    labelNames: ['operation', 'outcome'] as const,
+    buckets:    [10, 30, 60, 120, 300, 600, 1200, 1800],
+    registers:  [obs.registry],
+});
+
 async function main(): Promise<void> {
     const env  = parseCoachEnv();
     const pool = getPool(env.pg);
+    const start = process.hrtime.bigint();
+    let outcome: 'success' | 'failed' = 'failed';
 
     try {
         const analysis = await loadAnalysis(pool, env.strategistPipelineRunId);
@@ -75,27 +98,31 @@ async function main(): Promise<void> {
         });
 
         await updatePipelineRun(pool, env.coachPipelineRunId, 'complete');
+        outcome = 'success';
 
-        console.log(JSON.stringify({
-            event:              'coach_pipeline_complete',
+        log.info({
             coachPipelineRunId: env.coachPipelineRunId,
             applicationId:      env.applicationId,
             stage:              env.interviewStage,
-        }));
+        }, 'coach_pipeline_complete');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         await updatePipelineRun(pool, env.coachPipelineRunId, 'failed', message)
             .catch(() => { /* swallow — already failing */ });
-        console.error(JSON.stringify({
-            event:              'coach_pipeline_failed',
+        log.error({
             coachPipelineRunId: env.coachPipelineRunId,
             applicationId:      env.applicationId,
             stage:              env.interviewStage,
-            error:              message,
-        }));
+            err: message,
+        }, 'coach_pipeline_failed');
         throw err;
     } finally {
         await closePool();
+        const duration = Number(process.hrtime.bigint() - start) / 1e9;
+        strategistRuns.inc({ operation: 'coach', outcome });
+        strategistDuration.observe({ operation: 'coach', outcome }, duration);
+        await pushFinalMetrics(obs.registry, 'job-strategist', env.coachPipelineRunId);
+        await obs.shutdown();
     }
 }
 
