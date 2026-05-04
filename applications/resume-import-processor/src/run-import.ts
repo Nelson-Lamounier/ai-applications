@@ -198,8 +198,9 @@ async function main(): Promise<void> {
     let extractionMethod: string;
 
     if (env.contentType === 'application/pdf') {
-      rawText           = await extractTextFromPdf(fileBuffer);
-      extractionMethod  = 'pdf-parse';
+      const result      = await extractTextFromPdf(fileBuffer, env.s3Key, env.assetsBucketName, env.awsRegion);
+      rawText           = result.text;
+      extractionMethod  = result.method;
     } else {
       rawText           = await extractTextFromDocx(fileBuffer);
       extractionMethod  = 'mammoth';
