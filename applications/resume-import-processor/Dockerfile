@@ -43,6 +43,9 @@ WORKDIR /app
 COPY --from=builder --chown=appuser:appgroup /app/applications/resume-import-processor/dist     ./applications/resume-import-processor/dist
 COPY --from=builder --chown=appuser:appgroup /app/applications/resume-import-processor/package.json ./applications/resume-import-processor/
 COPY --from=builder --chown=appuser:appgroup /app/node_modules                                  ./node_modules
+# @bedrock/shared is a workspace package — node_modules symlink resolves to this path
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/dist                      ./applications/shared/dist
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/package.json              ./applications/shared/package.json
 
 USER appuser
 
