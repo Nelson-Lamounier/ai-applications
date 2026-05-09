@@ -41,7 +41,9 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             password:           config.password,
             max:                5,
             idleTimeoutMillis:  30_000,
-            ssl:                { rejectUnauthorized: false },
+            // PgBouncer runs with client_tls_sslmode=disable — no SSL on the
+            // client→PgBouncer leg. PgBouncer handles the PgBouncer→RDS leg.
+            ssl:                false,
         });
     }
 
