@@ -164,6 +164,8 @@ export class BedrockDataStack extends cdk.Stack {
                 {
                     allowedOrigins: [
                         'http://localhost:5001',
+                        'https://tucaken.io',
+                        'https://www.tucaken.io',
                         'https://tucaken.com',
                         'https://www.tucaken.com',
                     ],
