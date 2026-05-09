@@ -28,6 +28,10 @@ RUN yarn install --immutable
 COPY applications/resume-import-processor/tsconfig.json ./applications/resume-import-processor/
 COPY applications/resume-import-processor/src            ./applications/resume-import-processor/src/
 
+# shared source required by tsc -b project references
+COPY applications/shared/tsconfig.json ./applications/shared/
+COPY applications/shared/src           ./applications/shared/src/
+
 RUN node_modules/.bin/tsc -b applications/resume-import-processor --force \
  || [ -f applications/resume-import-processor/dist/run-import.js ]
 
