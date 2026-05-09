@@ -164,7 +164,7 @@ const EXTRACTION_TOOL_SCHEMA = {
   },
 };
 
-const MODEL_ID = process.env['EXTRACTION_MODEL_ID'] ?? 'anthropic.claude-haiku-4-5-20251001-v1:0';
+const MODEL_ID = process.env['EXTRACTION_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 // Cap resume text size before sending to Bedrock — prevents token explosion on
 // malformed/verbose PDFs. Typical resume is <8k chars; 40k covers edge cases.

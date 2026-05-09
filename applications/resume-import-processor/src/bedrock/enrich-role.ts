@@ -49,7 +49,7 @@ const ENRICH_TOOL_SCHEMA = {
   },
 };
 
-const MODEL_ID = process.env['ENRICHMENT_MODEL_ID'] ?? 'anthropic.claude-haiku-4-5-20251001-v1:0';
+const MODEL_ID = process.env['ENRICHMENT_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 // Web snippets are capped per-source to prevent a single verbose page from
 // dominating the context and to guard against prompt-injection text in crawled pages.
