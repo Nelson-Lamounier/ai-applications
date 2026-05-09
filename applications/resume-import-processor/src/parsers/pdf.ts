@@ -72,6 +72,13 @@ async function extractViaTextract(
   throw new Error(`Textract job did not complete within ${(POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s`);
 }
 
+// Minimum character count for pdf-parse output to be considered usable.
+// PDFs with font-encoding issues produce partial or garbled output that
+// passes the non-empty check but has too few meaningful characters to
+// yield career data from Bedrock. 200 chars is a safe lower bound for
+// any real single-page resume section.
+const MIN_USEFUL_TEXT_CHARS = 200;
+
 /**
  * @param buffer      - File bytes fetched from S3.
  * @param s3Key       - Original S3 key (used by Textract OCR fallback).
@@ -84,15 +91,30 @@ export async function extractTextFromPdf(
   bucket: string,
   awsRegion: string,
 ): Promise<{ text: string; method: 'pdf-parse' | 'textract' }> {
-  const parsed = await pdfParse(buffer);
-  const text = parsed.text.trim();
+  let pdfText = '';
 
-  if (text) {
-    return { text, method: 'pdf-parse' };
+  try {
+    const parsed = await pdfParse(buffer);
+    pdfText = parsed.text.trim();
+  } catch (err) {
+    // pdf-parse throws on encrypted PDFs, malformed structures, and certain
+    // CIDFont/XFA documents. Fall through to Textract rather than crashing.
+    console.warn('[run-import] pdf-parse threw, falling back to Textract OCR', { s3Key, err });
   }
 
-  // Image-only PDF — fall back to Textract async OCR
-  console.info('[run-import] pdf-parse found no text, falling back to Textract OCR', { s3Key });
+  if (pdfText.length >= MIN_USEFUL_TEXT_CHARS) {
+    return { text: pdfText, method: 'pdf-parse' };
+  }
+
+  if (pdfText.length > 0) {
+    console.info(
+      '[run-import] pdf-parse returned too little text, falling back to Textract OCR',
+      { s3Key, chars: pdfText.length },
+    );
+  } else {
+    console.info('[run-import] pdf-parse found no text, falling back to Textract OCR', { s3Key });
+  }
+
   const ocrText = await extractViaTextract(bucket, s3Key, awsRegion);
   return { text: ocrText, method: 'textract' };
 }
