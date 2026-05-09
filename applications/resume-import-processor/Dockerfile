@@ -32,8 +32,7 @@ COPY applications/resume-import-processor/src            ./applications/resume-i
 COPY applications/shared/tsconfig.json ./applications/shared/
 COPY applications/shared/src           ./applications/shared/src/
 
-RUN node_modules/.bin/tsc -b applications/resume-import-processor --force \
- || [ -f applications/resume-import-processor/dist/run-import.js ]
+RUN node_modules/.bin/tsc -b applications/resume-import-processor
 
 RUN yarn workspaces focus @bedrock/resume-import-processor --production
 

@@ -161,23 +161,23 @@ async function persistCareerEntries(
   };
 
   for (let i = 0; i < data.experience.length; i++) {
-    const id = await insertEntry('experience', data.experience[i] as Record<string, unknown>, i);
+    const id = await insertEntry('experience', data.experience[i] as unknown as Record<string, unknown>, i);
     createdIds.push(id);
   }
   for (let i = 0; i < data.education.length; i++) {
-    await insertEntry('education', data.education[i] as Record<string, unknown>, i);
+    await insertEntry('education', data.education[i] as unknown as Record<string, unknown>, i);
   }
   for (const skillGroup of data.skills) {
-    await insertEntry('skill', skillGroup as Record<string, unknown>, 0);
+    await insertEntry('skill', skillGroup as unknown as Record<string, unknown>, 0);
   }
   for (let i = 0; i < data.certifications.length; i++) {
-    await insertEntry('certification', data.certifications[i] as Record<string, unknown>, i);
+    await insertEntry('certification', data.certifications[i] as unknown as Record<string, unknown>, i);
   }
   for (let i = 0; i < data.projects.length; i++) {
-    await insertEntry('project', data.projects[i] as Record<string, unknown>, i);
+    await insertEntry('project', data.projects[i] as unknown as Record<string, unknown>, i);
   }
   for (let i = 0; i < data.keyAchievements.length; i++) {
-    await insertEntry('achievement', data.keyAchievements[i] as Record<string, unknown>, i);
+    await insertEntry('achievement', data.keyAchievements[i] as unknown as Record<string, unknown>, i);
   }
 
   // Update career_entries_created array on the import record
