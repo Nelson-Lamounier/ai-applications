@@ -1,0 +1,254 @@
+# @format
+# =============================================================================
+# Promote Argo Rollout (Composite Action)
+# =============================================================================
+#
+# Drives a full canary promotion sequence for an Argo Rollout:
+#   0. Prometheus pre-flight — verifies the SLO recording rule is reachable
+#   1. ArgoCD sync wait    — polls until the Rollout spec reflects the new image
+#   2. State snapshot      — dumps current rollout detail before promote
+#   3. Pause + promote     — waits for Paused phase, then issues promote
+#   4. Health watch        — streams rollout status until Healthy or timeout
+#   5. Diagnostics         — dumps events, pods, logs, analysis on failure
+#
+# Must run on a k8s-runner (ARC) pod inside the target EKS cluster.
+# The action builds an in-cluster kubeconfig from the mounted SA token —
+# no external kubeconfig or SSM secret required.
+#
+# Usage:
+#   jobs:
+#     promote:
+#       runs-on: k8s-runner
+#       steps:
+#         - uses: actions/checkout@v4
+#         - uses: ./.github/actions/configure-aws
+#           with: { role-to-assume: ..., aws-region: eu-west-1 }
+#         - uses: ./.github/actions/promote-rollout
+#           with:
+#             rollout-name:      my-app
+#             namespace:         my-app
+#             image-tag:         ${{ github.sha }}-r${{ github.run_attempt }}
+#             prometheus-query:  slo:my-app:errors_ratio:rate5m
+#           env:
+#             GH_TOKEN: ${{ github.token }}
+#             GH_REPO:  ${{ github.repository }}
+#             GH_SHA:   ${{ github.sha }}
+# =============================================================================
+
+name: Promote Argo Rollout
+description: >
+  Full canary promotion sequence: Prometheus pre-flight, ArgoCD sync wait,
+  pause detection, promote, and health watch. Runs inside EKS via ARC runner.
+
+inputs:
+  rollout-name:
+    description: "Argo Rollout resource name (kubectl get rollout <name>)"
+    required: true
+  namespace:
+    description: "Kubernetes namespace the Rollout lives in"
+    required: true
+  image-tag:
+    description: "New image tag to wait for in the Rollout spec (e.g. abc123-r1)"
+    required: true
+  argocd-app:
+    description: "ArgoCD application name for diagnostics. Defaults to rollout-name."
+    required: false
+    default: ""
+  environment:
+    description: "GitHub Actions environment name (used in deployment status updates)"
+    required: false
+    default: "development"
+  prometheus-url:
+    description: "Prometheus base URL (in-cluster)"
+    required: false
+    default: "http://prometheus.monitoring.svc.cluster.local:9090/prometheus"
+  prometheus-query:
+    description: "PromQL expression to verify before promote. Leave empty to skip."
+    required: false
+    default: ""
+  argocd-sync-attempts:
+    description: "Max poll iterations waiting for ArgoCD to reconcile (× 15s each)"
+    required: false
+    default: "40"
+  promote-attempts:
+    description: "Max poll iterations waiting for Paused phase before promote (× 15s each)"
+    required: false
+    default: "24"
+  rollout-timeout:
+    description: "kubectl argo rollouts status --timeout value (e.g. 10m)"
+    required: false
+    default: "10m"
+
+runs:
+  using: composite
+  steps:
+    # ── Kubeconfig ─────────────────────────────────────────────────────────────
+    # ARC runner pod runs inside EKS. Build config from the mounted SA token
+    # and cluster CA — no SSM kubeconfig or aws eks update-kubeconfig needed.
+    - name: Set up in-cluster kubeconfig
+      shell: bash
+      run: |
+        SA=/var/run/secrets/kubernetes.io/serviceaccount
+        kubectl config set-cluster in-cluster \
+          --server=https://kubernetes.default.svc:443 \
+          --certificate-authority="${SA}/ca.crt"
+        kubectl config set-credentials arc-runner \
+          --token="$(cat ${SA}/token)"
+        kubectl config set-context in-cluster \
+          --cluster=in-cluster --user=arc-runner
+        kubectl config use-context in-cluster
+
+    # ── 0. Prometheus pre-flight ───────────────────────────────────────────────
+    - name: Verify Prometheus is reachable
+      if: ${{ inputs.prometheus-query != '' }}
+      shell: bash
+      env:
+        PROM: ${{ inputs.prometheus-url }}
+        PROM_QUERY: ${{ inputs.prometheus-query }}
+      run: |
+        set -euo pipefail
+
+        echo '── Prometheus health ──'
+        curl -sf "${PROM}/-/healthy" && echo ' OK'
+
+        echo "── SLO recording rule reachable: ${PROM_QUERY} ──"
+        STATUS=$(curl -sf "${PROM}/api/v1/query?query=${PROM_QUERY}" \
+          | grep -o '"status":"[^"]*"' | head -1)
+        if [ "$STATUS" != '"status":"success"' ]; then
+          echo "FAIL: SLO recording rule query failed — Prometheus may be missing the rule"
+          exit 1
+        fi
+        echo "SLO recording rule reachable: OK"
+
+    # ── 1. ArgoCD sync wait ────────────────────────────────────────────────────
+    - name: Wait for ArgoCD sync
+      shell: bash
+      env:
+        ROLLOUT:   ${{ inputs.rollout-name }}
+        NAMESPACE: ${{ inputs.namespace }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        MAX_ATTEMPTS: ${{ inputs.argocd-sync-attempts }}
+      run: |
+        set -euo pipefail
+        echo "Waiting for ArgoCD to reconcile image tag: *${IMAGE_TAG}*"
+        for i in $(seq 1 "$MAX_ATTEMPTS"); do
+          SPEC_IMAGE=$(kubectl get rollout "$ROLLOUT" -n "$NAMESPACE" \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "<not found>")
+          echo "[attempt ${i}/${MAX_ATTEMPTS}] spec image: ${SPEC_IMAGE}"
+          if [[ "$SPEC_IMAGE" == *"$IMAGE_TAG"* ]]; then
+            echo "ArgoCD synced"
+            break
+          fi
+          [[ "$i" -eq "$MAX_ATTEMPTS" ]] && {
+            echo "FAIL: ArgoCD did not sync within $((MAX_ATTEMPTS * 15))s"
+            ARGOCD_APP="${{ inputs.argocd-app }}"
+            kubectl describe application -n argocd "${ARGOCD_APP:-$ROLLOUT}" 2>/dev/null || true
+            exit 1
+          }
+          sleep 15
+        done
+
+    # ── 2. State snapshot ──────────────────────────────────────────────────────
+    - name: Snapshot rollout state
+      shell: bash
+      env:
+        ROLLOUT:   ${{ inputs.rollout-name }}
+        NAMESPACE: ${{ inputs.namespace }}
+      run: kubectl argo rollouts get rollout "$ROLLOUT" -n "$NAMESPACE"
+
+    # ── 3. Wait for Paused phase then promote ──────────────────────────────────
+    - name: Wait for pre-promotion pause and promote
+      shell: bash
+      env:
+        ROLLOUT:      ${{ inputs.rollout-name }}
+        NAMESPACE:    ${{ inputs.namespace }}
+        MAX_ATTEMPTS: ${{ inputs.promote-attempts }}
+      run: |
+        set -euo pipefail
+        for i in $(seq 1 "$MAX_ATTEMPTS"); do
+          PHASE=$(kubectl get rollout "$ROLLOUT" -n "$NAMESPACE" \
+            -o jsonpath='{.status.phase}' 2>/dev/null || echo "unknown")
+          MESSAGE=$(kubectl get rollout "$ROLLOUT" -n "$NAMESPACE" \
+            -o jsonpath='{.status.message}' 2>/dev/null || echo "")
+          echo "[attempt ${i}/${MAX_ATTEMPTS}] phase=${PHASE}${MESSAGE:+ | ${MESSAGE}}"
+
+          [[ "$PHASE" == "Paused" ]] && { echo "Rollout paused — promoting"; break; }
+          [[ "$PHASE" == "Healthy" ]] && { echo "Already Healthy — no promotion needed"; exit 0; }
+          [[ "$PHASE" == "Degraded" || "$PHASE" == "Error" ]] && {
+            echo "FAIL: rollout entered ${PHASE} before promotion"
+            kubectl argo rollouts get rollout "$ROLLOUT" -n "$NAMESPACE"
+            exit 1
+          }
+          [[ "$i" -eq "$MAX_ATTEMPTS" ]] && {
+            echo "FAIL: rollout did not pause within $((MAX_ATTEMPTS * 15))s (phase=${PHASE})"
+            kubectl argo rollouts get rollout "$ROLLOUT" -n "$NAMESPACE"
+            exit 1
+          }
+          sleep 15
+        done
+        kubectl argo rollouts promote "$ROLLOUT" -n "$NAMESPACE"
+        echo "Promote issued"
+
+    # ── 4. Watch rollout to Healthy ────────────────────────────────────────────
+    - name: Watch rollout to Healthy
+      shell: bash
+      env:
+        ROLLOUT:   ${{ inputs.rollout-name }}
+        NAMESPACE: ${{ inputs.namespace }}
+        TIMEOUT:   ${{ inputs.rollout-timeout }}
+      run: |
+        set -euo pipefail
+        kubectl argo rollouts status "$ROLLOUT" -n "$NAMESPACE" --timeout "$TIMEOUT"
+        echo "Rollout Healthy"
+
+    # ── 5. Diagnostics on failure ──────────────────────────────────────────────
+    - name: Dump diagnostics
+      if: failure()
+      shell: bash
+      env:
+        ROLLOUT:     ${{ inputs.rollout-name }}
+        NAMESPACE:   ${{ inputs.namespace }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        GH_TOKEN:    ${{ env.GH_TOKEN }}
+        GH_REPO:     ${{ env.GH_REPO }}
+        GH_SHA:      ${{ env.GH_SHA }}
+      run: |
+        echo "──────────────── rollout detail ────────────────"
+        kubectl argo rollouts get rollout "$ROLLOUT" -n "$NAMESPACE" || true
+
+        echo "──────────────── rollout events ────────────────"
+        kubectl get events -n "$NAMESPACE" \
+          --field-selector "involvedObject.name=${ROLLOUT}" \
+          --sort-by='.lastTimestamp' || true
+
+        echo "──────────────── pods ──────────────────────────"
+        kubectl get pods -n "$NAMESPACE" -o wide || true
+
+        echo "──────────────── recent pod logs (last 50 lines) ───────────────"
+        for POD in $(kubectl get pods -n "$NAMESPACE" \
+          -l "app.kubernetes.io/name=${ROLLOUT}" \
+          -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "--- ${POD} ---"
+          kubectl logs "$POD" -n "$NAMESPACE" --tail=50 2>/dev/null || true
+        done
+
+        echo "──────────────── analysis runs ─────────────────"
+        kubectl get analysisrun -n "$NAMESPACE" \
+          --sort-by='.metadata.creationTimestamp' 2>/dev/null | tail -5 || true
+
+        # Post failure deployment status to GitHub Environments tab
+        if [ -n "${GH_TOKEN:-}" ] && [ -n "${GH_REPO:-}" ] && [ -n "${GH_SHA:-}" ]; then
+          DEPLOY_ID=$(gh api "/repos/${GH_REPO}/deployments" \
+            --jq ".[] | select(.sha == \"${GH_SHA}\" and .environment == \"${ENVIRONMENT}\") | .id" \
+            2>/dev/null | head -1 || echo "")
+          if [ -n "$DEPLOY_ID" ]; then
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GH_REPO}/deployments/${DEPLOY_ID}/statuses" \
+              -f state=failure \
+              -f description="Rollout did not become Healthy — see Actions log" \
+              -f environment="${ENVIRONMENT}" \
+              2>/dev/null || true
+          fi
+        fi
