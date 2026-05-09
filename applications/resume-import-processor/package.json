@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "jest --passWithNoTests"
+    "test": "jest --config ../jest.config.js --passWithNoTests"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1001.0",
