@@ -21,6 +21,11 @@ import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 
 const MODEL_ID = 'amazon.titan-embed-text-v2:0';
 
+// Bedrock rejects payloads whose inputText exceeds this character count.
+// Truncation preserves the leading content (most semantically dense) rather
+// than failing the entire chunk and crashing the ingestion job.
+const MAX_INPUT_CHARS = 50_000;
+
 export class TitanEmbeddingProvider implements IEmbeddingProvider {
     readonly dimension: number;
 
@@ -52,7 +57,7 @@ export class TitanEmbeddingProvider implements IEmbeddingProvider {
 
     async embed(text: string): Promise<number[]> {
         const body = JSON.stringify({
-            inputText:  text,
+            inputText:  text.length > MAX_INPUT_CHARS ? text.slice(0, MAX_INPUT_CHARS) : text,
             dimensions: this.dimension,
             normalize:  true,
         });
