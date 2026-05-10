@@ -21,10 +21,11 @@ import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 
 const MODEL_ID = 'amazon.titan-embed-text-v2:0';
 
-// Bedrock rejects payloads whose inputText exceeds this character count.
-// Truncation preserves the leading content (most semantically dense) rather
-// than failing the entire chunk and crashing the ingestion job.
-const MAX_INPUT_CHARS = 50_000;
+// Titan Text Embeddings v2 enforces a 8,192-token limit. At ~4 chars/token
+// for English, 30,000 chars ≈ 7,500 tokens — safely under the limit.
+// The API also has a 50,000-char hard limit, but the token limit is the
+// binding constraint in practice. Truncation preserves leading content.
+const MAX_INPUT_CHARS = 30_000;
 
 export class TitanEmbeddingProvider implements IEmbeddingProvider {
     readonly dimension: number;
