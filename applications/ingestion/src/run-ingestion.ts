@@ -33,6 +33,9 @@ import {
 import { Counter, Histogram } from 'prom-client';
 
 import { parseEnv } from './env.js';
+import { trace, context, SpanStatusCode } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('ingestion-worker');
 
 // Bootstrap observability before any pg / bedrock client constructs so
 // auto-instrumentation can hook them. K8s Job — no /metrics server;
@@ -95,29 +98,59 @@ async function main(): Promise<void> {
     const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher });
     const orchestrator = new RepoIngestionOrchestrator(repoAdapter, fileFilter, chunkerReg, pipeline);
 
+    const rootSpan = tracer.startSpan('ingestion.pipeline', {
+        attributes: {
+            'user.id':        env.userId,
+            'repo.full_name': env.repoFullName,
+            'force_reindex':  env.forceReindex,
+        },
+    }, obs.parentContext);
+
     try {
-        const report = env.forceReindex
-            ? await orchestrator.forceReindex(env.userId, env.repoFullName)
-            : await orchestrator.ingestRepo(env.userId, env.repoFullName);
+        const report = await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
+            return env.forceReindex
+                ? await orchestrator.forceReindex(env.userId, env.repoFullName)
+                : await orchestrator.ingestRepo(env.userId, env.repoFullName);
+        });
 
         chunksProcessed.inc({ phase: 'embedded' }, report.embedded);
         chunksProcessed.inc({ phase: 'skipped' },  report.skipped);
         chunksProcessed.inc({ phase: 'pruned' },   report.pruned);
+        rootSpan.setAttributes({
+            'chunks.embedded': report.embedded,
+            'chunks.pruned':   report.pruned,
+        });
         outcome = 'success';
 
+        const { traceId } = rootSpan.spanContext();
         log.info({
-            userId:         env.userId,
-            repoFullName:   env.repoFullName,
-            totalRawChunks: report.totalRawChunks,
-            embedded:       report.embedded,
-            skipped:        report.skipped,
-            pruned:         report.pruned,
-            inserted:       report.upsertResult.inserted,
-            updated:        report.upsertResult.updated,
-            errors:         report.upsertResult.errors,
-            durationMs:     report.durationMs,
+            event:           'ingestion.complete',
+            status:          'complete',
+            trace_id:         traceId,
+            user_id:          env.userId,
+            repo_full_name:   env.repoFullName,
+            job_name:         process.env['JOB_NAME'] ?? 'unknown',
+            embedded:         report.embedded,
+            skipped:          report.skipped,
+            pruned:           report.pruned,
+            duration_ms:      report.durationMs,
+            kb_quality_score: report.kbQualityScore,
         }, 'complete');
+
+    } catch (err) {
+        rootSpan.recordException(err instanceof Error ? err : new Error(String(err)));
+        rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+        const { traceId } = rootSpan.spanContext();
+        log.error({
+            event:          'ingestion.complete',
+            status:         'error',
+            trace_id:        traceId,
+            user_id:         env.userId,
+            repo_full_name:  env.repoFullName,
+        }, 'failed');
+        throw err;
     } finally {
+        rootSpan.end();
         await Promise.allSettled([vectorStore.end(), syncState.end()]);
         const duration = Number(process.hrtime.bigint() - start) / 1e9;
         ingestionRuns.inc({ outcome });
