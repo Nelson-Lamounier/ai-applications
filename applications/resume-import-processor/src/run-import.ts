@@ -361,7 +361,8 @@ async function main(): Promise<void> {
             try {
               enriched = await enrichRole(exp, searchTool, env.awsRegion);
             } catch (err) {
-              span.recordException(err as Error);
+              span.recordException(err instanceof Error ? err : new Error(String(err)));
+              span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
               await pool.query(
                 `UPDATE user_career_history
                     SET enrichment_status = 'failed', updated_at = NOW()
@@ -396,6 +397,7 @@ async function main(): Promise<void> {
             );
             totalEmbeddings += count;
           } catch (err) {
+            span.recordException(err instanceof Error ? err : new Error(String(err)));
             span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
           } finally { span.end(); }
         });

@@ -61,7 +61,7 @@ export class TavilySearchTool implements WebSearchTool {
         }));
         span.setAttributes({
           'tavily.results_count': results.length,
-          'http.status_code':     response.status,
+          'http.response.status_code': response.status,
         });
         return results;
       } catch (err) {
