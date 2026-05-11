@@ -230,7 +230,7 @@ export async function extractCareerData(
 
   return {
     data:         toolUseBlock.input as ExtractedCareerData,
-    inputTokens:  (parsed.usage?.input_tokens  as number | undefined)  ?? 0,
-    outputTokens: (parsed.usage?.output_tokens as number | undefined) ?? 0,
+    inputTokens:  parsed.usage?.input_tokens  ?? 0,
+    outputTokens: parsed.usage?.output_tokens ?? 0,
   };
 }
