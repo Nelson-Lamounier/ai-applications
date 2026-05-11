@@ -53,18 +53,30 @@ async function main(): Promise<void> {
     const start = process.hrtime.bigint();
     let outcome: 'success' | 'failed' = 'failed';
 
+    // Fetch the user's active resume from PG if RESUME_ID is provided.
+    // Done here rather than inside the research agent so the structured JSON
+    // is available to the strategist agent as Phase 1 input without an
+    // extra PG round-trip mid-pipeline.
+    let resumeData: unknown = null;
+    if (env.resumeId) {
+        const result = await pool.query<{ content_json: unknown }>(
+            `SELECT content_json FROM resumes WHERE id = $1 AND (user_id = $2 OR user_id IS NULL)`,
+            [env.resumeId, env.userId],
+        );
+        resumeData = result.rows[0]?.content_json ?? null;
+        if (resumeData) {
+            log.info({ pipelineRunId: env.pipelineRunId, resumeId: env.resumeId }, 'resume_loaded_from_pg');
+        } else {
+            log.warn({ pipelineRunId: env.pipelineRunId, resumeId: env.resumeId }, 'resume_not_found_in_pg');
+        }
+    }
+
     // Construct the StrategistPipelineContext required by the agents.
     //
     // Notes on field provenance:
-    //  - resumeId / resumeData: in the legacy pipeline these were resolved by
-    //    the Trigger Lambda (DDB lookup). For the K8s entrypoint they are
-    //    expected to be embedded by admin-api at dispatch time. Until Task 4
-    //    plumbs them through env vars we default to placeholders — the
-    //    Strategist still functions but without the user's structured resume
-    //    as Phase 1 input. TODO(phase-4-task-4): pass RESUME_ID + RESUME_DATA
-    //    via env (or fetch from PG resumes here).
+    //  - resumeId / resumeData: resolved above via PG lookup when RESUME_ID is
+    //    provided by admin-api at dispatch time.
     //  - bucket: artefact bucket for any S3 offload paths in the agents.
-    //    TODO(phase-4-task-4): pass S3_BUCKET via env.
     //  - operation: hard-coded to 'analyse' — the coach pipeline is a separate
     //    Job entrypoint.
     //  - interviewStage: defaults to 'applied' for the analyse path.
@@ -75,8 +87,8 @@ async function main(): Promise<void> {
         jobDescription:    env.jobDescription,
         targetCompany:     env.targetCompany,
         targetRole:        env.targetRole,
-        resumeId:          process.env['RESUME_ID'] ?? '',
-        resumeData:        null,
+        resumeId:          env.resumeId,
+        resumeData:        resumeData as import('@bedrock/shared').StructuredResumeData | null,
         interviewStage:    'applied',
         bucket:            process.env['S3_BUCKET'] ?? '',
         environment:       env.environment,

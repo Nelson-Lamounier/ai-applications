@@ -76,6 +76,13 @@ const RESEARCH_THINKING_BUDGET = 4096;
 
 /** Knowledge Base ID for Pinecone retrieval */
 const KNOWLEDGE_BASE_ID = process.env.KNOWLEDGE_BASE_ID ?? '';
+if (!KNOWLEDGE_BASE_ID) {
+    // Log at module load time so it appears at the top of every pod's log stream.
+    // KB retrieval will be skipped — research agent runs in zero-evidence mode.
+    log('ERROR', 'KNOWLEDGE_BASE_ID is not set — KB retrieval disabled. Inject via K8s Job env.', {
+        agent: 'strategist-research',
+    });
+}
 
 /**
  * Final number of KB passages handed to the LLM. With reranking enabled,

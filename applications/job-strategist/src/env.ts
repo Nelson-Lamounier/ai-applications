@@ -15,6 +15,7 @@ export interface StrategistEnv {
     readonly targetCompany:    string;
     readonly targetRole:       string;
     readonly jobDescription:   string;
+    readonly resumeId:         string;
     readonly mode:             string;     // PipelineMode-compatible
     readonly pipelineId:       string;
     readonly version:          number;
@@ -44,6 +45,7 @@ export function parseEnv(): StrategistEnv {
         targetCompany:   required('TARGET_COMPANY'),
         targetRole:      required('TARGET_ROLE'),
         jobDescription:  required('JOB_DESCRIPTION'),
+        resumeId:        process.env['RESUME_ID'] ?? '',
         mode:            process.env['MODE']             ?? 'standard',
         pipelineId:      process.env['PIPELINE_ID']      ?? pipelineRunId,
         version:         parseInt(process.env['PIPELINE_VERSION'] ?? '1', 10),
