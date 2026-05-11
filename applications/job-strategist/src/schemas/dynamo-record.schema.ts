@@ -1,13 +1,13 @@
 /**
  * @format
- * DynamoDB Record Schemas — Zod Runtime Validation
+ * Pipeline Record Schemas — Zod Runtime Validation
  *
- * Validates DynamoDB record shapes consumed by the job-strategist
- * handlers. Replaces unsafe `record['field'] as Type` casts with
- * strict schema-based parsing at the data retrieval boundary.
+ * Validates analysis record shapes consumed by the job-strategist pipeline.
+ * Originally backed by DynamoDB; now sourced from RDS pipeline_runs metadata.
+ * Replaces unsafe casts with strict schema-based parsing at retrieval boundaries.
  *
- * @see coach-loader-handler.ts — AnalysisRecordSchema
- * @see trigger-handler.ts — ApplicationMetadataRecordSchema
+ * @see pipeline-runs.ts — updatePipelineRunMetadata
+ * @see coach-agent.ts — AnalysisRecordSchema
  */
 
 import { z } from 'zod';
@@ -75,7 +75,7 @@ const ResumeSuggestionsSchema = z.object({
 // ANALYSIS METADATA (NESTED IN ANALYSIS RECORD)
 // =============================================================================
 
-/** Metadata sub-object within the ANALYSIS# DynamoDB record */
+/** Metadata sub-object within the analysis pipeline_runs record */
 const AnalysisMetadataSchema = z.object({
     candidateName: z.string().default(''),
     targetRole: z.string().default(''),
@@ -86,18 +86,17 @@ const AnalysisMetadataSchema = z.object({
 });
 
 // =============================================================================
-// ANALYSIS RECORD (FULL DDB RECORD)
+// ANALYSIS RECORD (PIPELINE_RUNS METADATA)
 // =============================================================================
 
 /**
- * Schema for the ANALYSIS# DynamoDB record consumed by coach-loader-handler.
+ * Schema for the analysis payload stored in pipeline_runs.metadata.
  *
- * Validates all fields extracted from the DynamoDB record, using
- * `.default()` and `.catch()` for backward-compatible parsing of
- * records that may predate schema additions.
+ * Validates all fields with `.default()` / `.catch()` for backward-compatible
+ * parsing of records produced by different pipeline versions.
  */
 export const AnalysisRecordSchema = z.object({
-    /** DynamoDB sort key — e.g. 'ANALYSIS#exec-name-1234567890' */
+    /** Pipeline run ID — corresponds to pipeline_runs.id */
     sk: z.string(),
 
     /** Full XML analysis output */
@@ -129,12 +128,10 @@ export const AnalysisRecordSchema = z.object({
 // =============================================================================
 
 /**
- * Schema for the APPLICATION# METADATA DynamoDB record.
+ * Schema for the application metadata stored in pipeline_runs.metadata.
  *
- * Used by the trigger handler to reconstruct pipeline context
- * when starting the coaching pipeline for an existing application.
- *
- * Only validates the fields actually read by the handler.
+ * Used to reconstruct pipeline context when starting the coaching pipeline
+ * for an existing application. Only validates fields read by the handler.
  */
 export const ApplicationMetadataRecordSchema = z.object({
     /** Job description text (stored with the analysis) */
@@ -153,7 +150,7 @@ export const ApplicationMetadataRecordSchema = z.object({
 // INFERRED TYPES
 // =============================================================================
 
-/** Validated analysis record from DynamoDB */
+/** Validated analysis record from pipeline_runs metadata */
 export type ValidatedAnalysisRecord = z.infer<typeof AnalysisRecordSchema>;
 
 /** Validated analysis metadata sub-object */

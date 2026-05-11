@@ -2,10 +2,10 @@
  * @format
  * Resume Service — Pure Formatting Utility
  *
- * Converts structured resume data (from DynamoDB) into LLM-friendly
- * prompt text. No DynamoDB access — this module is a pure transformer.
+ * Converts structured resume data (from RDS resumes table) into LLM-friendly
+ * prompt text. Pure transformer — no database access.
  *
- * The Trigger Lambda fetches the resume from DynamoDB; this module
+ * run-pipeline.ts fetches the resume from RDS at pipeline start; this module
  * formats it for consumption by the Research and Strategist agents.
  */
 
@@ -25,7 +25,7 @@ import type {
  * Each resume section is clearly delimited with headers so the model
  * can identify and reference individual sections during analysis.
  *
- * @param resume - The structured resume data from DynamoDB
+ * @param resume - The structured resume data from the RDS resumes table
  * @returns Formatted plain-text resume with section headers
  */
 export function formatResumeForPrompt(resume: StructuredResumeData): string {

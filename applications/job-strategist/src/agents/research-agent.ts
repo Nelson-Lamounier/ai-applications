@@ -1,25 +1,37 @@
 /**
  * @format
- * Strategist Research Agent — KB Retrieval, Resume Parsing & Gap Analysis
+ * Strategist Research Agent — RDS Vector Retrieval, Resume Parsing & Gap Analysis
  *
  * First agent in the 3-agent strategist pipeline. Receives the raw
- * job description, queries the Pinecone Knowledge Base for portfolio
- * and project data, fetches the latest resume from DynamoDB, and
- * produces a structured research brief with verified/partial/gap
- * skill classification.
+ * job description, queries the RDS pgvector Knowledge Base for portfolio
+ * and project data, reads the resume from pipeline context (fetched at
+ * pipeline start), and produces a structured research brief with
+ * verified/partial/gap skill classification.
  *
  * Uses Haiku 4.5 for cost-efficient extraction and analysis.
  *
- * Pipeline position: API → **Research** → Strategist → Coach → DynamoDB
+ * Pipeline position: Trigger → **Research** → Strategist → Coach → RDS persist
  */
 
 import {
-    BedrockAgentRuntimeClient,
-    RetrieveCommand,
-} from '@aws-sdk/client-bedrock-agent-runtime';
-
-import { runAgent, parseJsonResponse, InputSanitiser, BedrockReranker, log } from '@bedrock/shared';
-import type { IReranker, PiiPattern, RerankCandidate } from '@bedrock/shared';
+    runAgent,
+    parseJsonResponse,
+    InputSanitiser,
+    BedrockReranker,
+    RdsVectorStore,
+    TitanEmbeddingProvider,
+    log,
+} from '@bedrock/shared';
+import type {
+    AgentConfig,
+    AgentResult,
+    IReranker,
+    PiiPattern,
+    RerankCandidate,
+    StructuredResumeData,
+    StrategistPipelineContext,
+    StrategistResearchResult,
+} from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
@@ -40,13 +52,6 @@ const inputSanitiser = new InputSanitiser({
     maxLength: 50_000,
     piiPatterns: STRATEGIST_PII_PATTERNS,
 });
-import type {
-    AgentConfig,
-    AgentResult,
-    StructuredResumeData,
-    StrategistPipelineContext,
-    StrategistResearchResult,
-} from '@bedrock/shared';
 
 // =============================================================================
 // CONFIGURATION
@@ -74,81 +79,50 @@ const RESEARCH_MAX_TOKENS = 16000;
 /** Thinking budget for analysis tasks */
 const RESEARCH_THINKING_BUDGET = 4096;
 
-/** Knowledge Base ID for Pinecone retrieval */
-const KNOWLEDGE_BASE_ID = process.env.KNOWLEDGE_BASE_ID ?? '';
-if (!KNOWLEDGE_BASE_ID) {
-    // Log at module load time so it appears at the top of every pod's log stream.
-    // KB retrieval will be skipped — research agent runs in zero-evidence mode.
-    log('ERROR', 'KNOWLEDGE_BASE_ID is not set — KB retrieval disabled. Inject via K8s Job env.', {
-        agent: 'strategist-research',
-    });
-}
-
-/**
- * Final number of KB passages handed to the LLM. With reranking enabled,
- * we over-fetch this many × RETRIEVE_OVERFETCH from the KB and let the
- * cross-encoder pick the best slice.
- */
+/** Max pgvector passages surfaced to the LLM after optional reranking. */
 const MAX_KB_PASSAGES = 15;
 
 /**
- * Multiplier applied to MAX_KB_PASSAGES when fetching from the KB so the
- * reranker has a richer candidate pool to choose from. 50 candidates is
- * the industry baseline; 15 × 4 = 60 trims to 50 inside the rerank call
- * to stay under the Bedrock Rerank per-call cap of 100.
+ * Over-fetch factor — retrieve this × MAX_KB_PASSAGES candidates so the
+ * cross-encoder reranker has a richer pool. 15 × 4 = 60, under the 100-doc
+ * Bedrock Rerank API cap.
  */
 const RETRIEVE_OVERFETCH = 4;
-const MAX_RERANK_CANDIDATES = 50;
 
-/**
- * Reranking is best-effort: a thrown rerank call falls back to the
- * pre-rerank top-MAX_KB_PASSAGES of the KB result set. Set
- * RERANKER_DISABLED=1 to bypass entirely (e.g. for cost-controlled runs
- * or when the rerank model is unavailable in the deployment region).
- */
 const RERANKER_DISABLED = process.env.RERANKER_DISABLED === '1';
 
 // =============================================================================
 // CLIENTS
 // =============================================================================
 
-const bedrockAgentClient = new BedrockAgentRuntimeClient({});
+const embedder = TitanEmbeddingProvider.fromEnvironment();
 
 const reranker: IReranker | null = RERANKER_DISABLED
     ? null
     : BedrockReranker.fromEnvironment();
 
 // =============================================================================
-// KNOWLEDGE BASE RETRIEVAL
+// RDS VECTOR RETRIEVAL
 // =============================================================================
 
 /**
- * Execute a single KB retrieval query filtered to a specific user's vectors.
+ * Execute a single RDS pgvector retrieval query scoped to a specific user.
  *
- * The `userId` metadata filter restricts results to documents indexed for
- * this user — prevents cross-user data leakage and ensures KB evidence
- * is grounded in the candidate's own portfolio, not a shared corpus.
+ * Retrieval flow:
+ *   1. Embed the query text via Titan Embed Text v2 (1024-dim).
+ *   2. Over-fetch RETRIEVE_OVERFETCH × MAX_KB_PASSAGES candidates via HNSW.
+ *   3. Rerank with Bedrock cross-encoder; fall back to cosine-only on failure.
+ *   4. Return the top MAX_KB_PASSAGES as annotated passage strings.
  *
- * Retrieval flow (pick #5 in the Tucaken-product roadmap):
- *   1. Over-fetch up to RETRIEVE_OVERFETCH × MAX_KB_PASSAGES candidates
- *      (capped at MAX_RERANK_CANDIDATES) from the KB by cosine similarity.
- *   2. Rerank with a Bedrock cross-encoder against the original query.
- *   3. Take the top MAX_KB_PASSAGES from the reranked order.
- *   4. On any rerank failure, fall back to the cosine-only top-K so the
- *      strategist pipeline never breaks because of a rerank-time error.
- *
- * @param query - Search query text for the Knowledge Base
- * @param userId - Authenticated user ID for metadata filtering
- * @returns Raw passages with source/score metadata prefix
+ * @param query  - Search query text
+ * @param userId - Authenticated user ID — RdsVectorStore WHERE-filters to this user
+ * @param store  - RdsVectorStore instance backed by the pipeline PG pool
+ * @returns Annotated passage strings ready for LLM context injection
  */
-async function querySingleKb(query: string, userId: string): Promise<string[]> {
-    if (!KNOWLEDGE_BASE_ID) {
-        return [];
-    }
+async function querySingleRds(query: string, userId: string, store: RdsVectorStore): Promise<string[]> {
+    const overfetch = MAX_KB_PASSAGES * RETRIEVE_OVERFETCH;
 
-    const overfetch = Math.min(MAX_KB_PASSAGES * RETRIEVE_OVERFETCH, MAX_RERANK_CANDIDATES);
-
-    log('INFO', 'Querying KB', {
+    log('INFO', 'Querying RDS vector store', {
         agent:        'strategist-research',
         queryPreview: query.substring(0, 80),
         retrieveK:    overfetch,
@@ -156,31 +130,21 @@ async function querySingleKb(query: string, userId: string): Promise<string[]> {
         rerank:       reranker !== null,
     });
 
-    const command = new RetrieveCommand({
-        knowledgeBaseId: KNOWLEDGE_BASE_ID,
-        retrievalQuery: { text: query },
-        retrievalConfiguration: {
-            vectorSearchConfiguration: {
-                numberOfResults: overfetch,
-                filter: {
-                    equals: { key: 'userId', value: userId },
-                },
-            },
-        },
+    const queryEmbedding = await embedder.embed(query);
+    const results = await store.querySimilar({
+        userId,
+        queryEmbedding,
+        queryText:  query,
+        useHybrid:  true,
+        limit:      overfetch,
     });
 
-    const response = await bedrockAgentClient.send(command);
-    const results = response.retrievalResults ?? [];
-
-    /** Tagged candidate set so we can map rerank IDs → original passages. */
-    const passages = results
-        .filter(r => Boolean(r.content?.text))
-        .map((r, i) => ({
-            id:     String(i),
-            source: r.location?.s3Location?.uri ?? 'unknown',
-            cosineScore: r.score ?? 0,
-            text:   r.content!.text!,
-        }));
+    const passages = results.map((r, i) => ({
+        id:          String(i),
+        source:      `${r.repoFullName}/${r.filePath}`,
+        cosineScore: r.similarity,
+        text:        r.content,
+    }));
 
     if (passages.length === 0) return [];
 
@@ -408,51 +372,37 @@ export async function executeResearchAgent(
         log('WARN', warning, { agent: 'strategist-research' });
     }
 
-    // 2. Query Knowledge Base — factual portfolio evidence (4 queries, userId-scoped)
+    // 2. Query RDS pgvector store — factual portfolio evidence (4 queries, userId-scoped).
     //
     //    Constraint documents (agent-guide, gap-awareness, voice-library, role-archetypes,
-    //    achievements) are system-level pages with no userId attribute in the Pinecone index.
-    //    They CANNOT be retrieved via userId-filtered vector search — queries would return
-    //    zero results. These pages are embedded statically in RESUME_CONSTRAINTS and injected
-    //    directly, replicating the deterministic delivery that wiki-mcp previously provided.
-    //
-    //    Factual queries (4): portfolio evidence, skill signals, DORA outcome metrics.
-    //    These are userId-scoped because they must reflect this candidate's own projects.
+    //    achievements) are embedded statically in RESUME_CONSTRAINTS — no DB lookup needed.
+    //    Factual queries target the user's ingested repo chunks via HNSW + optional rerank.
     let kbContext = '';
 
-    // Constraint pages are always present — static embed, no KB lookup required.
     const resumeConstraints = RESUME_CONSTRAINTS;
-
-    const hasKb = Boolean(KNOWLEDGE_BASE_ID);
     const { userId } = ctx;
+    const store = RdsVectorStore.fromEnvironment();
 
-    if (hasKb) {
-        const [factual1, factual2, factual3, factual4] = await Promise.all([
-            // Query 1 — full JD text: surfaces skill/tech matches from across the KB
-            querySingleKb(sanitised.substring(0, 1000), userId),
-            // Query 2 — JD tail + experience signal: surfaces role-relevant work history
-            querySingleKb(`professional experience skills qualifications ${sanitised.substring(500, 1000)}`, userId),
-            // Query 3 — JD-aware project query: surfaces project templates matching this role
-            querySingleKb(`portfolio project implementation achievements ${sanitised.substring(0, 500)}`, userId),
-            // Query 4 — DORA metrics and outcome measurements: ensures every bullet can be
-            // grounded in a concrete outcome (lead time, MTTR, CFR, deployment frequency).
-            // Without this query the agent sees technical inventory but no outcome numbers.
-            querySingleKb('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId),
-        ]);
+    const [factual1, factual2, factual3, factual4] = await Promise.all([
+        // Query 1 — full JD text: surfaces skill/tech matches from across the user's docs
+        querySingleRds(sanitised.substring(0, 1000), userId, store),
+        // Query 2 — JD tail + experience signal: surfaces role-relevant work history
+        querySingleRds(`professional experience skills qualifications ${sanitised.substring(500, 1000)}`, userId, store),
+        // Query 3 — JD-aware project query: surfaces project templates matching this role
+        querySingleRds(`portfolio project implementation achievements ${sanitised.substring(0, 500)}`, userId, store),
+        // Query 4 — DORA metrics and outcome measurements
+        querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
+    ]);
 
-        // Factual context — portfolio evidence for achievement bullet verification
-        const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4];
-        kbContext = deduplicatePassages(allFactualPassages);
+    const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4];
+    kbContext = deduplicatePassages(allFactualPassages);
 
-        log('INFO', 'Retrieval complete', {
-            agent: 'strategist-research',
-            userId,
-            factualSizeKb: kbContext.length > 0 ? (kbContext.length / 1024).toFixed(1) : 'empty',
-            constraintsSizeKb: (resumeConstraints.length / 1024).toFixed(1),
-        });
-    } else {
-        log('INFO', 'Retrieval skipped — KNOWLEDGE_BASE_ID not configured', { agent: 'strategist-research' });
-    }
+    log('INFO', 'Retrieval complete', {
+        agent: 'strategist-research',
+        userId,
+        factualSizeKb: kbContext.length > 0 ? (kbContext.length / 1024).toFixed(1) : 'empty',
+        constraintsSizeKb: (resumeConstraints.length / 1024).toFixed(1),
+    });
 
     // 3. Read resume from pipeline context (fetched at trigger time)
     const resumeData = ctx.resumeData;

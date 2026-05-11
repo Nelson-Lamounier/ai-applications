@@ -9,7 +9,7 @@
  * Uses Sonnet 4.6 for complex reasoning with extended thinking
  * enabled for document crafting.
  *
- * Pipeline position: API → Research → **Strategist** → Coach → DynamoDB
+ * Pipeline position: Trigger → Research → **Strategist** → Coach → RDS persist
  */
 
 import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
@@ -430,7 +430,7 @@ function extractArchetypeSelection(xml: string): RoleArchetypeSelection | null {
  *
  * Parses the `<tailored_resume_json>` CDATA section in Phase 4.
  * This is the authoritative resume output produced by the Strategist
- * Agent — the Resume Builder handler persists it directly to DynamoDB
+ * Agent — persisted directly to the RDS resumes table by run-pipeline
  * without any further LLM transformation.
  *
  * Returns null when the section is absent (build-from-scratch runs
@@ -531,7 +531,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
         // Sanitise output to redact any infrastructure identifiers
         const sanitisedXml = outputSanitiser.sanitise(responseText);
 
-        // Extract metadata from XML for quick DynamoDB queries
+        // Extract metadata from XML for pipeline_runs metadata column
         const metadata = extractMetadataFromXml(sanitisedXml);
         const shouldIncludeCoverLetter = ctx.includeCoverLetter ?? true;
         const coverLetter = shouldIncludeCoverLetter
