@@ -215,10 +215,20 @@ describe('IngestionPipeline — OTel spans', () => {
         });
         rootSpan.end();
 
-        const spanNames = exporter.getFinishedSpans().map(s => s.name);
+        const allSpans = exporter.getFinishedSpans();
+        const spanNames = allSpans.map(s => s.name);
         expect(spanNames).toContain('ingestion.chunk');
         expect(spanNames).toContain('ingestion.enrich');
         expect(spanNames).toContain('ingestion.embed_upsert');
         expect(spanNames).toContain('ingestion.prune');
+
+        // Phase spans must be children of the test root span
+        const rootSpanId = rootSpan.spanContext().spanId;
+        const phaseSpanNames = ['ingestion.chunk', 'ingestion.enrich', 'ingestion.embed_upsert', 'ingestion.prune'];
+        for (const name of phaseSpanNames) {
+            const span = allSpans.find(s => s.name === name);
+            expect(span).toBeDefined();
+            expect(span!.parentSpanContext?.spanId).toBe(rootSpanId);
+        }
     });
 });

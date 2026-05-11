@@ -24,7 +24,7 @@
 
 import { createHash } from 'crypto';
 
-import { trace, SpanStatusCode } from '@opentelemetry/api';
+import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import type { IChunkEnricher } from '../interfaces/IChunkEnricher.js';
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
@@ -127,6 +127,7 @@ export class IngestionPipeline {
                     span.setAttributes({ 'chunk.total': rawChunks.length, 'chunk.to_embed': chunksToEmbed.length });
                     return { chunksToEmbed, missing, unchanged };
                 } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
                     span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
                     throw err;
                 } finally {
@@ -141,6 +142,7 @@ export class IngestionPipeline {
                     span.setAttribute('chunk.enrich_count', result.length);
                     return result;
                 } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
                     span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
                     throw err;
                 } finally {
@@ -167,6 +169,7 @@ export class IngestionPipeline {
                     span.setAttributes({ 'embed.count': embeddedChunks.length, 'upsert.inserted': result.inserted });
                     return result;
                 } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
                     span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
                     throw err;
                 } finally {
@@ -182,6 +185,7 @@ export class IngestionPipeline {
                     span.setAttribute('prune.count', n);
                     return n;
                 } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
                     span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
                     throw err;
                 } finally {
@@ -315,14 +319,17 @@ export class IngestionPipeline {
         // calls vary widely in latency (which Bedrock does).
         let next = 0;
         const total = chunks.length;
+        const currentCtx = context.active();
         await Promise.all(
-            Array.from({ length: Math.min(ENRICHMENT_CONCURRENCY, total) }, async () => {
-                while (true) {
-                    const myIdx = next++;
-                    if (myIdx >= total) return;
-                    await enrichOne(myIdx);
-                }
-            }),
+            Array.from({ length: Math.min(ENRICHMENT_CONCURRENCY, total) }, () =>
+                context.with(currentCtx, async () => {
+                    while (true) {
+                        const myIdx = next++;
+                        if (myIdx >= total) return;
+                        await enrichOne(myIdx);
+                    }
+                }),
+            ),
         );
 
         return out;
