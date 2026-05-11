@@ -128,6 +128,67 @@ ci-security-scan *ARGS:
 ci-synth project environment:
     npx tsx infra/scripts/ci/synthesize.ts {{project}} {{environment}}
 
+# ── Job Strategist ───────────────────────────────────────────────────────────
+
+ECR_STRATEGIST := "771826808455.dkr.ecr.eu-west-1.amazonaws.com/job-strategist"
+
+# Run the full job-strategist end-to-end integration test.
+# Manages the pgbouncer port-forward automatically — no split terminals needed.
+# Reads PG credentials from the platform-rds-credentials k8s secret by default.
+# Env overrides: see .env.strategist-integration (copy and fill in to customise).
+#
+# Usage:
+#   just test-strategist-integration
+#   just test-strategist-integration SKIP_BUILD=1          # skip tsc rebuild
+#   just test-strategist-integration SKIP_CLEANUP=1        # keep RDS rows for inspection
+#   just test-strategist-integration PG_PASSWORD=<secret>  # bypass k8s secret read
+[group('strategist')]
+test-strategist-integration *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Load .env.strategist-integration if present (values are additive; env vars already
+    # set in the shell take precedence because we only export unset vars)
+    if [[ -f .env.strategist-integration ]]; then
+      while IFS='=' read -r key value || [[ -n "$key" ]]; do
+        # Skip comments and blank lines
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${key// }" ]] && continue
+        # Only export if not already set in the caller's environment
+        key="${key// /}"
+        value="${value// /}"
+        [[ -n "$value" && -z "${!key:-}" ]] && export "$key=$value"
+      done < .env.strategist-integration
+    fi
+    # Allow recipe-level overrides: just test-strategist-integration SKIP_BUILD=1
+    for arg in {{ARGS}}; do export "$arg"; done
+    npx tsx scripts/test-strategist-integration.ts
+
+# Build the job-strategist Docker image locally.
+[group('strategist')]
+build-strategist:
+    docker build \
+      -f applications/job-strategist/Dockerfile \
+      -t job-strategist:local \
+      .
+
+# Open a port-forward to pgbouncer for manual psql / inspection.
+# Keep running in a separate terminal when using other strategist recipes.
+[group('strategist')]
+pgbouncer-tunnel:
+    kubectl port-forward svc/pgbouncer 15432:5432 -n platform
+
+# Push the local strategist image to ECR (requires: aws ecr get-login-password).
+# Usage: just push-strategist [tag]
+[group('strategist')]
+push-strategist tag="local":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    aws ecr get-login-password --region eu-west-1 \
+      | docker login --username AWS --password-stdin 771826808455.dkr.ecr.eu-west-1.amazonaws.com
+    docker tag job-strategist:{{tag}} {{ECR_STRATEGIST}}:{{tag}}
+    docker push {{ECR_STRATEGIST}}:{{tag}}
+    echo "Pushed {{ECR_STRATEGIST}}:{{tag}}"
+
 # ── Resume Import Processor ──────────────────────────────────────────────────
 
 ECR_RESUME    := "771826808455.dkr.ecr.eu-west-1.amazonaws.com/resume-import-processor"

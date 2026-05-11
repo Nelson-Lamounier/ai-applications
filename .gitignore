@@ -48,6 +48,7 @@ Thumbs.db
 .env.local
 .env.bootstrap
 .env.*.local
+.env.strategist-integration
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
