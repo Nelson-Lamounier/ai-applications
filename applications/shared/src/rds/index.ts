@@ -50,3 +50,7 @@ export type {
     KbQualityBreakdown,
     KbQualityResult,
 } from './quality/computeKbQuality.js';
+
+// Bedrock cost tracking
+export { recordBedrockCost, computeCostCents } from './bedrock-cost.js';
+export type { CostRecord } from './bedrock-cost.js';
