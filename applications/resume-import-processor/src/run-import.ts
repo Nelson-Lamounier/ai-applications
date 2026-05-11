@@ -418,7 +418,7 @@ async function main(): Promise<void> {
   } catch (err) {
     errorCode = 'PIPELINE_ERROR';
     rootSpan.recordException(err instanceof Error ? err : new Error(String(err)));
-    rootSpan.setStatus({ code: SpanStatusCode.ERROR });
+    rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
     log.error({ err }, 'fatal error');
     await pool.query(
       `UPDATE resume_imports
