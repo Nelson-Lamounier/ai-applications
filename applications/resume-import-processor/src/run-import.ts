@@ -27,6 +27,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import { parseEnv } from './env.js';
 
 // One-shot K8s Job — bootstrap observability before any AWS / pg client
@@ -71,7 +72,6 @@ import { enrichRole } from './bedrock/enrich-role.js';
 import { embedAndPersistEntry } from './embed.js';
 import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
 import type { ExtractedCareerData, ResumeExperience } from './bedrock/extract-career.js';
-import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 
 const tracer = trace.getTracer('resume-import-processor');
 
