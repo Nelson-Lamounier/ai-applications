@@ -284,7 +284,8 @@ async function main(): Promise<void> {
             rawExtractedText: rawText,
             extractionMethod,
           });
-          extracted = await extractCareerData(rawText, env.awsRegion);
+          const result = await extractCareerData(rawText, env.awsRegion);
+          extracted = result.data;
           span.setAttributes({
             'roles.count':     extracted.experience.length,
             'education.count': extracted.education.length,

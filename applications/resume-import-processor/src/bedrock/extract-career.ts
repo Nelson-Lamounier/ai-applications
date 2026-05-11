@@ -69,6 +69,12 @@ export interface ExtractedCareerData {
   keyAchievements: ResumeAchievement[];
 }
 
+export interface CareerExtractionResult {
+  data:         ExtractedCareerData;
+  inputTokens:  number;
+  outputTokens: number;
+}
+
 const EXTRACTION_TOOL_SCHEMA = {
   name: 'extract_career_data',
   description: 'Extract structured career data from resume text',
@@ -184,7 +190,7 @@ const SYSTEM_PROMPT = [
 export async function extractCareerData(
   resumeText: string,
   region: string,
-): Promise<ExtractedCareerData> {
+): Promise<CareerExtractionResult> {
   const client = new BedrockRuntimeClient({ region });
 
   const safeText = resumeText.slice(0, MAX_RESUME_CHARS);
@@ -222,5 +228,9 @@ export async function extractCareerData(
     throw new Error('extractCareerData: Bedrock returned no tool_use block');
   }
 
-  return toolUseBlock.input as ExtractedCareerData;
+  return {
+    data:         toolUseBlock.input as ExtractedCareerData,
+    inputTokens:  (parsed.usage?.input_tokens  as number | undefined)  ?? 0,
+    outputTokens: (parsed.usage?.output_tokens as number | undefined) ?? 0,
+  };
 }
