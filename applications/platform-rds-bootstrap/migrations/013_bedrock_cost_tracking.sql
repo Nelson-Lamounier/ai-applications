@@ -19,9 +19,11 @@ CREATE INDEX IF NOT EXISTS idx_prompt_invocations_repo_name
   ON prompt_invocations (repo_name)
   WHERE repo_name IS NOT NULL;
 
--- Monthly spend lookups: user_id + month
+-- Monthly spend lookups: user_id + month.
+-- INCLUDE total_cost_cents enables Index-Only Scans on the SUM aggregation.
 CREATE INDEX IF NOT EXISTS idx_prompt_invocations_user_month
-  ON prompt_invocations (user_id, invoked_at);
+  ON prompt_invocations (user_id, invoked_at)
+  INCLUDE (total_cost_cents);
 
 -- 2. Per-user monthly budget
 CREATE TABLE IF NOT EXISTS user_token_budgets (
