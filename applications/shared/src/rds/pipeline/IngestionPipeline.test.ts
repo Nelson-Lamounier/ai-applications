@@ -21,6 +21,9 @@ import type {
     SimilarityResult,
     UpsertBatchResult,
 } from '../types.js';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { trace, context } from '@opentelemetry/api';
 
 // =============================================================================
 // FAKES
@@ -176,5 +179,46 @@ describe('IngestionPipeline enrichment', () => {
             expect(c.skills).toEqual([]);
             expect(c.technologies).toEqual([]);
         });
+    });
+});
+
+describe('IngestionPipeline — OTel spans', () => {
+    let exporter: InMemorySpanExporter;
+    let provider: NodeTracerProvider;
+
+    beforeEach(() => {
+        exporter = new InMemorySpanExporter();
+        provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+        provider.register();
+    });
+
+    afterEach(async () => {
+        await provider.shutdown();
+        exporter.reset();
+    });
+
+    it('creates ingestion.chunk, ingestion.enrich, ingestion.embed_upsert, ingestion.prune spans', async () => {
+        const rootSpan = trace.getTracer('test').startSpan('test.root');
+        await context.with(trace.setSpan(context.active(), rootSpan), async () => {
+            const pipeline = new IngestionPipeline(
+                new FakeVectorStore(),
+                new FakeSyncState(),
+                new FakeEmbedder(),
+            );
+            const chunk: RawChunk = {
+                filePath:    'src/index.ts',
+                chunkIndex:  0,
+                totalChunks: 1,
+                content:     'export function main() {}',
+            };
+            await pipeline.ingestChunks('user-1', 'owner/repo', [chunk]);
+        });
+        rootSpan.end();
+
+        const spanNames = exporter.getFinishedSpans().map(s => s.name);
+        expect(spanNames).toContain('ingestion.chunk');
+        expect(spanNames).toContain('ingestion.enrich');
+        expect(spanNames).toContain('ingestion.embed_upsert');
+        expect(spanNames).toContain('ingestion.prune');
     });
 });
