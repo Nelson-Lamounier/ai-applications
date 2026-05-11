@@ -29,6 +29,13 @@ import { Counter, Histogram } from 'prom-client';
 import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import { parseEnv } from './env.js';
+import { extractTextFromPdf } from './parsers/pdf.js';
+import { extractTextFromDocx } from './parsers/docx.js';
+import { extractCareerData } from './bedrock/extract-career.js';
+import { enrichRole } from './bedrock/enrich-role.js';
+import { embedAndPersistEntry } from './embed.js';
+import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
+import type { ExtractedCareerData, ResumeExperience } from './bedrock/extract-career.js';
 
 // One-shot K8s Job — bootstrap observability before any AWS / pg client
 // loads so OTel auto-instrumentation picks them up. Metrics push to
@@ -65,13 +72,6 @@ const enrichmentEntriesTotal = new Counter({
   labelNames: ['outcome'] as const,
   registers:  [obs.registry],
 });
-import { extractTextFromPdf } from './parsers/pdf.js';
-import { extractTextFromDocx } from './parsers/docx.js';
-import { extractCareerData } from './bedrock/extract-career.js';
-import { enrichRole } from './bedrock/enrich-role.js';
-import { embedAndPersistEntry } from './embed.js';
-import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
-import type { ExtractedCareerData, ResumeExperience } from './bedrock/extract-career.js';
 
 const tracer = trace.getTracer('resume-import-processor');
 
