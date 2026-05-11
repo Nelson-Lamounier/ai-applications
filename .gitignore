@@ -10,6 +10,7 @@ tsconfig.tsbuildinfo
 # CI patch files committed to .github/patches/ must be tracked despite *.js
 !.github/patches/*.js
 *.d.ts
+*.d.ts.map
 !lib/**/*.d.ts
 
 # ── Dependencies ─────────────────────────────────────────────────────────────
