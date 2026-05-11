@@ -32,6 +32,13 @@ export interface ObservabilityHandle {
     readonly logger: import('pino').Logger;
     /** prom-client default registry (or namespaced). */
     readonly registry: import('prom-client').Registry;
+    /**
+     * The parent OTel Context extracted from the TRACEPARENT env var injected by
+     * admin-api into every K8s Job spec. Use as the third argument to
+     * `tracer.startSpan()` so the job's root span is a child of the admin-api
+     * dispatch span. Falls back to ROOT_CONTEXT (no parent) when TRACEPARENT absent.
+     */
+    readonly parentContext: import('@opentelemetry/api').Context;
     /** Stop OTel + flush spans + close metrics server. Call on SIGTERM. */
     shutdown(): Promise<void>;
     /** Bind a /metrics HTTP server (long-running services only). */
@@ -67,7 +74,7 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
     const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
     const { Resource }                  = require('@opentelemetry/resources');
     const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = require('@opentelemetry/semantic-conventions');
-    const { context, trace }           = require('@opentelemetry/api');
+    const { context, trace, propagation, ROOT_CONTEXT } = require('@opentelemetry/api');
     const pino                         = require('pino');
     const prom                         = require('prom-client');
     /* eslint-enable @typescript-eslint/no-require-imports */
@@ -94,6 +101,12 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
     });
     if (process.env['OTEL_EXPORTER_OTLP_ENDPOINT']) {
         sdk.start();
+    }
+
+    let parentCtx: import('@opentelemetry/api').Context = ROOT_CONTEXT;
+    const traceparent = process.env['TRACEPARENT'];
+    if (traceparent) {
+        parentCtx = propagation.extract(ROOT_CONTEXT, { traceparent });
     }
 
     // ── Pyroscope (optional) ───────────────────────────────────────────────
@@ -136,6 +149,7 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
     const handle: ObservabilityHandle = {
         logger,
         registry,
+        parentContext: parentCtx,
         startMetricsServer(port = 9100) {
             if (metricsServer) return metricsServer;
             metricsServer = http.createServer(async (req, res) => {
