@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS user_token_budgets (
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Cost columns must store fractional cents for sub-cent model costs (Haiku, Titan).
+-- INTEGER would round 0.08 cents to 0, making budget checks blind.
+ALTER TABLE prompt_invocations
+  ALTER COLUMN input_cost_cents  TYPE NUMERIC(12,4),
+  ALTER COLUMN output_cost_cents TYPE NUMERIC(12,4),
+  ALTER COLUMN total_cost_cents  TYPE NUMERIC(12,4);
+
 -- =============================================================================
 -- Verification
 -- =============================================================================

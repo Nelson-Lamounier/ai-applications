@@ -94,19 +94,19 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
        (pipeline, agent, model_id, system_prompt_hash, input_cost_cents, output_cost_cents,
         total_cost_cents, latency_ms, user_id, import_id, repo_name,
         system_prompt_tokens, user_message_tokens, output_tokens)
-     VALUES ($1, $2, $3, '', $4, $5, $6, 0, $7::uuid, $8, $9, $10, 0, $11)`,
+     VALUES ($1, $2, $3, '__direct_invoke__', $4, $5, $6, 0, $7::uuid, $8, $9, 0, $10, $11)`,
     [
-      record.pipeline,
-      record.pipeline,
-      record.modelId,
-      Math.round(inputCostCents),
-      Math.round(outputCostCents),
-      Math.round(totalCostCents),
-      record.userId,
-      record.importId ?? null,
-      record.repoName ?? null,
-      record.inputTokens,
-      record.outputTokens,
+      record.pipeline,           // $1 pipeline
+      '__direct_invoke__',       // $2 agent
+      record.modelId,            // $3 model_id
+      inputCostCents,            // $4 input_cost_cents
+      outputCostCents,           // $5 output_cost_cents
+      totalCostCents,            // $6 total_cost_cents
+      record.userId,             // $7 user_id
+      record.importId ?? null,   // $8 import_id
+      record.repoName ?? null,   // $9 repo_name
+      record.inputTokens,        // $10 user_message_tokens
+      record.outputTokens,       // $11 output_tokens
     ],
   );
 
