@@ -26,7 +26,7 @@
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
-import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost } from '@bedrock/shared';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import { parseEnv } from './env.js';
 import { extractTextFromPdf } from './parsers/pdf.js';
@@ -284,8 +284,16 @@ async function main(): Promise<void> {
             rawExtractedText: rawText,
             extractionMethod,
           });
-          const result = await extractCareerData(rawText, env.awsRegion);
-          extracted = result.data;
+          const extractionResult = await extractCareerData(rawText, env.awsRegion);
+          extracted = extractionResult.data;
+          recordBedrockCost(pool, {
+            userId:      env.userId,
+            modelId:     process.env['EXTRACTION_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+            pipeline:    'resume-import',
+            inputTokens:  extractionResult.inputTokens,
+            outputTokens: extractionResult.outputTokens,
+            importId:    env.importId,
+          }).catch((err) => log.warn({ err }, '[cost] extract-career cost record failed (non-fatal)'));
           span.setAttributes({
             'roles.count':     extracted.experience.length,
             'education.count': extracted.education.length,
@@ -345,7 +353,7 @@ async function main(): Promise<void> {
               );
               // Still embed without enrichment so basic retrieval works
               const count = await embedAndPersistEntry(
-                pool, env.awsRegion, env.userId, careerEntryId, exp, null,
+                pool, env.awsRegion, env.userId, careerEntryId, exp, null, env.importId,
               );
               totalEmbeddings += count;
               return;
@@ -360,7 +368,18 @@ async function main(): Promise<void> {
 
             let enriched = null;
             try {
-              enriched = await enrichRole(exp, searchTool, env.awsRegion);
+              const enrichResult = await enrichRole(exp, searchTool, env.awsRegion);
+              enriched = enrichResult.data;
+              if (enrichResult.inputTokens > 0) {
+                recordBedrockCost(pool, {
+                  userId:      env.userId,
+                  modelId:     process.env['ENRICHMENT_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                  pipeline:    'resume-import',
+                  inputTokens:  enrichResult.inputTokens,
+                  outputTokens: enrichResult.outputTokens,
+                  importId:    env.importId,
+                }).catch((err) => log.warn({ err }, '[cost] enrich-role cost record failed (non-fatal)'));
+              }
             } catch (err) {
               span.recordException(err instanceof Error ? err : new Error(String(err)));
               span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
@@ -394,7 +413,7 @@ async function main(): Promise<void> {
             }
 
             const count = await embedAndPersistEntry(
-              pool, env.awsRegion, env.userId, careerEntryId, exp, enriched,
+              pool, env.awsRegion, env.userId, careerEntryId, exp, enriched, env.importId,
             );
             totalEmbeddings += count;
           } catch (err) {

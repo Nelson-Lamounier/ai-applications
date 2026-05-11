@@ -249,7 +249,11 @@ export {
     BedrockChunkEnricher,
     IngestionPipeline,
     computeKbQuality,
+    recordBedrockCost,
+    computeCostCents,
 } from './rds/index.js';
+
+export type { CostRecord } from './rds/index.js';
 
 // ─── Retrieval (Reranking) ──────────────────────────────────────────────────
 export type {
