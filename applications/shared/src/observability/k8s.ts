@@ -74,7 +74,7 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
     const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
     const { Resource }                  = require('@opentelemetry/resources');
     const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = require('@opentelemetry/semantic-conventions');
-    const { context, trace, propagation, ROOT_CONTEXT } = require('@opentelemetry/api');
+    const { context, trace, propagation, ROOT_CONTEXT, defaultTextMapGetter } = require('@opentelemetry/api');
     const pino                         = require('pino');
     const prom                         = require('prom-client');
     /* eslint-enable @typescript-eslint/no-require-imports */
@@ -106,7 +106,7 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
     let parentCtx: import('@opentelemetry/api').Context = ROOT_CONTEXT;
     const traceparent = process.env['TRACEPARENT'];
     if (traceparent) {
-        parentCtx = propagation.extract(ROOT_CONTEXT, { traceparent });
+        parentCtx = propagation.extract(ROOT_CONTEXT, { traceparent }, defaultTextMapGetter);
     }
 
     // ── Pyroscope (optional) ───────────────────────────────────────────────
