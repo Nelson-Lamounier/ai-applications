@@ -31,6 +31,7 @@ import {
     pushFinalMetrics,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
+import { Pool } from 'pg';
 
 import { parseEnv } from './env.js';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
@@ -82,9 +83,24 @@ async function main(): Promise<void> {
         password: env.pg.password,
     };
 
+    const pgPool = new Pool({
+        host:     env.pg.host,
+        port:     env.pg.port,
+        database: env.pg.database,
+        user:     env.pg.user,
+        password: env.pg.password,
+        max:      3,
+    });
+
     const vectorStore  = new RdsVectorStore(rdsConfig);
     const syncState    = new RdsSyncStateRepository(rdsConfig);
-    const embedder     = TitanEmbeddingProvider.fromEnvironment();
+    const embedder     = new TitanEmbeddingProvider(
+        process.env.AWS_REGION ?? 'eu-west-1',
+        (process.env.EMBEDDING_DIMENSION
+            ? (parseInt(process.env.EMBEDDING_DIMENSION, 10) as 256 | 512 | 1024)
+            : 1024),
+        { pool: pgPool, userId: env.userId, repoName: env.repoFullName },
+    );
     const repoAdapter  = new GitHubAdapter(env.githubToken);
     const fileFilter   = new FileFilter();
     const chunkerReg   = ChunkerRegistry.withDefaults();
@@ -151,7 +167,7 @@ async function main(): Promise<void> {
         throw err;
     } finally {
         rootSpan.end();
-        await Promise.allSettled([vectorStore.end(), syncState.end()]);
+        await Promise.allSettled([vectorStore.end(), syncState.end(), pgPool.end()]);
         const duration = Number(process.hrtime.bigint() - start) / 1e9;
         ingestionRuns.inc({ outcome });
         ingestionDuration.observe({ outcome }, duration);

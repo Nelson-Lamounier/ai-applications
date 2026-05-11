@@ -18,6 +18,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
+import { recordBedrockCost } from '../bedrock-cost.js';
 
 const MODEL_ID = 'amazon.titan-embed-text-v2:0';
 
@@ -27,16 +28,24 @@ const MODEL_ID = 'amazon.titan-embed-text-v2:0';
 // binding constraint in practice. Truncation preserves leading content.
 const MAX_INPUT_CHARS = 30_000;
 
+export interface TitanCostContext {
+    pool:     import('pg').Pool;
+    userId:   string;
+    repoName: string;
+}
+
 export class TitanEmbeddingProvider implements IEmbeddingProvider {
     readonly dimension: number;
 
     private readonly client: BedrockRuntimeClient;
     private readonly region: string;
+    private readonly costCtx?: TitanCostContext;
 
-    constructor(region: string, dimension: 256 | 512 | 1024 = 1024) {
-        this.region = region;
+    constructor(region: string, dimension: 256 | 512 | 1024 = 1024, costCtx?: TitanCostContext) {
+        this.region    = region;
         this.dimension = dimension;
-        this.client = new BedrockRuntimeClient({ region });
+        this.client    = new BedrockRuntimeClient({ region });
+        this.costCtx   = costCtx;
     }
 
     /**
@@ -73,9 +82,20 @@ export class TitanEmbeddingProvider implements IEmbeddingProvider {
         );
 
         const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as {
-            embedding: number[];
+            embedding:           number[];
             inputTextTokenCount: number;
         };
+
+        if (this.costCtx) {
+            recordBedrockCost(this.costCtx.pool, {
+                userId:       this.costCtx.userId,
+                modelId:      MODEL_ID,
+                pipeline:     'repo-sync',
+                inputTokens:  parsed.inputTextTokenCount ?? 0,
+                outputTokens: 0,
+                repoName:     this.costCtx.repoName,
+            }).catch((err) => console.warn('[TitanEmbeddingProvider] cost record failed (non-fatal)', err));
+        }
 
         return parsed.embedding;
     }

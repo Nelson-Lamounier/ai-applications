@@ -253,7 +253,7 @@ export {
     computeCostCents,
 } from './rds/index.js';
 
-export type { CostRecord } from './rds/index.js';
+export type { CostRecord, TitanCostContext } from './rds/index.js';
 
 // ─── Retrieval (Reranking) ──────────────────────────────────────────────────
 export type {
