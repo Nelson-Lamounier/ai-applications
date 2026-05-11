@@ -22,11 +22,12 @@ import {
 import type { Pool } from 'pg';
 import type { ResumeExperience } from './bedrock/extract-career.js';
 import type { EnrichedRoleData } from './bedrock/enrich-role.js';
+import { recordBedrockCost } from '@bedrock/shared';
 
 const TITAN_MODEL_ID = 'amazon.titan-embed-text-v2:0';
 const EMBEDDING_DIM  = parseInt(process.env['EMBEDDING_DIMENSION'] ?? '1024', 10);
 
-async function embedText(client: BedrockRuntimeClient, text: string): Promise<number[]> {
+async function embedText(client: BedrockRuntimeClient, text: string): Promise<{ embedding: number[]; inputTokens: number }> {
   const command = new InvokeModelCommand({
     modelId:     TITAN_MODEL_ID,
     contentType: 'application/json',
@@ -39,7 +40,10 @@ async function embedText(client: BedrockRuntimeClient, text: string): Promise<nu
   });
   const response = await client.send(command);
   const parsed   = JSON.parse(Buffer.from(response.body).toString('utf-8'));
-  return parsed.embedding as number[];
+  return {
+    embedding:   parsed.embedding as number[],
+    inputTokens: parsed.inputTextTokenCount ?? 0,
+  };
 }
 
 interface EmbedChunk {
@@ -111,6 +115,7 @@ export async function embedAndPersistEntry(
   careerEntryId: string,
   experience: ResumeExperience,
   enriched: EnrichedRoleData | null,
+  importId: string,
 ): Promise<number> {
   const client = new BedrockRuntimeClient({ region: bedrockRegion });
   const chunks = buildChunks(experience, enriched);
@@ -127,7 +132,16 @@ export async function embedAndPersistEntry(
     );
     if (exists.rows[0]) continue;
 
-    const embedding = await embedText(client, chunk.content);
+    const { embedding, inputTokens } = await embedText(client, chunk.content);
+
+    recordBedrockCost(pool, {
+      userId,
+      modelId:      TITAN_MODEL_ID,
+      pipeline:     'resume-import',
+      inputTokens,
+      outputTokens: 0,
+      importId,
+    }).catch((err) => console.warn('[embed] cost record failed (non-fatal)', err));
 
     await pool.query(
       `INSERT INTO experience_embeddings
