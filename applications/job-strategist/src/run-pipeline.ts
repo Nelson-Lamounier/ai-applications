@@ -123,9 +123,13 @@ async function main(): Promise<void> {
               })
             : null;
 
-        // Stash the analysis on pipeline_runs.metadata so a downstream coach
-        // K8s Job can re-hydrate it without re-running Research+Strategist.
-        await updatePipelineRunMetadata(pool, env.pipelineRunId, { analysis: analysis.data });
+        // Stash both outputs on pipeline_runs.metadata so the admin-api detail
+        // endpoint can serve research fields (fitSummary, matches, gaps, etc.)
+        // and a downstream coach K8s Job can re-hydrate without re-running.
+        await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+            analysis:  analysis.data,
+            research:  research.data,
+        });
 
         await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
