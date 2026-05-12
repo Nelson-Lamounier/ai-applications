@@ -72,7 +72,7 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
     const { NodeSDK }                  = require('@opentelemetry/sdk-node');
     const { OTLPTraceExporter }        = require('@opentelemetry/exporter-trace-otlp-http');
     const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
-    const { Resource }                  = require('@opentelemetry/resources');
+    const { resourceFromAttributes }    = require('@opentelemetry/resources');
     const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = require('@opentelemetry/semantic-conventions');
     const { context, trace, propagation, ROOT_CONTEXT, defaultTextMapGetter } = require('@opentelemetry/api');
     const pino                         = require('pino');
@@ -87,7 +87,7 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
 
     // ── OTel ────────────────────────────────────────────────────────────────
     const sdk = new NodeSDK({
-        resource: new Resource({
+        resource: resourceFromAttributes({
             [ATTR_SERVICE_NAME]:    serviceName,
             [ATTR_SERVICE_VERSION]: serviceVersion,
         }),
