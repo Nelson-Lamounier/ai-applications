@@ -145,7 +145,6 @@ describe('job-strategist run-pipeline.js — integration', () => {
 
     beforeAll(async () => {
         pool = new Pool({ ...PG_CONFIG, max: 2, ssl: false });
-
         try {
             await pool.query('SELECT 1');
         } catch (err) {
@@ -203,20 +202,25 @@ describe('job-strategist run-pipeline.js — integration', () => {
             PG_DATABASE:      PG_CONFIG.database,
             PG_USER:          PG_CONFIG.user,
             PG_PASSWORD:      PG_CONFIG.password,
+            RDS_HOST:         PG_CONFIG.host,
+            RDS_PORT:         String(PG_CONFIG.port),
+            RDS_DB_NAME:      PG_CONFIG.database,
+            RDS_USER:         PG_CONFIG.user,
+            RDS_PASSWORD:     PG_CONFIG.password,
             ENVIRONMENT:      'local',
             // Disable OTel and Pushgateway — both are no-ops when these are absent
             // (bootstrapK8sObservability skips SDK init; pushFinalMetrics catches errors)
         });
-    });
+    }, 600_000);    // 10 min — pipeline makes real Bedrock calls
 
     afterAll(async () => {
-        if (!SKIP_CLEANUP) {
+        if (SKIP_CLEANUP) {
+            console.log(`\n[SKIP_CLEANUP=1] Rows preserved:\n  pipelineRunId=${pipelineRunId}\n  applicationId=${applicationId}`);
+        } else {
             await pool.query('DELETE FROM resumes          WHERE job_application_id = $1', [applicationId]);
             await pool.query('DELETE FROM coaching_content WHERE job_application_id = $1', [applicationId]);
             await pool.query('DELETE FROM pipeline_runs    WHERE id = $1', [pipelineRunId]);
             await pool.query('DELETE FROM job_applications WHERE id = $1', [applicationId]);
-        } else {
-            console.log(`\n[SKIP_CLEANUP=1] Rows preserved:\n  pipelineRunId=${pipelineRunId}\n  applicationId=${applicationId}`);
         }
         await pool.end();
     });
@@ -332,14 +336,15 @@ describe('job-strategist run-pipeline.js — integration', () => {
         expect(pipelineResult.stdout).not.toMatch(/"factualSizeKb":"empty"/);
     });
 
-    it('stdout records status transitions in order', () => {
+    it('stdout records pipeline phases in order', () => {
         const stdout = pipelineResult.stdout;
-        const researchingIdx = stdout.indexOf('researching');
-        const analysingIdx   = stdout.indexOf('analysing');
-        const completeIdx    = stdout.indexOf('strategist_pipeline_complete');
-        expect(researchingIdx).toBeGreaterThan(-1);
-        expect(analysingIdx).toBeGreaterThan(researchingIdx);
-        expect(completeIdx).toBeGreaterThan(analysingIdx);
+        // Check actual logged messages (status DB updates are not logged to stdout)
+        const retrievalIdx = stdout.indexOf('Retrieval complete');
+        const agentIdx     = stdout.indexOf('Starting agent execution');
+        const completeIdx  = stdout.indexOf('strategist_pipeline_complete');
+        expect(retrievalIdx).toBeGreaterThan(-1);
+        expect(agentIdx).toBeGreaterThan(retrievalIdx);
+        expect(completeIdx).toBeGreaterThan(agentIdx);
     });
 });
 
@@ -348,7 +353,7 @@ describe('job-strategist run-pipeline.js — integration', () => {
 // =============================================================================
 
 describe('job-strategist run-pipeline.js — failure path', () => {
-    jest.setTimeout(30_000);
+    jest.setTimeout(120_000);
 
     let pool: Pool;
 
@@ -381,15 +386,23 @@ describe('job-strategist run-pipeline.js — failure path', () => {
             APPLICATION_SLUG: applicationId,
             USER_ID:          TEST_USER_ID,
             TARGET_COMPANY:   'TestCo',
-            TARGET_ROLE:      'Engineer',
-            JOB_DESCRIPTION:  'JD text for failure test',
-            // RESEARCH_MODEL deliberately omitted — should throw at module load
+            TARGET_ROLE:      'Senior Engineer',
+            JOB_DESCRIPTION:  'We are looking for a senior engineer to join our platform team and help build scalable infrastructure.',
+            // Empty string is falsy — triggers the !RESEARCH_MODEL guard at module load.
+            // Must be explicit: Jest inherits RESEARCH_MODEL from the orchestrator env,
+            // so omitting the key leaves the inherited value in { ...process.env, ...env }.
+            RESEARCH_MODEL:   '',
             AWS_REGION,
             PG_HOST:     PG_CONFIG.host,
             PG_PORT:     String(PG_CONFIG.port),
             PG_DATABASE: PG_CONFIG.database,
             PG_USER:     PG_CONFIG.user,
             PG_PASSWORD: PG_CONFIG.password,
+            RDS_HOST:    PG_CONFIG.host,
+            RDS_PORT:    String(PG_CONFIG.port),
+            RDS_DB_NAME: PG_CONFIG.database,
+            RDS_USER:    PG_CONFIG.user,
+            RDS_PASSWORD: PG_CONFIG.password,
             ENVIRONMENT: 'local',
         });
 
@@ -398,5 +411,5 @@ describe('job-strategist run-pipeline.js — failure path', () => {
         // Cleanup
         await pool.query('DELETE FROM pipeline_runs    WHERE id = $1', [pipelineRunId]);
         await pool.query('DELETE FROM job_applications WHERE id = $1', [applicationId]);
-    });
+    }, 120_000);
 });

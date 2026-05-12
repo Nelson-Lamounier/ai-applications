@@ -326,7 +326,7 @@ export class RdsVectorStore implements IVectorStore {
             content:      row.content,
             chunkIndex:   row.chunk_index,
             tags:         row.tags ?? [],
-            similarity:   row.similarity,
+            similarity:   Number(row.similarity),
         };
     }
 

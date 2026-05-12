@@ -40,7 +40,7 @@ import path                                    from 'node:path';
 // CONFIG
 // =============================================================================
 
-const REPO_ROOT    = path.resolve(import.meta.dirname, '..');
+const REPO_ROOT    = process.cwd();
 const PF_PORT      = Number(process.env['PF_PORT']      ?? '15432');
 const PF_NS        = process.env['PF_NAMESPACE']        ?? 'platform';
 const AWS_REGION   = process.env['AWS_REGION']          ?? 'eu-west-1';
@@ -131,6 +131,60 @@ function resolveCredentials(): RdsCredentials {
         pgPassword,
         pgDatabase: secret['PG_DATABASE'] ?? 'tucaken',
     };
+}
+
+// =============================================================================
+// AWS CREDENTIALS
+// =============================================================================
+
+function resolveAwsCredentials(): Record<string, string> {
+    // If explicit key vars are already set (e.g. CI, env export), use them directly.
+    if (process.env['AWS_ACCESS_KEY_ID'] && process.env['AWS_SECRET_ACCESS_KEY']) {
+        dim('Using AWS credentials from environment variables');
+        const creds: Record<string, string> = {
+            AWS_ACCESS_KEY_ID:     process.env['AWS_ACCESS_KEY_ID'],
+            AWS_SECRET_ACCESS_KEY: process.env['AWS_SECRET_ACCESS_KEY'],
+        };
+        if (process.env['AWS_SESSION_TOKEN']) {
+            creds['AWS_SESSION_TOKEN'] = process.env['AWS_SESSION_TOKEN'];
+        }
+        return creds;
+    }
+
+    // Fall back to aws configure export-credentials (handles SSO, profiles, instance roles).
+    const awsProfile = process.env['AWS_PROFILE'] ?? 'dev-account';
+    dim(`Exporting AWS credentials via \`aws configure export-credentials\` (profile: ${awsProfile})`);
+    const result = spawnSync(
+        'aws',
+        ['configure', 'export-credentials', '--format', 'env-no-export', '--profile', awsProfile],
+        { encoding: 'utf8' },
+    );
+
+    if (result.status !== 0) {
+        throw new Error(
+            `Failed to export AWS credentials (exit ${result.status ?? 'null'}):\n${result.stderr}\n` +
+            'Ensure you are logged in: aws sso login --profile <profile>',
+        );
+    }
+
+    const creds: Record<string, string> = {};
+    for (const line of result.stdout.split('\n')) {
+        const eqIdx = line.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = line.slice(0, eqIdx).trim();
+        const val = line.slice(eqIdx + 1).trim();
+        if (key && val) creds[key] = val;
+    }
+
+    if (!creds['AWS_ACCESS_KEY_ID']) {
+        throw new Error(
+            'AWS_ACCESS_KEY_ID not found in export-credentials output. ' +
+            'Ensure you are authenticated: aws sso login',
+        );
+    }
+
+    ok(`AWS credentials resolved (access key: ${creds['AWS_ACCESS_KEY_ID']?.slice(0, 8)}...)`);
+    return creds;
 }
 
 // =============================================================================
@@ -226,7 +280,9 @@ function runJest(env: Record<string, string>): Promise<number> {
         ],
         {
             cwd:   REPO_ROOT,
-            env:   { ...process.env, ...env },
+            // Strip AWS_PROFILE so explicit ACCESS_KEY/SECRET vars take precedence.
+            // AWS SDK v3 prefers AWS_PROFILE over static creds when both are set.
+            env:   { ...process.env, AWS_PROFILE: undefined, ...env } as NodeJS.ProcessEnv,
             stdio: 'inherit',
         },
     );
@@ -281,6 +337,11 @@ async function main(): Promise<void> {
 
     // ── Step 4: assemble test environment ────────────────────────────────────
     next('Assembling test environment');
+
+    // Resolve AWS credentials explicitly so the pipeline subprocess (node dist/run-pipeline.js)
+    // can reach Bedrock regardless of whether SSO tokens are cached or env vars are set.
+    const awsCreds = resolveAwsCredentials();
+
     const testEnv: Record<string, string> = {
         PG_HOST:        '127.0.0.1',
         PG_PORT:        String(PF_PORT),
@@ -291,6 +352,7 @@ async function main(): Promise<void> {
         RESEARCH_MODEL,
         ENVIRONMENT:    'local',
         SKIP_CLEANUP,
+        ...awsCreds,
     };
     if (process.env['TEST_USER_ID']) testEnv['TEST_USER_ID'] = process.env['TEST_USER_ID'];
 

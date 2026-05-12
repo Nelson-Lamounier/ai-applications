@@ -5,7 +5,7 @@
  * chain orchestrated by Step Functions.
  *
  * Status transitions persisted in platform RDS pipeline_runs:
- *   queued → researching → analysing → complete (or failed at any step)
+ *   queued → researching → analysing → persisting → complete (or failed at any step)
  *
  * Parallel job_applications.kanban_status lifecycle:
  *   <prior> → analysing → analysis-ready (or failed)
@@ -105,6 +105,8 @@ async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
         const analysis = await executeStrategistAgent(ctx, research.data);
+
+        await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
         // Resume-builder persist (Option A): the Strategist already produced
         // the full tailored StructuredResumeData. Validate and persist to PG.
