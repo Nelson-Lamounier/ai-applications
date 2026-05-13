@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ProfileInputBundle } from './ProfileInputCollector.js';
 
 export const ExtractedRepoDataSchema = z.object({
     project_name:  z.string().min(1).max(120),
@@ -39,7 +40,7 @@ export class ProfileExtractionError extends Error {
 export class ProfileExtractor {
     readonly version = '1';
 
-    extract(_userId: string, _bundle: unknown): Promise<ExtractedRepoData> {
+    extract(_userId: string, _bundle: ProfileInputBundle): Promise<ExtractedRepoData> {
         throw new Error('ProfileExtractor: not yet implemented');
     }
 }
