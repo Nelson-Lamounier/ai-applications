@@ -35,7 +35,7 @@ export function parseEnv(): IngestionEnv {
             ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         pg: {
             host:     required('PG_HOST'),
-            port:     parseInt(process.env['PG_PORT'] ?? '5432', 10),
+            port:     Number.parseInt(process.env['PG_PORT'] ?? '5432', 10),
             database: required('PG_DATABASE'),
             user:     required('PG_USER'),
             password: required('PG_PASSWORD'),
