@@ -20,23 +20,22 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
-import { runAgent, parseJsonResponse, log } from '@bedrock/shared';
-import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
-import type {
-    AgentConfig,
-    AgentResult,
-    ComplexityAnalysis,
-    ComplexityTier,
-    KbPassage,
-    PipelineContext,
-    PipelineMode,
-    ResearchResult,
-    SeoResearch,
-    SuggestedReference,
+import {
+    runAgent, parseJsonResponse, log, PgVectorRetriever, TitanEmbeddingProvider,
+    type AgentConfig,
+    type AgentResult,
+    type ComplexityAnalysis,
+    type ComplexityTier,
+    type KbPassage,
+    type PipelineContext,
+    type PipelineMode,
+    type ResearchResult,
+    type RetrievedPassage,
+    type SeoResearch,
+    type SuggestedReference,
 } from '@bedrock/shared';
-import type { Pool }                                from 'pg';
-import { PgVectorRetriever, TitanEmbeddingProvider } from '@bedrock/shared';
-import type { RetrievedPassage }                    from '@bedrock/shared';
+import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
+import type { Pool } from 'pg';
 
 // =============================================================================
 // CONFIGURATION
