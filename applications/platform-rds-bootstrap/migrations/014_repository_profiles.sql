@@ -14,7 +14,8 @@ CREATE TABLE repository_profiles (
     repo_full_name      TEXT            NOT NULL,
     extracted           JSONB           NOT NULL DEFAULT '{}',
     user_overrides      JSONB           NOT NULL DEFAULT '{}',
-    quality_score       NUMERIC(3,2)    NOT NULL DEFAULT 0,
+    quality_score       NUMERIC(3,2)    NOT NULL DEFAULT 0
+                                        CHECK (quality_score >= 0 AND quality_score <= 1),
     quality_breakdown   JSONB           NOT NULL DEFAULT '{}',
     classification      TEXT            NOT NULL DEFAULT 'project'
                                         CHECK (classification IN
@@ -60,7 +61,8 @@ CREATE TRIGGER set_updated_at
 ALTER TABLE repository_profiles ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY rls_repository_profiles ON repository_profiles
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING      (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON repository_profiles TO tucaken_app;
 
@@ -101,7 +103,8 @@ CREATE INDEX idx_rpe_hnsw
 ALTER TABLE repository_profile_embeddings ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY rls_repository_profile_embeddings ON repository_profile_embeddings
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING      (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON repository_profile_embeddings TO tucaken_app;
 
