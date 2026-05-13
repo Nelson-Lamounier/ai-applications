@@ -76,7 +76,6 @@ export class ProfileInputCollector {
                 return null;
             }
             console.warn(`[ProfileInputCollector] fetchFile ${filePath} warn:`, msg);
-            this.cache.set(filePath, null);
             return null;
         }
     }
