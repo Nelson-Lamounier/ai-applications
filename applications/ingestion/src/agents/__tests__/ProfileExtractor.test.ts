@@ -14,7 +14,7 @@ jest.mock('@bedrock/shared', () => ({
     recordBedrockCost: mockRecordBedrockCost,
 }));
 
-import { ProfileExtractor, ProfileExtractionError } from '../ProfileExtractor.js';
+import { ProfileExtractor } from '../ProfileExtractor.js';
 import type { ProfileInputBundle } from '../ProfileInputCollector.js';
 import type { Pool } from 'pg';
 

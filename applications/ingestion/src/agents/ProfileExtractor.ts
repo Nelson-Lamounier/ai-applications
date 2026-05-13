@@ -163,7 +163,8 @@ export class ProfileExtractor {
                         body:        Buffer.from(body),
                     }),
                 ).catch((err: unknown) => {
-                    throw new ProfileExtractionError('bedrock_error', String(err));
+                    const msg = err instanceof Error ? err.message : String(err);
+                    throw new ProfileExtractionError('bedrock_error', msg);
                 });
 
                 const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as {
