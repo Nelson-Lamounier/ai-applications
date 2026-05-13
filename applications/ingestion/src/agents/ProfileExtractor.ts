@@ -167,22 +167,14 @@ export class ProfileExtractor {
                     throw new ProfileExtractionError('bedrock_error', msg);
                 });
 
+                if (!responseBody) {
+                    throw new ProfileExtractionError('bedrock_error', 'empty response body');
+                }
+
                 const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as {
                     usage?: { input_tokens?: number; output_tokens?: number };
                     content: Array<{ type: string; name?: string; input?: unknown }>;
                 };
-
-                const inputTokens  = parsed.usage?.input_tokens  ?? 0;
-                const outputTokens = parsed.usage?.output_tokens ?? 0;
-
-                await recordBedrockCost(this.pool, {
-                    userId,
-                    modelId:      this.modelId,
-                    pipeline:     'profile-extraction',
-                    inputTokens,
-                    outputTokens,
-                    repoName:     bundle.repo_full_name,
-                });
 
                 const toolUse = parsed.content.find(b => b.type === 'tool_use');
                 if (!toolUse?.input) {
@@ -199,6 +191,15 @@ export class ProfileExtractor {
                         `ProfileExtractor: schema validation failed: ${parsed2.error.message}`,
                     );
                 }
+
+                await recordBedrockCost(this.pool, {
+                    userId,
+                    modelId:      this.modelId,
+                    pipeline:     'profile-extraction',
+                    inputTokens:  parsed.usage?.input_tokens  ?? 0,
+                    outputTokens: parsed.usage?.output_tokens ?? 0,
+                    repoName:     bundle.repo_full_name,
+                });
 
                 const extracted = parsed2.data;
 
