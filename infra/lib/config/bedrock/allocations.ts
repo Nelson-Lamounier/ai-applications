@@ -39,6 +39,8 @@ export interface ApiLambdaAllocation {
     readonly memoryMb: number;
     /** Lambda timeout in seconds */
     readonly timeoutSeconds: number;
+    /** Bedrock model ID for RAG-based chatbot Lambdas (chatbot-public + chatbot-authenticated) */
+    readonly chatbotModel: string;
 }
 
 /**
@@ -94,6 +96,7 @@ export const BEDROCK_ALLOCATIONS: Record<DeployableEnvironment, BedrockAllocatio
         apiLambda: {
             memoryMb: 256,
             timeoutSeconds: 60,
+            chatbotModel: MODELS.CHATBOT_CONVERSE,
         },
         apiGateway: {
             throttlingRateLimit: 10,
@@ -114,6 +117,7 @@ export const BEDROCK_ALLOCATIONS: Record<DeployableEnvironment, BedrockAllocatio
         apiLambda: {
             memoryMb: 512,
             timeoutSeconds: 60,
+            chatbotModel: MODELS.CHATBOT_CONVERSE,
         },
         apiGateway: {
             throttlingRateLimit: 50,
@@ -134,6 +138,7 @@ export const BEDROCK_ALLOCATIONS: Record<DeployableEnvironment, BedrockAllocatio
         apiLambda: {
             memoryMb: 1024,
             timeoutSeconds: 120,
+            chatbotModel: MODELS.CHATBOT_CONVERSE,
         },
         apiGateway: {
             throttlingRateLimit: 100,

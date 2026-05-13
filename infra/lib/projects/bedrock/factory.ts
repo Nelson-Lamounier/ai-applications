@@ -175,6 +175,11 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 allowedOrigins: configs.api.allowedOrigins,
                 throttlingRateLimit: allocs.apiGateway.throttlingRateLimit,
                 throttlingBurstLimit: allocs.apiGateway.throttlingBurstLimit,
+                chatbotModel: allocs.apiLambda.chatbotModel,
+                portfolioOwnerUserId: configs.api.portfolioOwnerUserId,
+                rdsSsmPrefix: configs.api.rdsSsmPrefix,
+                rdsCredentialsSecretName: configs.api.rdsCredentialsSecretName,
+                chatbotRetrievalSource: configs.api.chatbotRetrievalSource,
                 env,
             }
         );

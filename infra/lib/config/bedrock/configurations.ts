@@ -44,6 +44,14 @@ export interface ApiConfig {
     readonly enableApiKey: boolean;
     /** Allowed CORS origins */
     readonly allowedOrigins: string[];
+    /** SSM parameter prefix for RDS connection params e.g. /k8s/development/platform-rds */
+    readonly rdsSsmPrefix: string;
+    /** SecretsManager secret name containing RDS username/password */
+    readonly rdsCredentialsSecretName: string;
+    /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
+    readonly chatbotRetrievalSource: string;
+    /** Portfolio owner user ID — scopes sessions + RLS in chat_sessions/chat_messages */
+    readonly portfolioOwnerUserId: string;
 }
 
 /**
@@ -114,6 +122,10 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
         api: {
             enableApiKey: true,
             allowedOrigins: ['http://localhost:3000', 'https://nelsonlamounier.com'],
+            rdsSsmPrefix: '/k8s/development/platform-rds',
+            rdsCredentialsSecretName: 'k8s-development/platform-rds/credentials',
+            chatbotRetrievalSource: 'bedrock-agent',
+            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
         },
         logRetention: logs.RetentionDays.ONE_WEEK,
         isProduction: false,
@@ -140,6 +152,10 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
         api: {
             enableApiKey: true,
             allowedOrigins: ['https://staging.nelsonlamounier.com'],
+            rdsSsmPrefix: '/k8s/staging/platform-rds',
+            rdsCredentialsSecretName: 'k8s-staging/platform-rds/credentials',
+            chatbotRetrievalSource: 'rds-pgvector',
+            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
         },
         logRetention: logs.RetentionDays.ONE_MONTH,
         isProduction: false,
@@ -166,6 +182,10 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
         api: {
             enableApiKey: true,
             allowedOrigins: ['https://nelsonlamounier.com'],
+            rdsSsmPrefix: '/k8s/production/platform-rds',
+            rdsCredentialsSecretName: 'k8s-production/platform-rds/credentials',
+            chatbotRetrievalSource: 'rds-pgvector',
+            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
         },
         logRetention: logs.RetentionDays.THREE_MONTHS,
         isProduction: true,

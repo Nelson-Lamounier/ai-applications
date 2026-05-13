@@ -56,6 +56,16 @@ export interface BedrockApiStackProps extends cdk.StackProps {
     readonly throttlingRateLimit: number;
     /** API Gateway throttle — burst capacity */
     readonly throttlingBurstLimit: number;
+    /** Bedrock model ID for RAG-based chatbot Lambdas */
+    readonly chatbotModel: string;
+    /** Portfolio owner user ID — scopes sessions + RLS in chat tables */
+    readonly portfolioOwnerUserId: string;
+    /** SSM prefix for RDS connection params e.g. /k8s/development/platform-rds */
+    readonly rdsSsmPrefix: string;
+    /** SecretsManager secret name containing RDS username/password */
+    readonly rdsCredentialsSecretName: string;
+    /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
+    readonly chatbotRetrievalSource: string;
 }
 
 /**
@@ -70,6 +80,12 @@ export class BedrockApiStack extends cdk.Stack {
 
     /** The invoke Lambda function */
     public readonly invokeFunction: lambdaNode.NodejsFunction;
+
+    /** Public RAG chatbot Lambda (stateless, supports bedrock-agent fallback) */
+    public readonly chatbotPublicFunction: lambdaNode.NodejsFunction;
+
+    /** Authenticated RAG chatbot Lambda (session-aware, always uses pgvector) */
+    public readonly chatbotAuthFunction: lambdaNode.NodejsFunction;
 
     /** The API URL */
     public readonly apiUrl: string;
@@ -165,6 +181,135 @@ export class BedrockApiStack extends cdk.Stack {
         }));
 
         // =================================================================
+        // RDS connection params — read from SSM, injected into RAG Lambdas
+        //
+        // Lambdas run OUTSIDE the VPC (no NAT Gateway in V1 dev), so
+        // chatbotRetrievalSource must stay 'bedrock-agent' for chatbot-public
+        // until a Bedrock VPC endpoint and private subnets are added.
+        // chatbot-authenticated always needs VPC; wire in follow-up PR.
+        // =================================================================
+        const rdsHost     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/host`);
+        const rdsPort     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/port`);
+        const rdsDatabase = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/database`);
+        const rdsUser     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/user`);
+        const rdsSecret   = secretsmanager.Secret.fromSecretNameV2(this, 'RdsCredentialsSecret', props.rdsCredentialsSecretName);
+
+        const rdsEnvVars = {
+            RDS_HOST:     rdsHost,
+            RDS_PORT:     rdsPort,
+            RDS_DB_NAME:  rdsDatabase,
+            RDS_USER:     rdsUser,
+            RDS_PASSWORD: rdsSecret.secretValueFromJson('password').unsafeUnwrap(),
+        };
+
+        // Chatbot lambdas bundle pg — do NOT exclude it (unlike K8s workloads).
+        const chatbotExternalModules = OBSERVABILITY_EXTERNAL_MODULES.filter(m => m !== 'pg');
+
+        // =================================================================
+        // chatbot-public Lambda — stateless RAG + Bedrock Agent fallback
+        // =================================================================
+        this.chatbotPublicFunction = new lambdaNode.NodejsFunction(this, 'ChatbotPublicFunction', {
+            functionName: `${namePrefix}-chatbot-public`,
+            runtime: lambda.Runtime.NODEJS_22_X,
+            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'chatbot-public', 'src', 'index.ts'),
+            handler: 'handler',
+            memorySize: props.lambdaMemoryMb,
+            timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
+            environment: {
+                AGENT_ID: agentId,
+                AGENT_ALIAS_ID: agentAliasId,
+                CHATBOT_MODEL: props.chatbotModel,
+                PORTFOLIO_OWNER_USER_ID: props.portfolioOwnerUserId,
+                ALLOWED_ORIGINS: props.allowedOrigins.join(','),
+                CHATBOT_RETRIEVAL_SOURCE: props.chatbotRetrievalSource,
+                ...rdsEnvVars,
+            },
+            description: `Public RAG chatbot handler for ${namePrefix}`,
+            logGroup: new logs.LogGroup(this, 'ChatbotPublicLogGroup', {
+                logGroupName: `/aws/lambda/${namePrefix}-chatbot-public`,
+                retention: props.logRetention,
+                removalPolicy: props.removalPolicy,
+            }),
+            bundling: {
+                minify: true,
+                sourceMap: true,
+                externalModules: ['@aws-sdk/*', ...chatbotExternalModules],
+            },
+        });
+
+        NagSuppressions.addResourceSuppressions(
+            this.chatbotPublicFunction,
+            [{ id: 'AwsSolutions-L1', reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime' }],
+            true,
+        );
+
+        addLambdaObservability(this, this.chatbotPublicFunction, {
+            serviceName: `${namePrefix}-chatbot-public`,
+            environment: props.environmentName,
+        });
+
+        this.chatbotPublicFunction.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'ChatbotPublicBedrockAccess',
+            effect: iam.Effect.ALLOW,
+            actions: ['bedrock:InvokeAgent', 'bedrock:Converse', 'bedrock:InvokeModel'],
+            resources: [
+                `arn:aws:bedrock:${this.region}:${this.account}:agent-alias/${agentId}/${agentAliasId}`,
+                `arn:aws:bedrock:${this.region}::foundation-model/${props.chatbotModel}`,
+                `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+            ],
+        }));
+
+        // =================================================================
+        // chatbot-authenticated Lambda — session-aware RAG (always pgvector)
+        // =================================================================
+        this.chatbotAuthFunction = new lambdaNode.NodejsFunction(this, 'ChatbotAuthFunction', {
+            functionName: `${namePrefix}-chatbot-authenticated`,
+            runtime: lambda.Runtime.NODEJS_22_X,
+            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'chatbot-authenticated', 'src', 'index.ts'),
+            handler: 'handler',
+            memorySize: props.lambdaMemoryMb,
+            timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
+            environment: {
+                CHATBOT_MODEL: props.chatbotModel,
+                PORTFOLIO_OWNER_USER_ID: props.portfolioOwnerUserId,
+                ALLOWED_ORIGINS: props.allowedOrigins.join(','),
+                ...rdsEnvVars,
+            },
+            description: `Authenticated session-aware chatbot handler for ${namePrefix}`,
+            logGroup: new logs.LogGroup(this, 'ChatbotAuthLogGroup', {
+                logGroupName: `/aws/lambda/${namePrefix}-chatbot-authenticated`,
+                retention: props.logRetention,
+                removalPolicy: props.removalPolicy,
+            }),
+            bundling: {
+                minify: true,
+                sourceMap: true,
+                externalModules: ['@aws-sdk/*', ...chatbotExternalModules],
+            },
+        });
+
+        NagSuppressions.addResourceSuppressions(
+            this.chatbotAuthFunction,
+            [{ id: 'AwsSolutions-L1', reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime' }],
+            true,
+        );
+
+        addLambdaObservability(this, this.chatbotAuthFunction, {
+            serviceName: `${namePrefix}-chatbot-authenticated`,
+            environment: props.environmentName,
+        });
+
+        this.chatbotAuthFunction.addToRolePolicy(new iam.PolicyStatement({
+            sid: 'ChatbotAuthBedrockAccess',
+            effect: iam.Effect.ALLOW,
+            actions: ['bedrock:Converse', 'bedrock:InvokeModel'],
+            resources: [
+                `arn:aws:bedrock:${this.region}::foundation-model/${props.chatbotModel}`,
+                `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+            ],
+        }));
+
+        // =================================================================
         // CloudWatch Log Group — API Gateway Access Logging
         // =================================================================
         const accessLogGroup = new logs.LogGroup(this, 'ApiAccessLogGroup', {
@@ -236,6 +381,25 @@ export class BedrockApiStack extends cdk.Stack {
             },
         });
 
+        // Define chatbot request model (prompt + optional sessionId + optional callerRole)
+        const chatbotInvokeModel = this.api.addModel('ChatbotInvokeRequestModel', {
+            contentType: 'application/json',
+            modelName: 'ChatbotInvokeRequest',
+            schema: {
+                type: apigateway.JsonSchemaType.OBJECT,
+                required: ['prompt'],
+                properties: {
+                    prompt: {
+                        type: apigateway.JsonSchemaType.STRING,
+                        minLength: 1,
+                        maxLength: 10000,
+                    },
+                    sessionId: { type: apigateway.JsonSchemaType.STRING },
+                    callerRole: { type: apigateway.JsonSchemaType.STRING },
+                },
+            },
+        });
+
         // =================================================================
         // POST /invoke — Invoke the agent
         // =================================================================
@@ -246,6 +410,36 @@ export class BedrockApiStack extends cdk.Stack {
             requestModels: {
                 'application/json': invokeModel,
             },
+            methodResponses: [
+                { statusCode: '200' },
+                { statusCode: '400' },
+                { statusCode: '500' },
+            ],
+        });
+
+        // =================================================================
+        // POST /invoke-public — Public stateless RAG chatbot
+        // =================================================================
+        const invokePublicResource = this.api.root.addResource('invoke-public');
+        invokePublicResource.addMethod('POST', new apigateway.LambdaIntegration(this.chatbotPublicFunction), {
+            apiKeyRequired: props.enableApiKey,
+            requestValidator,
+            requestModels: { 'application/json': chatbotInvokeModel },
+            methodResponses: [
+                { statusCode: '200' },
+                { statusCode: '400' },
+                { statusCode: '500' },
+            ],
+        });
+
+        // =================================================================
+        // POST /invoke-authenticated — Session-aware RAG chatbot
+        // =================================================================
+        const invokeAuthResource = this.api.root.addResource('invoke-authenticated');
+        invokeAuthResource.addMethod('POST', new apigateway.LambdaIntegration(this.chatbotAuthFunction), {
+            apiKeyRequired: props.enableApiKey,
+            requestValidator,
+            requestModels: { 'application/json': chatbotInvokeModel },
             methodResponses: [
                 { statusCode: '200' },
                 { statusCode: '400' },
@@ -345,14 +539,16 @@ export class BedrockApiStack extends cdk.Stack {
         // APIG4 + COG4: This API uses API Key authentication with Usage Plan
         // throttling — Cognito authorizer is not applicable for this
         // machine-to-machine integration pattern.
-        NagSuppressions.addResourceSuppressions(
-            invokeResource,
-            [
-                { id: 'AwsSolutions-APIG4', reason: 'API uses API Key authentication with Usage Plan throttling; Cognito not applicable for M2M integration' },
-                { id: 'AwsSolutions-COG4', reason: 'API uses API Key authentication; Cognito user pool authorizer not applicable for M2M integration' },
-            ],
-            true,
-        );
+        for (const resource of [invokeResource, invokePublicResource, invokeAuthResource]) {
+            NagSuppressions.addResourceSuppressions(
+                resource,
+                [
+                    { id: 'AwsSolutions-APIG4', reason: 'API uses API Key authentication with Usage Plan throttling; Cognito not applicable for M2M integration' },
+                    { id: 'AwsSolutions-COG4', reason: 'API uses API Key authentication; Cognito user pool authorizer not applicable for M2M integration' },
+                ],
+                true,
+            );
+        }
 
         // APIG3: WAF deferred — Gap S1 in implementation plan.
         // API key is now managed via Secrets Manager (Gap S2) and the endpoint
@@ -371,6 +567,20 @@ export class BedrockApiStack extends cdk.Stack {
             parameterName: `/${namePrefix}/api-url`,
             stringValue: this.api.url,
             description: `API Gateway URL for ${namePrefix} agent`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        new ssm.StringParameter(this, 'ChatbotPublicApiUrlParam', {
+            parameterName: `/${namePrefix}/chatbot-public-api-url`,
+            stringValue: `${this.api.url}invoke-public`,
+            description: `Public RAG chatbot endpoint URL for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        new ssm.StringParameter(this, 'ChatbotAuthApiUrlParam', {
+            parameterName: `/${namePrefix}/chatbot-authenticated-api-url`,
+            stringValue: `${this.api.url}invoke-authenticated`,
+            description: `Authenticated RAG chatbot endpoint URL for ${namePrefix}`,
             tier: ssm.ParameterTier.STANDARD,
         });
 
