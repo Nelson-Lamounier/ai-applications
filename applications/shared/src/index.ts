@@ -256,16 +256,18 @@ export {
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
 
-// ─── Retrieval (Reranking) ──────────────────────────────────────────────────
+// ─── Retrieval (Reranking + pgvector) ────────────────────────────────────────
 export type {
     IReranker,
     RerankCandidate,
     RerankResult,
     RerankOptions,
     BedrockRerankerConfig,
+    RetrievedPassage,
+    RetrieveOptions,
 } from './retrieval/index.js';
 
-export { BedrockReranker } from './retrieval/index.js';
+export { BedrockReranker, PgVectorRetriever } from './retrieval/index.js';
 
 // ─── Security (Input/Output Sanitisation) ────────────────────────────────────
 export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';

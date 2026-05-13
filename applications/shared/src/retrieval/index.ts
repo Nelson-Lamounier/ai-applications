@@ -16,3 +16,10 @@ export type {
 
 export { BedrockReranker } from './implementations/BedrockReranker.js';
 export type { BedrockRerankerConfig } from './implementations/BedrockReranker.js';
+
+export type {
+    RetrievedPassage,
+    RetrieveOptions,
+} from './implementations/PgVectorRetriever.js';
+
+export { PgVectorRetriever } from './implementations/PgVectorRetriever.js';
