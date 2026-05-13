@@ -34,6 +34,9 @@ import type {
     SeoResearch,
     SuggestedReference,
 } from '@bedrock/shared';
+import type { Pool }                                from 'pg';
+import { PgVectorRetriever, TitanEmbeddingProvider } from '@bedrock/shared';
+import type { RetrievedPassage }                    from '@bedrock/shared';
 
 // =============================================================================
 // CONFIGURATION
@@ -75,6 +78,8 @@ const KB_AUGMENTED_THRESHOLD = 500;
 
 /** Maximum KB passages to retrieve */
 const MAX_KB_PASSAGES = 10;
+
+const RESEARCH_RETRIEVAL_SOURCE = (): string => process.env['RESEARCH_RETRIEVAL_SOURCE'] ?? 'bedrock-kb';
 
 /** Maximum characters to include from previous version content */
 const PREVIOUS_VERSION_CONTENT_CAP = 3000;
@@ -217,6 +222,30 @@ async function queryKnowledgeBase(query: string): Promise<KbPassage[]> {
     log('INFO', 'KB retrieval complete', { agent: 'research', passageCount: passages.length, topScore: passages[0]?.score ?? null });
 
     return passages;
+}
+
+/**
+ * Query RDS pgvector for relevant passages from repository_profile_embeddings
+ * and document_embeddings. Used when RESEARCH_RETRIEVAL_SOURCE=pgvector.
+ */
+async function queryPgVector(userId: string, query: string, pool: Pool): Promise<KbPassage[]> {
+    log('INFO', 'Querying pgvector', { agent: 'research', userId, queryLength: query.length });
+
+    const embedder  = new TitanEmbeddingProvider(process.env['AWS_REGION'] ?? 'eu-west-1');
+    const retriever = new PgVectorRetriever(pool, embedder);
+
+    const passages: RetrievedPassage[] = await retriever.retrieve(userId, query, {
+        maxProfiles: MAX_KB_PASSAGES / 2,
+        maxChunks:   MAX_KB_PASSAGES / 2,
+    });
+
+    log('INFO', 'pgvector retrieval complete', { agent: 'research', passageCount: passages.length });
+
+    return passages.map((p) => ({
+        text:      p.text,
+        score:     Math.min(p.score, 1),
+        sourceUri: p.sourceUri,
+    }));
 }
 
 // =============================================================================
@@ -447,7 +476,8 @@ const RESEARCH_CONFIG: AgentConfig = {
  * @returns Research result with mode, complexity, KB passages, and outline
  */
 export async function executeResearchAgent(
-    ctx: PipelineContext,
+    ctx:  PipelineContext,
+    pool: Pool,
 ): Promise<AgentResult<ResearchResult>> {
     // 1. Read draft from S3
     log('INFO', 'Reading draft from S3', { agent: 'research', bucket: ctx.bucket, sourceKey: ctx.sourceKey });
@@ -459,8 +489,18 @@ export async function executeResearchAgent(
         : 'legacy-transform';
     log('INFO', 'Pipeline mode detected', { agent: 'research', mode, draftLength: draftContent.length });
 
-    // 3. Query Knowledge Base (for KB-augmented mode, or always for supplementary context)
-    const kbPassages = await queryKnowledgeBase(draftContent);
+    // 3. Retrieve context — pgvector or Bedrock KB depending on feature flag
+    let kbPassages: KbPassage[];
+    if (RESEARCH_RETRIEVAL_SOURCE() === 'pgvector') {
+        if (!ctx.userId) {
+            throw new Error(
+                'executeResearchAgent: ctx.userId is required when RESEARCH_RETRIEVAL_SOURCE=pgvector',
+            );
+        }
+        kbPassages = await queryPgVector(ctx.userId, draftContent.substring(0, 1000), pool);
+    } else {
+        kbPassages = await queryKnowledgeBase(draftContent);
+    }
 
     // 4. Perform local complexity analysis (fast, no LLM needed)
     const localComplexity = analyseComplexity(draftContent);
@@ -497,7 +537,7 @@ export async function executeResearchAgent(
                 authorDirection,
                 previousVersionContent,
                 seoResearch,
-            } as ResearchResult;
+            };
         },
         pipelineContext: ctx,
     });
