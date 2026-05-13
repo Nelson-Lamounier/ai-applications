@@ -200,6 +200,7 @@ export type {
 
 // ─── Ingestion (Repo → Vector Store Pipeline) ────────────────────────────────
 export { GitHubAdapter }            from './ingestion/implementations/GitHubAdapter.js';
+export type { GitHubRepoMeta }      from './ingestion/implementations/GitHubAdapter.js';
 export { FileFilter, DEFAULT_FILTER_CONFIG } from './ingestion/implementations/FileFilter.js';
 export { ChunkerRegistry }          from './ingestion/implementations/ChunkerRegistry.js';
 export { CommitChunker, isoWeek }   from './ingestion/implementations/CommitChunker.js';
