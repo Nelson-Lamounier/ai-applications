@@ -130,7 +130,7 @@ ci-synth project environment:
 
 # ── Job Strategist ───────────────────────────────────────────────────────────
 
-ECR_STRATEGIST := "771826808455.dkr.ecr.eu-west-1.amazonaws.com/job-strategist"
+ECR_STRATEGIST := env_var_or_default("ECR_STRATEGIST", "")
 
 # Run the full job-strategist end-to-end integration test.
 # Manages the pgbouncer port-forward automatically — no split terminals needed.
@@ -183,17 +183,18 @@ pgbouncer-tunnel:
 push-strategist tag="local":
     #!/usr/bin/env bash
     set -euo pipefail
+    ECR_REGISTRY=$(echo "{{ECR_STRATEGIST}}" | cut -d'/' -f1)
     aws ecr get-login-password --region eu-west-1 \
-      | docker login --username AWS --password-stdin 771826808455.dkr.ecr.eu-west-1.amazonaws.com
+      | docker login --username AWS --password-stdin "$ECR_REGISTRY"
     docker tag job-strategist:{{tag}} {{ECR_STRATEGIST}}:{{tag}}
     docker push {{ECR_STRATEGIST}}:{{tag}}
     echo "Pushed {{ECR_STRATEGIST}}:{{tag}}"
 
 # ── Resume Import Processor ──────────────────────────────────────────────────
 
-ECR_RESUME    := "771826808455.dkr.ecr.eu-west-1.amazonaws.com/resume-import-processor"
-RDS_HOST      := "k8s-dev-platform-rds.clkke44ao9lb.eu-west-1.rds.amazonaws.com"
-ASSETS_BUCKET := "bedrock-data-development-assetsbucket5cb76180-fnnkzihpuz3y"
+ECR_RESUME    := env_var_or_default("ECR_RESUME", "")
+RDS_HOST      := env_var_or_default("RDS_HOST_DEV", "")
+ASSETS_BUCKET := env_var_or_default("ASSETS_BUCKET_DEV", "")
 
 # Run PDF extraction integration test against live AWS Textract (no Docker needed)
 [group('resume-processor')]
