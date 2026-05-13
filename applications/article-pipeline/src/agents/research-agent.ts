@@ -469,7 +469,8 @@ const RESEARCH_CONFIG: AgentConfig = {
 /**
  * Execute the Research Agent.
  *
- * Reads the draft from S3, queries the Knowledge Base, classifies
+ * Reads the draft from S3, retrieves context via pgvector or Bedrock KB
+ * (controlled by RESEARCH_RETRIEVAL_SOURCE env var), classifies
  * complexity, and generates a structured research brief.
  *
  * @param ctx - Pipeline context with bucket, sourceKey

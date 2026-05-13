@@ -187,6 +187,33 @@ describe('PgVectorRetriever', () => {
         expect(failClient.query).toHaveBeenCalledWith('ROLLBACK');
     });
 
+    it('rolls back and rethrows when chunk query throws', async () => {
+        const profileClient = makeClient([]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const failQuery: jest.Mock<any> = jest.fn() as any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (failQuery as any)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .mockResolvedValueOnce({ rows: [] } as any)  // BEGIN
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .mockResolvedValueOnce({ rows: [] } as any)  // SET LOCAL
+            .mockRejectedValueOnce(new Error('chunk DB error'));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const failRelease: jest.Mock<any> = jest.fn();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const failClient: MockClient = {
+            query:   failQuery,
+            release: failRelease,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (mockConnect as any)
+            .mockResolvedValueOnce(profileClient as unknown as PoolClient)
+            .mockResolvedValueOnce(failClient as unknown as PoolClient);
+        await expect(retriever.retrieve(USER_ID, 'test')).rejects.toThrow('chunk DB error');
+        expect(failClient.query).toHaveBeenCalledWith('ROLLBACK');
+        expect(failClient.release).toHaveBeenCalled();
+    });
+
     it('returns empty array when both layers return no rows', async () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (mockConnect as any)
