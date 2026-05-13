@@ -281,3 +281,7 @@ export type {
     SanitiseInputResult,
     SanitisationResult,
 } from './security/types.js';
+
+// ─── Chatbot utilities ────────────────────────────────────────────────────────
+export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT } from './chatbot/index.js';
+export type { Metric, ChatbotResponse } from './chatbot/index.js';
