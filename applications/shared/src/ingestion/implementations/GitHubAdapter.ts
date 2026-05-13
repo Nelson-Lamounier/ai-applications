@@ -324,7 +324,7 @@ export class GitHubAdapter implements IRepoAdapter {
         return {
             primary_language: data.language,
             description:      data.description,
-            topics:           data.topics ?? [],
+            topics:           data.topics ?? [],   // GitHub omits field when no topics set
             stars:            data.stargazers_count,
             forks:            data.forks_count,
             is_fork:          data.fork,
