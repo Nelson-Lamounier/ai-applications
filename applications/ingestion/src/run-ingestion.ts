@@ -34,6 +34,15 @@ import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
 
 import { parseEnv } from './env.js';
+import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
+import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
+import { FileFetchCache } from './util/FileFetchCache.js';
+import { classifyRepo } from './util/classifyRepo.js';
+import { scoreProfile } from './util/scoreProfile.js';
+import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
+import { RepositoryProfileEmbeddingsRepository } from './repositories/RepositoryProfileEmbeddingsRepository.js';
+import type { ExtractedRepoData } from './agents/ProfileExtractor.js';
+import type { ProfileEmbeddingRow } from './repositories/RepositoryProfileEmbeddingsRepository.js';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 
 const tracer = trace.getTracer('ingestion-worker');
@@ -63,6 +72,33 @@ const chunksProcessed = new Counter({
     labelNames: ['phase'] as const,
     registers:  [obs.registry],
 });
+
+async function embedProfile(
+    userId: string,
+    profileId: string,
+    extracted: ExtractedRepoData,
+    embedder: TitanEmbeddingProvider,
+    embRepo: RepositoryProfileEmbeddingsRepository,
+): Promise<void> {
+    const rows: ProfileEmbeddingRow[] = [];
+
+    const addRow = async (
+        chunkType: 'one_liner' | 'description' | 'highlight',
+        content: string,
+    ): Promise<void> => {
+        const embedding   = await embedder.embed(content);
+        const contentHash = sha256(content);
+        rows.push({ userId, profileId, chunkType, content, contentHash, embedding });
+    };
+
+    await addRow('one_liner', extracted.one_liner);
+    await addRow('description', extracted.description);
+    for (const highlight of extracted.highlights) {
+        await addRow('highlight', highlight);
+    }
+
+    await embRepo.upsertBatch(userId, rows);
+}
 
 async function main(): Promise<void> {
     const env = parseEnv();
@@ -114,6 +150,12 @@ async function main(): Promise<void> {
     const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher });
     const orchestrator = new RepoIngestionOrchestrator(repoAdapter, fileFilter, chunkerReg, pipeline);
 
+    const fileCache        = new FileFetchCache();
+    const profileRepo      = new RepositoryProfileRepository(pgPool);
+    const embRepo          = new RepositoryProfileEmbeddingsRepository(pgPool);
+    const profileExtractor = new ProfileExtractor(env.profileExtractorModelId, pgPool);
+    const profileCollector = new ProfileInputCollector(repoAdapter, fileCache);
+
     const rootSpan = tracer.startSpan('ingestion.pipeline', {
         attributes: {
             'user.id':        env.userId,
@@ -123,6 +165,59 @@ async function main(): Promise<void> {
     }, obs.parentContext);
 
     try {
+        // ── Phase 0: profile extraction ──────────────────────────────────────────
+        log.info({ repoFullName: env.repoFullName }, 'profile_extraction.start');
+
+        const bundle         = await profileCollector.collect(env.repoFullName);
+        const classification = classifyRepo(bundle);
+
+        const { id: profileId } = await profileRepo.upsert({
+            userId:           env.userId,
+            repoFullName:     env.repoFullName,
+            extractionStatus: 'extracting',
+            extractorModel:   env.profileExtractorModelId,
+            extractorVersion: profileExtractor.version,
+        });
+
+        try {
+            const extracted               = await profileExtractor.extract(env.userId, bundle);
+            const { score, breakdown }    = scoreProfile(extracted, bundle);
+
+            await profileRepo.upsert({
+                userId:           env.userId,
+                repoFullName:     env.repoFullName,
+                extracted,
+                classification,
+                qualityScore:     score,
+                qualityBreakdown: breakdown,
+                extractionStatus: 'ready_for_review',
+                extractedAt:      new Date(),
+                extractorModel:   env.profileExtractorModelId,
+                extractorVersion: profileExtractor.version,
+            });
+
+            await embedProfile(env.userId, profileId, extracted, embedder, embRepo);
+            await profileRepo.updateStatus(profileId, env.userId, 'completed');
+
+            log.info({
+                repoFullName:  env.repoFullName,
+                classification,
+                qualityScore:  score,
+                domain:        extracted.domain,
+                confidence:    extracted.confidence,
+            }, 'profile_extraction.complete');
+        } catch (profileErr) {
+            await profileRepo.updateStatus(profileId, env.userId, 'failed', String(profileErr));
+            throw profileErr;
+        }
+
+        // ── Phase 1+: chunk pipeline (skipped for non-project repos) ──────────────
+        if (classification !== 'project') {
+            log.info({ classification }, 'skipping_tier2_chunk_pipeline');
+            outcome = 'success';
+            return;
+        }
+
         const report = await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
             return env.forceReindex
                 ? await orchestrator.forceReindex(env.userId, env.repoFullName)

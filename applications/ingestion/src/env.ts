@@ -5,10 +5,11 @@
  */
 
 export interface IngestionEnv {
-    readonly userId:        string;
-    readonly repoFullName:  string;
-    readonly forceReindex:  boolean;
-    readonly githubToken:   string;
+    readonly userId:                   string;
+    readonly repoFullName:             string;
+    readonly forceReindex:             boolean;
+    readonly githubToken:              string;
+    readonly profileExtractorModelId:  string;
     readonly pg: {
         readonly host:     string;
         readonly port:     number;
@@ -26,10 +27,12 @@ function required(name: string): string {
 
 export function parseEnv(): IngestionEnv {
     return {
-        userId:       required('USER_ID'),
-        repoFullName: required('REPO_FULL_NAME'),
-        forceReindex: (process.env['FORCE_REINDEX'] ?? 'false').toLowerCase() === 'true',
-        githubToken:  required('GITHUB_TOKEN'),
+        userId:                  required('USER_ID'),
+        repoFullName:            required('REPO_FULL_NAME'),
+        forceReindex:            (process.env['FORCE_REINDEX'] ?? 'false').toLowerCase() === 'true',
+        githubToken:             required('GITHUB_TOKEN'),
+        profileExtractorModelId: process.env['PROFILE_EXTRACTOR_MODEL_ID']
+            ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         pg: {
             host:     required('PG_HOST'),
             port:     parseInt(process.env['PG_PORT'] ?? '5432', 10),
