@@ -63,11 +63,12 @@ async function main(): Promise<void> {
 
     const ctx: PipelineContext = {
         pipelineId:        env.pipelineId,
+        userId:            env.userId,
         slug:              env.slug,
         sourceKey:         env.s3SourceKey,
         bucket:            env.s3Bucket,
         environment:       env.environment,
-        version:           parseInt(process.env['PIPELINE_VERSION'] ?? '1', 10),
+        version:           Number.parseInt(process.env['PIPELINE_VERSION'] ?? '1', 10),
         cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
         cumulativeCostUsd: 0,
         retryAttempt:      0,
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
 
     try {
         await updatePipelineRun(pool, env.pipelineRunId, 'researching');
-        const research = await timed('research', () => executeResearchAgent(ctx));
+        const research = await timed('research', () => executeResearchAgent(ctx, pool));
 
         await updatePipelineRun(pool, env.pipelineRunId, 'writing');
         const writer = await timed('writing', () => executeWriterAgent(ctx, research.data));

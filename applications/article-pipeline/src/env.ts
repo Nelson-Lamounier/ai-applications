@@ -3,10 +3,11 @@
  * Environment variable parsing for the article pipeline K8s Job.
  *
  * The Job is dispatched by admin-api with a per-run set of env vars.
- * Required: PIPELINE_RUN_ID, SLUG, S3_BUCKET, S3_SOURCE_KEY, PG_*.
+ * Required: PIPELINE_RUN_ID, SLUG, S3_BUCKET, S3_SOURCE_KEY, PG_*, USER_ID.
  * Optional with defaults: MODE, PIPELINE_ID.
  */
 export interface PipelineEnv {
+    readonly userId:       string;
     readonly pipelineRunId: string;
     readonly slug:          string;
     readonly s3Bucket:      string;
@@ -32,6 +33,7 @@ function required(name: string): string {
 export function parseEnv(): PipelineEnv {
     const pipelineRunId = required('PIPELINE_RUN_ID');
     return {
+        userId:       required('USER_ID'),
         pipelineRunId,
         slug:        required('SLUG'),
         s3Bucket:    required('S3_BUCKET'),
@@ -41,7 +43,7 @@ export function parseEnv(): PipelineEnv {
         environment: process.env['ENVIRONMENT'] ?? 'production',
         pg: {
             host:     required('PG_HOST'),
-            port:     parseInt(process.env['PG_PORT'] ?? '5432', 10),
+            port:     Number.parseInt(process.env['PG_PORT'] ?? '5432', 10),
             database: required('PG_DATABASE'),
             user:     required('PG_USER'),
             password: required('PG_PASSWORD'),
