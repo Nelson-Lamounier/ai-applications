@@ -78,7 +78,14 @@ export class RepositoryProfileRepository {
             );
 
             await client.query('COMMIT');
-            return { id: result.rows[0].id };
+            const row = result.rows[0];
+            if (!row) {
+                throw new Error(
+                    `upsert returned no row for user=${input.userId} repo=${input.repoFullName}; ` +
+                    `check RLS RETURNING policy on repository_profiles`,
+                );
+            }
+            return { id: row.id };
         } catch (err) {
             await client.query('ROLLBACK');
             throw err;
@@ -127,8 +134,9 @@ export class RepositoryProfileRepository {
                     SET extraction_status = $1,
                         extraction_error  = $2,
                         updated_at        = now()
-                  WHERE id = $3::uuid`,
-                [status, error ?? null, id],
+                  WHERE id = $3::uuid
+                    AND user_id = $4::uuid`,
+                [status, error ?? null, id, userId],
             );
             await client.query('COMMIT');
         } catch (err) {

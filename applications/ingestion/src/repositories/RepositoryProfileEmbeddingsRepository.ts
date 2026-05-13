@@ -28,6 +28,11 @@ export class RepositoryProfileEmbeddingsRepository {
 
             const values: unknown[] = [];
             for (const row of rows) {
+                if (row.embedding.some(v => !Number.isFinite(v))) {
+                    throw new Error(
+                        `Non-finite value in embedding for profileId=${row.profileId} chunkType=${row.chunkType}`,
+                    );
+                }
                 values.push(
                     row.userId,
                     row.profileId,
