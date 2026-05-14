@@ -101,7 +101,7 @@ export class RepositoryProfileRepository {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [input.userId]);
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
             const result = await client.query<RepositoryProfile>(
                 `SELECT id, user_id AS "userId", repo_full_name AS "repoFullName",
                         extraction_status AS "extractionStatus"
