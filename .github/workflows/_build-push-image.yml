@@ -61,7 +61,7 @@ on:
         description: "EKS cluster name used to generate kubeconfig for the direct K8s secret patch."
         required: false
         type: string
-        default: "tucaken-eks-cluster"
+        default: "k8s-eks-development"
       build-timeout:
         description: "Build job timeout in minutes"
         required: false
