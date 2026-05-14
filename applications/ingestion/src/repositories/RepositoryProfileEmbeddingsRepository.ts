@@ -19,7 +19,7 @@ export class RepositoryProfileEmbeddingsRepository {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`SET LOCAL app.current_user_id = $1`, [userId]);
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
 
             const valuePlaceholders = rows.map((_, i) => {
                 const base = i * 7;
