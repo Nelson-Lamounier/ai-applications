@@ -14,10 +14,10 @@ export const ExtractedRepoDataSchema = z.object({
     one_liner:     z.string().min(20).max(140),
     description:   z.string().min(40).max(800),
     domain:        z.enum(['web','ml','devops','infra','mobile','data','cli','lib','other']),
-    tech_stack:    z.array(z.string()).max(40),
+    tech_stack:    z.array(z.string()).transform(arr => arr.slice(0, 40)),
     role_inferred: z.enum(['creator','maintainer','contributor']),
     complexity:    z.enum(['simple','moderate','complex']),
-    highlights:    z.array(z.string().max(280)).max(5),
+    highlights:    z.array(z.string().transform(s => s.slice(0, 280))).max(5),
     signals: z.object({
         has_readme:       z.boolean(),
         has_tests:        z.boolean(),
@@ -61,7 +61,7 @@ const EXTRACT_TOOL = {
             role_inferred: { type: 'string', enum: ['creator','maintainer','contributor'] },
             complexity:    { type: 'string', enum: ['simple','moderate','complex'] },
             highlights: {
-                type: 'array', items: { type: 'string' }, maxItems: 5,
+                type: 'array', items: { type: 'string', maxLength: 280 }, maxItems: 5,
                 description: 'Resume-bullet-worthy specifics. Each <=280 chars. Must be grounded in inputs - do NOT invent metrics.',
             },
             signals: {
@@ -110,7 +110,7 @@ RULES:
 
 6. **Tech stack scope.** Languages, frameworks, infrastructure (AWS services, Kubernetes), datastores, notable libraries. Exclude trivial tooling (Prettier, ESLint) unless they're the project's purpose. <=15 items typical; infra/platform repos may reach 30+.
 
-7. **Highlights are resume bullets in waiting.** Each must stand alone.
+7. **Highlights are resume bullets in waiting.** Each must stand alone. Keep each under 280 chars.
    Good: "Built a self-healing Kubernetes operator using ArgoCD and a custom controller for automated drift remediation across multi-environment EKS clusters."
    Bad: "Used React."
 
