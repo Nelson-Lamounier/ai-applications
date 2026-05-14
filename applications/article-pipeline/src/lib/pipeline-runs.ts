@@ -31,8 +31,11 @@ export async function persistArticle(
     slug: string,
     contentMd: string,
 ): Promise<void> {
-    await pool.query(
+    const result = await pool.query(
         `UPDATE articles SET content_md = $2, status = 'review', updated_at = NOW() WHERE slug = $1`,
         [slug, contentMd],
     );
+    if (result.rowCount === 0) {
+        throw new Error(`persistArticle: no articles row found for slug '${slug}' — ensure article placeholder is created before dispatching the K8s Job`);
+    }
 }
