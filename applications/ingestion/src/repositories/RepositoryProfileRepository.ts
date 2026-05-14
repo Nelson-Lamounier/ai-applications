@@ -50,10 +50,10 @@ export class RepositoryProfileRepository {
                 )
                 ON CONFLICT (user_id, repo_full_name) DO UPDATE SET
                     repository_id      = COALESCE(EXCLUDED.repository_id, repository_profiles.repository_id),
-                    extracted          = COALESCE(EXCLUDED.extracted, repository_profiles.extracted),
+                    extracted          = COALESCE(NULLIF(EXCLUDED.extracted, '{}'), repository_profiles.extracted),
                     classification     = COALESCE(EXCLUDED.classification, repository_profiles.classification),
                     quality_score      = COALESCE(EXCLUDED.quality_score, repository_profiles.quality_score),
-                    quality_breakdown  = COALESCE(EXCLUDED.quality_breakdown, repository_profiles.quality_breakdown),
+                    quality_breakdown  = COALESCE(NULLIF(EXCLUDED.quality_breakdown, '{}'), repository_profiles.quality_breakdown),
                     extraction_status  = EXCLUDED.extraction_status,
                     extraction_error   = EXCLUDED.extraction_error,
                     extracted_at       = COALESCE(EXCLUDED.extracted_at, repository_profiles.extracted_at),
@@ -101,7 +101,7 @@ export class RepositoryProfileRepository {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [input.userId]);
             const result = await client.query<RepositoryProfile>(
                 `SELECT id, user_id AS "userId", repo_full_name AS "repoFullName",
                         extraction_status AS "extractionStatus"
