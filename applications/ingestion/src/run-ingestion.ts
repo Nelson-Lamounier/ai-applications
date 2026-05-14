@@ -100,6 +100,30 @@ async function embedProfile(
     await embRepo.upsertBatch(userId, rows);
 }
 
+/**
+ * Mirrors the terminal ingestion outcome back to repositories.index_status so
+ * the admin-api's GET /connected-repos fallback (sync_status ?? index_status)
+ * stays consistent with repo_sync_state.
+ *
+ * Best-effort on error path — a failure here must not mask the original error.
+ */
+async function syncRepositoryIndexStatus(
+    pool: Pool,
+    userId: string,
+    repoFullName: string,
+    status: 'complete' | 'error',
+    errorMessage?: string,
+): Promise<void> {
+    await pool.query(
+        `UPDATE repositories
+         SET index_status  = $3,
+             indexed_at    = CASE WHEN $3 = 'complete' THEN NOW() ELSE indexed_at END,
+             error_message = $4
+         WHERE user_id = $1::uuid AND full_name = $2`,
+        [userId, repoFullName, status, errorMessage ?? null],
+    );
+}
+
 async function main(): Promise<void> {
     const env = parseEnv();
     const start = process.hrtime.bigint();
@@ -214,6 +238,7 @@ async function main(): Promise<void> {
         // ── Phase 1+: chunk pipeline (skipped for non-project repos) ──────────────
         if (classification !== 'project') {
             log.info({ classification }, 'skipping_tier2_chunk_pipeline');
+            await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
             outcome = 'success';
             return;
         }
@@ -231,6 +256,8 @@ async function main(): Promise<void> {
             'chunks.embedded': report.embedded,
             'chunks.pruned':   report.pruned,
         });
+
+        await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
         outcome = 'success';
 
         const { traceId } = rootSpan.spanContext();
@@ -259,6 +286,10 @@ async function main(): Promise<void> {
             user_id:         env.userId,
             repo_full_name:  env.repoFullName,
         }, 'failed');
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await syncRepositoryIndexStatus(
+            pgPool, env.userId, env.repoFullName, 'error', errMsg.slice(0, 500),
+        ).catch(() => {}); // best-effort — must not mask the original error
         throw err;
     } finally {
         rootSpan.end();
