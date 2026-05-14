@@ -14,7 +14,7 @@ export const ExtractedRepoDataSchema = z.object({
     one_liner:     z.string().min(20).max(140),
     description:   z.string().min(40).max(800),
     domain:        z.enum(['web','ml','devops','infra','mobile','data','cli','lib','other']),
-    tech_stack:    z.array(z.string()).max(20),
+    tech_stack:    z.array(z.string()).max(40),
     role_inferred: z.enum(['creator','maintainer','contributor']),
     complexity:    z.enum(['simple','moderate','complex']),
     highlights:    z.array(z.string().max(280)).max(5),
@@ -55,7 +55,7 @@ const EXTRACT_TOOL = {
             description:   { type: 'string', description: '2-4 sentences on purpose, approach, key technical decisions.' },
             domain:        { type: 'string', enum: ['web','ml','devops','infra','mobile','data','cli','lib','other'] },
             tech_stack: {
-                type: 'array', items: { type: 'string' }, maxItems: 20,
+                type: 'array', items: { type: 'string' }, maxItems: 40,
                 description: 'Normalized names (e.g. "React" not "reactjs"). Languages, frameworks, infra, notable libraries.',
             },
             role_inferred: { type: 'string', enum: ['creator','maintainer','contributor'] },
@@ -108,7 +108,7 @@ RULES:
 
 5. **Use 'missing' for user-input gaps.** Common entries: 'role_outcome', 'team_size', 'business_context', 'metrics', 'project_dates'. The gap-fill UI surfaces these.
 
-6. **Tech stack scope.** Languages, frameworks, infrastructure (AWS services, Kubernetes), datastores, notable libraries. Exclude trivial tooling (Prettier, ESLint) unless they're the project's purpose. <=15 items typical.
+6. **Tech stack scope.** Languages, frameworks, infrastructure (AWS services, Kubernetes), datastores, notable libraries. Exclude trivial tooling (Prettier, ESLint) unless they're the project's purpose. <=15 items typical; infra/platform repos may reach 30+.
 
 7. **Highlights are resume bullets in waiting.** Each must stand alone.
    Good: "Built a self-healing Kubernetes operator using ArgoCD and a custom controller for automated drift remediation across multi-environment EKS clusters."
