@@ -238,6 +238,7 @@ async function main(): Promise<void> {
         // ── Phase 1+: chunk pipeline (skipped for non-project repos) ──────────────
         if (classification !== 'project') {
             log.info({ classification }, 'skipping_tier2_chunk_pipeline');
+            await syncState.markComplete(env.userId, env.repoFullName, 0, 0);
             await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
             outcome = 'success';
             return;
