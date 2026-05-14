@@ -69,6 +69,12 @@ export interface ExtractedCareerData {
   keyAchievements: ResumeAchievement[];
 }
 
+export interface CareerExtractionResult {
+  data:         ExtractedCareerData;
+  inputTokens:  number;
+  outputTokens: number;
+}
+
 const EXTRACTION_TOOL_SCHEMA = {
   name: 'extract_career_data',
   description: 'Extract structured career data from resume text',
@@ -164,7 +170,7 @@ const EXTRACTION_TOOL_SCHEMA = {
   },
 };
 
-const MODEL_ID = process.env['EXTRACTION_MODEL_ID'] ?? 'anthropic.claude-haiku-4-5-20251001-v1:0';
+const MODEL_ID = process.env['EXTRACTION_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 // Cap resume text size before sending to Bedrock — prevents token explosion on
 // malformed/verbose PDFs. Typical resume is <8k chars; 40k covers edge cases.
@@ -184,7 +190,7 @@ const SYSTEM_PROMPT = [
 export async function extractCareerData(
   resumeText: string,
   region: string,
-): Promise<ExtractedCareerData> {
+): Promise<CareerExtractionResult> {
   const client = new BedrockRuntimeClient({ region });
 
   const safeText = resumeText.slice(0, MAX_RESUME_CHARS);
@@ -222,5 +228,9 @@ export async function extractCareerData(
     throw new Error('extractCareerData: Bedrock returned no tool_use block');
   }
 
-  return toolUseBlock.input as ExtractedCareerData;
+  return {
+    data:         toolUseBlock.input as ExtractedCareerData,
+    inputTokens:  parsed.usage?.input_tokens  ?? 0,
+    outputTokens: parsed.usage?.output_tokens ?? 0,
+  };
 }

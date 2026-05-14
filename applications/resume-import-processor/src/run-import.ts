@@ -25,6 +25,9 @@
  */
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
+import { Counter, Histogram } from 'prom-client';
+import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost } from '@bedrock/shared';
+import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import { parseEnv } from './env.js';
 import { extractTextFromPdf } from './parsers/pdf.js';
 import { extractTextFromDocx } from './parsers/docx.js';
@@ -33,6 +36,44 @@ import { enrichRole } from './bedrock/enrich-role.js';
 import { embedAndPersistEntry } from './embed.js';
 import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
 import type { ExtractedCareerData, ResumeExperience } from './bedrock/extract-career.js';
+
+// One-shot K8s Job — bootstrap observability before any AWS / pg client
+// loads so OTel auto-instrumentation picks them up. Metrics push to
+// Pushgateway in `finally` because the pod dies before scrape.
+const obs = bootstrapK8sObservability({ serviceName: 'resume-import-processor' });
+const log = obs.logger;
+
+const importsTotal = new Counter({
+  name:       'resume_import_runs_total',
+  help:       'Resume import Job runs by terminal outcome.',
+  labelNames: ['outcome', 'error_code'] as const,
+  registers:  [obs.registry],
+});
+
+const importDurationSeconds = new Histogram({
+  name:       'resume_import_duration_seconds',
+  help:       'End-to-end Job duration in seconds.',
+  labelNames: ['outcome'] as const,
+  buckets:    [1, 5, 15, 30, 60, 120, 300, 600],
+  registers:  [obs.registry],
+});
+
+const stepDurationSeconds = new Histogram({
+  name:       'resume_import_step_duration_seconds',
+  help:       'Per-pipeline-step duration in seconds.',
+  labelNames: ['step'] as const,
+  buckets:    [0.1, 0.5, 1, 5, 15, 30, 60, 120],
+  registers:  [obs.registry],
+});
+
+const enrichmentEntriesTotal = new Counter({
+  name:       'resume_import_enrichment_entries_total',
+  help:       'Career entries processed by enrichment outcome.',
+  labelNames: ['outcome'] as const,
+  registers:  [obs.registry],
+});
+
+const tracer = trace.getTracer('resume-import-processor');
 
 const FREE_TIER_ENRICHMENT_CAP = 5;
 
@@ -123,23 +164,23 @@ async function persistCareerEntries(
   };
 
   for (let i = 0; i < data.experience.length; i++) {
-    const id = await insertEntry('experience', data.experience[i] as Record<string, unknown>, i);
+    const id = await insertEntry('experience', data.experience[i] as unknown as Record<string, unknown>, i);
     createdIds.push(id);
   }
   for (let i = 0; i < data.education.length; i++) {
-    await insertEntry('education', data.education[i] as Record<string, unknown>, i);
+    await insertEntry('education', data.education[i] as unknown as Record<string, unknown>, i);
   }
   for (const skillGroup of data.skills) {
-    await insertEntry('skill', skillGroup as Record<string, unknown>, 0);
+    await insertEntry('skill', skillGroup as unknown as Record<string, unknown>, 0);
   }
   for (let i = 0; i < data.certifications.length; i++) {
-    await insertEntry('certification', data.certifications[i] as Record<string, unknown>, i);
+    await insertEntry('certification', data.certifications[i] as unknown as Record<string, unknown>, i);
   }
   for (let i = 0; i < data.projects.length; i++) {
-    await insertEntry('project', data.projects[i] as Record<string, unknown>, i);
+    await insertEntry('project', data.projects[i] as unknown as Record<string, unknown>, i);
   }
   for (let i = 0; i < data.keyAchievements.length; i++) {
-    await insertEntry('achievement', data.keyAchievements[i] as Record<string, unknown>, i);
+    await insertEntry('achievement', data.keyAchievements[i] as unknown as Record<string, unknown>, i);
   }
 
   // Update career_entries_created array on the import record
@@ -162,13 +203,16 @@ async function countEnrichedEntries(pool: Pool, userId: string): Promise<number>
 
 async function main(): Promise<void> {
   const env = parseEnv();
+  const jobStart = process.hrtime.bigint();
+  let outcome: string = 'failed';
+  let errorCode = '';
 
-  console.info('[run-import] starting', {
+  log.info({
     importId:    env.importId,
     userId:      env.userId,
     s3Key:       env.s3Key,
     contentType: env.contentType,
-  });
+  }, 'starting');
 
   const pool = new Pool({
     host:               env.pg.host,
@@ -187,148 +231,215 @@ async function main(): Promise<void> {
     ? new TavilySearchTool(env.tavilyApiKey)
     : new NoOpSearchTool();
 
+  const rootSpan = tracer.startSpan('resume_import.pipeline', {
+    attributes: {
+      'user.id':   env.userId,
+      'import.id': env.importId,
+    },
+  }, obs.parentContext);
+
   try {
-    // ── Step 1: fetch file from S3 ──────────────────────────────────────────
-    await updateImportStatus(pool, env.importId, 'parsing', 'Downloading resume file');
-    console.info('[run-import] fetching from S3', { key: env.s3Key });
-    const fileBuffer = await fetchFileFromS3(s3, env.assetsBucketName, env.s3Key);
+    await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
 
-    // ── Step 2: parse text ──────────────────────────────────────────────────
-    let rawText: string;
-    let extractionMethod: string;
-
-    if (env.contentType === 'application/pdf') {
-      rawText           = await extractTextFromPdf(fileBuffer);
-      extractionMethod  = 'pdf-parse';
-    } else {
-      rawText           = await extractTextFromDocx(fileBuffer);
-      extractionMethod  = 'mammoth';
-    }
-
-    console.info('[run-import] parsed text', { chars: rawText.length, method: extractionMethod });
-
-    // ── Step 3: Bedrock structured extraction ───────────────────────────────
-    await updateImportStatus(pool, env.importId, 'extracting_career', 'Extracting career data', {
-      rawExtractedText: rawText,
-      extractionMethod,
-    });
-
-    console.info('[run-import] calling Bedrock for structured extraction');
-    const extracted = await extractCareerData(rawText, env.awsRegion);
-    console.info('[run-import] extraction complete', {
-      experience:  extracted.experience.length,
-      education:   extracted.education.length,
-      skills:      extracted.skills.length,
-    });
-
-    // ── Step 4: persist career entries, signal ready_for_review ────────────
-    const experienceIds = await persistCareerEntries(pool, env.userId, env.importId, extracted);
-
-    await updateImportStatus(pool, env.importId, 'ready_for_review', 'Career data extracted', {
-      careerEntriesCreated: experienceIds,
-    });
-
-    console.info('[run-import] ready_for_review — user can now see extracted data');
-
-    // ── Step 5: per-role enrichment (background) ────────────────────────────
-    if (!env.tavilyApiKey) {
-      console.info('[run-import] TAVILY_API_KEY absent — skipping enrichment');
-    }
-
-    await updateImportStatus(pool, env.importId, 'enriching', 'Researching roles');
-
-    let totalEmbeddings = 0;
-
-    for (let i = 0; i < extracted.experience.length; i++) {
-      const exp: ResumeExperience = extracted.experience[i];
-      const careerEntryId = experienceIds[i];
-      if (!careerEntryId) continue;
-
-      // Check free-tier cap (counts already-enriched entries across all imports)
-      const alreadyEnriched = await countEnrichedEntries(pool, env.userId);
-      if (alreadyEnriched >= FREE_TIER_ENRICHMENT_CAP) {
-        await pool.query(
-          `UPDATE user_career_history
-              SET enrichment_status = 'skipped',
-                  enrichment_skipped_reason = 'free_tier_limit',
-                  updated_at = NOW()
-            WHERE id = $1::uuid`,
-          [careerEntryId],
-        );
-        console.info('[run-import] free-tier enrichment cap reached, skipping remaining roles', {
-          role: exp.title, cap: FREE_TIER_ENRICHMENT_CAP,
-        });
-        // Still embed without enrichment so basic retrieval works
-        const count = await embedAndPersistEntry(
-          pool, env.awsRegion, env.userId, careerEntryId, exp, null,
-        );
-        totalEmbeddings += count;
-        continue;
-      }
-
-      console.info(`[run-import] enriching role ${i + 1}/${extracted.experience.length}`, {
-        title: exp.title, company: exp.company,
+      // ── Step 1: fetch file from S3 ────────────────────────────────────────
+      let fileBuffer!: Buffer;
+      await tracer.startActiveSpan('resume_import.fetch', async (span) => {
+        try {
+          await updateImportStatus(pool, env.importId, 'parsing', 'Downloading resume file');
+          fileBuffer = await fetchFileFromS3(s3, env.assetsBucketName, env.s3Key);
+          span.setAttribute('s3.key', env.s3Key);
+        } catch (err) {
+          span.recordException(err instanceof Error ? err : new Error(String(err)));
+          span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+          throw err;
+        } finally { span.end(); }
       });
 
-      await pool.query(
-        `UPDATE user_career_history
-            SET enrichment_status = 'enriching', updated_at = NOW()
-          WHERE id = $1::uuid`,
-        [careerEntryId],
-      );
+      // ── Step 2: parse text ────────────────────────────────────────────────
+      let rawText = '';
+      let extractionMethod = '';
+      await tracer.startActiveSpan('resume_import.parse', async (span) => {
+        try {
+          if (env.contentType === 'application/pdf') {
+            const result     = await extractTextFromPdf(fileBuffer, env.s3Key, env.assetsBucketName, env.awsRegion);
+            rawText          = result.text;
+            extractionMethod = result.method;
+          } else {
+            rawText          = await extractTextFromDocx(fileBuffer);
+            extractionMethod = 'mammoth';
+          }
+          span.setAttributes({ 'parse.chars': rawText.length, 'parse.method': extractionMethod });
+        } catch (err) {
+          span.recordException(err instanceof Error ? err : new Error(String(err)));
+          span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+          throw err;
+        } finally { span.end(); }
+      });
 
-      let enriched = null;
-      try {
-        enriched = await enrichRole(exp, searchTool, env.awsRegion);
-      } catch (err) {
-        console.warn('[run-import] enrichment failed for role', { title: exp.title, err });
-        await pool.query(
-          `UPDATE user_career_history
-              SET enrichment_status = 'failed', updated_at = NOW()
-            WHERE id = $1::uuid`,
-          [careerEntryId],
-        );
+      // ── Step 3: Bedrock structured extraction ─────────────────────────────
+      let extracted!: ExtractedCareerData;
+      await tracer.startActiveSpan('resume_import.extract_roles', async (span) => {
+        try {
+          await updateImportStatus(pool, env.importId, 'extracting_career', 'Extracting career data', {
+            rawExtractedText: rawText,
+            extractionMethod,
+          });
+          const extractionResult = await extractCareerData(rawText, env.awsRegion);
+          extracted = extractionResult.data;
+          recordBedrockCost(pool, {
+            userId:      env.userId,
+            modelId:     process.env['EXTRACTION_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+            pipeline:    'resume-import',
+            inputTokens:  extractionResult.inputTokens,
+            outputTokens: extractionResult.outputTokens,
+            importId:    env.importId,
+          }).catch((err) => log.warn({ err }, '[cost] extract-career cost record failed (non-fatal)'));
+          span.setAttributes({
+            'roles.count':     extracted.experience.length,
+            'education.count': extracted.education.length,
+          });
+        } catch (err) {
+          span.recordException(err instanceof Error ? err : new Error(String(err)));
+          span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+          throw err;
+        } finally { span.end(); }
+      });
+
+      // ── Step 4: persist career entries, signal ready_for_review ──────────
+      let experienceIds!: string[];
+      await tracer.startActiveSpan('resume_import.save_entries', async (span) => {
+        try {
+          experienceIds = await persistCareerEntries(pool, env.userId, env.importId, extracted);
+          await updateImportStatus(pool, env.importId, 'ready_for_review', 'Career data extracted', {
+            careerEntriesCreated: experienceIds,
+          });
+          span.setAttribute('entries.saved', experienceIds.length);
+        } catch (err) {
+          span.recordException(err instanceof Error ? err : new Error(String(err)));
+          span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+          throw err;
+        } finally { span.end(); }
+      });
+
+      // ── Step 5: per-role enrichment (background) ──────────────────────────
+      if (!env.tavilyApiKey) {
+        console.info('[run-import] TAVILY_API_KEY absent — skipping enrichment');
       }
 
-      if (enriched !== null) {
-        await pool.query(
-          `UPDATE user_career_history
-              SET enrichment_status = 'complete',
-                  enriched_data     = $1,
-                  updated_at        = NOW()
-            WHERE id = $2::uuid`,
-          [JSON.stringify(enriched), careerEntryId],
-        );
-      } else if (enriched === null) {
-        // enrichRole returned null (no search results) — mark skipped, still embed
-        await pool.query(
-          `UPDATE user_career_history
-              SET enrichment_status = 'skipped',
-                  enrichment_skipped_reason = 'no_search_results',
-                  updated_at = NOW()
-            WHERE id = $1::uuid`,
-          [careerEntryId],
-        );
+      await updateImportStatus(pool, env.importId, 'enriching', 'Researching roles');
+
+      let totalEmbeddings = 0;
+
+      for (let i = 0; i < extracted.experience.length; i++) {
+        const exp: ResumeExperience = extracted.experience[i];
+        const careerEntryId = experienceIds[i];
+        if (!careerEntryId) continue;
+
+        await tracer.startActiveSpan('resume_import.enrich_role', {
+          attributes: { 'role.title': exp.title, 'role.company': exp.company, 'role.index': i },
+        }, async (span) => {
+          try {
+            // Check free-tier cap (counts already-enriched entries across all imports)
+            const alreadyEnriched = await countEnrichedEntries(pool, env.userId);
+            if (alreadyEnriched >= FREE_TIER_ENRICHMENT_CAP) {
+              span.setAttribute('enrich.skipped_reason', 'free_tier_limit');
+              await pool.query(
+                `UPDATE user_career_history
+                    SET enrichment_status = 'skipped',
+                        enrichment_skipped_reason = 'free_tier_limit',
+                        updated_at = NOW()
+                  WHERE id = $1::uuid`,
+                [careerEntryId],
+              );
+              // Still embed without enrichment so basic retrieval works
+              const count = await embedAndPersistEntry(
+                pool, env.awsRegion, env.userId, careerEntryId, exp, null, env.importId,
+              );
+              totalEmbeddings += count;
+              return;
+            }
+
+            await pool.query(
+              `UPDATE user_career_history
+                  SET enrichment_status = 'enriching', updated_at = NOW()
+                WHERE id = $1::uuid`,
+              [careerEntryId],
+            );
+
+            let enriched = null;
+            try {
+              const enrichResult = await enrichRole(exp, searchTool, env.awsRegion);
+              enriched = enrichResult.data;
+              if (enrichResult.inputTokens > 0) {
+                recordBedrockCost(pool, {
+                  userId:      env.userId,
+                  modelId:     process.env['ENRICHMENT_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                  pipeline:    'resume-import',
+                  inputTokens:  enrichResult.inputTokens,
+                  outputTokens: enrichResult.outputTokens,
+                  importId:    env.importId,
+                }).catch((err) => log.warn({ err }, '[cost] enrich-role cost record failed (non-fatal)'));
+              }
+            } catch (err) {
+              span.recordException(err instanceof Error ? err : new Error(String(err)));
+              span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+              await pool.query(
+                `UPDATE user_career_history
+                    SET enrichment_status = 'failed', updated_at = NOW()
+                  WHERE id = $1::uuid`,
+                [careerEntryId],
+              );
+            }
+
+            if (enriched !== null) {
+              await pool.query(
+                `UPDATE user_career_history
+                    SET enrichment_status = 'complete',
+                        enriched_data     = $1,
+                        updated_at        = NOW()
+                  WHERE id = $2::uuid`,
+                [JSON.stringify(enriched), careerEntryId],
+              );
+            } else if (enriched === null) {
+              // enrichRole returned null (no search results) — mark skipped, still embed
+              await pool.query(
+                `UPDATE user_career_history
+                    SET enrichment_status = 'skipped',
+                        enrichment_skipped_reason = 'no_search_results',
+                        updated_at = NOW()
+                  WHERE id = $1::uuid`,
+                [careerEntryId],
+              );
+            }
+
+            const count = await embedAndPersistEntry(
+              pool, env.awsRegion, env.userId, careerEntryId, exp, enriched, env.importId,
+            );
+            totalEmbeddings += count;
+          } catch (err) {
+            span.recordException(err instanceof Error ? err : new Error(String(err)));
+            span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+          } finally { span.end(); }
+        });
       }
 
-      const count = await embedAndPersistEntry(
-        pool, env.awsRegion, env.userId, careerEntryId, exp, enriched,
-      );
-      totalEmbeddings += count;
-    }
+      // ── Step 6: completed ─────────────────────────────────────────────────
+      await updateImportStatus(pool, env.importId, 'completed', 'Import complete', {
+        embeddingsCreatedCount: totalEmbeddings,
+        completedAt: new Date(),
+      });
 
-    // ── Step 6: completed ───────────────────────────────────────────────────
-    await updateImportStatus(pool, env.importId, 'completed', 'Import complete', {
-      embeddingsCreatedCount: totalEmbeddings,
-      completedAt: new Date(),
+      log.info({ totalEmbeddings }, 'completed');
+      outcome = 'success';
+
+      await pool.end();
     });
 
-    console.info('[run-import] completed', { totalEmbeddings });
-
-    await pool.end();
-    process.exit(0);
   } catch (err) {
-    console.error('[run-import] fatal error', err);
+    errorCode = 'PIPELINE_ERROR';
+    rootSpan.recordException(err instanceof Error ? err : new Error(String(err)));
+    rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+    log.error({ err }, 'fatal error');
     await pool.query(
       `UPDATE resume_imports
           SET status = 'failed',
@@ -339,7 +450,31 @@ async function main(): Promise<void> {
       [JSON.stringify({ message: (err as Error).message }), env.importId],
     ).catch(() => {}); // best-effort — don't mask the original error
     await pool.end().catch(() => {});
-    process.exit(1);
+  } finally {
+    rootSpan.end();
+    const { traceId } = rootSpan.spanContext();
+
+    // Record terminal counters BEFORE pushing — these are the ones that
+    // matter for Prometheus alerting and dashboards.
+    const duration = Number(process.hrtime.bigint() - jobStart) / 1e9;
+    importsTotal.inc({ outcome, error_code: errorCode });
+    importDurationSeconds.observe({ outcome }, duration);
+
+    // Structured completion log — Loki filters on trace_id to join log stream with Tempo.
+    log.info({
+      event:      'resume_import.complete',
+      status:     outcome === 'success' ? 'complete' : 'error',
+      trace_id:   traceId,
+      user_id:    env.userId,
+      import_id:  env.importId,
+      duration_s: duration,
+    }, outcome === 'success' ? 'complete' : 'error');
+
+    // Push final metrics keyed by importId so successive runs replace
+    // (Pushgateway groups by URL path = job + groupings).
+    await pushFinalMetrics(obs.registry, 'resume-import-processor', env.importId);
+    await obs.shutdown();
+    process.exit(outcome === 'success' ? 0 : 1);
   }
 }
 

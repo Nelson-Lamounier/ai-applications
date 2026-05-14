@@ -27,18 +27,113 @@ import {
     FileFilter,
     ChunkerRegistry,
     RepoIngestionOrchestrator,
+    bootstrapK8sObservability,
+    pushFinalMetrics,
 } from '@bedrock/shared';
+import { Counter, Histogram } from 'prom-client';
+import { Pool } from 'pg';
 
 import { parseEnv } from './env.js';
+import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
+import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
+import { FileFetchCache } from './util/FileFetchCache.js';
+import { classifyRepo } from './util/classifyRepo.js';
+import { scoreProfile } from './util/scoreProfile.js';
+import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
+import { RepositoryProfileEmbeddingsRepository } from './repositories/RepositoryProfileEmbeddingsRepository.js';
+import type { ExtractedRepoData } from './agents/ProfileExtractor.js';
+import type { ProfileEmbeddingRow } from './repositories/RepositoryProfileEmbeddingsRepository.js';
+import { trace, context, SpanStatusCode } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('ingestion-worker');
+
+// Bootstrap observability before any pg / bedrock client constructs so
+// auto-instrumentation can hook them. K8s Job — no /metrics server;
+// metrics are pushed to Pushgateway in finally{}.
+const obs = bootstrapK8sObservability({ serviceName: 'ingestion' });
+const log = obs.logger;
+
+const ingestionRuns = new Counter({
+    name:       'ingestion_runs_total',
+    help:       'Repo ingestion Job runs by terminal outcome.',
+    labelNames: ['outcome'] as const,
+    registers:  [obs.registry],
+});
+const ingestionDuration = new Histogram({
+    name:       'ingestion_duration_seconds',
+    help:       'End-to-end Job duration in seconds.',
+    labelNames: ['outcome'] as const,
+    buckets:    [5, 15, 30, 60, 120, 300, 600, 1800],
+    registers:  [obs.registry],
+});
+const chunksProcessed = new Counter({
+    name:       'ingestion_chunks_total',
+    help:       'Chunks processed during ingestion by phase.',
+    labelNames: ['phase'] as const,
+    registers:  [obs.registry],
+});
+
+async function embedProfile(
+    userId: string,
+    profileId: string,
+    extracted: ExtractedRepoData,
+    embedder: TitanEmbeddingProvider,
+    embRepo: RepositoryProfileEmbeddingsRepository,
+): Promise<void> {
+    const rows: ProfileEmbeddingRow[] = [];
+
+    const addRow = async (
+        chunkType: 'one_liner' | 'description' | 'highlight',
+        content: string,
+    ): Promise<void> => {
+        const embedding   = await embedder.embed(content);
+        const contentHash = sha256(content);
+        rows.push({ userId, profileId, chunkType, content, contentHash, embedding });
+    };
+
+    await addRow('one_liner', extracted.one_liner);
+    await addRow('description', extracted.description);
+    for (const highlight of extracted.highlights) {
+        await addRow('highlight', highlight);
+    }
+
+    await embRepo.upsertBatch(userId, rows);
+}
+
+/**
+ * Mirrors the terminal ingestion outcome back to repositories.index_status so
+ * the admin-api's GET /connected-repos fallback (sync_status ?? index_status)
+ * stays consistent with repo_sync_state.
+ *
+ * Best-effort on error path — a failure here must not mask the original error.
+ */
+async function syncRepositoryIndexStatus(
+    pool: Pool,
+    userId: string,
+    repoFullName: string,
+    status: 'complete' | 'error',
+    errorMessage?: string,
+): Promise<void> {
+    await pool.query(
+        `UPDATE repositories
+         SET index_status  = $3,
+             indexed_at    = CASE WHEN $3 = 'complete' THEN NOW() ELSE indexed_at END,
+             error_message = $4
+         WHERE user_id = $1::uuid AND full_name = $2`,
+        [userId, repoFullName, status, errorMessage ?? null],
+    );
+}
 
 async function main(): Promise<void> {
     const env = parseEnv();
+    const start = process.hrtime.bigint();
+    let outcome: 'success' | 'failed' = 'failed';
 
-    console.info('[run-ingestion] starting', {
+    log.info({
         userId:       env.userId,
         repoFullName: env.repoFullName,
         forceReindex: env.forceReindex,
-    });
+    }, 'starting');
 
     const rdsConfig = {
         host:     env.pg.host,
@@ -48,9 +143,24 @@ async function main(): Promise<void> {
         password: env.pg.password,
     };
 
+    const pgPool = new Pool({
+        host:     env.pg.host,
+        port:     env.pg.port,
+        database: env.pg.database,
+        user:     env.pg.user,
+        password: env.pg.password,
+        max:      3,
+    });
+
     const vectorStore  = new RdsVectorStore(rdsConfig);
     const syncState    = new RdsSyncStateRepository(rdsConfig);
-    const embedder     = TitanEmbeddingProvider.fromEnvironment();
+    const embedder     = new TitanEmbeddingProvider(
+        process.env.AWS_REGION ?? 'eu-west-1',
+        (process.env.EMBEDDING_DIMENSION
+            ? (parseInt(process.env.EMBEDDING_DIMENSION, 10) as 256 | 512 | 1024)
+            : 1024),
+        { pool: pgPool, userId: env.userId, repoName: env.repoFullName },
+    );
     const repoAdapter  = new GitHubAdapter(env.githubToken);
     const fileFilter   = new FileFilter();
     const chunkerReg   = ChunkerRegistry.withDefaults();
@@ -64,29 +174,136 @@ async function main(): Promise<void> {
     const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher });
     const orchestrator = new RepoIngestionOrchestrator(repoAdapter, fileFilter, chunkerReg, pipeline);
 
-    try {
-        const report = env.forceReindex
-            ? await orchestrator.forceReindex(env.userId, env.repoFullName)
-            : await orchestrator.ingestRepo(env.userId, env.repoFullName);
+    const fileCache        = new FileFetchCache();
+    const profileRepo      = new RepositoryProfileRepository(pgPool);
+    const embRepo          = new RepositoryProfileEmbeddingsRepository(pgPool);
+    const profileExtractor = new ProfileExtractor(env.profileExtractorModelId, pgPool);
+    const profileCollector = new ProfileInputCollector(repoAdapter, fileCache);
 
-        console.info('[run-ingestion] complete', {
-            userId:         env.userId,
-            repoFullName:   env.repoFullName,
-            totalRawChunks: report.totalRawChunks,
-            embedded:       report.embedded,
-            skipped:        report.skipped,
-            pruned:         report.pruned,
-            inserted:       report.upsertResult.inserted,
-            updated:        report.upsertResult.updated,
-            errors:         report.upsertResult.errors,
-            durationMs:     report.durationMs,
+    const rootSpan = tracer.startSpan('ingestion.pipeline', {
+        attributes: {
+            'user.id':        env.userId,
+            'repo.full_name': env.repoFullName,
+            'force_reindex':  env.forceReindex,
+        },
+    }, obs.parentContext);
+
+    try {
+        // ── Phase 0: profile extraction ──────────────────────────────────────────
+        log.info({ repoFullName: env.repoFullName }, 'profile_extraction.start');
+
+        const bundle         = await profileCollector.collect(env.repoFullName);
+        const classification = classifyRepo(bundle);
+
+        const { id: profileId } = await profileRepo.upsert({
+            userId:           env.userId,
+            repoFullName:     env.repoFullName,
+            extractionStatus: 'extracting',
+            extractorModel:   env.profileExtractorModelId,
+            extractorVersion: profileExtractor.version,
         });
+
+        try {
+            const extracted               = await profileExtractor.extract(env.userId, bundle);
+            const { score, breakdown }    = scoreProfile(extracted, bundle);
+
+            await profileRepo.upsert({
+                userId:           env.userId,
+                repoFullName:     env.repoFullName,
+                extracted,
+                classification,
+                qualityScore:     score,
+                qualityBreakdown: breakdown,
+                extractionStatus: 'ready_for_review',
+                extractedAt:      new Date(),
+                extractorModel:   env.profileExtractorModelId,
+                extractorVersion: profileExtractor.version,
+            });
+
+            await embedProfile(env.userId, profileId, extracted, embedder, embRepo);
+            await profileRepo.updateStatus(profileId, env.userId, 'completed');
+
+            log.info({
+                repoFullName:  env.repoFullName,
+                classification,
+                qualityScore:  score,
+                domain:        extracted.domain,
+                confidence:    extracted.confidence,
+            }, 'profile_extraction.complete');
+        } catch (profileErr) {
+            await profileRepo.updateStatus(profileId, env.userId, 'failed', String(profileErr));
+            throw profileErr;
+        }
+
+        // ── Phase 1+: chunk pipeline (skipped for non-project repos) ──────────────
+        if (classification !== 'project') {
+            log.info({ classification }, 'skipping_tier2_chunk_pipeline');
+            await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
+            outcome = 'success';
+            return;
+        }
+
+        const report = await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
+            return env.forceReindex
+                ? await orchestrator.forceReindex(env.userId, env.repoFullName)
+                : await orchestrator.ingestRepo(env.userId, env.repoFullName);
+        });
+
+        chunksProcessed.inc({ phase: 'embedded' }, report.embedded);
+        chunksProcessed.inc({ phase: 'skipped' },  report.skipped);
+        chunksProcessed.inc({ phase: 'pruned' },   report.pruned);
+        rootSpan.setAttributes({
+            'chunks.embedded': report.embedded,
+            'chunks.pruned':   report.pruned,
+        });
+
+        await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
+        outcome = 'success';
+
+        const { traceId } = rootSpan.spanContext();
+        log.info({
+            event:           'ingestion.complete',
+            status:          'complete',
+            trace_id:         traceId,
+            user_id:          env.userId,
+            repo_full_name:   env.repoFullName,
+            job_name:         process.env['JOB_NAME'] ?? 'unknown',
+            embedded:         report.embedded,
+            skipped:          report.skipped,
+            pruned:           report.pruned,
+            duration_ms:      report.durationMs,
+            kb_quality_score: report.kbQualityScore,
+        }, 'complete');
+
+    } catch (err) {
+        rootSpan.recordException(err instanceof Error ? err : new Error(String(err)));
+        rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+        const { traceId } = rootSpan.spanContext();
+        log.error({
+            event:          'ingestion.complete',
+            status:         'error',
+            trace_id:        traceId,
+            user_id:         env.userId,
+            repo_full_name:  env.repoFullName,
+        }, 'failed');
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await syncRepositoryIndexStatus(
+            pgPool, env.userId, env.repoFullName, 'error', errMsg.slice(0, 500),
+        ).catch(() => {}); // best-effort — must not mask the original error
+        throw err;
     } finally {
-        await Promise.allSettled([vectorStore.end(), syncState.end()]);
+        rootSpan.end();
+        await Promise.allSettled([vectorStore.end(), syncState.end(), pgPool.end()]);
+        const duration = Number(process.hrtime.bigint() - start) / 1e9;
+        ingestionRuns.inc({ outcome });
+        ingestionDuration.observe({ outcome }, duration);
+        // Group by repoFullName so dashboards show "last run per repo".
+        await pushFinalMetrics(obs.registry, 'ingestion', `${env.userId}_${env.repoFullName.replace('/', '_')}`);
+        await obs.shutdown();
     }
 }
 
 main().catch((err) => {
-    console.error('[run-ingestion] failed', err);
+    log.error({ err }, 'failed');
     process.exit(1);
 });

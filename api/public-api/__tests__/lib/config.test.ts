@@ -39,7 +39,12 @@ function unsetEnv(keys: string[]): void {
 
 describe('loadConfig()', () => {
   beforeEach(() => setEnv(VALID_ENV));
-  afterEach(() => unsetEnv([...Object.keys(VALID_ENV), 'PORT']));
+  afterEach(() => unsetEnv([
+    ...Object.keys(VALID_ENV),
+    'PORT',
+    'BEDROCK_PUBLIC_API_URL',
+    'BEDROCK_AUTH_API_URL',
+  ]));
 
   describe('happy path', () => {
     it('returns typed config when all required vars are present', () => {
@@ -73,6 +78,28 @@ describe('loadConfig()', () => {
     it('returns a frozen config object', () => {
       const cfg = loadConfig();
       expect(Object.isFrozen(cfg)).toBe(true);
+    });
+
+    it('bedrockPublicApiUrl is undefined when BEDROCK_PUBLIC_API_URL is absent', () => {
+      const cfg = loadConfig();
+      expect(cfg.bedrockPublicApiUrl).toBeUndefined();
+    });
+
+    it('reads bedrockPublicApiUrl from BEDROCK_PUBLIC_API_URL', () => {
+      process.env['BEDROCK_PUBLIC_API_URL'] = 'https://api.example.com/v1/invoke-public';
+      const cfg = loadConfig();
+      expect(cfg.bedrockPublicApiUrl).toBe('https://api.example.com/v1/invoke-public');
+    });
+
+    it('bedrockAuthApiUrl is undefined when BEDROCK_AUTH_API_URL is absent', () => {
+      const cfg = loadConfig();
+      expect(cfg.bedrockAuthApiUrl).toBeUndefined();
+    });
+
+    it('reads bedrockAuthApiUrl from BEDROCK_AUTH_API_URL', () => {
+      process.env['BEDROCK_AUTH_API_URL'] = 'https://api.example.com/v1/invoke-authenticated';
+      const cfg = loadConfig();
+      expect(cfg.bedrockAuthApiUrl).toBe('https://api.example.com/v1/invoke-authenticated');
     });
   });
 

@@ -98,6 +98,21 @@ const SKIP_DIRS = new Set([
     '.git',
 ]);
 
+// =============================================================================
+// PUBLIC TYPES — GitHubAdapter-specific (not part of IRepoAdapter)
+// =============================================================================
+
+export interface GitHubRepoMeta {
+    primary_language: string | null;
+    description:      string | null;
+    topics:           string[];
+    stars:            number;
+    forks:            number;
+    is_fork:          boolean;
+    created_at:       string | null;
+    pushed_at:        string | null;
+}
+
 export class GitHubAdapter implements IRepoAdapter {
     private readonly token: string;
     private readonly apiBase = 'api.github.com';
@@ -288,6 +303,34 @@ export class GitHubAdapter implements IRepoAdapter {
         }
 
         return out;
+    }
+
+    // =========================================================================
+    // GitHubAdapter.getRepoMeta (not part of IRepoAdapter — profile-specific)
+    // =========================================================================
+
+    async getRepoMeta(repoFullName: string): Promise<GitHubRepoMeta> {
+        const data = await this.get<{
+            language:          string | null;
+            description:       string | null;
+            topics:            string[] | undefined;
+            stargazers_count:  number;
+            forks_count:       number;
+            fork:              boolean;
+            created_at:        string | null;
+            pushed_at:         string | null;
+        }>(`/repos/${repoFullName}`);
+
+        return {
+            primary_language: data.language,
+            description:      data.description,
+            topics:           data.topics ?? [],   // GitHub omits field when no topics set
+            stars:            data.stargazers_count,
+            forks:            data.forks_count,
+            is_fork:          data.fork,
+            created_at:       data.created_at,
+            pushed_at:        data.pushed_at,
+        };
     }
 
     // =========================================================================

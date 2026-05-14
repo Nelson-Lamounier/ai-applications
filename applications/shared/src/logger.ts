@@ -30,6 +30,26 @@
  */
 
 // =============================================================================
+// TRACE CONTEXT MERGE
+// =============================================================================
+// Reads the active OpenTelemetry span (set by the ADOT layer in Lambda or
+// the K8s observability bootstrap) and returns its trace_id/span_id. If
+// @opentelemetry/api isn't installed, returns empty so logs work without
+// the dep — important for any consumer that imports just the logger.
+function activeTraceContextSafe(): { trace_id?: string; span_id?: string } {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const otel = require('@opentelemetry/api') as typeof import('@opentelemetry/api');
+        const span = otel.trace.getSpan(otel.context.active());
+        if (!span) return {};
+        const { traceId, spanId } = span.spanContext();
+        return { trace_id: traceId, span_id: spanId };
+    } catch {
+        return {};
+    }
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -83,6 +103,7 @@ export function createLogger(defaults: Record<string, unknown>): LogFunction {
             level,
             message,
             ...defaults,
+            ...activeTraceContextSafe(),
             ...data,
             timestamp: new Date().toISOString(),
         };
@@ -131,6 +152,7 @@ export function log(
         level,
         message,
         timestamp: new Date().toISOString(),
+        ...activeTraceContextSafe(),
         ...data,
     };
 

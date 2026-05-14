@@ -1,25 +1,16 @@
 /**
  * @file chatbot.ts
- * @description BFF proxy route for the Bedrock chatbot API (Gap S2).
+ * @description BFF proxy routes for Bedrock chatbot endpoints (Gap S2).
  *
- * Proxies POST /api/chatbot/invoke to the Bedrock API Gateway, injecting
- * the API key server-side so the browser never sees it.
+ * Injects the API key server-side so the browser never sees it.
  *
- * ## Key flow
+ * Routes:
+ *   POST /api/chatbot/invoke       — legacy authenticated chatbot (BEDROCK_API_URL)
+ *   POST /api/chat                 — alias for /invoke, normalises response shape
+ *   POST /api/chatbot/public       — stateless RAG chatbot (BEDROCK_PUBLIC_API_URL)
+ *   POST /api/chatbot/authenticated — session-aware RAG chatbot (BEDROCK_AUTH_API_URL)
  *
- * 1. Browser  → POST /api/chatbot/invoke  (no x-api-key header)
- * 2. public-api fetches the API key from Secrets Manager on first request
- *    (cached in module scope; EC2 instance profile provides credentials)
- * 3. public-api → POST {BEDROCK_API_URL}invoke  (with x-api-key header)
- * 4. Response forwarded back to browser
- *
- * ## Configuration (from ConfigMap — both optional)
- *
- *   BEDROCK_API_URL           — e.g. https://id.execute-api.eu-west-1.amazonaws.com/v1/
- *   BEDROCK_API_KEY_SECRET_ARN — Secrets Manager ARN for the chatbot API key
- *
- * If either is absent the route returns 503 so misconfiguration is visible
- * immediately rather than failing silently at query time.
+ * All routes return 503 when the backing URL or API key secret is not configured.
  */
 
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
@@ -87,22 +78,18 @@ interface ProxyResult {
   readonly data: Record<string, unknown>;
 }
 
-async function proxyToBedrock(body: string | null): Promise<ProxyResult> {
-  const cfg = loadConfig();
-
-  if (!cfg.bedrockApiUrl || !cfg.bedrockApiKeySecretArn) {
-    console.error(
-      '[chatbot-bff] BEDROCK_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured',
-    );
-    return {
-      status: 503,
-      data: { error: 'ChatbotUnavailable', message: 'Chatbot service is not configured' },
-    };
-  }
-
+/**
+ * POSTs `body` to `fullUrl` with the API key injected as `x-api-key`.
+ * Returns the upstream status and parsed JSON body.
+ */
+async function proxyToEndpoint(
+  fullUrl: string,
+  secretArn: string,
+  body: string | null,
+): Promise<ProxyResult> {
   let apiKey: string;
   try {
-    apiKey = await getApiKey(cfg.bedrockApiKeySecretArn);
+    apiKey = await getApiKey(secretArn);
   } catch (err) {
     console.error('[chatbot-bff] Failed to retrieve API key from Secrets Manager:', err);
     return {
@@ -111,17 +98,13 @@ async function proxyToBedrock(body: string | null): Promise<ProxyResult> {
     };
   }
 
-  const upstreamUrl = cfg.bedrockApiUrl.endsWith('/')
-    ? `${cfg.bedrockApiUrl}invoke`
-    : `${cfg.bedrockApiUrl}/invoke`;
-
   // 27 s — safely under API Gateway's 29 s hard limit, leaving ~2 s for the
   // error response to clear Traefik and CloudFront before their own timeouts fire.
   const controller = AbortSignal.timeout(27_000);
 
   let upstream: Response;
   try {
-    upstream = await fetch(upstreamUrl, {
+    upstream = await fetch(fullUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -150,6 +133,13 @@ async function proxyToBedrock(body: string | null): Promise<ProxyResult> {
   return { status: upstream.status, data };
 }
 
+function unconfigured503(): ProxyResult {
+  return {
+    status: 503,
+    data: { error: 'ChatbotUnavailable', message: 'Chatbot service is not configured' },
+  };
+}
+
 // =============================================================================
 // Routes
 // =============================================================================
@@ -159,41 +149,93 @@ const chatbot = new Hono();
 /**
  * POST /api/chatbot/invoke
  *
- * Proxies the request body to the Bedrock chatbot API Gateway.
+ * Legacy authenticated chatbot proxy. Appends `/invoke` to BEDROCK_API_URL.
  * Accepts: { prompt: string, sessionId?: string, callerRole?: string }
- * Returns the upstream response body and status code unchanged.
  */
 chatbot.post('/api/chatbot/invoke', async (c) => {
-  const { status, data } = await proxyToBedrock(await c.req.text());
+  const cfg = loadConfig();
+  if (!cfg.bedrockApiUrl || !cfg.bedrockApiKeySecretArn) {
+    console.error('[chatbot-bff] BEDROCK_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
+    const { status, data } = unconfigured503();
+    return c.json(data, status as Parameters<typeof c.json>[1]);
+  }
+  const url = cfg.bedrockApiUrl.endsWith('/') ? `${cfg.bedrockApiUrl}invoke` : `${cfg.bedrockApiUrl}/invoke`;
+  const { status, data } = await proxyToEndpoint(url, cfg.bedrockApiKeySecretArn, await c.req.text());
   return c.json(data, status as Parameters<typeof c.json>[1]);
 });
 
 /**
  * POST /api/chat
  *
- * Alias for /api/chatbot/invoke that normalises the upstream response shape
- * to { message, sessionId } — matching the ChatResponse contract expected by
- * the frontend chat-service. Traefik routes all /api/* to this service, so
- * the Next.js /api/chat handler is unreachable in production; this route
- * bridges that gap without frontend changes.
+ * Alias for /api/chatbot/invoke. Normalises response to { message, sessionId }
+ * for the frontend ChatResponse contract. Traefik routes /api/* here so the
+ * Next.js handler is unreachable in production.
  */
 chatbot.post('/api/chat', async (c) => {
-  const { status, data } = await proxyToBedrock(await c.req.text());
+  const cfg = loadConfig();
+  if (!cfg.bedrockApiUrl || !cfg.bedrockApiKeySecretArn) {
+    console.error('[chatbot-bff] BEDROCK_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
+    const { status, data } = unconfigured503();
+    return c.json(data, status as Parameters<typeof c.json>[1]);
+  }
+  const url = cfg.bedrockApiUrl.endsWith('/') ? `${cfg.bedrockApiUrl}invoke` : `${cfg.bedrockApiUrl}/invoke`;
+  const { status, data } = await proxyToEndpoint(url, cfg.bedrockApiKeySecretArn, await c.req.text());
 
   if (status >= 400) {
     return c.json(data, status as Parameters<typeof c.json>[1]);
   }
 
   // Upstream Lambda returns { response, sessionId }; frontend expects { message, sessionId }.
+  let message: string;
+  if (typeof data.message === 'string') {
+    message = data.message;
+  } else if (typeof data.response === 'string') {
+    message = data.response;
+  } else {
+    message = 'Received a response but could not parse it.';
+  }
   const normalized = {
-    message:
-      typeof data.message === 'string' ? data.message :
-      typeof data.response === 'string' ? data.response :
-      'Received a response but could not parse it.',
+    message,
     sessionId: typeof data.sessionId === 'string' ? data.sessionId : '',
   };
 
   return c.json(normalized, status as Parameters<typeof c.json>[1]);
+});
+
+/**
+ * POST /api/chatbot/public
+ *
+ * Stateless RAG chatbot (no session persistence). Proxies to the
+ * chatbot-public Lambda via BEDROCK_PUBLIC_API_URL (full URL from SSM).
+ * Accepts: { prompt: string }
+ */
+chatbot.post('/api/chatbot/public', async (c) => {
+  const cfg = loadConfig();
+  if (!cfg.bedrockPublicApiUrl || !cfg.bedrockApiKeySecretArn) {
+    console.error('[chatbot-bff] BEDROCK_PUBLIC_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
+    const { status, data } = unconfigured503();
+    return c.json(data, status as Parameters<typeof c.json>[1]);
+  }
+  const { status, data } = await proxyToEndpoint(cfg.bedrockPublicApiUrl, cfg.bedrockApiKeySecretArn, await c.req.text());
+  return c.json(data, status as Parameters<typeof c.json>[1]);
+});
+
+/**
+ * POST /api/chatbot/authenticated
+ *
+ * Session-aware RAG chatbot. Proxies to the chatbot-authenticated Lambda
+ * via BEDROCK_AUTH_API_URL (full URL from SSM). Passes sessionId through.
+ * Accepts: { prompt: string, sessionId?: string }
+ */
+chatbot.post('/api/chatbot/authenticated', async (c) => {
+  const cfg = loadConfig();
+  if (!cfg.bedrockAuthApiUrl || !cfg.bedrockApiKeySecretArn) {
+    console.error('[chatbot-bff] BEDROCK_AUTH_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
+    const { status, data } = unconfigured503();
+    return c.json(data, status as Parameters<typeof c.json>[1]);
+  }
+  const { status, data } = await proxyToEndpoint(cfg.bedrockAuthApiUrl, cfg.bedrockApiKeySecretArn, await c.req.text());
+  return c.json(data, status as Parameters<typeof c.json>[1]);
 });
 
 export default chatbot;

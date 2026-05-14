@@ -24,6 +24,7 @@
 
 import { createHash } from 'crypto';
 
+import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import type { IChunkEnricher } from '../interfaces/IChunkEnricher.js';
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
@@ -34,6 +35,8 @@ import type {
     IngestionReport,
     RawChunk,
 } from '../types.js';
+
+const tracer = trace.getTracer('ingestion-pipeline');
 
 /**
  * Default cap on how many chunks are sent to the enricher in one ingestion
@@ -99,106 +102,105 @@ export class IngestionPipeline {
         rawChunks: RawChunk[],
     ): Promise<IngestionReport> {
         const startMs = Date.now();
-
         await this.syncState.markStarted(userId, repoFullName);
 
         try {
-            // -----------------------------------------------------------------
-            // Step 1: Compute content hashes (CPU-only, no I/O)
-            // -----------------------------------------------------------------
-            const hashedChunks = rawChunks.map(chunk => ({
-                chunk,
-                contentHash: createHash('sha256').update(chunk.content).digest('hex'),
-            }));
+            // ── Phase: Chunk + classify ──────────────────────────────────────────
+            const { chunksToEmbed, unchanged } = await tracer.startActiveSpan('ingestion.chunk', async (span) => {
+                try {
+                    const hashedChunks = rawChunks.map(chunk => ({
+                        chunk,
+                        contentHash: createHash('sha256').update(chunk.content).digest('hex'),
+                    }));
+                    const candidates = hashedChunks.map(({ chunk, contentHash }) => ({
+                        filePath:   chunk.filePath,
+                        chunkIndex: chunk.chunkIndex,
+                        contentHash,
+                    }));
+                    const { missing, stale, unchanged } = await this.vectorStore.checkContentHashes(
+                        userId, repoFullName, candidates,
+                    );
+                    const unchangedSet = new Set(unchanged.map(c => `${c.filePath}::${c.chunkIndex}`));
+                    const chunksToEmbed = hashedChunks.filter(
+                        ({ chunk }) => !unchangedSet.has(`${chunk.filePath}::${chunk.chunkIndex}`),
+                    );
+                    span.setAttributes({ 'chunk.total': rawChunks.length, 'chunk.to_embed': chunksToEmbed.length });
+                    return { chunksToEmbed, missing, unchanged };
+                } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
+                    span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+                    throw err;
+                } finally {
+                    span.end();
+                }
+            });
 
-            // -----------------------------------------------------------------
-            // Step 2: Classify chunks — single DB round-trip
-            // -----------------------------------------------------------------
-            const candidates = hashedChunks.map(({ chunk, contentHash }) => ({
-                filePath:    chunk.filePath,
-                chunkIndex:  chunk.chunkIndex,
-                contentHash,
-            }));
+            // ── Phase: Enrich ────────────────────────────────────────────────────
+            const enrichedChunks = await tracer.startActiveSpan('ingestion.enrich', async (span) => {
+                try {
+                    const result = await this.enrichChunks(chunksToEmbed.map(c => c.chunk));
+                    span.setAttribute('chunk.enrich_count', result.length);
+                    return result;
+                } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
+                    span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+                    throw err;
+                } finally {
+                    span.end();
+                }
+            });
 
-            const { missing, stale, unchanged } = await this.vectorStore.checkContentHashes(
-                userId,
-                repoFullName,
-                candidates,
-            );
+            // ── Phase: Embed + Upsert ────────────────────────────────────────────
+            const upsertResult = await tracer.startActiveSpan('ingestion.embed_upsert', async (span) => {
+                try {
+                    const enrichedByKey = new Map(
+                        enrichedChunks.map(c => [`${c.filePath}::${c.chunkIndex}`, c] as const),
+                    );
+                    const embeddedChunks: DocumentChunk[] = [];
+                    for (const { chunk, contentHash } of chunksToEmbed) {
+                        const enriched  = enrichedByKey.get(`${chunk.filePath}::${chunk.chunkIndex}`) ?? chunk;
+                        const embedText = this.buildEmbedText(enriched.content, repoFullName, enriched.filePath, enriched.heading);
+                        const embedding = await this.embedder.embed(embedText);
+                        embeddedChunks.push({ ...enriched, userId, repoFullName, contentHash, embedding });
+                    }
+                    const result = embeddedChunks.length > 0
+                        ? await this.vectorStore.upsertBatch(embeddedChunks)
+                        : { inserted: 0, updated: 0, skipped: 0, errors: 0 };
+                    span.setAttributes({ 'embed.count': embeddedChunks.length, 'upsert.inserted': result.inserted });
+                    return result;
+                } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
+                    span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+                    throw err;
+                } finally {
+                    span.end();
+                }
+            });
 
-            const unchangedSet = new Set(
-                unchanged.map(c => `${c.filePath}::${c.chunkIndex}`),
-            );
+            // ── Phase: Prune ─────────────────────────────────────────────────────
+            const pruned = await tracer.startActiveSpan('ingestion.prune', async (span) => {
+                try {
+                    const currentFilePaths = [...new Set(rawChunks.map(c => c.filePath))];
+                    const n = await this.vectorStore.pruneDeletedFiles(userId, repoFullName, currentFilePaths);
+                    span.setAttribute('prune.count', n);
+                    return n;
+                } catch (err) {
+                    span.recordException(err instanceof Error ? err : new Error(String(err)));
+                    span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+                    throw err;
+                } finally {
+                    span.end();
+                }
+            });
 
-            // -----------------------------------------------------------------
-            // Step 3: Embed missing + stale chunks (sequential)
-            // Context preamble prepended to embed text only — stored content
-            // stays clean. This gives the vector model repo/file/section signal
-            // without polluting retrieval results.
-            // -----------------------------------------------------------------
-            const chunksToEmbed = hashedChunks.filter(
-                ({ chunk, contentHash: _ }) =>
-                    !unchangedSet.has(`${chunk.filePath}::${chunk.chunkIndex}`),
-            );
-
-            // -----------------------------------------------------------------
-            // Step 3a: Enrich chunks with skill evidence (best-effort).
-            // Hash-skipped chunks already filtered out above — re-running
-            // extraction on identical content would waste tokens.
-            // -----------------------------------------------------------------
-            const enrichedChunks = await this.enrichChunks(
-                chunksToEmbed.map(c => c.chunk),
-            );
-            const enrichedByKey = new Map(
-                enrichedChunks.map(c => [`${c.filePath}::${c.chunkIndex}`, c] as const),
-            );
-
-            const embeddedChunks: DocumentChunk[] = [];
-
-            for (const { chunk, contentHash } of chunksToEmbed) {
-                const enriched = enrichedByKey.get(`${chunk.filePath}::${chunk.chunkIndex}`)
-                    ?? chunk;
-                const embedText = this.buildEmbedText(enriched.content, repoFullName, enriched.filePath, enriched.heading);
-                const embedding = await this.embedder.embed(embedText);
-
-                embeddedChunks.push({
-                    ...enriched,
-                    userId,
-                    repoFullName,
-                    contentHash,
-                    embedding,
-                });
-            }
-
-            // -----------------------------------------------------------------
-            // Step 4: Upsert embedded chunks
-            // -----------------------------------------------------------------
-            const upsertResult = embeddedChunks.length > 0
-                ? await this.vectorStore.upsertBatch(embeddedChunks)
-                : { inserted: 0, updated: 0, skipped: 0, errors: 0 };
-
-            // -----------------------------------------------------------------
-            // Step 5: Prune chunks whose file no longer exists in the repo
-            // -----------------------------------------------------------------
+            // ── Quality + completion ─────────────────────────────────────────────
             const currentFilePaths = [...new Set(rawChunks.map(c => c.filePath))];
-            const pruned = await this.vectorStore.pruneDeletedFiles(userId, repoFullName, currentFilePaths);
-
-            // -----------------------------------------------------------------
-            // Step 5.5: Compute KB quality score (pure derivation).
-            // Uses the raw chunks we built — captures everything an end-user
-            // sees, including hash-skipped unchanged chunks.
-            // -----------------------------------------------------------------
             const quality = computeKbQuality(rawChunks);
-
-            // -----------------------------------------------------------------
-            // Step 6: Record completion
-            // -----------------------------------------------------------------
-            const uniqueFiles = currentFilePaths.length;
 
             await this.syncState.markComplete(
                 userId,
                 repoFullName,
-                uniqueFiles,
+                currentFilePaths.length,
                 rawChunks.length,
                 quality.score,
                 quality.breakdown as unknown as Record<string, unknown>,
@@ -317,14 +319,17 @@ export class IngestionPipeline {
         // calls vary widely in latency (which Bedrock does).
         let next = 0;
         const total = chunks.length;
+        const currentCtx = context.active();
         await Promise.all(
-            Array.from({ length: Math.min(ENRICHMENT_CONCURRENCY, total) }, async () => {
-                while (true) {
-                    const myIdx = next++;
-                    if (myIdx >= total) return;
-                    await enrichOne(myIdx);
-                }
-            }),
+            Array.from({ length: Math.min(ENRICHMENT_CONCURRENCY, total) }, () =>
+                context.with(currentCtx, async () => {
+                    while (true) {
+                        const myIdx = next++;
+                        if (myIdx >= total) return;
+                        await enrichOne(myIdx);
+                    }
+                }),
+            ),
         );
 
         return out;

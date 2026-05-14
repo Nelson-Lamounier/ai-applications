@@ -36,6 +36,7 @@ export { RdsVectorStore }            from './implementations/RdsVectorStore.js';
 export type { RdsClientConfig }      from './implementations/RdsVectorStore.js';
 export { RdsSyncStateRepository }    from './implementations/RdsSyncStateRepository.js';
 export { TitanEmbeddingProvider }    from './implementations/TitanEmbeddingProvider.js';
+export type { TitanCostContext }     from './implementations/TitanEmbeddingProvider.js';
 export { BedrockChunkEnricher }      from './implementations/BedrockChunkEnricher.js';
 export type { BedrockChunkEnricherConfig } from './implementations/BedrockChunkEnricher.js';
 
@@ -50,3 +51,7 @@ export type {
     KbQualityBreakdown,
     KbQualityResult,
 } from './quality/computeKbQuality.js';
+
+// Bedrock cost tracking
+export { recordBedrockCost, computeCostCents } from './bedrock-cost.js';
+export type { CostRecord } from './bedrock-cost.js';

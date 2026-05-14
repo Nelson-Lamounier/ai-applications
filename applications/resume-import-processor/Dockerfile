@@ -19,6 +19,8 @@ COPY api/public-api/package.json                   ./api/public-api/
 COPY applications/article-pipeline/package.json    ./applications/article-pipeline/
 COPY applications/job-strategist/package.json      ./applications/job-strategist/
 COPY applications/chatbot/package.json             ./applications/chatbot/
+COPY applications/chatbot-public/package.json      ./applications/chatbot-public/
+COPY applications/chatbot-authenticated/package.json ./applications/chatbot-authenticated/
 COPY applications/self-healing/package.json              ./applications/self-healing/
 COPY applications/platform-job-watcher/package.json     ./applications/platform-job-watcher/
 COPY packages/script-utils/package.json                 ./packages/script-utils/
@@ -28,8 +30,11 @@ RUN yarn install --immutable
 COPY applications/resume-import-processor/tsconfig.json ./applications/resume-import-processor/
 COPY applications/resume-import-processor/src            ./applications/resume-import-processor/src/
 
-RUN node_modules/.bin/tsc -b applications/resume-import-processor --force \
- || [ -f applications/resume-import-processor/dist/run-import.js ]
+# shared source required by tsc -b project references
+COPY applications/shared/tsconfig.json ./applications/shared/
+COPY applications/shared/src           ./applications/shared/src/
+
+RUN node_modules/.bin/tsc -b applications/resume-import-processor
 
 RUN yarn workspaces focus @bedrock/resume-import-processor --production
 
@@ -43,6 +48,9 @@ WORKDIR /app
 COPY --from=builder --chown=appuser:appgroup /app/applications/resume-import-processor/dist     ./applications/resume-import-processor/dist
 COPY --from=builder --chown=appuser:appgroup /app/applications/resume-import-processor/package.json ./applications/resume-import-processor/
 COPY --from=builder --chown=appuser:appgroup /app/node_modules                                  ./node_modules
+# @bedrock/shared is a workspace package — node_modules symlink resolves to this path
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/dist                      ./applications/shared/dist
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/package.json              ./applications/shared/package.json
 
 USER appuser
 

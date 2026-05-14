@@ -58,6 +58,7 @@ import {
     SSMClient,
     GetParameterCommand,
 } from '@aws-sdk/client-ssm';
+import { withSpan } from '@bedrock/shared';
 
 // =============================================================================
 // Configuration
@@ -1468,7 +1469,12 @@ function buildPreviousSessionContext(session: SessionRecord): string {
  * @param event - CloudWatch Alarm / EventBridge event
  * @returns Structured remediation report
  */
-export async function handler(event: AlarmEvent): Promise<AgentResult> {
+// Wrapped with withSpan so every alarm-driven invocation produces a span
+// even when ADOT auto-instrumentation skips the entrypoint. The
+// correlationId remains the primary in-app trace key (used across S3
+// session memory + DynamoDB idempotency); trace_id is the cross-service
+// pivot for Grafana.
+export const handler = withSpan('self-healing.handler', async (event: AlarmEvent): Promise<AgentResult> => {
     const handlerStart = Date.now();
     correlationId = `sh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -1606,7 +1612,7 @@ export async function handler(event: AlarmEvent): Promise<AgentResult> {
             }),
         };
     }
-}
+});
 
 // =============================================================================
 // Exported for testing

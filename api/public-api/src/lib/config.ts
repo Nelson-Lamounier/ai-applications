@@ -45,6 +45,20 @@ export interface Config {
    * Optional — if absent the /api/chatbot/invoke route returns 503.
    */
   readonly bedrockApiKeySecretArn: string | undefined;
+  /**
+   * Full endpoint URL for the public (stateless) RAG chatbot Lambda.
+   * Sourced from BEDROCK_PUBLIC_API_URL (ESO secret — public-api-bedrock).
+   * Published to SSM by bedrock/api-stack at /{namePrefix}/chatbot-public-api-url.
+   * Optional — if absent POST /api/chatbot/public returns 503.
+   */
+  readonly bedrockPublicApiUrl: string | undefined;
+  /**
+   * Full endpoint URL for the authenticated (session-aware) RAG chatbot Lambda.
+   * Sourced from BEDROCK_AUTH_API_URL (ESO secret — public-api-bedrock).
+   * Published to SSM by bedrock/api-stack at /{namePrefix}/chatbot-authenticated-api-url.
+   * Optional — if absent POST /api/chatbot/authenticated returns 503.
+   */
+  readonly bedrockAuthApiUrl: string | undefined;
 }
 
 /**
@@ -84,5 +98,7 @@ export function loadConfig(): Config {
     allowedOrigins: (process.env['ALLOWED_ORIGINS'] ?? 'https://nelsonlamounier.com,http://localhost:3000').split(',').map(s => s.trim()),
     bedrockApiUrl: process.env['BEDROCK_API_URL'] ?? undefined,
     bedrockApiKeySecretArn: process.env['BEDROCK_API_KEY_SECRET_ARN'] ?? undefined,
+    bedrockPublicApiUrl: process.env['BEDROCK_PUBLIC_API_URL'] ?? undefined,
+    bedrockAuthApiUrl: process.env['BEDROCK_AUTH_API_URL'] ?? undefined,
   });
 }

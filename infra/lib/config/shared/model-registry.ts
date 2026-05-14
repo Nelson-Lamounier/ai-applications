@@ -85,6 +85,8 @@ export const MODELS = {
     // ── ChatBot ─────────────────────────────────────────────────
     /** Portfolio chatbot agent (managed Bedrock Agent) */
     CHATBOT_AGENT: CLAUDE_HAIKU_4_5,
+    /** Portfolio chatbot RAG Lambda — direct Converse API + pgvector retrieval */
+    CHATBOT_CONVERSE: CLAUDE_SONNET_4_6,
 
     // ── Article Pipeline ────────────────────────────────────────
     /** Research agent: KB retrieval, complexity analysis, outline */

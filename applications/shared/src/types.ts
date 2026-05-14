@@ -107,6 +107,13 @@ export interface PipelineContext {
 
     /** ISO timestamp of pipeline start */
     readonly startedAt: string;
+
+    /**
+     * User ID sourced from USER_ID env var dispatched by admin-api.
+     * Required for pgvector RLS queries. Optional for backwards compatibility
+     * with existing Step Functions state payloads.
+     */
+    readonly userId?: string;
 }
 
 // =============================================================================

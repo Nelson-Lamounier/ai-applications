@@ -29,6 +29,25 @@ export { BaseAgent } from './base-agent.js';
 
 export type { BasePipelineContext } from './base-agent.js';
 
+// ─── Observability (K8s + Lambda) ────────────────────────────────────────────
+// Lazily-loaded so Lambdas don't pay for K8s-only deps (prom-client, pino,
+// pyroscope) and K8s pods don't ship Lambda-only helpers unused.
+export {
+    bootstrapK8sObservability,
+    pushFinalMetrics,
+    activeTraceContext,
+    withSpan,
+    recordBedrockUsage,
+    setBedrockMetricsRegistry,
+} from './observability/index.js';
+
+export type {
+    ObservabilityHandle,
+    BootstrapOptions,
+    BedrockUsage,
+    RecordBedrockUsageArgs,
+} from './observability/index.js';
+
 // ─── Metrics & Cost Estimation ───────────────────────────────────────────────
 export {
     estimateInvocationCost,
@@ -181,6 +200,7 @@ export type {
 
 // ─── Ingestion (Repo → Vector Store Pipeline) ────────────────────────────────
 export { GitHubAdapter }            from './ingestion/implementations/GitHubAdapter.js';
+export type { GitHubRepoMeta }      from './ingestion/implementations/GitHubAdapter.js';
 export { FileFilter, DEFAULT_FILTER_CONFIG } from './ingestion/implementations/FileFilter.js';
 export { ChunkerRegistry }          from './ingestion/implementations/ChunkerRegistry.js';
 export { CommitChunker, isoWeek }   from './ingestion/implementations/CommitChunker.js';
@@ -230,18 +250,24 @@ export {
     BedrockChunkEnricher,
     IngestionPipeline,
     computeKbQuality,
+    recordBedrockCost,
+    computeCostCents,
 } from './rds/index.js';
 
-// ─── Retrieval (Reranking) ──────────────────────────────────────────────────
+export type { CostRecord, TitanCostContext } from './rds/index.js';
+
+// ─── Retrieval (Reranking + pgvector) ────────────────────────────────────────
 export type {
     IReranker,
     RerankCandidate,
     RerankResult,
     RerankOptions,
     BedrockRerankerConfig,
+    RetrievedPassage,
+    RetrieveOptions,
 } from './retrieval/index.js';
 
-export { BedrockReranker } from './retrieval/index.js';
+export { BedrockReranker, PgVectorRetriever } from './retrieval/index.js';
 
 // ─── Security (Input/Output Sanitisation) ────────────────────────────────────
 export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';
@@ -255,3 +281,7 @@ export type {
     SanitiseInputResult,
     SanitisationResult,
 } from './security/types.js';
+
+// ─── Chatbot utilities ────────────────────────────────────────────────────────
+export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT } from './chatbot/index.js';
+export type { Metric, ChatbotResponse } from './chatbot/index.js';

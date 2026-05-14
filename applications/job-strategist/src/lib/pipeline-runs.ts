@@ -3,6 +3,8 @@
  * Helpers for the platform RDS pipeline_runs status table and the
  * strategist-specific persistence (job_applications, resumes).
  */
+import { randomUUID } from 'node:crypto';
+
 import type { Pool } from 'pg';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
@@ -127,18 +129,20 @@ export async function persistTailoredResume(
         return null;
     }
 
-    const resumeId = `${args.applicationId}-${args.pipelineId}`;
-    const contentJson = {
-        ...validated.data,
-        label:      `Tailored — ${args.targetRole}${args.archetype ? ` (${args.archetype})` : ''}`,
-        is_active:  false,
-    };
+    // Use pipelineId (already a UUID) as the resume ID so ON CONFLICT handles
+    // retries deterministically. A compound string like "${appId}-${pipelineId}"
+    // is not a valid UUID and would fail the resumes.id UUID column constraint.
+    const resumeId = args.pipelineId || randomUUID();
+    const label    = `Tailored — ${args.targetRole}${args.archetype ? ` (${args.archetype})` : ''}`;
 
     await pool.query(
-        `INSERT INTO resumes (id, user_id, job_application_id, content_json)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (id) DO UPDATE SET content_json = EXCLUDED.content_json, generated_at = NOW()`,
-        [resumeId, args.userId, args.applicationId, JSON.stringify(contentJson)],
+        `INSERT INTO resumes (id, user_id, job_application_id, content_json, label, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO UPDATE SET
+             content_json = EXCLUDED.content_json,
+             label        = EXCLUDED.label,
+             generated_at = NOW()`,
+        [resumeId, args.userId, args.applicationId, JSON.stringify(validated.data), label, false],
     );
     return { resumeId };
 }

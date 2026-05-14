@@ -28,6 +28,8 @@
     { "path": "article-pipeline" },
     { "path": "self-healing" },
     { "path": "chatbot" },
+    { "path": "chatbot-public" },
+    { "path": "chatbot-authenticated" },
     { "path": "job-strategist" },
     { "path": "ingestion" },
     { "path": "resume-import-processor" }

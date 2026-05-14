@@ -32,6 +32,12 @@ export interface EnrichedRoleData {
   careerLevel:          'junior' | 'mid' | 'senior' | 'principal' | 'executive';
 }
 
+export interface RoleEnrichmentResult {
+  data:         EnrichedRoleData | null;
+  inputTokens:  number;
+  outputTokens: number;
+}
+
 const ENRICH_TOOL_SCHEMA = {
   name: 'enrich_role_data',
   description: 'Synthesise enriched role data from web research snippets',
@@ -49,7 +55,7 @@ const ENRICH_TOOL_SCHEMA = {
   },
 };
 
-const MODEL_ID = process.env['ENRICHMENT_MODEL_ID'] ?? 'anthropic.claude-haiku-4-5-20251001-v1:0';
+const MODEL_ID = process.env['ENRICHMENT_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 // Web snippets are capped per-source to prevent a single verbose page from
 // dominating the context and to guard against prompt-injection text in crawled pages.
@@ -69,19 +75,19 @@ export async function enrichRole(
   experience: ResumeExperience,
   searchTool: WebSearchTool,
   region: string,
-): Promise<EnrichedRoleData | null> {
+): Promise<RoleEnrichmentResult> {
   const query = `${experience.title} responsibilities ${experience.company} job description`;
 
   let snippets: string[];
   try {
     const results = await searchTool.search(query, 4);
-    if (results.length === 0) return null;
+    if (results.length === 0) return { data: null, inputTokens: 0, outputTokens: 0 };
     // Truncate each snippet to prevent prompt-injection text in crawled pages
     // from exceeding a safe size and to keep context window predictable.
     snippets = results.map((r) => `[${r.title}]\n${r.content.slice(0, MAX_SNIPPET_CHARS)}`);
   } catch (err) {
     console.warn('[enrich-role] search failed, skipping enrichment', { query, err });
-    return null;
+    return { data: null, inputTokens: 0, outputTokens: 0 };
   }
 
   console.info('[enrich-role] Tavily results', { query, count: snippets.length });
@@ -126,8 +132,12 @@ export async function enrichRole(
 
   if (!toolUseBlock?.input) {
     console.warn('[enrich-role] Bedrock returned no tool_use block', { title: experience.title });
-    return null;
+    return { data: null, inputTokens: 0, outputTokens: 0 };
   }
 
-  return toolUseBlock.input as EnrichedRoleData;
+  return {
+    data:         toolUseBlock.input as EnrichedRoleData,
+    inputTokens:  parsed.usage?.input_tokens  ?? 0,
+    outputTokens: parsed.usage?.output_tokens ?? 0,
+  };
 }

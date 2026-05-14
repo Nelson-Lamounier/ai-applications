@@ -51,6 +51,11 @@ function createApiStack(
             allowedOrigins: ['https://nelsonlamounier.com'],
             throttlingRateLimit: 10,
             throttlingBurstLimit: 20,
+            chatbotModel: 'eu.anthropic.claude-sonnet-4-6',
+            portfolioOwnerUserId: '00000000-0000-0000-0000-000000000001',
+            rdsSsmPrefix: '/k8s/development/platform-rds',
+            rdsCredentialsSecretName: 'k8s-development/platform-rds/credentials',
+            chatbotRetrievalSource: 'bedrock-agent',
             env: TEST_ENV_EU,
             ...overrides,
         },
@@ -247,12 +252,142 @@ describe('BedrockApiStack', () => {
             expect(stack.invokeFunction).toBeDefined();
         });
 
+        it('should expose chatbotPublicFunction', () => {
+            expect(stack.chatbotPublicFunction).toBeDefined();
+        });
+
+        it('should expose chatbotAuthFunction', () => {
+            expect(stack.chatbotAuthFunction).toBeDefined();
+        });
+
         it('should expose apiUrl', () => {
             expect(stack.apiUrl).toBeDefined();
         });
 
         it('should expose apiKey when enableApiKey is true', () => {
             expect(stack.apiKey).toBeDefined();
+        });
+    });
+
+    // =========================================================================
+    // chatbot-public Lambda
+    // =========================================================================
+    describe('chatbot-public Lambda', () => {
+        const { template } = createApiStack();
+
+        it('should create chatbot-public Lambda with correct name', () => {
+            template.hasResourceProperties('AWS::Lambda::Function', {
+                FunctionName: `${NAME_PREFIX}-chatbot-public`,
+            });
+        });
+
+        it('should inject CHATBOT_MODEL and PORTFOLIO_OWNER_USER_ID env vars', () => {
+            template.hasResourceProperties('AWS::Lambda::Function', {
+                FunctionName: `${NAME_PREFIX}-chatbot-public`,
+                Environment: {
+                    Variables: Match.objectLike({
+                        CHATBOT_MODEL: 'eu.anthropic.claude-sonnet-4-6',
+                        PORTFOLIO_OWNER_USER_ID: '00000000-0000-0000-0000-000000000001',
+                        CHATBOT_RETRIEVAL_SOURCE: 'bedrock-agent',
+                    }),
+                },
+            });
+        });
+
+        it('should inject RDS connection env vars', () => {
+            template.hasResourceProperties('AWS::Lambda::Function', {
+                FunctionName: `${NAME_PREFIX}-chatbot-public`,
+                Environment: {
+                    Variables: Match.objectLike({
+                        RDS_HOST: Match.anyValue(),
+                        RDS_PORT: Match.anyValue(),
+                        RDS_DB_NAME: Match.anyValue(),
+                        RDS_USER: Match.anyValue(),
+                        RDS_PASSWORD: Match.anyValue(),
+                    }),
+                },
+            });
+        });
+
+        it('should grant Bedrock Converse + InvokeModel + InvokeAgent permissions', () => {
+            template.hasResourceProperties('AWS::IAM::Policy', {
+                PolicyDocument: {
+                    Statement: Match.arrayWith([
+                        Match.objectLike({
+                            Action: Match.arrayWith([
+                                'bedrock:InvokeAgent',
+                                'bedrock:Converse',
+                                'bedrock:InvokeModel',
+                            ]),
+                            Effect: 'Allow',
+                        }),
+                    ]),
+                },
+            });
+        });
+    });
+
+    // =========================================================================
+    // chatbot-authenticated Lambda
+    // =========================================================================
+    describe('chatbot-authenticated Lambda', () => {
+        const { template } = createApiStack();
+
+        it('should create chatbot-authenticated Lambda with correct name', () => {
+            template.hasResourceProperties('AWS::Lambda::Function', {
+                FunctionName: `${NAME_PREFIX}-chatbot-authenticated`,
+            });
+        });
+
+        it('should inject RDS and chatbot env vars', () => {
+            template.hasResourceProperties('AWS::Lambda::Function', {
+                FunctionName: `${NAME_PREFIX}-chatbot-authenticated`,
+                Environment: {
+                    Variables: Match.objectLike({
+                        CHATBOT_MODEL: 'eu.anthropic.claude-sonnet-4-6',
+                        PORTFOLIO_OWNER_USER_ID: '00000000-0000-0000-0000-000000000001',
+                        RDS_HOST: Match.anyValue(),
+                    }),
+                },
+            });
+        });
+    });
+
+    // =========================================================================
+    // API Routes
+    // =========================================================================
+    describe('API Routes', () => {
+        const { template } = createApiStack();
+
+        it('should create POST /invoke-public resource', () => {
+            template.hasResourceProperties('AWS::ApiGateway::Resource', {
+                PathPart: 'invoke-public',
+            });
+        });
+
+        it('should create POST /invoke-authenticated resource', () => {
+            template.hasResourceProperties('AWS::ApiGateway::Resource', {
+                PathPart: 'invoke-authenticated',
+            });
+        });
+    });
+
+    // =========================================================================
+    // SSM Exports — chatbot URLs
+    // =========================================================================
+    describe('SSM Chatbot URL Exports', () => {
+        const { template } = createApiStack();
+
+        it('should export chatbot-public API URL to SSM', () => {
+            template.hasResourceProperties('AWS::SSM::Parameter', {
+                Name: `/${NAME_PREFIX}/chatbot-public-api-url`,
+            });
+        });
+
+        it('should export chatbot-authenticated API URL to SSM', () => {
+            template.hasResourceProperties('AWS::SSM::Parameter', {
+                Name: `/${NAME_PREFIX}/chatbot-authenticated-api-url`,
+            });
         });
     });
 });

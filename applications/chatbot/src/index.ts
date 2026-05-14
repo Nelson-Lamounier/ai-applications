@@ -33,7 +33,7 @@ import type {
     APIGatewayProxyResult,
 } from 'aws-lambda';
 
-import { log, emitEmfMetric, InputSanitiser, OutputSanitiser } from '@bedrock/shared';
+import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, withSpan } from '@bedrock/shared';
 import { invokeChatbotAgent } from './agents/chatbot-agent.js';
 
 // Module-scoped sanitiser instances (default patterns — no domain-specific overrides)
@@ -333,7 +333,10 @@ function handleAgentError(
  * @param event - API Gateway proxy event
  * @returns API Gateway proxy result
  */
-export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+// withSpan ensures every invocation has a top-level span even if ADOT auto-
+// instrumentation misses this entrypoint; logs in @bedrock/shared/logger
+// then auto-pick the active span's trace_id, closing the Logs↔Traces loop.
+export const handler = withSpan('chatbot.handler', async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
     const origin = resolveOrigin(event.headers?.origin ?? event.headers?.Origin);
     const startTime = Date.now();
 
@@ -460,7 +463,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     } catch (err) {
         return handleAgentError(err, Date.now() - startTime, origin);
     }
-}
+});
 
 // =============================================================================
 // Re-exports for testing

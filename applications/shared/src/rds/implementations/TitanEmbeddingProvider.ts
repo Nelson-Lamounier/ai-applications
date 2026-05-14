@@ -18,19 +18,34 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
+import { recordBedrockCost } from '../bedrock-cost.js';
 
 const MODEL_ID = 'amazon.titan-embed-text-v2:0';
+
+// Titan Text Embeddings v2 enforces a 8,192-token limit. At ~4 chars/token
+// for English, 30,000 chars ≈ 7,500 tokens — safely under the limit.
+// The API also has a 50,000-char hard limit, but the token limit is the
+// binding constraint in practice. Truncation preserves leading content.
+const MAX_INPUT_CHARS = 30_000;
+
+export interface TitanCostContext {
+    pool:     import('pg').Pool;
+    userId:   string;
+    repoName: string;
+}
 
 export class TitanEmbeddingProvider implements IEmbeddingProvider {
     readonly dimension: number;
 
     private readonly client: BedrockRuntimeClient;
     private readonly region: string;
+    private readonly costCtx?: TitanCostContext;
 
-    constructor(region: string, dimension: 256 | 512 | 1024 = 1024) {
-        this.region = region;
+    constructor(region: string, dimension: 256 | 512 | 1024 = 1024, costCtx?: TitanCostContext) {
+        this.region    = region;
         this.dimension = dimension;
-        this.client = new BedrockRuntimeClient({ region });
+        this.client    = new BedrockRuntimeClient({ region });
+        this.costCtx   = costCtx;
     }
 
     /**
@@ -52,7 +67,7 @@ export class TitanEmbeddingProvider implements IEmbeddingProvider {
 
     async embed(text: string): Promise<number[]> {
         const body = JSON.stringify({
-            inputText:  text,
+            inputText:  text.length > MAX_INPUT_CHARS ? text.slice(0, MAX_INPUT_CHARS) : text,
             dimensions: this.dimension,
             normalize:  true,
         });
@@ -67,9 +82,20 @@ export class TitanEmbeddingProvider implements IEmbeddingProvider {
         );
 
         const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as {
-            embedding: number[];
+            embedding:           number[];
             inputTextTokenCount: number;
         };
+
+        if (this.costCtx) {
+            recordBedrockCost(this.costCtx.pool, {
+                userId:       this.costCtx.userId,
+                modelId:      MODEL_ID,
+                pipeline:     'repo-sync',
+                inputTokens:  parsed.inputTextTokenCount ?? 0,
+                outputTokens: 0,
+                repoName:     this.costCtx.repoName,
+            }).catch((err) => console.warn('[TitanEmbeddingProvider] cost record failed (non-fatal)', err));
+        }
 
         return parsed.embedding;
     }
