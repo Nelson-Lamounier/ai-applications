@@ -235,15 +235,6 @@ async function main(): Promise<void> {
             throw profileErr;
         }
 
-        // ── Phase 1+: chunk pipeline (skipped for non-project repos) ──────────────
-        if (classification !== 'project') {
-            log.info({ classification }, 'skipping_tier2_chunk_pipeline');
-            await syncState.markComplete(env.userId, env.repoFullName, 0, 0);
-            await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
-            outcome = 'success';
-            return;
-        }
-
         const report = await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
             return env.forceReindex
                 ? await orchestrator.forceReindex(env.userId, env.repoFullName)
@@ -300,7 +291,9 @@ async function main(): Promise<void> {
         ingestionDuration.observe({ outcome }, duration);
         // Group by repoFullName so dashboards show "last run per repo".
         await pushFinalMetrics(obs.registry, 'ingestion', `${env.userId}_${env.repoFullName.replace('/', '_')}`);
-        await obs.shutdown();
+        // sdk.shutdown() flushes OTel spans to Alloy; cap at 10s to prevent
+        // a hung HTTP connection from blocking pod exit until the job deadline.
+        await Promise.race([obs.shutdown(), new Promise(r => setTimeout(r, 10_000))]);
     }
 }
 
