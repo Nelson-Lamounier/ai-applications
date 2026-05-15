@@ -51,7 +51,7 @@ describe('CachedSearchTool', () => {
     const out = await new CachedSearchTool(inner, pool).search('Software Engineer', 4);
 
     expect(out).toEqual(SAMPLE);
-    expect(search).toHaveBeenCalledWith('Software Engineer', 4);
+    expect(search).toHaveBeenCalledWith('Software Engineer', 4, undefined);
     const sqls = query.mock.calls.map((c) => String(c[0]));
     expect(sqls.some((s) => s.includes('INSERT INTO tavily_cache'))).toBe(true);
   });

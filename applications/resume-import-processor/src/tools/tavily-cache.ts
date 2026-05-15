@@ -40,7 +40,7 @@ export class CachedSearchTool implements WebSearchTool {
     private readonly pool: Pool,
   ) {}
 
-  async search(query: string, maxResults = 5): Promise<SearchResult[]> {
+  async search(query: string, maxResults = 5, signal?: AbortSignal): Promise<SearchResult[]> {
     const { tavilyCacheTotal } = await import('../metrics.js');
     const key = cacheKey(query, maxResults);
 
@@ -61,7 +61,7 @@ export class CachedSearchTool implements WebSearchTool {
     }
 
     tavilyCacheTotal().inc({ result: 'miss' });
-    const results = await this.inner.search(query, maxResults);
+    const results = await this.inner.search(query, maxResults, signal);
 
     // Only cache non-empty result sets. Empty stays uncached so a retry or
     // future query-fallback can recover. UPSERT refreshes a stale row in place.

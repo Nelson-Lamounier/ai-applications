@@ -18,7 +18,9 @@ export interface SearchResult {
 }
 
 export interface WebSearchTool {
-  search(query: string, maxResults?: number): Promise<SearchResult[]>;
+  /** @param signal optional AbortSignal — when aborted the underlying fetch
+   *  is cancelled. Used by the fan-out's per-request + overall budget timeouts. */
+  search(query: string, maxResults?: number, signal?: AbortSignal): Promise<SearchResult[]>;
 }
 
 export class TavilySearchTool implements WebSearchTool {
@@ -29,7 +31,7 @@ export class TavilySearchTool implements WebSearchTool {
     this.apiKey = apiKey;
   }
 
-  async search(query: string, maxResults = 5): Promise<SearchResult[]> {
+  async search(query: string, maxResults = 5, signal?: AbortSignal): Promise<SearchResult[]> {
     return tracer.startActiveSpan('resume_import.tavily_search', {
       attributes: { 'tavily.query': query, 'tavily.max_results': maxResults },
     }, async (span) => {
@@ -45,6 +47,7 @@ export class TavilySearchTool implements WebSearchTool {
             include_answer:      false,
             include_raw_content: false,
           }),
+          signal,
         });
 
         if (!response.ok) {
@@ -77,7 +80,7 @@ export class TavilySearchTool implements WebSearchTool {
 
 /** Null implementation — used when TAVILY_API_KEY is absent (free-tier enrichment skip). */
 export class NoOpSearchTool implements WebSearchTool {
-  async search(_query: string, _maxResults?: number): Promise<SearchResult[]> {
+  async search(_query: string, _maxResults?: number, _signal?: AbortSignal): Promise<SearchResult[]> {
     return [];
   }
 }

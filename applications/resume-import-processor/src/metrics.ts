@@ -41,6 +41,7 @@ let _textractFallback:    Counter<'reason'> | undefined;
 let _textractDuration:    Histogram<never> | undefined;
 let _tavilyDuration:      Histogram<'outcome'> | undefined;
 let _tavilyCache:         Counter<'result'> | undefined;
+let _fanoutTotal:         Counter<'outcome'> | undefined;
 let _bedrockDuration:     Histogram<'purpose'> | undefined;
 let _embedDuration:       Histogram<never> | undefined;
 let _persistDuration:     Histogram<'op'> | undefined;
@@ -75,6 +76,13 @@ export const tavilyCacheTotal = (): Counter<'result'> =>
     name: 'resume_import_tavily_cache_total',
     help: 'Tavily cache lookups by result (hit|miss).',
     labelNames: ['result'] as const,
+  });
+
+export const fanoutTotal = (): Counter<'outcome'> =>
+  _fanoutTotal ??= makeCounter({
+    name: 'resume_import_fanout_total',
+    help: 'Tavily fan-out role outcomes (ok|empty|failed|skipped_budget).',
+    labelNames: ['outcome'] as const,
   });
 
 export const bedrockDurationSeconds = (): Histogram<'purpose'> =>
@@ -133,6 +141,9 @@ export function seedZeroSeries(): void {
   }
   for (const result of ['hit', 'miss'] as const) {
     tavilyCacheTotal().inc({ result }, 0);
+  }
+  for (const outcome of ['ok', 'empty', 'failed', 'skipped_budget'] as const) {
+    fanoutTotal().inc({ outcome }, 0);
   }
   for (const purpose of ['extract', 'enrich'] as const) {
     bedrockDurationSeconds().observe({ purpose }, 0);
