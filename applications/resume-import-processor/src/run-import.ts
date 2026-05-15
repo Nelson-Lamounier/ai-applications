@@ -2,26 +2,20 @@
  * @format
  * Resume import K8s Job entrypoint — runs as a one-shot pod.
  *
+ * This Job covers extraction only. Enrichment + embeddings were split into
+ * the resume-enrichment Job (run-enrichment.ts), dispatched by admin-api
+ * after the user confirms their reviewed career history.
+ *
  * Pipeline:
  *   Step 1 — Fetch PDF/DOCX from S3
  *   Step 2 — Parse text (pdf-parse or mammoth)
  *   Step 3 — Bedrock structured extraction → ExtractedCareerData
  *   Step 4 — Persist career entries → mark import 'ready_for_review'
- *             (admin-api status polling returns success here)
- *   Step 5 — Per experience entry (background enrichment):
- *             a. Check free-tier enrichment cap (5 entries)
- *             b. Tavily search for role context
- *             c. Bedrock synthesis → EnrichedRoleData
- *             d. Titan embed → insert experience_embeddings
- *             e. Update enrichment_status on career entry
- *   Step 6 — Mark import 'completed'
+ *             (admin-api status polling returns success here; the pod exits)
  *
  * Exit codes:
- *   0 — completed (at least extraction succeeded)
+ *   0 — extraction succeeded, status is ready_for_review
  *   1 — fatal error before any data was written
- *
- * Partial failure (enrichment fails for one role) does not fail the Job.
- * The entry is marked enrichment_status='failed' and the rest continue.
  */
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
@@ -29,8 +23,6 @@ import { Counter, Histogram } from 'prom-client';
 import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost } from '@bedrock/shared';
 import {
   careerEntriesTotal,
-  embeddingsCreatedTotal,
-  freeTierCappedTotal,
   seedZeroSeries as seedSubStepSeries,
 } from './metrics.js';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
@@ -38,12 +30,7 @@ import { parseEnv } from './env.js';
 import { extractTextFromPdf } from './parsers/pdf.js';
 import { extractTextFromDocx } from './parsers/docx.js';
 import { extractCareerData } from './bedrock/extract-career.js';
-import { enrichRole } from './bedrock/enrich-role.js';
-import { embedAndPersistEntry } from './embed.js';
-import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
-import { CachedSearchTool } from './tools/tavily-cache.js';
-import type { ExtractedCareerData, ResumeExperience } from './bedrock/extract-career.js';
-import type { EnrichedRoleData } from './bedrock/enrich-role.js';
+import type { ExtractedCareerData } from './bedrock/extract-career.js';
 
 // One-shot K8s Job — bootstrap observability before any AWS / pg client
 // loads so OTel auto-instrumentation picks them up. Metrics push to
@@ -74,13 +61,6 @@ const stepDurationSeconds = new Histogram({
   registers:  [obs.registry],
 });
 
-const enrichmentEntriesTotal = new Counter({
-  name:       'resume_import_enrichment_entries_total',
-  help:       'Career entries processed by enrichment outcome.',
-  labelNames: ['outcome'] as const,
-  registers:  [obs.registry],
-});
-
 // Seed zero-valued series so Grafana panels render "0" instead of "No data"
 // when Pushgateway is fresh (it has no on-disk persistence) or when no Job has
 // pushed yet in the dashboard's [24h] window. inc(…, 0) / observe(…, 0)
@@ -89,18 +69,13 @@ for (const outcome of ['success', 'failed'] as const) {
   importsTotal.inc({ outcome, error_code: '' }, 0);
   importDurationSeconds.observe({ outcome }, 0);
 }
-for (const step of ['extract', 'parse', 'enrich', 'embed', 'persist'] as const) {
+for (const step of ['extract', 'parse', 'persist'] as const) {
   stepDurationSeconds.observe({ step }, 0);
-}
-for (const outcome of ['success', 'skipped', 'failed'] as const) {
-  enrichmentEntriesTotal.inc({ outcome }, 0);
 }
 // Seed the new sub-step series (textract, tavily, bedrock, embed, persist, …).
 seedSubStepSeries();
 
 const tracer = trace.getTracer('resume-import-processor');
-
-const FREE_TIER_ENRICHMENT_CAP = 5;
 
 async function fetchFileFromS3(
   s3: S3Client,
@@ -223,15 +198,6 @@ async function persistCareerEntries(
   return createdIds;
 }
 
-async function countEnrichedEntries(pool: Pool, userId: string): Promise<number> {
-  const result = await pool.query<{ count: string }>(
-    `SELECT COUNT(*) AS count FROM user_career_history
-      WHERE user_id = $1::uuid AND entry_type = 'experience' AND enrichment_status = 'complete'`,
-    [userId],
-  );
-  return parseInt(result.rows[0]?.count ?? '0', 10);
-}
-
 async function main(): Promise<void> {
   const env = parseEnv();
   const jobStart = process.hrtime.bigint();
@@ -257,12 +223,6 @@ async function main(): Promise<void> {
   });
 
   const s3 = new S3Client({ region: env.awsRegion });
-
-  // Wrap the live Tavily tool in a Postgres cache (migration 017). The NoOp
-  // tool returns [] which is never cached, so wrapping it adds no value.
-  const searchTool = env.tavilyApiKey
-    ? new CachedSearchTool(new TavilySearchTool(env.tavilyApiKey), pool)
-    : new NoOpSearchTool();
 
   const rootSpan = tracer.startSpan('resume_import.pipeline', {
     attributes: {
@@ -356,123 +316,12 @@ async function main(): Promise<void> {
         } finally { span.end(); }
       });
 
-      // ── Step 5: per-role enrichment (background) ──────────────────────────
-      if (!env.tavilyApiKey) {
-        console.info('[run-import] TAVILY_API_KEY absent — skipping enrichment');
-      }
-
-      await updateImportStatus(pool, env.importId, 'enriching', 'Researching roles');
-
-      let totalEmbeddings = 0;
-
-      for (let i = 0; i < extracted.experience.length; i++) {
-        const exp: ResumeExperience = extracted.experience[i];
-        const careerEntryId = experienceIds[i];
-        if (!careerEntryId) continue;
-
-        await tracer.startActiveSpan('resume_import.enrich_role', {
-          attributes: { 'role.title': exp.title, 'role.company': exp.company, 'role.index': i },
-        }, async (span) => {
-          try {
-            // Check free-tier cap (counts already-enriched entries across all imports)
-            const alreadyEnriched = await countEnrichedEntries(pool, env.userId);
-            if (alreadyEnriched >= FREE_TIER_ENRICHMENT_CAP) {
-              span.setAttribute('enrich.skipped_reason', 'free_tier_limit');
-              freeTierCappedTotal().inc();
-              await pool.query(
-                `UPDATE user_career_history
-                    SET enrichment_status = 'skipped',
-                        enrichment_skipped_reason = 'free_tier_limit',
-                        updated_at = NOW()
-                  WHERE id = $1::uuid`,
-                [careerEntryId],
-              );
-              // Still embed without enrichment so basic retrieval works
-              const count = await embedAndPersistEntry(
-                pool, env.awsRegion, env.userId, careerEntryId, exp, null, env.importId,
-              );
-              totalEmbeddings += count;
-              return;
-            }
-
-            await pool.query(
-              `UPDATE user_career_history
-                  SET enrichment_status = 'enriching', updated_at = NOW()
-                WHERE id = $1::uuid`,
-              [careerEntryId],
-            );
-
-            let enriched: EnrichedRoleData | null = null;
-            let enrichThrew = false;
-            try {
-              const enrichResult = await enrichRole(exp, searchTool, env.awsRegion, log);
-              enriched = enrichResult.data;
-              if (enrichResult.inputTokens > 0) {
-                recordBedrockCost(pool, {
-                  userId:      env.userId,
-                  modelId:     process.env['ENRICHMENT_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
-                  pipeline:    'resume-import',
-                  inputTokens:  enrichResult.inputTokens,
-                  outputTokens: enrichResult.outputTokens,
-                  importId:    env.importId,
-                }).catch((err) => log.warn({ err }, '[cost] enrich-role cost record failed (non-fatal)'));
-              }
-            } catch (err) {
-              enrichThrew = true;
-              span.recordException(err instanceof Error ? err : new Error(String(err)));
-              span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
-              await pool.query(
-                `UPDATE user_career_history
-                    SET enrichment_status = 'failed', updated_at = NOW()
-                  WHERE id = $1::uuid`,
-                [careerEntryId],
-              );
-            }
-
-            // Status writes are mutually exclusive: failed (catch above) | complete | skipped.
-            // The earlier bug let the null-branch overwrite 'failed' with 'skipped' when
-            // enrichRole threw, because `enriched` stayed null in both throw and empty-search paths.
-            if (enrichThrew) {
-              log.warn({ careerEntryId }, 'enrichment threw, status=failed already written');
-            } else if (enriched !== null) {
-              await pool.query(
-                `UPDATE user_career_history
-                    SET enrichment_status = 'complete',
-                        enriched_data     = $1,
-                        updated_at        = NOW()
-                  WHERE id = $2::uuid`,
-                [JSON.stringify(enriched), careerEntryId],
-              );
-            } else {
-              await pool.query(
-                `UPDATE user_career_history
-                    SET enrichment_status = 'skipped',
-                        enrichment_skipped_reason = 'no_search_results',
-                        updated_at = NOW()
-                  WHERE id = $1::uuid`,
-                [careerEntryId],
-              );
-            }
-
-            const count = await embedAndPersistEntry(
-              pool, env.awsRegion, env.userId, careerEntryId, exp, enriched, env.importId,
-            );
-            totalEmbeddings += count;
-          } catch (err) {
-            span.recordException(err instanceof Error ? err : new Error(String(err)));
-            span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
-          } finally { span.end(); }
-        });
-      }
-
-      // ── Step 6: completed ─────────────────────────────────────────────────
-      await updateImportStatus(pool, env.importId, 'completed', 'Import complete', {
-        embeddingsCreatedCount: totalEmbeddings,
-        completedAt: new Date(),
-      });
-
-      embeddingsCreatedTotal().inc(totalEmbeddings);
-      log.info({ totalEmbeddings }, 'completed');
+      // Pipeline ends here. Enrichment + embeddings are deferred to the
+      // resume-enrichment Job, dispatched by admin-api only after the user
+      // reviews and confirms their extracted career history. This keeps the
+      // user-facing path fast and prevents enriching data the user is about
+      // to correct (corrections would otherwise be layered on stale enrichment).
+      log.info({ entries: experienceIds.length }, 'ready_for_review');
       outcome = 'success';
 
       await pool.end();
