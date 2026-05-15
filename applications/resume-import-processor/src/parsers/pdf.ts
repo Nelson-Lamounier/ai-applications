@@ -20,6 +20,35 @@ import {
 const POLL_INTERVAL_MS  = 2_000;
 const POLL_MAX_ATTEMPTS = 60; // 2 min ceiling
 
+// Minimum chars for Textract OCR output to be considered usable.
+// Below this, OCR likely failed to recognise the document (encrypted scan,
+// non-Latin glyphs without language hints, or pure-image PDF with no text).
+const MIN_OCR_TEXT_CHARS = 200;
+
+// Minimum ratio of alphabetic characters in OCR output.
+// Garbled OCR returns long strings of symbols/punctuation that pass the
+// length check but yield nothing useful to Bedrock — the extractor will
+// hallucinate empty fields rather than fail loudly.
+const MIN_OCR_ALPHA_RATIO = 0.5;
+
+function assertTextractTextUsable(text: string): void {
+  if (text.length === 0) {
+    throw new Error('Textract extracted no text from PDF');
+  }
+  if (text.length < MIN_OCR_TEXT_CHARS) {
+    throw new Error(
+      `Textract output below usable floor: ${text.length} chars < ${MIN_OCR_TEXT_CHARS}`,
+    );
+  }
+  const alphaCount = (text.match(/[A-Za-zÀ-ÿ]/g) ?? []).length;
+  const ratio = alphaCount / text.length;
+  if (ratio < MIN_OCR_ALPHA_RATIO) {
+    throw new Error(
+      `Textract output alpha ratio ${ratio.toFixed(2)} below floor ${MIN_OCR_ALPHA_RATIO} — likely garbled OCR`,
+    );
+  }
+}
+
 async function extractViaTextract(
   bucket: string,
   s3Key: string,
@@ -66,7 +95,7 @@ async function extractViaTextract(
 
       const text = lines.join('\n').trim();
       stop();
-      if (!text) throw new Error('Textract extracted no text from PDF');
+      assertTextractTextUsable(text);
       return text;
     }
     // JobStatus === 'IN_PROGRESS' — keep polling

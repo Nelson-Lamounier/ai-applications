@@ -42,6 +42,7 @@ import { enrichRole } from './bedrock/enrich-role.js';
 import { embedAndPersistEntry } from './embed.js';
 import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
 import type { ExtractedCareerData, ResumeExperience } from './bedrock/extract-career.js';
+import type { EnrichedRoleData } from './bedrock/enrich-role.js';
 
 // One-shot K8s Job — bootstrap observability before any AWS / pg client
 // loads so OTel auto-instrumentation picks them up. Metrics push to
@@ -398,7 +399,8 @@ async function main(): Promise<void> {
               [careerEntryId],
             );
 
-            let enriched = null;
+            let enriched: EnrichedRoleData | null = null;
+            let enrichThrew = false;
             try {
               const enrichResult = await enrichRole(exp, searchTool, env.awsRegion, log);
               enriched = enrichResult.data;
@@ -413,6 +415,7 @@ async function main(): Promise<void> {
                 }).catch((err) => log.warn({ err }, '[cost] enrich-role cost record failed (non-fatal)'));
               }
             } catch (err) {
+              enrichThrew = true;
               span.recordException(err instanceof Error ? err : new Error(String(err)));
               span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
               await pool.query(
@@ -423,7 +426,12 @@ async function main(): Promise<void> {
               );
             }
 
-            if (enriched !== null) {
+            // Status writes are mutually exclusive: failed (catch above) | complete | skipped.
+            // The earlier bug let the null-branch overwrite 'failed' with 'skipped' when
+            // enrichRole threw, because `enriched` stayed null in both throw and empty-search paths.
+            if (enrichThrew) {
+              log.warn({ careerEntryId }, 'enrichment threw, status=failed already written');
+            } else if (enriched !== null) {
               await pool.query(
                 `UPDATE user_career_history
                     SET enrichment_status = 'complete',
@@ -432,8 +440,7 @@ async function main(): Promise<void> {
                   WHERE id = $2::uuid`,
                 [JSON.stringify(enriched), careerEntryId],
               );
-            } else if (enriched === null) {
-              // enrichRole returned null (no search results) — mark skipped, still embed
+            } else {
               await pool.query(
                 `UPDATE user_career_history
                     SET enrichment_status = 'skipped',

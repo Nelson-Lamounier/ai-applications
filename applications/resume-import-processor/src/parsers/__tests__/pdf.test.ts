@@ -34,12 +34,14 @@ beforeEach(() => {
 
 describe('extractTextFromPdf — Nelson_Lamounier_Resume.pdf (image-based)', () => {
   it('falls back to Textract because pdf-parse extracts < 200 chars', async () => {
+    // Lines must total >= 200 chars (alpha-dominant) to satisfy the OCR sanity floor
+    // introduced alongside this test's purpose.
     const resumeLines = [
-      'Nelson Lamounier',
-      'Software Engineer',
-      'Experience: Senior Software Engineer at Acme Corp 2020-2024',
-      'Education: B.Sc. Computer Science',
-      'Skills: TypeScript, AWS, Kubernetes',
+      'Nelson Lamounier — Software Engineer',
+      'Experience: Senior Software Engineer at Acme Corp 2020 to 2024',
+      'Led platform engineering team, scaled infrastructure across Kubernetes clusters',
+      'Education: Bachelor of Science in Computer Science, University of Example 2014',
+      'Skills: TypeScript, AWS, Kubernetes, Terraform, PostgreSQL, distributed systems',
     ];
     mockSend
       .mockResolvedValueOnce({ JobId: 'mock-job-id' })
@@ -62,11 +64,12 @@ describe('extractTextFromPdf — Nelson_Lamounier_Resume.pdf (image-based)', () 
 
 describe('extractTextFromPdf — corrupted / non-PDF buffer', () => {
   it('falls back to Textract when pdf-parse throws', async () => {
+    const recovered = 'Recovered text via OCR — this is a long enough resume body to pass the usability floor introduced for Textract fallback output validation, covering name, role, experience, skills, education and certifications.';
     mockSend
       .mockResolvedValueOnce({ JobId: 'mock-job-id' })
       .mockResolvedValueOnce({
         JobStatus: 'SUCCEEDED',
-        Blocks: [{ BlockType: 'LINE', Text: 'Recovered via OCR' }],
+        Blocks: [{ BlockType: 'LINE', Text: recovered }],
         NextToken: undefined,
       });
 
@@ -74,7 +77,7 @@ describe('extractTextFromPdf — corrupted / non-PDF buffer', () => {
     const { text, method } = await extractTextFromPdf(badBuf, 'bad.pdf', BUCKET, REGION);
 
     expect(method).toBe('textract');
-    expect(text).toBe('Recovered via OCR');
+    expect(text).toBe(recovered);
     expect(mockSend).toHaveBeenCalledTimes(2);
   });
 });
@@ -133,5 +136,50 @@ describe('extractTextFromPdf — Textract failure', () => {
     await expect(
       extractTextFromPdf(buf, 'resume.pdf', BUCKET, REGION),
     ).rejects.toThrow('Textract job failed: Unsupported document');
+  });
+});
+
+describe('extractTextFromPdf — Textract OCR sanity floor', () => {
+  it('throws when Textract returns text below the usable length floor', async () => {
+    mockSend
+      .mockResolvedValueOnce({ JobId: 'mock-job-id' })
+      .mockResolvedValueOnce({
+        JobStatus: 'SUCCEEDED',
+        Blocks: [{ BlockType: 'LINE', Text: 'Resume header only — too short' }],
+        NextToken: undefined,
+      });
+
+    const buf = fs.readFileSync(FIXTURE);
+    await expect(
+      extractTextFromPdf(buf, 'resume.pdf', BUCKET, REGION),
+    ).rejects.toThrow(/below usable floor/);
+  });
+
+  it('throws when Textract OCR output is mostly non-alphabetic (garbled)', async () => {
+    // 250 chars, but <50% alphabetic — typical garbled-OCR pattern.
+    const garbled = '!@#$%^&*()_+-=[]{}|;:,.<>?/~`'.repeat(10).slice(0, 250);
+    mockSend
+      .mockResolvedValueOnce({ JobId: 'mock-job-id' })
+      .mockResolvedValueOnce({
+        JobStatus: 'SUCCEEDED',
+        Blocks: [{ BlockType: 'LINE', Text: garbled }],
+        NextToken: undefined,
+      });
+
+    const buf = fs.readFileSync(FIXTURE);
+    await expect(
+      extractTextFromPdf(buf, 'resume.pdf', BUCKET, REGION),
+    ).rejects.toThrow(/alpha ratio.*below floor/);
+  });
+
+  it('throws when Textract returns zero blocks', async () => {
+    mockSend
+      .mockResolvedValueOnce({ JobId: 'mock-job-id' })
+      .mockResolvedValueOnce({ JobStatus: 'SUCCEEDED', Blocks: [], NextToken: undefined });
+
+    const buf = fs.readFileSync(FIXTURE);
+    await expect(
+      extractTextFromPdf(buf, 'resume.pdf', BUCKET, REGION),
+    ).rejects.toThrow('Textract extracted no text from PDF');
   });
 });
