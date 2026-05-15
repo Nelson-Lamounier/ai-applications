@@ -31,6 +31,10 @@ import { extractTextFromPdf } from './parsers/pdf.js';
 import { extractTextFromDocx } from './parsers/docx.js';
 import { extractCareerData } from './bedrock/extract-career.js';
 import type { ExtractedCareerData } from './bedrock/extract-career.js';
+import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
+import { CachedSearchTool } from './tools/tavily-cache.js';
+import { fanOutRoleSearches, type FanoutRole } from './tools/tavily-fanout.js';
+import { generateGapAnalysis, type GapAnalysisRole } from './bedrock/gap-analysis.js';
 
 // One-shot K8s Job — bootstrap observability before any AWS / pg client
 // loads so OTel auto-instrumentation picks them up. Metrics push to
@@ -300,12 +304,12 @@ async function main(): Promise<void> {
         } finally { span.end(); }
       });
 
-      // ── Step 4: persist career entries, signal ready_for_review ──────────
+      // ── Step 4: persist career entries ───────────────────────────────────
       let experienceIds!: string[];
       await tracer.startActiveSpan('resume_import.save_entries', async (span) => {
         try {
           experienceIds = await persistCareerEntries(pool, env.userId, env.importId, extracted);
-          await updateImportStatus(pool, env.importId, 'ready_for_review', 'Career data extracted', {
+          await updateImportStatus(pool, env.importId, 'analyzing', 'Analyzing your experience', {
             careerEntriesCreated: experienceIds,
           });
           span.setAttribute('entries.saved', experienceIds.length);
@@ -316,11 +320,67 @@ async function main(): Promise<void> {
         } finally { span.end(); }
       });
 
+      // ── Step 5: gap analysis (fan-out → Bedrock → persist report) ────────
+      // Non-fatal: any failure here leaves gap_report NULL and the import
+      // still reaches ready_for_review — the review screen must work without
+      // a report. The fan-out caps to the most-recent roles; the count of
+      // skipped roles is surfaced in the report's freeTierLimit.
+      await tracer.startActiveSpan('resume_import.gap_analysis', async (span) => {
+        try {
+          const searchTool = env.tavilyApiKey
+            ? new CachedSearchTool(new TavilySearchTool(env.tavilyApiKey), pool)
+            : new NoOpSearchTool();
+
+          const fanoutRoles: FanoutRole[] = extracted.experience.map((exp, i) => ({
+            roleId:  experienceIds[i]!,
+            company: exp.company,
+            title:   exp.title,
+            period:  exp.period,
+          }));
+
+          const { outcomes } = await fanOutRoleSearches(fanoutRoles, searchTool, log);
+          const ctxByRole = new Map(
+            outcomes.map((o) => [o.roleId, o.status === 'ok' ? o.results : null]),
+          );
+          const rolesSkipped = outcomes.filter((o) => o.status === 'skipped_budget').length;
+
+          const gapRoles: GapAnalysisRole[] = extracted.experience.map((exp, i) => ({
+            roleId:        experienceIds[i]!,
+            experience:    exp,
+            publicContext: ctxByRole.get(experienceIds[i]!) ?? null,
+          }));
+
+          const gap = await generateGapAnalysis(gapRoles, rolesSkipped, env.awsRegion);
+          recordBedrockCost(pool, {
+            userId:       env.userId,
+            modelId:      process.env['GAP_ANALYSIS_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+            pipeline:     'resume-import',
+            inputTokens:  gap.inputTokens,
+            outputTokens: gap.outputTokens,
+            importId:     env.importId,
+          }).catch((err) => log.warn({ err }, '[cost] gap-analysis cost record failed (non-fatal)'));
+
+          await pool.query(
+            `UPDATE resume_imports
+                SET gap_report = $1::jsonb,
+                    gap_report_generated_at = NOW(),
+                    updated_at = NOW()
+              WHERE id = $2::uuid`,
+            [JSON.stringify(gap.data), env.importId],
+          );
+          span.setAttribute('gap.roles', gap.data.perRole.length);
+        } catch (err) {
+          // Non-fatal — log and continue to ready_for_review without a report.
+          span.recordException(err instanceof Error ? err : new Error(String(err)));
+          span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+          log.warn({ err }, 'gap analysis failed (non-fatal) — review will render without a report');
+        } finally { span.end(); }
+      });
+
       // Pipeline ends here. Enrichment + embeddings are deferred to the
       // resume-enrichment Job, dispatched by admin-api only after the user
-      // reviews and confirms their extracted career history. This keeps the
-      // user-facing path fast and prevents enriching data the user is about
-      // to correct (corrections would otherwise be layered on stale enrichment).
+      // reviews and confirms their extracted career history.
+      await updateImportStatus(pool, env.importId, 'ready_for_review', 'Career data extracted');
       log.info({ entries: experienceIds.length }, 'ready_for_review');
       outcome = 'success';
 
