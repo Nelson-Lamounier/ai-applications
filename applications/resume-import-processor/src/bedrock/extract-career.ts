@@ -216,7 +216,10 @@ export async function extractCareerData(
     body:        Buffer.from(JSON.stringify(requestBody)),
   });
 
+  const { bedrockDurationSeconds } = await import('../metrics.js');
+  const stop = bedrockDurationSeconds().startTimer({ purpose: 'extract' });
   const response = await client.send(command);
+  stop();
   const parsed   = JSON.parse(Buffer.from(response.body).toString('utf-8'));
 
   // The forced tool_use response always has content[0] as tool_use block

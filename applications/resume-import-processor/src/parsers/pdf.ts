@@ -25,6 +25,8 @@ async function extractViaTextract(
   s3Key: string,
   region: string,
 ): Promise<string> {
+  const { textractDurationSeconds } = await import('../metrics.js');
+  const stop = textractDurationSeconds().startTimer();
   const client = new TextractClient({ region });
 
   const { JobId } = await client.send(
@@ -63,12 +65,14 @@ async function extractViaTextract(
       }
 
       const text = lines.join('\n').trim();
+      stop();
       if (!text) throw new Error('Textract extracted no text from PDF');
       return text;
     }
     // JobStatus === 'IN_PROGRESS' — keep polling
   }
 
+  stop();
   throw new Error(`Textract job did not complete within ${(POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s`);
 }
 
@@ -93,12 +97,14 @@ export async function extractTextFromPdf(
 ): Promise<{ text: string; method: 'pdf-parse' | 'textract' }> {
   let pdfText = '';
 
+  let fallbackReason: 'threw' | 'empty' | 'short_text' | null = null;
   try {
     const parsed = await pdfParse(buffer);
     pdfText = parsed.text.trim();
   } catch (err) {
     // pdf-parse throws on encrypted PDFs, malformed structures, and certain
     // CIDFont/XFA documents. Fall through to Textract rather than crashing.
+    fallbackReason = 'threw';
     console.warn('[run-import] pdf-parse threw, falling back to Textract OCR', { s3Key, err });
   }
 
@@ -107,13 +113,18 @@ export async function extractTextFromPdf(
   }
 
   if (pdfText.length > 0) {
+    fallbackReason ??= 'short_text';
     console.info(
       '[run-import] pdf-parse returned too little text, falling back to Textract OCR',
       { s3Key, chars: pdfText.length },
     );
   } else {
+    fallbackReason ??= 'empty';
     console.info('[run-import] pdf-parse found no text, falling back to Textract OCR', { s3Key });
   }
+
+  const { textractFallbackTotal } = await import('../metrics.js');
+  textractFallbackTotal().inc({ reason: fallbackReason });
 
   const ocrText = await extractViaTextract(bucket, s3Key, awsRegion);
   return { text: ocrText, method: 'textract' };

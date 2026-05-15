@@ -27,6 +27,12 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost } from '@bedrock/shared';
+import {
+  careerEntriesTotal,
+  embeddingsCreatedTotal,
+  freeTierCappedTotal,
+  seedZeroSeries as seedSubStepSeries,
+} from './metrics.js';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import { parseEnv } from './env.js';
 import { extractTextFromPdf } from './parsers/pdf.js';
@@ -87,6 +93,8 @@ for (const step of ['extract', 'parse', 'enrich', 'embed', 'persist'] as const) 
 for (const outcome of ['success', 'skipped', 'failed'] as const) {
   enrichmentEntriesTotal.inc({ outcome }, 0);
 }
+// Seed the new sub-step series (textract, tavily, bedrock, embed, persist, …).
+seedSubStepSeries();
 
 const tracer = trace.getTracer('resume-import-processor');
 
@@ -147,10 +155,13 @@ async function updateImportStatus(
   }
 
   values.push(importId);
+  const { persistDurationSeconds } = await import('./metrics.js');
+  const stop = persistDurationSeconds().startTimer({ op: 'update_status' });
   await pool.query(
     `UPDATE resume_imports SET ${setParts.join(', ')} WHERE id = $${idx}::uuid`,
     values,
   );
+  stop();
 }
 
 async function persistCareerEntries(
@@ -161,11 +172,13 @@ async function persistCareerEntries(
 ): Promise<string[]> {
   const createdIds: string[] = [];
 
+  const { persistDurationSeconds } = await import('./metrics.js');
   const insertEntry = async (
     entryType: string,
     rawData: Record<string, unknown>,
     displayOrder: number,
   ): Promise<string> => {
+    const stop = persistDurationSeconds().startTimer({ op: 'insert_career' });
     const result = await pool.query<{ id: string }>(
       `INSERT INTO user_career_history
              (user_id, import_id, entry_type, raw_data, display_order)
@@ -173,6 +186,7 @@ async function persistCareerEntries(
        RETURNING id`,
       [userId, importId, entryType, JSON.stringify(rawData), displayOrder],
     );
+    stop();
     const row = result.rows[0];
     if (!row) throw new Error('persistCareerEntries: INSERT returned no row');
     return row.id;
@@ -313,6 +327,8 @@ async function main(): Promise<void> {
             'roles.count':     extracted.experience.length,
             'education.count': extracted.education.length,
           });
+          careerEntriesTotal().inc({ type: 'experience' }, extracted.experience.length);
+          careerEntriesTotal().inc({ type: 'education' },  extracted.education.length);
         } catch (err) {
           span.recordException(err instanceof Error ? err : new Error(String(err)));
           span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
@@ -358,6 +374,7 @@ async function main(): Promise<void> {
             const alreadyEnriched = await countEnrichedEntries(pool, env.userId);
             if (alreadyEnriched >= FREE_TIER_ENRICHMENT_CAP) {
               span.setAttribute('enrich.skipped_reason', 'free_tier_limit');
+              freeTierCappedTotal().inc();
               await pool.query(
                 `UPDATE user_career_history
                     SET enrichment_status = 'skipped',
@@ -444,6 +461,7 @@ async function main(): Promise<void> {
         completedAt: new Date(),
       });
 
+      embeddingsCreatedTotal().inc(totalEmbeddings);
       log.info({ totalEmbeddings }, 'completed');
       outcome = 'success';
 

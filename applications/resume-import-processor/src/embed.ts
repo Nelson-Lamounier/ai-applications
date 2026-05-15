@@ -117,6 +117,7 @@ export async function embedAndPersistEntry(
   enriched: EnrichedRoleData | null,
   importId: string,
 ): Promise<number> {
+  const { embedDurationSeconds, persistDurationSeconds } = await import('./metrics.js');
   const client = new BedrockRuntimeClient({ region: bedrockRegion });
   const chunks = buildChunks(experience, enriched);
   let inserted = 0;
@@ -132,7 +133,9 @@ export async function embedAndPersistEntry(
     );
     if (exists.rows[0]) continue;
 
+    const stopEmbed = embedDurationSeconds().startTimer();
     const { embedding, inputTokens } = await embedText(client, chunk.content);
+    stopEmbed();
 
     recordBedrockCost(pool, {
       userId,
@@ -143,6 +146,7 @@ export async function embedAndPersistEntry(
       importId,
     }).catch((err) => console.warn('[embed] cost record failed (non-fatal)', err));
 
+    const stopInsert = persistDurationSeconds().startTimer({ op: 'insert_embedding' });
     await pool.query(
       `INSERT INTO experience_embeddings
              (user_id, career_entry_id, chunk_type, content, content_hash, embedding, metadata)
@@ -157,6 +161,7 @@ export async function embedAndPersistEntry(
         JSON.stringify(chunk.metadata),
       ],
     );
+    stopInsert();
     inserted++;
   }
 

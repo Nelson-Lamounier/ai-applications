@@ -88,16 +88,23 @@ export async function enrichRole(
       warn: (obj: object, msg: string) => console.warn(`[enrich-role] ${msg}`, obj),
     } as Pick<Logger, 'info' | 'warn'>;
 
+  const { tavilyDurationSeconds, bedrockDurationSeconds } = await import('../metrics.js');
   const query = `${experience.title} responsibilities ${experience.company} job description`;
 
   let snippets: string[];
+  const stopTavily = tavilyDurationSeconds().startTimer();
   try {
     const results = await searchTool.search(query, 4);
-    if (results.length === 0) return { data: null, inputTokens: 0, outputTokens: 0 };
+    if (results.length === 0) {
+      stopTavily({ outcome: 'empty' });
+      return { data: null, inputTokens: 0, outputTokens: 0 };
+    }
     // Truncate each snippet to prevent prompt-injection text in crawled pages
     // from exceeding a safe size and to keep context window predictable.
     snippets = results.map((r) => `[${r.title}]\n${r.content.slice(0, MAX_SNIPPET_CHARS)}`);
+    stopTavily({ outcome: 'success' });
   } catch (err) {
+    stopTavily({ outcome: 'failed' });
     log.warn(
       { event: 'enrich_role.search_failed', query, err: (err as Error).message },
       'search failed, skipping enrichment',
@@ -111,6 +118,7 @@ export async function enrichRole(
   );
 
   const client = new BedrockRuntimeClient({ region });
+  const stopBedrock = bedrockDurationSeconds().startTimer({ purpose: 'enrich' });
 
   const userMessage = [
     `Role to enrich:`,
@@ -142,6 +150,7 @@ export async function enrichRole(
   });
 
   const response = await client.send(command);
+  stopBedrock();
   const parsed   = JSON.parse(Buffer.from(response.body).toString('utf-8'));
 
   const toolUseBlock = parsed.content?.find(
