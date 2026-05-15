@@ -145,7 +145,7 @@ export function seedZeroSeries(): void {
   for (const outcome of ['ok', 'empty', 'failed', 'skipped_budget'] as const) {
     fanoutTotal().inc({ outcome }, 0);
   }
-  for (const purpose of ['extract', 'enrich'] as const) {
+  for (const purpose of ['extract', 'enrich', 'gap_analysis'] as const) {
     bedrockDurationSeconds().observe({ purpose }, 0);
   }
   embedDurationSeconds().observe(0);
