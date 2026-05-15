@@ -32,6 +32,7 @@ describe('enrichRole', () => {
       company: 'TechCorp',
       period: '2020-2023',
       highlights: ['Led team', 'Shipped features'],
+      confidenceFlags: [],
     };
 
     const searchTool = {
@@ -54,6 +55,7 @@ describe('enrichRole', () => {
       company: 'TechCorp',
       period: '2020-2023',
       highlights: ['Led team'],
+      confidenceFlags: [],
     };
 
     const searchTool = {

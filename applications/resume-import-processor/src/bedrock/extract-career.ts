@@ -24,11 +24,25 @@ export interface ResumeProfile {
   website?: string;
 }
 
+/**
+ * Per-field confidence flags emitted by the extraction model.
+ * Empty array = model is confident in every field of this experience entry.
+ * Multiple flags allowed when several fields are uncertain.
+ */
+export type ExperienceConfidenceFlag =
+  | 'dateRangeAmbiguous'  // e.g. "2019-Present" with no end date or unclear start
+  | 'companyUnclear'      // OCR garbled, abbreviation, or missing company name
+  | 'titleInferred'       // title not explicit, inferred from highlights
+  | 'highlightsTruncated' // bullet list visibly cut off in source text
+  | 'periodOverlap';      // overlaps another role; possible parsing error
+
 export interface ResumeExperience {
   company: string;
   title: string;
   period: string;
   highlights: string[];
+  /** Low-confidence field flags. Empty array when the model is confident. */
+  confidenceFlags: ExperienceConfidenceFlag[];
 }
 
 export interface ResumeSkillCategory {
@@ -104,8 +118,22 @@ const EXTRACTION_TOOL_SCHEMA = {
             title:      { type: 'string' },
             period:     { type: 'string', description: 'e.g. "Jan 2021 – Mar 2023"' },
             highlights: { type: 'array', items: { type: 'string' } },
+            confidenceFlags: {
+              type:        'array',
+              description: 'Flags for low-confidence fields. Empty array when confident.',
+              items: {
+                type: 'string',
+                enum: [
+                  'dateRangeAmbiguous',
+                  'companyUnclear',
+                  'titleInferred',
+                  'highlightsTruncated',
+                  'periodOverlap',
+                ],
+              },
+            },
           },
-          required: ['company', 'title', 'period', 'highlights'],
+          required: ['company', 'title', 'period', 'highlights', 'confidenceFlags'],
         },
       },
       skills: {
@@ -184,6 +212,7 @@ const SYSTEM_PROMPT = [
   '- Dates: preserve the original format (e.g. "Jan 2021 – Mar 2023", "2019–Present").',
   '- Highlights: each bullet point from the experience section becomes one array item.',
   '- Skills: group by category if the resume groups them; otherwise use a single "Technical Skills" category.',
+  '- For every experience entry, set confidenceFlags: include flags only when you are genuinely unsure about that specific field. Use an empty array when all fields are clearly readable. Available flags: dateRangeAmbiguous, companyUnclear, titleInferred, highlightsTruncated, periodOverlap. Do not invent flags outside this list.',
   '- If the text is garbled, truncated, or appears to be an image-only PDF with no usable text, still call the tool with whatever data is recoverable.',
 ].join('\n');
 
