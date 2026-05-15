@@ -73,6 +73,21 @@ const enrichmentEntriesTotal = new Counter({
   registers:  [obs.registry],
 });
 
+// Seed zero-valued series so Grafana panels render "0" instead of "No data"
+// when Pushgateway is fresh (it has no on-disk persistence) or when no Job has
+// pushed yet in the dashboard's [24h] window. inc(…, 0) / observe(…, 0)
+// register the TimeSeries without changing the count.
+for (const outcome of ['success', 'failed'] as const) {
+  importsTotal.inc({ outcome, error_code: '' }, 0);
+  importDurationSeconds.observe({ outcome }, 0);
+}
+for (const step of ['extract', 'parse', 'enrich', 'embed', 'persist'] as const) {
+  stepDurationSeconds.observe({ step }, 0);
+}
+for (const outcome of ['success', 'skipped', 'failed'] as const) {
+  enrichmentEntriesTotal.inc({ outcome }, 0);
+}
+
 const tracer = trace.getTracer('resume-import-processor');
 
 const FREE_TIER_ENRICHMENT_CAP = 5;
