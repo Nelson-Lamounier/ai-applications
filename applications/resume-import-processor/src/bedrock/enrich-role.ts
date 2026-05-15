@@ -20,6 +20,7 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import type { Logger } from 'pino';
 import type { WebSearchTool } from '../tools/tavily.js';
 import type { ResumeExperience } from './extract-career.js';
 
@@ -75,7 +76,18 @@ export async function enrichRole(
   experience: ResumeExperience,
   searchTool: WebSearchTool,
   region: string,
+  logger?: Logger,
 ): Promise<RoleEnrichmentResult> {
+  // Resolve a structured logger: prefer the explicit arg, fall back to the
+  // observability handle on globalThis (set by bootstrapK8sObservability), and
+  // finally a tiny console shim so unit tests without OTel bootstrap still work.
+  const log: Pick<Logger, 'info' | 'warn'> = logger
+    ?? (globalThis as { __obsHandle?: { logger: Logger } }).__obsHandle?.logger
+    ?? {
+      info: (obj: object, msg: string) => console.info(`[enrich-role] ${msg}`, obj),
+      warn: (obj: object, msg: string) => console.warn(`[enrich-role] ${msg}`, obj),
+    } as Pick<Logger, 'info' | 'warn'>;
+
   const query = `${experience.title} responsibilities ${experience.company} job description`;
 
   let snippets: string[];
@@ -86,11 +98,17 @@ export async function enrichRole(
     // from exceeding a safe size and to keep context window predictable.
     snippets = results.map((r) => `[${r.title}]\n${r.content.slice(0, MAX_SNIPPET_CHARS)}`);
   } catch (err) {
-    console.warn('[enrich-role] search failed, skipping enrichment', { query, err });
+    log.warn(
+      { event: 'enrich_role.search_failed', query, err: (err as Error).message },
+      'search failed, skipping enrichment',
+    );
     return { data: null, inputTokens: 0, outputTokens: 0 };
   }
 
-  console.info('[enrich-role] Tavily results', { query, count: snippets.length });
+  log.info(
+    { event: 'enrich_role.search_results', query, count: snippets.length },
+    'tavily results',
+  );
 
   const client = new BedrockRuntimeClient({ region });
 
@@ -131,7 +149,10 @@ export async function enrichRole(
   );
 
   if (!toolUseBlock?.input) {
-    console.warn('[enrich-role] Bedrock returned no tool_use block', { title: experience.title });
+    log.warn(
+      { event: 'enrich_role.no_tool_use', title: experience.title },
+      'bedrock returned no tool_use block',
+    );
     return { data: null, inputTokens: 0, outputTokens: 0 };
   }
 

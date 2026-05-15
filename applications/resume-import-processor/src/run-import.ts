@@ -383,7 +383,7 @@ async function main(): Promise<void> {
 
             let enriched = null;
             try {
-              const enrichResult = await enrichRole(exp, searchTool, env.awsRegion);
+              const enrichResult = await enrichRole(exp, searchTool, env.awsRegion, log);
               enriched = enrichResult.data;
               if (enrichResult.inputTokens > 0) {
                 recordBedrockCost(pool, {
