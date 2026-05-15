@@ -41,6 +41,7 @@ import { extractCareerData } from './bedrock/extract-career.js';
 import { enrichRole } from './bedrock/enrich-role.js';
 import { embedAndPersistEntry } from './embed.js';
 import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
+import { CachedSearchTool } from './tools/tavily-cache.js';
 import type { ExtractedCareerData, ResumeExperience } from './bedrock/extract-career.js';
 import type { EnrichedRoleData } from './bedrock/enrich-role.js';
 
@@ -257,8 +258,10 @@ async function main(): Promise<void> {
 
   const s3 = new S3Client({ region: env.awsRegion });
 
+  // Wrap the live Tavily tool in a Postgres cache (migration 017). The NoOp
+  // tool returns [] which is never cached, so wrapping it adds no value.
   const searchTool = env.tavilyApiKey
-    ? new TavilySearchTool(env.tavilyApiKey)
+    ? new CachedSearchTool(new TavilySearchTool(env.tavilyApiKey), pool)
     : new NoOpSearchTool();
 
   const rootSpan = tracer.startSpan('resume_import.pipeline', {
