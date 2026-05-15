@@ -13,7 +13,7 @@
 -- Retention: indefinite for now — volume is bounded by user edit activity.
 -- =============================================================================
 
-CREATE TABLE resume_import_corrections (
+CREATE TABLE IF NOT EXISTS resume_import_corrections (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   import_id       UUID NOT NULL REFERENCES resume_imports(id)       ON DELETE CASCADE,
   career_entry_id UUID NOT NULL REFERENCES user_career_history(id)  ON DELETE CASCADE,
@@ -43,15 +43,15 @@ CREATE TABLE resume_import_corrections (
 );
 
 -- Eval queries hit user_id + created_at ranges (recent corrections by user).
-CREATE INDEX idx_corrections_user_created
+CREATE INDEX IF NOT EXISTS idx_corrections_user_created
   ON resume_import_corrections (user_id, created_at DESC);
 
 -- Lookup all corrections for a specific entry (entry detail UI).
-CREATE INDEX idx_corrections_entry
+CREATE INDEX IF NOT EXISTS idx_corrections_entry
   ON resume_import_corrections (career_entry_id);
 
 -- Aggregate "which fields get corrected most?" queries.
-CREATE INDEX idx_corrections_entry_field
+CREATE INDEX IF NOT EXISTS idx_corrections_entry_field
   ON resume_import_corrections (entry_type, field_path);
 
 -- =============================================================================

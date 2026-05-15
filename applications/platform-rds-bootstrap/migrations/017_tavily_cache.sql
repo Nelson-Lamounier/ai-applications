@@ -15,7 +15,7 @@
 -- background sweeper is required; an optional janitor can prune by fetched_at.
 -- =============================================================================
 
-CREATE TABLE tavily_cache (
+CREATE TABLE IF NOT EXISTS tavily_cache (
   -- sha256 hex of `${normalisedQuery}::${maxResults}`. PK so the read path is
   -- a single index probe and the write path is an idempotent UPSERT.
   query_hash   TEXT PRIMARY KEY,
@@ -34,7 +34,7 @@ CREATE TABLE tavily_cache (
 );
 
 -- Janitor query support: "delete rows older than 7 days".
-CREATE INDEX idx_tavily_cache_fetched_at
+CREATE INDEX IF NOT EXISTS idx_tavily_cache_fetched_at
   ON tavily_cache (fetched_at);
 
 -- =============================================================================
