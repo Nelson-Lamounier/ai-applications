@@ -44,6 +44,15 @@ import { RepositoryProfileEmbeddingsRepository } from './repositories/Repository
 import type { ExtractedRepoData } from './agents/ProfileExtractor.js';
 import type { ProfileEmbeddingRow } from './repositories/RepositoryProfileEmbeddingsRepository.js';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
+import {
+    profileCollectDurationSeconds,
+    profileExtractDurationSeconds,
+    profileEmbedDurationSeconds,
+    chunkIngestDurationSeconds,
+    kbQualityScoreHist,
+    profileExtractCallsTotal,
+    seedZeroSeries as seedIngestionSubStepSeries,
+} from './metrics.js';
 
 const tracer = trace.getTracer('ingestion-worker');
 
@@ -72,6 +81,9 @@ const chunksProcessed = new Counter({
     labelNames: ['phase'] as const,
     registers:  [obs.registry],
 });
+
+// Seed sub-stage series so panels show "0" before the first observation.
+seedIngestionSubStepSeries();
 
 async function embedProfile(
     userId: string,
@@ -192,7 +204,9 @@ async function main(): Promise<void> {
         // ── Phase 0: profile extraction ──────────────────────────────────────────
         log.info({ repoFullName: env.repoFullName }, 'profile_extraction.start');
 
+        const stopCollect    = profileCollectDurationSeconds().startTimer();
         const bundle         = await profileCollector.collect(env.repoFullName);
+        stopCollect();
         const classification = classifyRepo(bundle);
 
         const { id: profileId } = await profileRepo.upsert({
@@ -204,8 +218,11 @@ async function main(): Promise<void> {
         });
 
         try {
-            const extracted               = await profileExtractor.extract(env.userId, bundle);
-            const { score, breakdown }    = scoreProfile(extracted, bundle);
+            const stopExtract = profileExtractDurationSeconds().startTimer();
+            const extracted   = await profileExtractor.extract(env.userId, bundle);
+            stopExtract();
+            const { score, breakdown } = scoreProfile(extracted, bundle);
+            kbQualityScoreHist().observe(score);
 
             await profileRepo.upsert({
                 userId:           env.userId,
@@ -220,8 +237,11 @@ async function main(): Promise<void> {
                 extractorVersion: profileExtractor.version,
             });
 
+            const stopEmbed = profileEmbedDurationSeconds().startTimer();
             await embedProfile(env.userId, profileId, extracted, embedder, embRepo);
+            stopEmbed();
             await profileRepo.updateStatus(profileId, env.userId, 'completed');
+            profileExtractCallsTotal().inc({ outcome: 'success' });
 
             log.info({
                 repoFullName:  env.repoFullName,
@@ -231,15 +251,18 @@ async function main(): Promise<void> {
                 confidence:    extracted.confidence,
             }, 'profile_extraction.complete');
         } catch (profileErr) {
+            profileExtractCallsTotal().inc({ outcome: 'failed' });
             await profileRepo.updateStatus(profileId, env.userId, 'failed', String(profileErr));
             throw profileErr;
         }
 
+        const stopChunkIngest = chunkIngestDurationSeconds().startTimer();
         const report = await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
             return env.forceReindex
                 ? await orchestrator.forceReindex(env.userId, env.repoFullName)
                 : await orchestrator.ingestRepo(env.userId, env.repoFullName);
         });
+        stopChunkIngest({ outcome: 'success' });
 
         chunksProcessed.inc({ phase: 'embedded' }, report.embedded);
         chunksProcessed.inc({ phase: 'skipped' },  report.skipped);
