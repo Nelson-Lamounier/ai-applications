@@ -19,7 +19,9 @@ beforeEach(() => { queryMock.mockReset(); embedMock.mockReset(); emitMock.mockRe
 
 describe('PgSemanticCache', () => {
     it('returns a hit when similarity >= threshold', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [{ id: 7, response: { a: 1 }, similarity: 0.97 }] });
+        queryMock
+            .mockResolvedValueOnce({ rows: [{ id: 7, response: { a: 1 }, similarity: 0.97 }] })
+            .mockResolvedValueOnce({ rows: [] });
         const c = new PgSemanticCache({ ...cfg, threshold: 0.95 });
         const r = await c.get({ scope: 's', kbTag: 'k', queryText: 'hello' });
         expect(r.hit).toBe(true);
@@ -28,7 +30,7 @@ describe('PgSemanticCache', () => {
     });
 
     it('returns a miss when similarity is below threshold', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [{ id: 7, response: { a: 1 }, similarity: 0.80 }] });
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 7, response: { a: 1 }, similarity: 0.8 }] });
         const c = new PgSemanticCache({ ...cfg, threshold: 0.95 });
         const r = await c.get({ scope: 's', kbTag: 'k', queryText: 'hello' });
         expect(r.hit).toBe(false);
@@ -74,5 +76,19 @@ describe('PgSemanticCache', () => {
         await new Promise(r => setImmediate(r));
         const calls = queryMock.mock.calls.map(c => String(c[0]));
         expect(calls.some(s => /hit_count\s*=\s*hit_count\s*\+\s*1/i.test(s))).toBe(true);
+    });
+
+    it('scrubs PII from query_text before inserting into the DB', async () => {
+        const { PiiScrubber } = jest.requireMock('../security/index.js') as
+            { PiiScrubber: jest.Mock };
+        PiiScrubber.mockImplementationOnce(() => ({
+            scrub: (t: string) => ({ redacted: t.replace(/\S+@\S+/, '[EMAIL]') }),
+        }));
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const c = new PgSemanticCache(cfg);
+        await c.put({ scope: 's', kbTag: 'k', queryText: 'reach me at user@example.com', response: {} });
+        const params = queryMock.mock.calls.at(-1)?.[1] as string[];
+        expect(params[2]).not.toContain('user@example.com');
+        expect(params[2]).toContain('[EMAIL]');
     });
 });

@@ -69,9 +69,12 @@ export class PgSemanticCache implements ISemanticCache {
         });
     }
 
+    private scrubbedNormalised(text: string): string {
+        return this.scrubber.scrub(normalise(text)).redacted;
+    }
+
     private async embed(text: string): Promise<number[]> {
-        const clean = this.scrubber.scrub(normalise(text)).redacted;
-        return this.embedder.embed(clean);
+        return this.embedder.embed(this.scrubbedNormalised(text));
     }
 
     async get(input: SemanticCacheGetInput): Promise<SemanticCacheGetResult> {
@@ -91,11 +94,9 @@ export class PgSemanticCache implements ISemanticCache {
             );
             const row = res.rows[0];
             if (row && Number(row.similarity) >= this.threshold) {
-                Promise.resolve(
-                    this.pool.query(
-                        'UPDATE semantic_cache SET hit_count = hit_count + 1 WHERE id = $1',
-                        [row.id],
-                    ),
+                void this.pool.query(
+                    'UPDATE semantic_cache SET hit_count = hit_count + 1 WHERE id = $1',
+                    [row.id],
                 ).catch(() => {});
                 emitEmfMetric(NS, { Module: 'cache' },
                     [{ name: 'CacheHit', value: 1, unit: 'Count' }]);
@@ -120,7 +121,7 @@ export class PgSemanticCache implements ISemanticCache {
                 `INSERT INTO semantic_cache
                    (scope, kb_tag, query_text, query_embedding, response)
                  VALUES ($1, $2, $3, $4::vector, $5::jsonb)`,
-                [input.scope, input.kbTag, normalise(input.queryText),
+                [input.scope, input.kbTag, this.scrubbedNormalised(input.queryText),
                  `[${vec.join(',')}]`, JSON.stringify(input.response)],
             );
         } catch (e) {
