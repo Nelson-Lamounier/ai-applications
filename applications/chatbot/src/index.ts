@@ -33,7 +33,7 @@ import type {
     APIGatewayProxyResult,
 } from 'aws-lambda';
 
-import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, PiiScrubber, withSpan, BedrockGroundingVerifier } from '@bedrock/shared';
+import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, PiiScrubber, withSpan, BedrockGroundingVerifier, PgSemanticCache } from '@bedrock/shared';
 import { invokeChatbotAgent } from './agents/chatbot-agent.js';
 import type {
     InvokeRequestBody,
@@ -48,6 +48,7 @@ const inputSanitiser = new InputSanitiser();
 const outputSanitiser = new OutputSanitiser();
 const piiScrubber = new PiiScrubber();
 const groundingVerifier = new BedrockGroundingVerifier({ mode: 'block' });
+const semanticCache = PgSemanticCache.fromEnvironment();
 
 // =============================================================================
 // Constants
@@ -404,6 +405,19 @@ export const handler = withSpan('chatbot.handler', async (event: APIGatewayProxy
         const scrubbedPrompt = piiScrubber.scrub(inputCheck.sanitised).redacted;
 
         // =====================================================================
+        // Semantic cache check (fail-open — cache errors must not block requests)
+        // =====================================================================
+        const cacheScope = `chatbot:${resolvedRole}`;
+        const cacheTag = `${config.agentAliasId}:${process.env.CHATBOT_MODEL ?? 'default'}`;
+        let cached: { hit: boolean; response?: unknown } = { hit: false };
+        try {
+            cached = await semanticCache.get({ scope: cacheScope, kbTag: cacheTag, queryText: scrubbedPrompt });
+        } catch { cached = { hit: false }; }
+        if (cached.hit && typeof cached.response === 'string') {
+            return buildResponse(200, { response: cached.response, sessionId }, origin);
+        }
+
+        // =====================================================================
         // Invoke the agent (delegated to agents/ module)
         // =====================================================================
         const result = await invokeChatbotAgent(
@@ -422,12 +436,20 @@ export const handler = withSpan('chatbot.handler', async (event: APIGatewayProxy
         // Grounding verification (block mode — fail-open)
         // =====================================================================
         let answerForOutput = normalised;
+        // groundingStatus tracks whether the verified answer is safe to cache.
+        // 'NOT_GROUNDED' means the verifier replaced the answer with a fallback —
+        // that fallback must NOT be cached. All other outcomes (GROUNDED, skipped
+        // because no context, or verifier error kept original) are cacheable.
+        let groundingStatus = 'SKIPPED';
         const ctxChunks = result.contextChunks ?? [];
         if (ctxChunks.length > 0) {
             try {
                 const g = await groundingVerifier.verify({ query: scrubbedPrompt, contextChunks: ctxChunks, answer: normalised });
+                groundingStatus = g.status;
                 answerForOutput = g.answer;
             } catch (e) {
+                // Verifier threw — keep original answer, treat as cacheable (fail-open)
+                groundingStatus = 'ERROR';
                 emitEmfMetric(EMF_NAMESPACE, { Environment: process.env.CDK_ENV ?? 'development', Stage: 'grounding' }, [{ name: 'GroundingError', value: 1, unit: 'Count' }]);
                 log('WARN', 'Grounding verifier failed — returning original answer', { error: (e as Error).message });
             }
@@ -478,6 +500,18 @@ export const handler = withSpan('chatbot.handler', async (event: APIGatewayProxy
                 [{ name: 'RedactedOutputs', value: 1, unit: 'Count' }],
                 { sessionId },
             );
+        }
+
+        // =====================================================================
+        // Semantic cache store (fire-and-forget, fail-silent)
+        // Only cache when the answer is genuinely grounded (or verifier was
+        // skipped/errored — those keep the real agent answer). Never cache
+        // the NOT_GROUNDED fallback substitution.
+        // =====================================================================
+        if (groundingStatus !== 'NOT_GROUNDED' && typeof sanitisedResponse === 'string' && sanitisedResponse.length > 0) {
+            void semanticCache.put({
+                scope: cacheScope, kbTag: cacheTag, queryText: scrubbedPrompt, response: sanitisedResponse,
+            }).catch(() => {});
         }
 
         return buildResponse(200, {

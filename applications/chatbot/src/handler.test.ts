@@ -27,6 +27,8 @@ process.env.ALLOWED_ORIGINS = 'https://example.com,https://dev.example.com';
 // =============================================================================
 const mockSend = jest.fn();
 const groundingVerifyMock = jest.fn();
+const mockCacheGet = jest.fn();
+const mockCachePut = jest.fn();
 
 jest.mock('@aws-sdk/client-bedrock-agent-runtime', () => ({
     BedrockAgentRuntimeClient: jest.fn(() => ({ send: mockSend })),
@@ -35,13 +37,25 @@ jest.mock('@aws-sdk/client-bedrock-agent-runtime', () => ({
 
 jest.mock('@bedrock/shared', () => {
     const actual = jest.requireActual('@bedrock/shared') as Record<string, unknown>;
+    // Build a mock class for PgSemanticCache with a static fromEnvironment.
+    // mockCacheGet/mockCachePut are mock-prefixed so babel-jest hoists them above this factory.
+    function MockPgSemanticCache() {
+        return { get: mockCacheGet, put: mockCachePut };
+    }
+    MockPgSemanticCache.fromEnvironment = () => ({ get: mockCacheGet, put: mockCachePut });
+
     return {
         ...actual,
         BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
             verify: groundingVerifyMock,
         })),
+        PgSemanticCache: MockPgSemanticCache,
     };
 });
+
+// Aliases matching the task spec naming convention
+const cacheGetMock = mockCacheGet;
+const cachePutMock = mockCachePut;
 
 // Import handler and security functions AFTER env vars and mocks are set up
 import type { APIGatewayProxyEvent } from 'aws-lambda';
@@ -111,6 +125,11 @@ async function* mockCompletionStream(texts: string[]) {
 describe('Bedrock invoke-agent handler', () => {
     beforeEach(() => {
         mockSend.mockReset();
+        // Default cache behaviour for all tests: miss + put resolves (fail-open by default)
+        mockCacheGet.mockReset();
+        mockCachePut.mockReset();
+        mockCacheGet.mockResolvedValue({ hit: false });
+        mockCachePut.mockResolvedValue(undefined);
     });
 
     // =========================================================================
@@ -503,6 +522,104 @@ describe('Bedrock invoke-agent handler', () => {
             const res = await handler(event as never);
             expect(res.statusCode).toBe(200);
             expect(JSON.parse(res.body).response).toBe('This is the agent answer.');
+        });
+    });
+
+    // =========================================================================
+    // Semantic cache — check/store, fail-open, skip agent on hit
+    // =========================================================================
+    describe('semantic cache', () => {
+        /**
+         * Build a mock completion stream that includes a citation chunk so that
+         * contextChunks is populated and grounding is triggered (mirrors grounding suite).
+         */
+        async function* mockCompletionStreamWithCitationForCache(texts: string[]) {
+            yield {
+                chunk: {
+                    bytes: new TextEncoder().encode(texts[0] ?? 'some answer'),
+                    attribution: {
+                        citations: [
+                            {
+                                retrievedReferences: [
+                                    {
+                                        content: { text: 'some source text' },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+            };
+            for (const text of texts.slice(1)) {
+                yield {
+                    chunk: {
+                        bytes: new TextEncoder().encode(text),
+                    },
+                };
+            }
+        }
+
+        function makeEvent(bodyOverrides: Record<string, unknown>): APIGatewayProxyEvent {
+            return buildEvent(
+                { prompt: 'tell me about the portfolio', ...bodyOverrides },
+                { origin: 'https://example.com' },
+            );
+        }
+
+        beforeEach(() => {
+            groundingVerifyMock.mockReset();
+            mockCacheGet.mockReset();
+            mockCachePut.mockReset();
+            // Default: cache miss so non-cache tests go through the normal path
+            mockCacheGet.mockResolvedValue({ hit: false });
+            // Default: put resolves (it's fire-and-forget, but must return a Promise)
+            mockCachePut.mockResolvedValue(undefined);
+            // Default: grounding passes through with the original answer
+            groundingVerifyMock.mockResolvedValue({
+                status: 'GROUNDED',
+                reason: 'ok',
+                ungroundedClaims: [],
+                answer: 'This is the agent answer.',
+            });
+            mockSend.mockResolvedValue({
+                completion: mockCompletionStreamWithCitationForCache(['This is the agent answer.']),
+            });
+        });
+
+        it('returns the cached answer and skips the agent on a cache hit', async () => {
+            mockCacheGet.mockResolvedValueOnce({ hit: true, response: 'CACHED ANSWER' });
+            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            const res = await handler(event as never);
+            expect(JSON.parse(res.body).response).toBe('CACHED ANSWER');
+            expect(mockSend).not.toHaveBeenCalled();
+        });
+
+        it('on a miss runs the agent and stores a GROUNDED answer', async () => {
+            mockCacheGet.mockResolvedValueOnce({ hit: false });
+            groundingVerifyMock.mockResolvedValueOnce({
+                status: 'GROUNDED', reason: 'ok', ungroundedClaims: [], answer: 'This is the agent answer.',
+            });
+            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            await handler(event as never);
+            expect(mockSend).toHaveBeenCalled();
+            expect(mockCachePut).toHaveBeenCalled();
+        });
+
+        it('does NOT store when grounding blocked the answer', async () => {
+            mockCacheGet.mockResolvedValueOnce({ hit: false });
+            groundingVerifyMock.mockResolvedValueOnce({
+                status: 'NOT_GROUNDED', reason: 'x', ungroundedClaims: ['c'], answer: 'I do not have grounded info.',
+            });
+            const event = makeEvent({ prompt: 'q' });
+            await handler(event as never);
+            expect(mockCachePut).not.toHaveBeenCalled();
+        });
+
+        it('cache get throwing does not break the request (fail-open)', async () => {
+            mockCacheGet.mockRejectedValueOnce(new Error('db down'));
+            const event = makeEvent({ prompt: 'q' });
+            const res = await handler(event as never);
+            expect(res.statusCode).toBe(200);
         });
     });
 });
