@@ -43,6 +43,64 @@ import path              from 'node:path';
 import { Pool }          from 'pg';
 
 // =============================================================================
+// GROUNDING UNIT TEST MOCKS
+// jest.mock calls are hoisted by Jest — they do not affect the subprocess-based
+// integration suites below (those spawn a real child process).
+// =============================================================================
+
+const groundingVerifyMock = jest.fn();
+
+jest.mock('@bedrock/shared', () => {
+    const actual = jest.requireActual<typeof import('@bedrock/shared')>('@bedrock/shared');
+    return {
+        ...actual,
+        BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
+            verify: groundingVerifyMock,
+        })),
+        bootstrapK8sObservability: jest.fn().mockReturnValue({
+            logger: {
+                info: jest.fn(),
+                warn: jest.fn(),
+                error: jest.fn(),
+            },
+            registry: {},
+            shutdown: jest.fn().mockResolvedValue(undefined),
+        }),
+        pushFinalMetrics: jest.fn().mockResolvedValue(undefined),
+    };
+});
+
+jest.mock('../agents/research-agent', () => ({
+    executeResearchAgent: jest.fn(),
+}));
+
+jest.mock('../agents/strategist-agent', () => ({
+    executeStrategistAgent: jest.fn(),
+}));
+
+jest.mock('../env', () => ({
+    parseEnv: jest.fn(),
+}));
+
+jest.mock('../lib/pg', () => ({
+    getPool: jest.fn(),
+    closePool: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('../lib/pipeline-runs', () => ({
+    updatePipelineRun:          jest.fn().mockResolvedValue(undefined),
+    updatePipelineRunMetadata:  jest.fn().mockResolvedValue(undefined),
+    updateJobApplicationStatus: jest.fn().mockResolvedValue(undefined),
+    persistTailoredResume:      jest.fn().mockResolvedValue({ resumeId: 'resume-test-id' }),
+}));
+
+jest.mock('prom-client', () => ({
+    Counter:   jest.fn().mockImplementation(() => ({ inc: jest.fn() })),
+    Histogram: jest.fn().mockImplementation(() => ({ observe: jest.fn() })),
+    Registry:  jest.fn(),
+}));
+
+// =============================================================================
 // CONFIG
 // =============================================================================
 
@@ -412,4 +470,129 @@ describe('job-strategist run-pipeline.js — failure path', () => {
         await pool.query('DELETE FROM pipeline_runs    WHERE id = $1', [pipelineRunId]);
         await pool.query('DELETE FROM job_applications WHERE id = $1', [applicationId]);
     }, 120_000);
+});
+
+// =============================================================================
+// GROUNDING UNIT TESTS
+// These tests drive main() in-process with all external dependencies mocked.
+// They verify the grounding block in run-pipeline.ts — not the subprocess path.
+// =============================================================================
+
+describe('job-strategist run-pipeline — grounding (block mode, in-process)', () => {
+    jest.setTimeout(10_000);
+
+    // Shared mock handles — resolved after jest.mock hoisting.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { executeResearchAgent }   = require('../agents/research-agent') as { executeResearchAgent: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { executeStrategistAgent } = require('../agents/strategist-agent') as { executeStrategistAgent: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { parseEnv }               = require('../env') as { parseEnv: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getPool }                = require('../lib/pg') as { getPool: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { updatePipelineRunMetadata } = require('../lib/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock };
+
+    /** Minimal env returned by mocked parseEnv */
+    const FAKE_ENV = {
+        pipelineId:    'pipe-test',
+        pipelineRunId: 'run-test',
+        applicationId: 'app-test',
+        applicationSlug: 'app-test',
+        userId:        'user-test',
+        targetRole:    'Senior Engineer',
+        targetCompany: 'TestCo',
+        jobDescription: 'Build scalable systems.',
+        resumeId:      null,
+        environment:   'test' as const,
+        pg: { host: 'localhost', port: 5432, database: 'test', user: 'test', password: 'test' },
+    };
+
+    /** Minimal research result with a deduped kbContext */
+    const FAKE_RESEARCH_DATA = {
+        kbContext:           'chunk one\n\n---\n\nchunk two',
+        targetRole:          'Senior Engineer',
+        targetCompany:       'TestCo',
+        seniority:           'senior',
+        domain:              'platform',
+        overallFitRating:    'STRONG' as const,
+        fitSummary:          'Great fit.',
+        hardRequirements:    [],
+        softRequirements:    [],
+        implicitRequirements:[],
+        verifiedMatches:     [],
+        partialMatches:      [],
+        gaps:                [],
+        technologyInventory: { languages:[], frameworks:[], infrastructure:[], tools:[], methodologies:[] },
+        experienceSignals:   { yearsExpected:'5+', domainExperience:'platform', leadershipExpectation:'none', scaleIndicators:'medium' },
+        resumeData:          null,
+        resumeConstraints:   '',
+    };
+
+    /** Minimal analysis result */
+    const FAKE_ANALYSIS_DATA = {
+        analysisXml:        '<analysis>ORIGINAL_XML</analysis>',
+        metadata:           { candidateName:'A', targetRole:'Senior Engineer', targetCompany:'TestCo', analysisDate:'2026-01-01', overallFitRating:'STRONG' as const, applicationRecommendation:'APPLY' as const },
+        coverLetter:        null,
+        archetypeSelection: null,
+        tailoredResumeData: null,
+        resumeSuggestions:  { additions:[], reframes:[], eslCorrections:[] },
+        resumeAdditions:    0,
+        resumeReframes:     0,
+        eslCorrections:     0,
+    };
+
+    /** Fake pool — all queries are no-ops */
+    const fakePool = {
+        query: jest.fn().mockResolvedValue({ rows: [] }),
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+
+        parseEnv.mockReturnValue(FAKE_ENV);
+        getPool.mockReturnValue(fakePool);
+
+        executeResearchAgent.mockResolvedValue({ data: FAKE_RESEARCH_DATA });
+        executeStrategistAgent.mockResolvedValue({ data: FAKE_ANALYSIS_DATA });
+
+        // Default grounding: GROUNDED — returns original answer unchanged.
+        groundingVerifyMock.mockResolvedValue({
+            status: 'GROUNDED',
+            reason: 'all claims supported',
+            ungroundedClaims: [],
+            answer: FAKE_ANALYSIS_DATA.analysisXml,
+        });
+    });
+
+    it('substitutes fallback when strategist output is NOT_GROUNDED (block)', async () => {
+        groundingVerifyMock.mockResolvedValueOnce({
+            status: 'NOT_GROUNDED',
+            reason: 'r',
+            ungroundedClaims: [],
+            answer: 'GROUNDING_FALLBACK_XYZ',
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { main } = require('../run-pipeline') as { main: () => Promise<void> };
+        await main();
+
+        // The persisted metadata must contain the fallback string in analysisXml.
+        expect(updatePipelineRunMetadata).toHaveBeenCalledTimes(1);
+        const [, , metadata] = updatePipelineRunMetadata.mock.calls[0] as [unknown, unknown, { analysis: { analysisXml: string } }];
+        expect(metadata.analysis.analysisXml).toContain('GROUNDING_FALLBACK_XYZ');
+    });
+
+    it('does not hard-fail when the grounding verifier throws (fail-open)', async () => {
+        groundingVerifyMock.mockRejectedValueOnce(new Error('bedrock down'));
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { main } = require('../run-pipeline') as { main: () => Promise<void> };
+        await expect(main()).resolves.toBeUndefined();
+
+        // Pipeline must still persist — with the original analysisXml.
+        expect(updatePipelineRunMetadata).toHaveBeenCalledTimes(1);
+        const [, , metadata] = updatePipelineRunMetadata.mock.calls[0] as [unknown, unknown, { analysis: { analysisXml: string } }];
+        expect(metadata.analysis.analysisXml).toBe(FAKE_ANALYSIS_DATA.analysisXml);
+    });
 });

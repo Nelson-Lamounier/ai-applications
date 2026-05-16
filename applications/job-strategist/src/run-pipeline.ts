@@ -14,7 +14,7 @@
  * (Option A) is validated and persisted to platform RDS resumes.
  */
 import type { StrategistPipelineContext } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent }   from './agents/research-agent.js';
@@ -27,6 +27,9 @@ import {
     updateJobApplicationStatus,
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
+
+/** Module-scoped grounding verifier — block mode replaces ungrounded analysis with fallback. */
+const groundingVerifier = new BedrockGroundingVerifier({ mode: 'block' });
 
 // Shared registry across both run-pipeline (analyse) and run-coach so
 // dashboard rollups can be done service-wide.
@@ -47,7 +50,7 @@ const strategistDuration = new Histogram({
     registers:  [obs.registry],
 });
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
     const start = process.hrtime.bigint();
@@ -108,6 +111,27 @@ async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
+        // ── Grounding verification (block mode, fail-open) ─────────────────
+        // Run after analysis is produced and KB context is available, before
+        // any persistence so the verified (or fallback) text is what is stored.
+        const contextChunks = (research.data.kbContext ?? '')
+            .split('\n\n---\n\n')
+            .filter((s: string) => s.trim().length > 0);
+        let finalAnalysis = analysis.data.analysisXml;
+        try {
+            const g = await groundingVerifier.verify({
+                query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
+                contextChunks,
+                answer: analysis.data.analysisXml,
+            });
+            finalAnalysis = g.answer;
+        } catch (e) {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                error: (e as Error).message,
+            }, 'Grounding verifier failed — keeping original analysis');
+        }
+
         // Resume-builder persist (Option A): the Strategist already produced
         // the full tailored StructuredResumeData. Validate and persist to PG.
         const tailoredResumeData = analysis.data.tailoredResumeData ?? null;
@@ -126,8 +150,9 @@ async function main(): Promise<void> {
         // Stash both outputs on pipeline_runs.metadata so the admin-api detail
         // endpoint can serve research fields (fitSummary, matches, gaps, etc.)
         // and a downstream coach K8s Job can re-hydrate without re-running.
+        // analysisXml is replaced by finalAnalysis (grounded or original on fail-open).
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:  analysis.data,
+            analysis:  { ...analysis.data, analysisXml: finalAnalysis },
             research:  research.data,
         });
 
@@ -162,4 +187,7 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch(() => process.exit(1));
+// Only auto-execute when run as the K8s Job entrypoint, not when imported by tests.
+if (require.main === module) {
+    main().catch(() => process.exit(1));
+}
