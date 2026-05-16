@@ -23,7 +23,9 @@
  */
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
-import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber } from '@bedrock/shared';
+
+const piiScrubber = new PiiScrubber();
 import {
   embeddingsCreatedTotal,
   seedZeroSeries as seedSubStepSeries,
@@ -113,7 +115,7 @@ async function updateImportStatus(
   }
   if (extras?.errorDetails !== undefined) {
     setParts.push(`error_details = $${idx++}`);
-    values.push(JSON.stringify(extras.errorDetails));
+    values.push(piiScrubber.scrub(JSON.stringify(extras.errorDetails)).redacted);
   }
   values.push(importId);
   await pool.query(
@@ -203,7 +205,7 @@ async function main(): Promise<void> {
                 error_details = $1,
                 completed_at = NOW()
           WHERE id = $2::uuid`,
-        [JSON.stringify({ message: (err as Error).message }), env.importId],
+        [JSON.stringify({ message: piiScrubber.scrub((err as Error).message).redacted }), env.importId],
       )
       .catch(() => {});
     await pool.end().catch(() => {});

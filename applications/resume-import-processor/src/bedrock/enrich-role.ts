@@ -21,8 +21,11 @@ import {
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import type { Logger } from 'pino';
+import { PiiScrubber } from '@bedrock/shared';
 import type { WebSearchTool } from '../tools/tavily.js';
 import type { ResumeExperience } from './extract-career.js';
+
+const piiScrubber = new PiiScrubber();
 
 export interface EnrichedRoleData {
   roleDescription:      string;
@@ -89,7 +92,9 @@ export async function enrichRole(
     } as Pick<Logger, 'info' | 'warn'>;
 
   const { tavilyDurationSeconds, bedrockDurationSeconds } = await import('../metrics.js');
-  const query = `${experience.title} responsibilities ${experience.company} job description`;
+  const t = piiScrubber.scrub(experience.title).redacted;
+  const c = piiScrubber.scrub(experience.company).redacted;
+  const query = `${t} responsibilities ${c} job description`;
 
   let snippets: string[];
   const stopTavily = tavilyDurationSeconds().startTimer();
@@ -159,7 +164,7 @@ export async function enrichRole(
 
   if (!toolUseBlock?.input) {
     log.warn(
-      { event: 'enrich_role.no_tool_use', title: experience.title },
+      { event: 'enrich_role.no_tool_use', title: piiScrubber.scrub(experience.title).redacted },
       'bedrock returned no tool_use block',
     );
     return { data: null, inputTokens: 0, outputTokens: 0 };

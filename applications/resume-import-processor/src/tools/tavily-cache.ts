@@ -17,7 +17,10 @@
  */
 import crypto from 'node:crypto';
 import type { Pool } from 'pg';
+import { PiiScrubber } from '@bedrock/shared';
 import type { SearchResult, WebSearchTool } from './tavily.js';
+
+const piiScrubber = new PiiScrubber();
 
 const TTL_DAYS = 7;
 
@@ -42,7 +45,8 @@ export class CachedSearchTool implements WebSearchTool {
 
   async search(query: string, maxResults = 5, signal?: AbortSignal): Promise<SearchResult[]> {
     const { tavilyCacheTotal } = await import('../metrics.js');
-    const key = cacheKey(query, maxResults);
+    const q = piiScrubber.scrub(query).redacted;
+    const key = cacheKey(q, maxResults);
 
     const cached = await this.pool.query<{ results: SearchResult[] }>(
       `SELECT results FROM tavily_cache
@@ -61,7 +65,7 @@ export class CachedSearchTool implements WebSearchTool {
     }
 
     tavilyCacheTotal().inc({ result: 'miss' });
-    const results = await this.inner.search(query, maxResults, signal);
+    const results = await this.inner.search(q, maxResults, signal);
 
     // Only cache non-empty result sets. Empty stays uncached so a retry or
     // future query-fallback can recover. UPSERT refreshes a stale row in place.
@@ -74,7 +78,7 @@ export class CachedSearchTool implements WebSearchTool {
                 query_text = EXCLUDED.query_text,
                 fetched_at = NOW(),
                 hit_count  = 0`,
-        [key, normaliseQuery(query), maxResults, JSON.stringify(results)],
+        [key, normaliseQuery(q), maxResults, JSON.stringify(results)],
       );
     }
 

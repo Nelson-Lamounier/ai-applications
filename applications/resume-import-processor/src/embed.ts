@@ -22,7 +22,9 @@ import {
 import type { Pool } from 'pg';
 import type { ResumeExperience } from './bedrock/extract-career.js';
 import type { EnrichedRoleData } from './bedrock/enrich-role.js';
-import { recordBedrockCost } from '@bedrock/shared';
+import { recordBedrockCost, PiiScrubber } from '@bedrock/shared';
+
+const piiScrubber = new PiiScrubber();
 
 const TITAN_MODEL_ID = 'amazon.titan-embed-text-v2:0';
 const EMBEDDING_DIM  = parseInt(process.env['EMBEDDING_DIMENSION'] ?? '1024', 10);
@@ -70,7 +72,7 @@ function buildChunks(
   for (const highlight of experience.highlights) {
     chunks.push({
       chunkType: 'achievement',
-      content:   highlight,
+      content:   piiScrubber.scrub(highlight).redacted,
       metadata:  base,
     });
   }
