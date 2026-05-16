@@ -269,7 +269,7 @@ export type {
 
 export { BedrockReranker, PgVectorRetriever } from './retrieval/index.js';
 
-// ─── Security (Input/Output Sanitisation) ────────────────────────────────────
+// ─── Security (Input/Output Sanitisation + PII Scrubbing) ────────────────────
 export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';
 export type { InputSanitiserConfig } from './security/input-sanitiser.js';
 export { OutputSanitiser } from './security/output-sanitiser.js';
@@ -281,7 +281,24 @@ export type {
     SanitiseInputResult,
     SanitisationResult,
 } from './security/types.js';
+export { PiiScrubber } from './security/pii-scrubber.js';
+export type { PiiScrubberConfig, PiiScrubResult } from './security/pii-scrubber.js';
+export { RegexPiiDetector } from './security/regex-pii-detector.js';
+export { ComprehendPiiDetector } from './security/comprehend-pii-detector.js';
+export { DEFAULT_REDACTION_POLICY } from './security/pii-types.js';
+export type { IPiiDetector, PiiSpan, PiiType, RedactionPolicy } from './security/pii-types.js';
 
 // ─── Chatbot utilities ────────────────────────────────────────────────────────
 export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT } from './chatbot/index.js';
 export type { Metric, ChatbotResponse } from './chatbot/index.js';
+
+// ─── Grounding (Answer Self-Correction / Verification) ───────────────────────
+export { BedrockGroundingVerifier } from './grounding/index.js';
+export type { BedrockGroundingVerifierConfig } from './grounding/index.js';
+export { DEFAULT_GROUNDING_FALLBACK } from './grounding/index.js';
+export type {
+    GroundingInput,
+    GroundingMode,
+    GroundingResult,
+    IGroundingVerifier,
+} from './grounding/index.js';
