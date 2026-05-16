@@ -10,25 +10,35 @@
 
 import type { IPiiDetector, PiiSpan, PiiType } from './pii-types.js';
 
-interface Rule {
+interface RuleTemplate {
     readonly type: PiiType;
-    readonly regex: RegExp;
+    readonly source: string;
+    readonly flags: string;
 }
 
-const RULES: ReadonlyArray<Rule> = [
-    { type: 'EMAIL', regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
-    { type: 'SSN', regex: /\b\d{3}-\d{2}-\d{4}\b/g },
-    { type: 'CREDIT_CARD', regex: /\b(?:\d[ -]*?){13,16}\b/g },
-    { type: 'PHONE', regex: /\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/g },
-    { type: 'IP', regex: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g },
-    { type: 'NAME', regex: /(?<=\b(?:name|candidate|applicant|by)\b[:\s]+)[A-Z][a-z]+ [A-Z][a-z]+/gi },
+const RULE_TEMPLATES: ReadonlyArray<RuleTemplate> = [
+    { type: 'EMAIL', source: String.raw`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`, flags: 'g' },
+    { type: 'SSN', source: String.raw`\b\d{3}-\d{2}-\d{4}\b`, flags: 'g' },
+    { type: 'CREDIT_CARD', source: String.raw`\b(?:\d[ -]*?){13,16}\b`, flags: 'g' },
+    { type: 'PHONE', source: String.raw`\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b`, flags: 'g' },
+    { type: 'IP', source: String.raw`\b(?:\d{1,3}\.){3}\d{1,3}\b`, flags: 'g' },
+    { type: 'NAME', source: String.raw`(?<=\b(?:name|candidate|applicant|by)\b[:\s]+)[A-Z][a-z]+ [A-Z][a-z]+`, flags: 'gi' },
 ];
 
 export class RegexPiiDetector implements IPiiDetector {
+    private readonly rules: ReadonlyArray<{ type: PiiType; regex: RegExp }>;
+
+    constructor() {
+        this.rules = RULE_TEMPLATES.map(({ type, source, flags }) => ({
+            type,
+            regex: new RegExp(source, flags),
+        }));
+    }
+
     detect(text: string): PiiSpan[] {
         const spans: PiiSpan[] = [];
-        for (const { type, regex } of RULES) {
-            regex.lastIndex = 0; // RegExp /g is stateful; reset before reuse (detect() is sync, safe single-threaded)
+        for (const { type, regex } of this.rules) {
+            regex.lastIndex = 0;
             let m: RegExpExecArray | null;
             while ((m = regex.exec(text)) !== null) {
                 spans.push({ start: m.index, end: m.index + m[0].length, type, value: m[0] });

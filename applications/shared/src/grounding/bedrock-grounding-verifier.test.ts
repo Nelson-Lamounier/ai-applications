@@ -60,4 +60,15 @@ describe('BedrockGroundingVerifier', () => {
             { name: 'GroundingFailed', value: 1, unit: 'Count' },
         ]);
     });
+
+    it('warns only on unparseable output, not on legitimate NOT_GROUNDED', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        sendMock.mockResolvedValueOnce(modelReply('NOT_GROUNDED\nReason: hallucinated'));
+        await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input);
+        expect(warn).not.toHaveBeenCalled();
+        sendMock.mockResolvedValueOnce(modelReply('the model rambled with no verdict'));
+        await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input);
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+    });
 });

@@ -51,9 +51,10 @@ function parse(text: string): { status: 'GROUNDED' | 'NOT_GROUNDED'; reason: str
     const reason = /Reason:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
     const claimsRaw = /Claims:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
     const claims = claimsRaw ? claimsRaw.split(';').map(c => c.trim()).filter(Boolean) : [];
-    if (!grounded) {
+    const hasVerdict = /\bGROUNDED\b/.test(text) || /\bNOT_GROUNDED\b/.test(text);
+    if (!hasVerdict) {
         console.warn(
-            '[grounding-verifier] non-GROUNDED verdict — raw text snippet:',
+            '[grounding-verifier] unparseable model output — defaulting to NOT_GROUNDED:',
             text.substring(0, 200),
         );
     }
