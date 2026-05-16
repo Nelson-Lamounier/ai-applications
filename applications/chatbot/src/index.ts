@@ -35,11 +35,6 @@ import type {
 
 import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, PiiScrubber, withSpan } from '@bedrock/shared';
 import { invokeChatbotAgent } from './agents/chatbot-agent.js';
-
-// Module-scoped sanitiser instances (default patterns — no domain-specific overrides)
-const inputSanitiser = new InputSanitiser();
-const outputSanitiser = new OutputSanitiser();
-const piiScrubber = new PiiScrubber();
 import type {
     InvokeRequestBody,
     InvokeResponseBody,
@@ -47,6 +42,11 @@ import type {
     CallerRole,
     ChatbotCallerContext,
 } from './types.js';
+
+// Module-scoped sanitiser instances (default patterns — no domain-specific overrides)
+const inputSanitiser = new InputSanitiser();
+const outputSanitiser = new OutputSanitiser();
+const piiScrubber = new PiiScrubber();
 
 // =============================================================================
 // Constants
