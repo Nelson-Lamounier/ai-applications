@@ -347,6 +347,34 @@ describe('Bedrock invoke-agent handler', () => {
     });
 
     // =========================================================================
+    // PII scrubbing — prompt must be redacted before reaching the agent
+    // =========================================================================
+    describe('PII scrubbing', () => {
+        it('redacts PII from the prompt before the agent is invoked', async () => {
+            mockSend.mockResolvedValue({
+                completion: mockCompletionStream(['OK']),
+            });
+
+            const { InvokeAgentCommand } = jest.requireMock('@aws-sdk/client-bedrock-agent-runtime') as {
+                InvokeAgentCommand: jest.Mock;
+            };
+            InvokeAgentCommand.mockClear();
+
+            const event = buildEvent({ prompt: 'my email is jane.doe@example.com and ssn 123-45-6789' });
+            await handler(event);
+
+            // InvokeAgentCommand is called with the config object; inputText carries the prompt
+            const passedInput = InvokeAgentCommand.mock.calls.at(-1)?.[0] as { inputText: string };
+            const passedPrompt = passedInput?.inputText;
+
+            expect(passedPrompt).not.toContain('jane.doe@example.com');
+            expect(passedPrompt).not.toContain('123-45-6789');
+            expect(passedPrompt).toContain('[EMAIL]');
+            expect(passedPrompt).toContain('[SSN]');
+        });
+    });
+
+    // =========================================================================
     // Error handling
     // =========================================================================
     describe('Error handling', () => {

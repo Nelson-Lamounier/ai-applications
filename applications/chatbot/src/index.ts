@@ -33,12 +33,13 @@ import type {
     APIGatewayProxyResult,
 } from 'aws-lambda';
 
-import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, withSpan } from '@bedrock/shared';
+import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, PiiScrubber, withSpan } from '@bedrock/shared';
 import { invokeChatbotAgent } from './agents/chatbot-agent.js';
 
 // Module-scoped sanitiser instances (default patterns — no domain-specific overrides)
 const inputSanitiser = new InputSanitiser();
 const outputSanitiser = new OutputSanitiser();
+const piiScrubber = new PiiScrubber();
 import type {
     InvokeRequestBody,
     InvokeResponseBody,
@@ -265,7 +266,7 @@ function handleAgentError(
     const errorName = err instanceof Error ? err.name : 'UnknownError';
 
     log('ERROR', 'Agent invocation failed', {
-        error: errorMessage,
+        error: piiScrubber.scrub(errorMessage).redacted,
         errorName,
         durationMs,
     });
@@ -397,11 +398,16 @@ export const handler = withSpan('chatbot.handler', async (event: APIGatewayProxy
         const callerContext: ChatbotCallerContext = { callerRole: resolvedRole };
 
         // =====================================================================
+        // PII scrubbing (Layer 2b: redact PII from injection-checked prompt)
+        // =====================================================================
+        const scrubbedPrompt = piiScrubber.scrub(inputCheck.sanitised).redacted;
+
+        // =====================================================================
         // Invoke the agent (delegated to agents/ module)
         // =====================================================================
         const result = await invokeChatbotAgent(
             { agentId: config.agentId, agentAliasId: config.agentAliasId },
-            inputCheck.sanitised,
+            scrubbedPrompt,
             sessionId,
             callerContext,
         );
