@@ -49,6 +49,8 @@ import { Pool }          from 'pg';
 // =============================================================================
 
 const groundingVerifyMock = jest.fn();
+const cacheGetMock = jest.fn();
+const cachePutMock = jest.fn();
 
 jest.mock('@bedrock/shared', () => {
     const actual = jest.requireActual<typeof import('@bedrock/shared')>('@bedrock/shared');
@@ -57,6 +59,12 @@ jest.mock('@bedrock/shared', () => {
         BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
             verify: groundingVerifyMock,
         })),
+        PgSemanticCache: {
+            fromEnvironment: jest.fn().mockReturnValue({
+                get: cacheGetMock,
+                put: cachePutMock,
+            }),
+        },
         bootstrapK8sObservability: jest.fn().mockReturnValue({
             logger: {
                 info: jest.fn(),
@@ -612,5 +620,143 @@ describe('job-strategist run-pipeline — grounding (block mode, in-process)', (
         expect(updatePipelineRunMetadata).toHaveBeenCalledTimes(1);
         const [, , metadata] = updatePipelineRunMetadata.mock.calls[0] as [unknown, unknown, { analysis: { analysisXml: string } }];
         expect(metadata.analysis.analysisXml).toBe(FAKE_ANALYSIS_DATA.analysisXml);
+    });
+});
+
+// =============================================================================
+// SEMANTIC CACHE UNIT TESTS
+// Drive main() in-process with the same harness as the grounding suite, plus
+// the mocked PgSemanticCache (cacheGetMock / cachePutMock).
+// =============================================================================
+
+describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
+    jest.setTimeout(10_000);
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { executeResearchAgent }   = require('../agents/research-agent') as { executeResearchAgent: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { executeStrategistAgent } = require('../agents/strategist-agent') as { executeStrategistAgent: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { parseEnv }               = require('../env') as { parseEnv: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getPool }                = require('../lib/pg') as { getPool: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { updatePipelineRunMetadata } = require('../lib/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock };
+
+    const executeResearchAgentMock        = executeResearchAgent;
+    const executeStrategistAgentMock      = executeStrategistAgent;
+    const updatePipelineRunMetadataMock   = updatePipelineRunMetadata;
+
+    const FAKE_ENV = {
+        pipelineId:    'pipe-test',
+        pipelineRunId: 'run-test',
+        applicationId: 'app-test',
+        applicationSlug: 'app-test',
+        userId:        'user-test',
+        targetRole:    'Senior Engineer',
+        targetCompany: 'TestCo',
+        jobDescription: 'Build scalable systems for jane@example.com.',
+        resumeId:      null,
+        environment:   'test' as const,
+        pg: { host: 'localhost', port: 5432, database: 'test', user: 'test', password: 'test' },
+    };
+
+    const FAKE_RESEARCH_DATA = {
+        kbContext:           'chunk one\n\n---\n\nchunk two',
+        targetRole:          'Senior Engineer',
+        targetCompany:       'TestCo',
+        seniority:           'senior',
+        domain:              'platform',
+        overallFitRating:    'STRONG' as const,
+        fitSummary:          'Great fit.',
+        hardRequirements:    [],
+        softRequirements:    [],
+        implicitRequirements:[],
+        verifiedMatches:     [],
+        partialMatches:      [],
+        gaps:                [],
+        technologyInventory: { languages:[], frameworks:[], infrastructure:[], tools:[], methodologies:[] },
+        experienceSignals:   { yearsExpected:'5+', domainExperience:'platform', leadershipExpectation:'none', scaleIndicators:'medium' },
+        resumeData:          null,
+        resumeConstraints:   '',
+    };
+
+    const FAKE_ANALYSIS_DATA = {
+        analysisXml:        '<analysis>ORIGINAL_XML</analysis>',
+        metadata:           { candidateName:'A', targetRole:'Senior Engineer', targetCompany:'TestCo', analysisDate:'2026-01-01', overallFitRating:'STRONG' as const, applicationRecommendation:'APPLY' as const },
+        coverLetter:        null,
+        archetypeSelection: null,
+        tailoredResumeData: null,
+        resumeSuggestions:  { additions:[], reframes:[], eslCorrections:[] },
+        resumeAdditions:    0,
+        resumeReframes:     0,
+        eslCorrections:     0,
+    };
+
+    const fakePool = {
+        query: jest.fn().mockResolvedValue({ rows: [] }),
+    };
+
+    async function runPipelineForTest(): Promise<void> {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { main } = require('../run-pipeline') as { main: () => Promise<void> };
+        return main();
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+
+        parseEnv.mockReturnValue(FAKE_ENV);
+        getPool.mockReturnValue(fakePool);
+
+        executeResearchAgent.mockResolvedValue({ data: FAKE_RESEARCH_DATA });
+        executeStrategistAgent.mockResolvedValue({ data: FAKE_ANALYSIS_DATA });
+
+        groundingVerifyMock.mockResolvedValue({
+            status: 'GROUNDED',
+            reason: 'all claims supported',
+            ungroundedClaims: [],
+            answer: FAKE_ANALYSIS_DATA.analysisXml,
+        });
+
+        cacheGetMock.mockResolvedValue({ hit: false });
+        cachePutMock.mockResolvedValue(undefined);
+    });
+
+    it('on cache hit skips research+strategist and persists the cached analysis', async () => {
+        cacheGetMock.mockResolvedValueOnce({ hit: true, response: { analysisXml: 'CACHED_XML', research: { r: 1 }, fitSummary: 'fs' } });
+
+        await runPipelineForTest();
+
+        expect(executeResearchAgentMock).not.toHaveBeenCalled();
+        expect(executeStrategistAgentMock).not.toHaveBeenCalled();
+        const meta = updatePipelineRunMetadataMock.mock.calls.at(-1)?.[2];
+        expect(JSON.stringify(meta)).toContain('CACHED_XML');
+    });
+
+    it('on miss runs the pipeline and stores the grounded analysis', async () => {
+        cacheGetMock.mockResolvedValueOnce({ hit: false });
+        groundingVerifyMock.mockResolvedValueOnce({ status: 'GROUNDED', reason: 'ok', ungroundedClaims: [], answer: 'A' });
+
+        await runPipelineForTest();
+
+        expect(executeResearchAgentMock).toHaveBeenCalled();
+        expect(cachePutMock).toHaveBeenCalled();
+    });
+
+    it('does NOT store when grounding substituted the fallback', async () => {
+        cacheGetMock.mockResolvedValueOnce({ hit: false });
+        groundingVerifyMock.mockResolvedValueOnce({ status: 'NOT_GROUNDED', reason: 'x', ungroundedClaims: [], answer: 'FALLBACK' });
+
+        await runPipelineForTest();
+
+        expect(cachePutMock).not.toHaveBeenCalled();
+    });
+
+    it('cache get throwing does not fail the run (fail-open)', async () => {
+        cacheGetMock.mockRejectedValueOnce(new Error('db down'));
+
+        // main() returns Promise<void>; fail-open means it resolves (no throw).
+        await expect(runPipelineForTest()).resolves.toBeUndefined();
     });
 });

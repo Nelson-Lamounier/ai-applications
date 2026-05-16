@@ -14,7 +14,7 @@
  * (Option A) is validated and persisted to platform RDS resumes.
  */
 import type { StrategistPipelineContext } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, PgSemanticCache, PiiScrubber } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
@@ -30,6 +30,11 @@ import {
 
 /** Module-scoped grounding verifier — block mode replaces ungrounded analysis with fallback. */
 const groundingVerifier = new BedrockGroundingVerifier({ mode: 'block' });
+
+/** Shared Postgres+pgvector semantic response cache (fail-open). */
+const semanticCache = PgSemanticCache.fromEnvironment();
+/** Scrubs raw PII out of the JD before it is ever used as a cache key. */
+const piiScrubber = new PiiScrubber();
 
 // Shared registry across both run-pipeline (analyse) and run-coach so
 // dashboard rollups can be done service-wide.
@@ -49,6 +54,20 @@ const strategistDuration = new Histogram({
     buckets:    [10, 30, 60, 120, 300, 600, 1200, 1800],
     registers:  [obs.registry],
 });
+
+/**
+ * Build the semantic-cache kb_tag for a user. Fail-open: on any DB error
+ * fall back to a model-only tag so the cache still partitions by model.
+ */
+async function cacheTagFor(pool: import('pg').Pool, userId: string): Promise<string> {
+    const model = process.env['STRATEGIST_MODEL'] ?? 'default';
+    try {
+        const r = await pool.query<{ t: string }>(
+            `SELECT COALESCE(MAX(last_synced_at)::text, '') || COALESCE((MAX(kb_quality_breakdown->>'version')), '') AS t FROM repo_sync_state WHERE user_id = $1`,
+            [userId]);
+        return `${r.rows[0]?.t ?? ''}:${model}`;
+    } catch { return `:${model}`; }
+}
 
 export async function main(): Promise<void> {
     const env  = parseEnv();
@@ -104,6 +123,41 @@ export async function main(): Promise<void> {
     try {
         await updatePipelineRun(pool, env.pipelineRunId, 'researching');
         await updateJobApplicationStatus(pool, env.applicationId, 'analysing');
+
+        // ── Semantic cache short-circuit (fail-open) ──────────────────────
+        // The JD is PII-scrubbed before it ever becomes the cache key so no
+        // raw PII reaches the embedding model or the cache table. Any cache
+        // failure degrades to a normal (uncached) run — never a hard-fail.
+        // A hit reproduces the exact terminal run-state of a successful run.
+        const cacheScope = `jobstrat:${env.userId}:${env.targetRole}:${env.targetCompany}`;
+        const cacheTag   = await cacheTagFor(pool, env.userId);
+        const jdForCache = piiScrubber.scrub(env.jobDescription).redacted;
+        let cached: { hit: boolean; response?: unknown } = { hit: false };
+        try {
+            cached = (await semanticCache.get({ scope: cacheScope, kbTag: cacheTag, queryText: jdForCache })) ?? { hit: false };
+        } catch (e) {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                error: (e as Error).message,
+            }, 'Semantic cache get failed — proceeding without cache');
+            cached = { hit: false };
+        }
+        if (cached.hit && cached.response && typeof (cached.response as { analysisXml?: unknown }).analysisXml === 'string') {
+            const cr = cached.response as { analysisXml: string; research: unknown; fitSummary: unknown };
+            await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+                analysis: { analysisXml: cr.analysisXml, fitSummary: cr.fitSummary },
+                research: cr.research,
+            });
+            await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
+            await updatePipelineRun(pool, env.pipelineRunId, 'complete');
+            outcome = 'success';
+            log.info({
+                pipelineRunId: env.pipelineRunId,
+                applicationId: env.applicationId,
+            }, 'strategist_pipeline_complete');
+            return;
+        }
+
         const research = await executeResearchAgent(ctx);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
@@ -120,6 +174,10 @@ export async function main(): Promise<void> {
             .split(KB_CONTEXT_SEPARATOR)
             .filter((s: string) => s.trim().length > 0);
         let finalAnalysis = analysis.data.analysisXml;
+        // Default non-NOT_GROUNDED → skipped (no verify) and verifier-threw
+        // (fail-open) paths remain cacheable; only an explicit NOT_GROUNDED
+        // fallback substitution must NOT be cached.
+        let groundingStatus = 'GROUNDED';
         if (contextChunks.length > 0) {
             try {
                 const g = await groundingVerifier.verify({
@@ -127,6 +185,7 @@ export async function main(): Promise<void> {
                     contextChunks,
                     answer: analysis.data.analysisXml,
                 });
+                groundingStatus = g.status;
                 finalAnalysis = g.answer;
             } catch (e) {
                 log.warn({
@@ -165,6 +224,25 @@ export async function main(): Promise<void> {
             analysis:  { ...analysis.data, analysisXml: finalAnalysis },
             research:  research.data,
         });
+
+        // Store in the semantic cache (fire-and-forget, fail-open). Skip only
+        // when grounding explicitly substituted the one-line fallback — a
+        // skipped/fail-open verify keeps groundingStatus non-NOT_GROUNDED and
+        // is therefore cacheable. The cache key is the PII-scrubbed JD.
+        if (groundingStatus !== 'NOT_GROUNDED') {
+            void Promise.resolve(
+                semanticCache.put({
+                    scope:     cacheScope,
+                    kbTag:     cacheTag,
+                    queryText: jdForCache,
+                    response:  {
+                        analysisXml: finalAnalysis,
+                        research:    research.data,
+                        fitSummary:  research.data.fitSummary,
+                    },
+                }),
+            ).catch(() => { /* fail-open — cache write must never break the run */ });
+        }
 
         await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
