@@ -388,13 +388,16 @@ export async function executeResearchAgent(
     const { userId } = ctx;
     const store = RdsVectorStore.fromEnvironment();
 
+    const half = Math.min(500, Math.floor(jd.length / 2));
+    const full = Math.min(1000, jd.length);
+
     const [factual1, factual2, factual3, factual4] = await Promise.all([
         // Query 1 — full JD text: surfaces skill/tech matches from across the user's docs
-        querySingleRds(jd.substring(0, 1000), userId, store),
+        querySingleRds(jd.substring(0, full), userId, store),
         // Query 2 — JD tail + experience signal: surfaces role-relevant work history
-        querySingleRds(`professional experience skills qualifications ${jd.substring(500, 1000)}`, userId, store),
+        querySingleRds(`professional experience skills qualifications ${jd.substring(half)}`, userId, store),
         // Query 3 — JD-aware project query: surfaces project templates matching this role
-        querySingleRds(`portfolio project implementation achievements ${jd.substring(0, 500)}`, userId, store),
+        querySingleRds(`portfolio project implementation achievements ${jd.substring(0, half)}`, userId, store),
         // Query 4 — DORA metrics and outcome measurements
         querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
     ]);

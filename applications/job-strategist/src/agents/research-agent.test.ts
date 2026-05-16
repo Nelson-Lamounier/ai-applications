@@ -470,12 +470,14 @@ describe('Strategist Research Agent — PII redaction before retrieval and Bedro
 
         // Retrieval queries must NOT contain raw PII.
         expect(queryText).not.toContain('recruiter@acme.com');
+        expect(queryText).not.toContain('415-555-2671');
 
         // Bedrock user message must NOT contain raw PII.
         expect(captured.bedrockUserMessage).not.toContain('recruiter@acme.com');
         expect(captured.bedrockUserMessage).not.toContain('415-555-2671');
 
-        // Bedrock user message MUST contain the redaction token.
+        // Bedrock user message MUST contain the redaction tokens.
         expect(captured.bedrockUserMessage).toContain('[EMAIL]');
+        expect(captured.bedrockUserMessage).toContain('[PHONE]');
     });
 });
