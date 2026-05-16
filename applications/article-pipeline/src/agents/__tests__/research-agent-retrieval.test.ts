@@ -173,4 +173,60 @@ describe('executeResearchAgent — retrieval source', () => {
         await expect(executeResearchAgent(ctxWithoutUserId, fakePool))
             .rejects.toThrow('userId');
     });
+
+    it('redacts PII from the author draft before KB query and Bedrock', async () => {
+        process.env['RESEARCH_RETRIEVAL_SOURCE'] = 'pgvector';
+
+        const piiDraft = 'Draft by author@example.com about serverless. Phone 415-555-2671.';
+
+        // Override S3 mock to return PII-containing draft
+        mockS3Send.mockResolvedValueOnce({
+            Body: {
+                transformToString: jest.fn<() => Promise<string>>().mockResolvedValue(piiDraft),
+            },
+        });
+
+        const { runAgent } = jest.requireMock<{
+            runAgent: jest.MockedFunction<typeof import('@bedrock/shared').runAgent>;
+        }>('@bedrock/shared');
+
+        let capturedUserMessage = '';
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (runAgent as any).mockImplementationOnce(async (opts: { userMessage?: string }) => {
+            capturedUserMessage = opts.userMessage ?? '';
+            return {
+                data: {
+                    mode: 'kb-augmented',
+                    draftContent: '',
+                    complexity: { tier: 'LOW', budgetTokens: 2048, reason: '', signals: {} },
+                    kbPassages: [],
+                    outline: [],
+                    technicalFacts: [],
+                    suggestedTitle: 'T',
+                    suggestedTags: [],
+                    authorDirection: '',
+                },
+                tokenUsage: { input: 0, output: 0, thinking: 0 },
+                durationMs: 0,
+                agentName: 'research',
+                modelId: 'test',
+                costUsd: 0,
+            };
+        });
+
+        // pgvector retrieve args are captured via mockRetrieve
+        mockRetrieve.mockResolvedValueOnce([]);
+
+        await executeResearchAgent(makeCtx(), fakePool);
+
+        // The user message passed to Bedrock must not contain raw PII
+        expect(capturedUserMessage).not.toContain('author@example.com');
+        expect(capturedUserMessage).not.toContain('415-555-2671');
+        expect(capturedUserMessage).toContain('[EMAIL]');
+
+        // The KB query (retrieve first arg) must not contain raw PII
+        const queryArgs = mockRetrieve.mock.calls[0] as unknown[];
+        const queryString = (queryArgs ?? []).join(' ');
+        expect(queryString).not.toContain('author@example.com');
+    });
 });

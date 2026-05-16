@@ -10,7 +10,7 @@
  * 'review'. The admin-api owns the eventual transition to 'published'.
  */
 import type { PipelineContext } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent } from './agents/research-agent.js';
@@ -23,6 +23,7 @@ import {
     persistArticle,
 } from './lib/pipeline-runs.js';
 
+const piiScrubber = new PiiScrubber();
 const obs = bootstrapK8sObservability({ serviceName: 'article-pipeline' });
 const log = obs.logger;
 
@@ -91,7 +92,7 @@ async function main(): Promise<void> {
         ));
 
         // Final persist — write the rendered MDX back to platform RDS.
-        await persistArticle(pool, env.slug, writer.data.content);
+        await persistArticle(pool, env.slug, piiScrubber.scrub(writer.data.content).redacted);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
         outcome = 'success';
