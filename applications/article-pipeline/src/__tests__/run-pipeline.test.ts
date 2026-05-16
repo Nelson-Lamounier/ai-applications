@@ -312,11 +312,11 @@ describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open
         const { persistArgs, emitCalls } = await runPipelineWithMocks({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             verifyImpl: ((...args: any[]) => {
-                capturedVerifyArg = args[0] as Record<string, unknown>;
+                capturedVerifyArg = args[0];
                 return Promise.resolve({
                     status: 'NOT_GROUNDED', reason: 'r', ungroundedClaims: ['c'], answer: 'IGNORED_IN_FLAG',
                 });
-            }) as () => Promise<unknown>,
+            }),
         });
 
         // FLAG mode must NEVER alter the persisted content — even when NOT_GROUNDED.
