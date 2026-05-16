@@ -251,7 +251,7 @@ export async function generateGapAnalysis(
       batches.map((b, idx) => invokeOnce(client, b, idx === 0 ? rolesSkipped : 0)),
     );
 
-    const head = results[0]!;
+    const head = results[0];
     const merged: GapAnalysisReport = {
       ...head.data,
       perRole: results.flatMap((r) => r.data.perRole),
