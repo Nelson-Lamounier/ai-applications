@@ -17,7 +17,7 @@ import type { StrategistPipelineContext } from '@bedrock/shared';
 import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
-import { executeResearchAgent }   from './agents/research-agent.js';
+import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
@@ -115,7 +115,7 @@ export async function main(): Promise<void> {
         // Run after analysis is produced and KB context is available, before
         // any persistence so the verified (or fallback) text is what is stored.
         const contextChunks = (research.data.kbContext ?? '')
-            .split('\n\n---\n\n')
+            .split(KB_CONTEXT_SEPARATOR)
             .filter((s: string) => s.trim().length > 0);
         let finalAnalysis = analysis.data.analysisXml;
         try {
@@ -130,6 +130,7 @@ export async function main(): Promise<void> {
                 pipelineRunId: env.pipelineRunId,
                 error: (e as Error).message,
             }, 'Grounding verifier failed — keeping original analysis');
+            strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_error' });
         }
 
         // Resume-builder persist (Option A): the Strategist already produced

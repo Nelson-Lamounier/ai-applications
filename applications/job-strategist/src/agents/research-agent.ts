@@ -37,6 +37,9 @@ import { formatResumeForPrompt } from '../services/resume-service.js';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
 
+/** Delimiter used to join and later split deduplicated KB passages. */
+export const KB_CONTEXT_SEPARATOR = '\n\n---\n\n';
+
 /**
  * PII patterns specific to job description inputs.
  * Flags (warns) without redacting — JDs may legitimately contain recruiter contact info.
@@ -246,7 +249,7 @@ function deduplicatePassages(passages: string[]): string {
 
     log('INFO', 'Deduplicated passages', { agent: 'strategist-research', total: passages.length, unique: unique.length });
 
-    return unique.length > 0 ? unique.join('\n\n---\n\n') : '';
+    return unique.length > 0 ? unique.join(KB_CONTEXT_SEPARATOR) : '';
 }
 
 
