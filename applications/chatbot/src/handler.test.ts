@@ -118,6 +118,49 @@ async function* mockCompletionStream(texts: string[]) {
     }
 }
 
+/**
+ * Build a mock completion stream that includes a citation chunk so that
+ * the agent loop collects at least one contextChunk, enabling grounding.
+ */
+async function* mockCompletionStreamWithCitation(texts: string[]) {
+    // First yield a chunk with attribution/citation so contextChunks is populated
+    yield {
+        chunk: {
+            bytes: new TextEncoder().encode(texts[0] ?? 'some answer'),
+            attribution: {
+                citations: [
+                    {
+                        retrievedReferences: [
+                            {
+                                content: { text: 'some source text' },
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    };
+    // Yield any remaining text chunks without citations
+    for (const text of texts.slice(1)) {
+        yield {
+            chunk: {
+                bytes: new TextEncoder().encode(text),
+            },
+        };
+    }
+}
+
+/**
+ * Build an event whose completion stream includes citation data
+ * so grounding is triggered.
+ */
+function makeCitationEvent(bodyOverrides: Record<string, unknown>): APIGatewayProxyEvent {
+    return buildEvent(
+        { prompt: 'tell me about the portfolio', ...bodyOverrides },
+        { origin: 'https://example.com' },
+    );
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -454,49 +497,6 @@ describe('Bedrock invoke-agent handler', () => {
     // Grounding — block mode via Agent trace citations
     // =========================================================================
     describe('grounding', () => {
-        /**
-         * Build a mock completion stream that includes a citation chunk so that
-         * the agent loop collects at least one contextChunk, enabling grounding.
-         */
-        async function* mockCompletionStreamWithCitation(texts: string[]) {
-            // First yield a chunk with attribution/citation so contextChunks is populated
-            yield {
-                chunk: {
-                    bytes: new TextEncoder().encode(texts[0] ?? 'some answer'),
-                    attribution: {
-                        citations: [
-                            {
-                                retrievedReferences: [
-                                    {
-                                        content: { text: 'some source text' },
-                                    },
-                                ],
-                            },
-                        ],
-                    },
-                },
-            };
-            // Yield any remaining text chunks without citations
-            for (const text of texts.slice(1)) {
-                yield {
-                    chunk: {
-                        bytes: new TextEncoder().encode(text),
-                    },
-                };
-            }
-        }
-
-        /**
-         * Build an event whose completion stream includes citation data
-         * so grounding is triggered.
-         */
-        function makeEvent(bodyOverrides: Record<string, unknown>): APIGatewayProxyEvent {
-            return buildEvent(
-                { prompt: 'tell me about the portfolio', ...bodyOverrides },
-                { origin: 'https://example.com' },
-            );
-        }
-
         beforeEach(() => {
             groundingVerifyMock.mockReset();
             mockSend.mockResolvedValue({
@@ -511,14 +511,14 @@ describe('Bedrock invoke-agent handler', () => {
                 ungroundedClaims: ['x'],
                 answer: 'I do not have grounded info.',
             });
-            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            const event = makeCitationEvent({ prompt: 'tell me about the portfolio' });
             const res = await handler(event as never);
             expect(JSON.parse(res.body).response).toBe('I do not have grounded info.');
         });
 
         it('returns the original answer when the verifier throws (fail-open)', async () => {
             groundingVerifyMock.mockRejectedValueOnce(new Error('bedrock down'));
-            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            const event = makeCitationEvent({ prompt: 'tell me about the portfolio' });
             const res = await handler(event as never);
             expect(res.statusCode).toBe(200);
             expect(JSON.parse(res.body).response).toBe('This is the agent answer.');
@@ -529,43 +529,6 @@ describe('Bedrock invoke-agent handler', () => {
     // Semantic cache — check/store, fail-open, skip agent on hit
     // =========================================================================
     describe('semantic cache', () => {
-        /**
-         * Build a mock completion stream that includes a citation chunk so that
-         * contextChunks is populated and grounding is triggered (mirrors grounding suite).
-         */
-        async function* mockCompletionStreamWithCitationForCache(texts: string[]) {
-            yield {
-                chunk: {
-                    bytes: new TextEncoder().encode(texts[0] ?? 'some answer'),
-                    attribution: {
-                        citations: [
-                            {
-                                retrievedReferences: [
-                                    {
-                                        content: { text: 'some source text' },
-                                    },
-                                ],
-                            },
-                        ],
-                    },
-                },
-            };
-            for (const text of texts.slice(1)) {
-                yield {
-                    chunk: {
-                        bytes: new TextEncoder().encode(text),
-                    },
-                };
-            }
-        }
-
-        function makeEvent(bodyOverrides: Record<string, unknown>): APIGatewayProxyEvent {
-            return buildEvent(
-                { prompt: 'tell me about the portfolio', ...bodyOverrides },
-                { origin: 'https://example.com' },
-            );
-        }
-
         beforeEach(() => {
             groundingVerifyMock.mockReset();
             mockCacheGet.mockReset();
@@ -582,13 +545,13 @@ describe('Bedrock invoke-agent handler', () => {
                 answer: 'This is the agent answer.',
             });
             mockSend.mockResolvedValue({
-                completion: mockCompletionStreamWithCitationForCache(['This is the agent answer.']),
+                completion: mockCompletionStreamWithCitation(['This is the agent answer.']),
             });
         });
 
         it('returns the cached answer and skips the agent on a cache hit', async () => {
             mockCacheGet.mockResolvedValueOnce({ hit: true, response: 'CACHED ANSWER' });
-            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            const event = makeCitationEvent({ prompt: 'tell me about the portfolio' });
             const res = await handler(event as never);
             expect(JSON.parse(res.body).response).toBe('CACHED ANSWER');
             expect(mockSend).not.toHaveBeenCalled();
@@ -599,7 +562,7 @@ describe('Bedrock invoke-agent handler', () => {
             groundingVerifyMock.mockResolvedValueOnce({
                 status: 'GROUNDED', reason: 'ok', ungroundedClaims: [], answer: 'This is the agent answer.',
             });
-            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            const event = makeCitationEvent({ prompt: 'tell me about the portfolio' });
             await handler(event as never);
             expect(mockSend).toHaveBeenCalled();
             expect(mockCachePut).toHaveBeenCalled();
@@ -610,14 +573,14 @@ describe('Bedrock invoke-agent handler', () => {
             groundingVerifyMock.mockResolvedValueOnce({
                 status: 'NOT_GROUNDED', reason: 'x', ungroundedClaims: ['c'], answer: 'I do not have grounded info.',
             });
-            const event = makeEvent({ prompt: 'q' });
+            const event = makeCitationEvent({ prompt: 'q' });
             await handler(event as never);
             expect(mockCachePut).not.toHaveBeenCalled();
         });
 
         it('cache get throwing does not break the request (fail-open)', async () => {
             mockCacheGet.mockRejectedValueOnce(new Error('db down'));
-            const event = makeEvent({ prompt: 'q' });
+            const event = makeCitationEvent({ prompt: 'q' });
             const res = await handler(event as never);
             expect(res.statusCode).toBe(200);
         });
