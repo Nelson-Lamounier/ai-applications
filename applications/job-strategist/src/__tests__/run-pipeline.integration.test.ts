@@ -733,11 +733,13 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
         cacheGetMock.mockResolvedValueOnce({
             hit: true,
             response: {
-                analysisXml: 'CACHED_XML',
-                research: { r: 1 },
-                fitSummary: 'fs',
-                tailoredResumeData: { profile: { name: 'Cached Candidate' } },
-                archetype: 'platform-engineer',
+                analysis: {
+                    analysisXml: 'CACHED_XML',
+                    metadata: { overallFitRating: 'STRONG', applicationRecommendation: 'APPLY' },
+                    tailoredResumeData: { profile: { name: 'Cached Candidate' } },
+                    archetypeSelection: { selectedArchetype: 'platform-engineer' },
+                },
+                research: { r: 1, fitSummary: 'fs' },
             },
         });
 
@@ -745,8 +747,11 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
 
         expect(executeResearchAgentMock).not.toHaveBeenCalled();
         expect(executeStrategistAgentMock).not.toHaveBeenCalled();
-        const meta = updatePipelineRunMetadataMock.mock.calls.at(-1)?.[2];
+        const meta = updatePipelineRunMetadataMock.mock.calls.at(-1)?.[2] as { analysis: { metadata: { overallFitRating: string } } };
         expect(JSON.stringify(meta)).toContain('CACHED_XML');
+        // The coach Job reads analysis.metadata.overallFitRating — it MUST
+        // survive a cache hit (the data-integrity defect this fix closes).
+        expect(meta.analysis.metadata.overallFitRating).toBe('STRONG');
         // Cache hit must persist the cached tailored resume so the terminal
         // state is identical to a normal run (admin-api detail + coach Job).
         expect(persistTailoredResumeMock).toHaveBeenCalledWith(
@@ -770,10 +775,17 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
 
         expect(executeResearchAgentMock).toHaveBeenCalled();
         expect(cachePutMock).toHaveBeenCalled();
-        // The stored payload must carry tailoredResumeData so a later cache
-        // hit can reproduce the resume row (data-integrity fix).
-        const putArg = cachePutMock.mock.calls.at(-1)?.[0] as { response: Record<string, unknown> };
-        expect(putArg.response).toHaveProperty('tailoredResumeData');
+        // The stored payload must mirror the normal-path metadata shape:
+        // the FULL analysis object (so a later cache hit reproduces every
+        // coach-required field, e.g. analysis.metadata) plus research.
+        const putArg = cachePutMock.mock.calls.at(-1)?.[0] as {
+            response: { analysis: Record<string, unknown>; research: unknown };
+        };
+        expect(putArg.response).toHaveProperty('analysis');
+        expect(putArg.response).toHaveProperty('research');
+        expect(putArg.response.analysis).toHaveProperty('metadata');
+        expect(putArg.response.analysis).toHaveProperty('tailoredResumeData');
+        expect(putArg.response.analysis).toHaveProperty('analysisXml');
     });
 
     it('does NOT store when grounding substituted the fallback', async () => {

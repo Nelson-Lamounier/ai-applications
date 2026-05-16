@@ -145,16 +145,18 @@ export async function main(): Promise<void> {
             }, 'Semantic cache get failed — proceeding without cache');
             cached = { hit: false };
         }
-        if (cached.hit && cached.response && typeof (cached.response as { analysisXml?: unknown }).analysisXml === 'string') {
+        if (cached.hit && cached.response && typeof (cached.response as { analysis?: { analysisXml?: unknown } }).analysis?.analysisXml === 'string') {
             const cr = cached.response as {
-                analysisXml: string;
+                analysis: {
+                    analysisXml: string;
+                    tailoredResumeData?: unknown;
+                    archetypeSelection?: { selectedArchetype?: string | null };
+                    [k: string]: unknown;
+                };
                 research: unknown;
-                fitSummary: unknown;
-                tailoredResumeData?: unknown;
-                archetype?: string | null;
             };
             await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-                analysis: { analysisXml: cr.analysisXml, fitSummary: cr.fitSummary },
+                analysis: cr.analysis,
                 research: cr.research,
             });
             // Reproduce the exact terminal state of a normal run: persist the
@@ -162,14 +164,14 @@ export async function main(): Promise<void> {
             // coach Job see a resume row. Older cached entries predate this
             // field — when absent, proceed without it (matches a run that
             // produced no resume). Mirrors the normal success-path call.
-            if (cr.tailoredResumeData) {
+            if (cr.analysis?.tailoredResumeData) {
                 await persistTailoredResume(pool, {
                     applicationId:  env.applicationId,
                     userId:         env.userId,
                     pipelineId:     env.pipelineId,
                     targetRole:     env.targetRole,
-                    archetype:      cr.archetype ?? null,
-                    tailoredResume: cr.tailoredResumeData,
+                    archetype:      cr.analysis?.archetypeSelection?.selectedArchetype ?? null,
+                    tailoredResume: cr.analysis.tailoredResumeData,
                 });
             }
             await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
@@ -259,11 +261,8 @@ export async function main(): Promise<void> {
                 kbTag:     cacheTag,
                 queryText: jdForCache,
                 response:  {
-                    analysisXml:        finalAnalysis,
-                    research:           research.data,
-                    fitSummary:         research.data.fitSummary,
-                    tailoredResumeData: analysis.data.tailoredResumeData,
-                    archetype,
+                    analysis: { ...analysis.data, analysisXml: finalAnalysis },
+                    research: research.data,
                 },
             }).catch(() => { /* fail-open — cache write must never break the run */ });
         }
