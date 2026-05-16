@@ -38,6 +38,7 @@ export class RepositoryProfileEmbeddingsRepository {
                     );
                 }
                 const scrubbedContent = piiScrubber.scrub(row.content).redacted;
+                // Always recompute from scrubbed content; row.contentHash is intentionally ignored.
                 const scrubbedHash = createHash('sha256').update(scrubbedContent, 'utf8').digest('hex');
                 values.push(
                     row.userId,

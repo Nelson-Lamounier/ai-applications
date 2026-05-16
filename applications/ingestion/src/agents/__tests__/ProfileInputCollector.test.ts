@@ -1,8 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { ProfileInputCollector } from '../ProfileInputCollector.js';
 import { FileFetchCache } from '../../util/FileFetchCache.js';
-import type { GitHubAdapter } from '@bedrock/shared';
-import type { RepoCommit } from '@bedrock/shared';
+import type { GitHubAdapter, RepoCommit } from '@bedrock/shared';
 
 // ---------------------------------------------------------------------------
 // Stub helpers
