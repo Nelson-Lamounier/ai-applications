@@ -354,7 +354,8 @@ async function fetchPreviousVersionContent(
         log('INFO', 'Reading previous version from S3', { agent: 'research', bucket: ctx.bucket, s3Key });
 
         const content = await readDraftFromS3(ctx.bucket, s3Key);
-        const capped = content.substring(0, PREVIOUS_VERSION_CONTENT_CAP);
+        const redacted = piiScrubber.scrub(content).redacted;
+        const capped = redacted.substring(0, PREVIOUS_VERSION_CONTENT_CAP);
 
         log('INFO', 'Previous version loaded', { agent: 'research', originalLength: content.length, cappedLength: capped.length });
 
