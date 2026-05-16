@@ -39,9 +39,11 @@ any app, semantic cache, Comprehend implementation, reversible PII rehydration.
 ## A. Per-App Split Checklist Docs
 
 `Rag-deployment-check-list.md` stays unchanged as the chatbot canonical
-reference. New directory `docs/rag-checklist/`:
+reference. New tracked directory `rag-checklist/` at repo root (note: `docs/`
+is gitignored — checklist docs follow the existing root-level review
+convention):
 
-- `README.md` — explains the split model:
+- `rag-checklist/README.md` — explains the split model:
   - **RAG-Retrieval subset:** §1 Chunking, §2 Hybrid Search, §3 Reranking,
     §4 Context Window, §8 HNSW, §9 Semantic Cache. Applies to query-driven
     apps (chatbot, job-strategist) and the relevant pipeline producers
@@ -172,7 +174,7 @@ imports them.
 
 ## Success Criteria
 
-- `docs/rag-checklist/` exists with README + 5 per-app files, items as
+- `rag-checklist/` exists with README + 5 per-app files, items as
   checkboxes with Status/Evidence/Gap.
 - Two GitHub issues open with per-app acceptance checklists.
 - `PiiScrubber` + `IPiiDetector` + `RegexPiiDetector` + `ComprehendPiiDetector`
