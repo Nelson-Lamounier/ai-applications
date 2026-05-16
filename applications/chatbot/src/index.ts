@@ -33,7 +33,7 @@ import type {
     APIGatewayProxyResult,
 } from 'aws-lambda';
 
-import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, PiiScrubber, withSpan } from '@bedrock/shared';
+import { log, emitEmfMetric, InputSanitiser, OutputSanitiser, PiiScrubber, withSpan, BedrockGroundingVerifier } from '@bedrock/shared';
 import { invokeChatbotAgent } from './agents/chatbot-agent.js';
 import type {
     InvokeRequestBody,
@@ -47,6 +47,7 @@ import type {
 const inputSanitiser = new InputSanitiser();
 const outputSanitiser = new OutputSanitiser();
 const piiScrubber = new PiiScrubber();
+const groundingVerifier = new BedrockGroundingVerifier({ mode: 'block' });
 
 // =============================================================================
 // Constants
@@ -416,7 +417,25 @@ export const handler = withSpan('chatbot.handler', async (event: APIGatewayProxy
         // Output sanitisation (Layer 5: Sensitive pattern redaction)
         // =====================================================================
         const normalised = stripCodeFence(result.response);
-        const { sanitised: sanitisedResponse, wasRedacted } = outputSanitiser.sanitiseWithReport(normalised);
+
+        // =====================================================================
+        // Grounding verification (block mode — fail-open)
+        // =====================================================================
+        let answerForOutput = normalised;
+        const ctxChunks = result.contextChunks ?? [];
+        if (ctxChunks.length > 0) {
+            try {
+                const g = await groundingVerifier.verify({ query: scrubbedPrompt, contextChunks: ctxChunks, answer: normalised });
+                answerForOutput = g.answer;
+            } catch (e) {
+                emitEmfMetric(EMF_NAMESPACE, { Stage: 'grounding' }, [{ name: 'GroundingError', value: 1, unit: 'Count' }]);
+                log('WARN', 'Grounding verifier failed — returning original answer', { error: (e as Error).message });
+            }
+        } else {
+            emitEmfMetric(EMF_NAMESPACE, { Stage: 'grounding' }, [{ name: 'GroundingSkippedNoContext', value: 1, unit: 'Count' }]);
+        }
+
+        const { sanitised: sanitisedResponse, wasRedacted } = outputSanitiser.sanitiseWithReport(answerForOutput);
 
         const durationMs = Date.now() - startTime;
 

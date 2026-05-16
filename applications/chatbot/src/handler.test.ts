@@ -26,11 +26,22 @@ process.env.ALLOWED_ORIGINS = 'https://example.com,https://dev.example.com';
 // Mocks — Jest hoists variables prefixed with `mock` above jest.mock()
 // =============================================================================
 const mockSend = jest.fn();
+const groundingVerifyMock = jest.fn();
 
 jest.mock('@aws-sdk/client-bedrock-agent-runtime', () => ({
     BedrockAgentRuntimeClient: jest.fn(() => ({ send: mockSend })),
     InvokeAgentCommand: jest.fn((input: unknown) => input),
 }));
+
+jest.mock('@bedrock/shared', () => {
+    const actual = jest.requireActual('@bedrock/shared') as Record<string, unknown>;
+    return {
+        ...actual,
+        BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
+            verify: groundingVerifyMock,
+        })),
+    };
+});
 
 // Import handler and security functions AFTER env vars and mocks are set up
 import type { APIGatewayProxyEvent } from 'aws-lambda';
@@ -417,6 +428,81 @@ describe('Bedrock invoke-agent handler', () => {
 
             const body = JSON.parse(result.body);
             expect(body.error).toBe('InternalError');
+        });
+    });
+
+    // =========================================================================
+    // Grounding — block mode via Agent trace citations
+    // =========================================================================
+    describe('grounding', () => {
+        /**
+         * Build a mock completion stream that includes a citation chunk so that
+         * the agent loop collects at least one contextChunk, enabling grounding.
+         */
+        async function* mockCompletionStreamWithCitation(texts: string[]) {
+            // First yield a chunk with attribution/citation so contextChunks is populated
+            yield {
+                chunk: {
+                    bytes: new TextEncoder().encode(texts[0] ?? 'some answer'),
+                    attribution: {
+                        citations: [
+                            {
+                                retrievedReferences: [
+                                    {
+                                        content: { text: 'some source text' },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+            };
+            // Yield any remaining text chunks without citations
+            for (const text of texts.slice(1)) {
+                yield {
+                    chunk: {
+                        bytes: new TextEncoder().encode(text),
+                    },
+                };
+            }
+        }
+
+        /**
+         * Build an event whose completion stream includes citation data
+         * so grounding is triggered.
+         */
+        function makeEvent(bodyOverrides: Record<string, unknown>): APIGatewayProxyEvent {
+            mockSend.mockResolvedValue({
+                completion: mockCompletionStreamWithCitation(['This is the agent answer.']),
+            });
+            return buildEvent(
+                { prompt: 'tell me about the portfolio', ...bodyOverrides },
+                { origin: 'https://example.com' },
+            );
+        }
+
+        beforeEach(() => {
+            groundingVerifyMock.mockReset();
+        });
+
+        it('substitutes the grounding fallback when NOT_GROUNDED (block mode)', async () => {
+            groundingVerifyMock.mockResolvedValueOnce({
+                status: 'NOT_GROUNDED',
+                reason: 'unsupported',
+                ungroundedClaims: ['x'],
+                answer: 'I do not have grounded info.',
+            });
+            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            const res = await handler(event as never);
+            expect(JSON.parse(res.body).response).toBe('I do not have grounded info.');
+        });
+
+        it('returns the original answer when the verifier throws (fail-open)', async () => {
+            groundingVerifyMock.mockRejectedValueOnce(new Error('bedrock down'));
+            const event = makeEvent({ prompt: 'tell me about the portfolio' });
+            const res = await handler(event as never);
+            expect(res.statusCode).toBe(200);
+            expect(typeof JSON.parse(res.body).response).toBe('string');
         });
     });
 });
