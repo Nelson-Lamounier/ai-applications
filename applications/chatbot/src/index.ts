@@ -428,11 +428,11 @@ export const handler = withSpan('chatbot.handler', async (event: APIGatewayProxy
                 const g = await groundingVerifier.verify({ query: scrubbedPrompt, contextChunks: ctxChunks, answer: normalised });
                 answerForOutput = g.answer;
             } catch (e) {
-                emitEmfMetric(EMF_NAMESPACE, { Stage: 'grounding' }, [{ name: 'GroundingError', value: 1, unit: 'Count' }]);
+                emitEmfMetric(EMF_NAMESPACE, { Environment: process.env.CDK_ENV ?? 'development', Stage: 'grounding' }, [{ name: 'GroundingError', value: 1, unit: 'Count' }]);
                 log('WARN', 'Grounding verifier failed — returning original answer', { error: (e as Error).message });
             }
         } else {
-            emitEmfMetric(EMF_NAMESPACE, { Stage: 'grounding' }, [{ name: 'GroundingSkippedNoContext', value: 1, unit: 'Count' }]);
+            emitEmfMetric(EMF_NAMESPACE, { Environment: process.env.CDK_ENV ?? 'development', Stage: 'grounding' }, [{ name: 'GroundingSkippedNoContext', value: 1, unit: 'Count' }]);
         }
 
         const { sanitised: sanitisedResponse, wasRedacted } = outputSanitiser.sanitiseWithReport(answerForOutput);

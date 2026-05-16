@@ -472,9 +472,6 @@ describe('Bedrock invoke-agent handler', () => {
          * so grounding is triggered.
          */
         function makeEvent(bodyOverrides: Record<string, unknown>): APIGatewayProxyEvent {
-            mockSend.mockResolvedValue({
-                completion: mockCompletionStreamWithCitation(['This is the agent answer.']),
-            });
             return buildEvent(
                 { prompt: 'tell me about the portfolio', ...bodyOverrides },
                 { origin: 'https://example.com' },
@@ -483,6 +480,9 @@ describe('Bedrock invoke-agent handler', () => {
 
         beforeEach(() => {
             groundingVerifyMock.mockReset();
+            mockSend.mockResolvedValue({
+                completion: mockCompletionStreamWithCitation(['This is the agent answer.']),
+            });
         });
 
         it('substitutes the grounding fallback when NOT_GROUNDED (block mode)', async () => {
@@ -502,7 +502,7 @@ describe('Bedrock invoke-agent handler', () => {
             const event = makeEvent({ prompt: 'tell me about the portfolio' });
             const res = await handler(event as never);
             expect(res.statusCode).toBe(200);
-            expect(typeof JSON.parse(res.body).response).toBe('string');
+            expect(JSON.parse(res.body).response).toBe('This is the agent answer.');
         });
     });
 });
