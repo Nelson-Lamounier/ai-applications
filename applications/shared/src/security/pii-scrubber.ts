@@ -44,7 +44,11 @@ export class PiiScrubber {
         let redacted = text;
         for (let i = spans.length - 1; i >= 0; i--) {
             const sp = spans[i];
-            redacted = redacted.slice(0, sp.start) + this.policy[sp.type] + redacted.slice(sp.end);
+            // Fall back to a derived token if a detector emits a type the
+            // policy does not cover (policy is exhaustive at the type level
+            // only; a cast or loose detector could bypass that at runtime).
+            const token = this.policy[sp.type] ?? `[${sp.type}]`;
+            redacted = redacted.slice(0, sp.start) + token + redacted.slice(sp.end);
         }
         return { redacted, spans, found: true };
     }
