@@ -33,10 +33,10 @@ apps** (chatbot + job-strategist).
 Non-goals: Redis/ElastiCache, in-memory LRU, caching for the pipeline
 apps (ingestion/resume-import/article-pipeline), CDK/infra changes.
 
-## A. Store — migration `021_semantic_cache.sql`
+## A. Store — migration `022_semantic_cache.sql`
 
-`applications/platform-rds-bootstrap/migrations/021_semantic_cache.sql`,
-idempotent (`IF NOT EXISTS`), next lexical number after `020`, loaded by
+`applications/platform-rds-bootstrap/migrations/022_semantic_cache.sql`,
+idempotent (`IF NOT EXISTS`), next lexical number after `021`, loaded by
 the existing bootstrap runner.
 
 ```sql
@@ -167,17 +167,17 @@ returned/persisted); a NOT_GROUNDED/blocked answer is NOT stored; a cache
 
 ## Scope / Sequencing
 
-One spec. Plan sequenced: (1) migration `021`, (2) shared cache module +
+One spec. Plan sequenced: (1) migration `022`, (2) shared cache module +
 tests, (3) chatbot wiring + tests, (4) job-strategist wiring + tests,
 (5) final verification. Subagent-driven, per-task TDD + two-stage review.
 Branch off `rls-secure-by-default` (carries the SP1/SP2 shared modules
-this depends on). Touch only: `migrations/021_semantic_cache.sql`, the
+this depends on). Touch only: `migrations/022_semantic_cache.sql`, the
 shared `cache/` module + `shared/src/index.ts`, and the two query apps'
 entrypoints.
 
 ## Success Criteria
 
-- `021_semantic_cache.sql` present, idempotent, follows the 020 convention.
+- `022_semantic_cache.sql` present, idempotent, follows the 020 convention.
 - `PgSemanticCache`/`ISemanticCache` exported from `@bedrock/shared`, all
   unit tests green, `applications/shared` typecheck clean.
 - chatbot returns a cached answer (skipping agent+grounding) on a
