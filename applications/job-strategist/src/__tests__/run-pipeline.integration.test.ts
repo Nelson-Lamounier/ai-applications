@@ -571,6 +571,11 @@ describe('job-strategist run-pipeline — grounding (block mode, in-process)', (
             ungroundedClaims: [],
             answer: FAKE_ANALYSIS_DATA.analysisXml,
         });
+
+        // semanticCache.put returns a Promise in production (PgSemanticCache);
+        // mirror that so the `void put(...).catch(...)` idiom has a thenable.
+        cacheGetMock.mockResolvedValue({ hit: false });
+        cachePutMock.mockResolvedValue(undefined);
     });
 
     it('substitutes fallback when strategist output is NOT_GROUNDED (block)', async () => {
@@ -641,11 +646,12 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getPool }                = require('../lib/pg') as { getPool: jest.Mock };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { updatePipelineRunMetadata } = require('../lib/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock };
+    const { updatePipelineRunMetadata, persistTailoredResume } = require('../lib/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock; persistTailoredResume: jest.Mock };
 
     const executeResearchAgentMock        = executeResearchAgent;
     const executeStrategistAgentMock      = executeStrategistAgent;
     const updatePipelineRunMetadataMock   = updatePipelineRunMetadata;
+    const persistTailoredResumeMock       = persistTailoredResume;
 
     const FAKE_ENV = {
         pipelineId:    'pipe-test',
@@ -724,7 +730,16 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
     });
 
     it('on cache hit skips research+strategist and persists the cached analysis', async () => {
-        cacheGetMock.mockResolvedValueOnce({ hit: true, response: { analysisXml: 'CACHED_XML', research: { r: 1 }, fitSummary: 'fs' } });
+        cacheGetMock.mockResolvedValueOnce({
+            hit: true,
+            response: {
+                analysisXml: 'CACHED_XML',
+                research: { r: 1 },
+                fitSummary: 'fs',
+                tailoredResumeData: { profile: { name: 'Cached Candidate' } },
+                archetype: 'platform-engineer',
+            },
+        });
 
         await runPipelineForTest();
 
@@ -732,6 +747,19 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
         expect(executeStrategistAgentMock).not.toHaveBeenCalled();
         const meta = updatePipelineRunMetadataMock.mock.calls.at(-1)?.[2];
         expect(JSON.stringify(meta)).toContain('CACHED_XML');
+        // Cache hit must persist the cached tailored resume so the terminal
+        // state is identical to a normal run (admin-api detail + coach Job).
+        expect(persistTailoredResumeMock).toHaveBeenCalledWith(
+            fakePool,
+            expect.objectContaining({
+                applicationId:  FAKE_ENV.applicationId,
+                userId:         FAKE_ENV.userId,
+                pipelineId:     FAKE_ENV.pipelineId,
+                targetRole:     FAKE_ENV.targetRole,
+                archetype:      'platform-engineer',
+                tailoredResume: { profile: { name: 'Cached Candidate' } },
+            }),
+        );
     });
 
     it('on miss runs the pipeline and stores the grounded analysis', async () => {
@@ -742,6 +770,10 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
 
         expect(executeResearchAgentMock).toHaveBeenCalled();
         expect(cachePutMock).toHaveBeenCalled();
+        // The stored payload must carry tailoredResumeData so a later cache
+        // hit can reproduce the resume row (data-integrity fix).
+        const putArg = cachePutMock.mock.calls.at(-1)?.[0] as { response: Record<string, unknown> };
+        expect(putArg.response).toHaveProperty('tailoredResumeData');
     });
 
     it('does NOT store when grounding substituted the fallback', async () => {

@@ -130,7 +130,10 @@ export async function main(): Promise<void> {
         // failure degrades to a normal (uncached) run — never a hard-fail.
         // A hit reproduces the exact terminal run-state of a successful run.
         const cacheScope = `jobstrat:${env.userId}:${env.targetRole}:${env.targetCompany}`;
-        const cacheTag   = await cacheTagFor(pool, env.userId);
+        // Fail-open: any throw from cacheTagFor degrades to a model-only tag so
+        // the cache still partitions by model and the run never hard-fails.
+        let cacheTag = `:${process.env['STRATEGIST_MODEL'] ?? 'default'}`;
+        try { cacheTag = await cacheTagFor(pool, env.userId); } catch { /* fail-open: model-only tag */ }
         const jdForCache = piiScrubber.scrub(env.jobDescription).redacted;
         let cached: { hit: boolean; response?: unknown } = { hit: false };
         try {
@@ -143,11 +146,32 @@ export async function main(): Promise<void> {
             cached = { hit: false };
         }
         if (cached.hit && cached.response && typeof (cached.response as { analysisXml?: unknown }).analysisXml === 'string') {
-            const cr = cached.response as { analysisXml: string; research: unknown; fitSummary: unknown };
+            const cr = cached.response as {
+                analysisXml: string;
+                research: unknown;
+                fitSummary: unknown;
+                tailoredResumeData?: unknown;
+                archetype?: string | null;
+            };
             await updatePipelineRunMetadata(pool, env.pipelineRunId, {
                 analysis: { analysisXml: cr.analysisXml, fitSummary: cr.fitSummary },
                 research: cr.research,
             });
+            // Reproduce the exact terminal state of a normal run: persist the
+            // cached tailored resume so admin-api detail and the downstream
+            // coach Job see a resume row. Older cached entries predate this
+            // field — when absent, proceed without it (matches a run that
+            // produced no resume). Mirrors the normal success-path call.
+            if (cr.tailoredResumeData) {
+                await persistTailoredResume(pool, {
+                    applicationId:  env.applicationId,
+                    userId:         env.userId,
+                    pipelineId:     env.pipelineId,
+                    targetRole:     env.targetRole,
+                    archetype:      cr.archetype ?? null,
+                    tailoredResume: cr.tailoredResumeData,
+                });
+            }
             await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
             await updatePipelineRun(pool, env.pipelineRunId, 'complete');
             outcome = 'success';
@@ -230,18 +254,18 @@ export async function main(): Promise<void> {
         // skipped/fail-open verify keeps groundingStatus non-NOT_GROUNDED and
         // is therefore cacheable. The cache key is the PII-scrubbed JD.
         if (groundingStatus !== 'NOT_GROUNDED') {
-            void Promise.resolve(
-                semanticCache.put({
-                    scope:     cacheScope,
-                    kbTag:     cacheTag,
-                    queryText: jdForCache,
-                    response:  {
-                        analysisXml: finalAnalysis,
-                        research:    research.data,
-                        fitSummary:  research.data.fitSummary,
-                    },
-                }),
-            ).catch(() => { /* fail-open — cache write must never break the run */ });
+            void semanticCache.put({
+                scope:     cacheScope,
+                kbTag:     cacheTag,
+                queryText: jdForCache,
+                response:  {
+                    analysisXml:        finalAnalysis,
+                    research:           research.data,
+                    fitSummary:         research.data.fitSummary,
+                    tailoredResumeData: analysis.data.tailoredResumeData,
+                    archetype,
+                },
+            }).catch(() => { /* fail-open — cache write must never break the run */ });
         }
 
         await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
