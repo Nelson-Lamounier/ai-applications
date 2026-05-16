@@ -97,10 +97,10 @@ async function main(): Promise<void> {
         // Runs post-QA, pre-persist. Fail-open: any verifier error is logged and
         // ignored so the article always proceeds to 'review'.
         const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
-        let groundingMeta: { status: string; reason: string; ungroundedClaims: string[] } | undefined;
+        let groundingMeta: Pick<Awaited<ReturnType<typeof groundingVerifier.verify>>, 'status' | 'reason' | 'ungroundedClaims'> | undefined;
         try {
             const g = await groundingVerifier.verify({
-                query:        (research.data.draftContent ?? '').slice(0, 500),
+                query:        `${env.slug} ${research.data.authorDirection ?? ''}`.trim().slice(0, 500),
                 contextChunks: (research.data.kbPassages ?? []).map((p) => p.text),
                 answer:       writer.data.content,
             });
