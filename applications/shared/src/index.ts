@@ -293,10 +293,9 @@ export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT } from './chatbot/
 export type { Metric, ChatbotResponse } from './chatbot/index.js';
 
 // ─── Grounding (Answer Self-Correction / Verification) ───────────────────────
-export { BedrockGroundingVerifier } from './grounding/index.js';
-export type { BedrockGroundingVerifierConfig } from './grounding/index.js';
-export { DEFAULT_GROUNDING_FALLBACK } from './grounding/index.js';
+export { BedrockGroundingVerifier, DEFAULT_GROUNDING_FALLBACK } from './grounding/index.js';
 export type {
+    BedrockGroundingVerifierConfig,
     GroundingInput,
     GroundingMode,
     GroundingResult,
