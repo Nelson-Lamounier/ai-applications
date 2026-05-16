@@ -7,7 +7,7 @@ describe('PiiScrubber', () => {
         const r = s.scrub('email jane@x.com and ip 10.0.0.1');
         expect(r.found).toBe(true);
         expect(r.redacted).toBe('email [EMAIL] and ip [IP]');
-        expect(r.spans.map(x => x.type).sort()).toEqual(['EMAIL', 'IP']);
+        expect(r.spans.map(x => x.type).sort((a, b) => a.localeCompare(b))).toEqual(['EMAIL', 'IP']);
     });
 
     it('returns input unchanged and found=false when no PII', () => {
@@ -36,8 +36,8 @@ describe('PiiScrubber', () => {
         const s = new PiiScrubber();
         it('redacts spaced/dashed SSN and credit card variants', () => {
             expect(s.scrub('ssn 123-45-6789').redacted).toBe('ssn [SSN]');
-            expect(s.scrub('card 4111-1111-1111-1111').found).toBe(true);
-            expect(s.scrub('card 4111 1111 1111 1111').found).toBe(true);
+            expect(s.scrub('card 4111-1111-1111-1111').redacted).toBe('card [CC]');
+            expect(s.scrub('card 4111 1111 1111 1111').redacted).toBe('card [CC]');
         });
         it('redacts email with plus-addressing and subdomains', () => {
             expect(s.scrub('a.b+tag@mail.corp.example.co').redacted).toBe('[EMAIL]');
@@ -56,6 +56,7 @@ describe('PiiScrubber', () => {
             const r = new PiiScrubber({ detector: fake }).scrub('a@b.com xx');
             expect(typeof r.redacted).toBe('string');
             expect(r.found).toBe(true);
+            expect(r.redacted).toBe('[EMAIL]x');
         });
     });
 });
