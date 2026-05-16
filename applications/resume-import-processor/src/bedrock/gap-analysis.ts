@@ -56,8 +56,31 @@ export interface GapAnalysisResult {
   groundingMetadata?: GroundingResult[];
 }
 
+/** Type anchor for the persisted wrapper written by run-import. */
+export interface GapReportPayload {
+  report:            GapAnalysisReport;
+  groundingMetadata: GroundingResult[];
+  verifiedAt:        string;
+}
+
 const MODEL_ID = process.env['GAP_ANALYSIS_MODEL_ID']
   ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+
+// Module-scoped verifier: avoids a new BedrockRuntimeClient allocation on every
+// generateGapAnalysis call. Consistent with the pattern used in Tasks 2/4
+// (chatbot / job-strategist).
+const groundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
+
+// Resolved once at module load: prefer the observability handle injected by
+// bootstrapK8sObservability, fall back to a concrete console shim so that
+// unit tests without OTel bootstrap still emit visible warnings.
+type MinLogger = { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
+const gLog: MinLogger =
+  (globalThis as { __obsHandle?: { logger: MinLogger } }).__obsHandle?.logger
+  ?? {
+    info: (obj: object, msg: string) => console.info(`[gap-analysis] ${msg}`, obj),
+    warn: (obj: object, msg: string) => console.warn(`[gap-analysis] ${msg}`, obj),
+  };
 
 // Above this many roles per call the prompt risks context bloat / truncated
 // output. Split into batches and merge perRole.
@@ -241,10 +264,6 @@ export async function generateGapAnalysis(
   }
 
   // ── Flag-mode grounding: attach metadata per role, never block ───────────
-  type MinLogger = { warn?: (obj: object, msg: string) => void };
-  const gLog: MinLogger =
-    (globalThis as { __obsHandle?: { logger: MinLogger } }).__obsHandle?.logger ?? {};
-  const verifier = new BedrockGroundingVerifier({ mode: 'flag' });
   const groundingMetadata: GroundingResult[] = [];
 
   for (const perRole of base.data.perRole) {
@@ -257,16 +276,17 @@ export async function generateGapAnalysis(
     const answer = perRole.suggestedAdditions
       .map((s) => `${s.bullet} (${s.rationale})`)
       .join('\n');
+    if (!answer) continue;
     try {
       groundingMetadata.push(
-        await verifier.verify({
+        await groundingVerifier.verify({
           query: `gap suggestions for ${roleData.experience.title}`,
           contextChunks,
           answer,
         }),
       );
     } catch (e) {
-      gLog.warn?.(
+      gLog.warn(
         { event: 'gap_grounding.failed', err: (e as Error).message },
         'grounding verify failed; continuing',
       );

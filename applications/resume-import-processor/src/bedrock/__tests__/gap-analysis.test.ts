@@ -145,4 +145,39 @@ describe('generateGapAnalysis', () => {
     // Error swallowed — metadata array exists but may be empty or partial
     expect(result.groundingMetadata).toBeDefined();
   });
+
+  it('skips grounding for roles with empty suggestedAdditions (no misleading NOT_GROUNDED entry)', async () => {
+    // Bedrock returns a role whose suggestedAdditions array is empty.
+    sendMock.mockResolvedValue({
+      body: Buffer.from(JSON.stringify({
+        usage: { input_tokens: 100, output_tokens: 50 },
+        content: [{
+          type: 'tool_use',
+          input: {
+            overallScore: 55,
+            perRole: [{
+              roleId: 'r1', company: 'C', title: 'T', period: 'P',
+              completenessScore: 40,
+              coveredResponsibilities: [],
+              missingResponsibilities: ['missing X'],
+              suggestedAdditions: [],          // empty — must skip verify
+              quantificationOpportunities: [],
+              keywordsForATS: [],
+              externalValidation: 'limited',
+            }],
+            skillsGap: { present: [], missing: [], emerging: [] },
+            narrativeFeedback: 'needs work',
+            freeTierLimit: { rolesSkipped: 0, upgradeCta: null },
+          },
+        }],
+      })),
+    });
+
+    const result = await generateGapAnalysis([role(1)], 0, 'eu-west-1');
+
+    // verify must NOT have been called for the empty-additions role
+    expect(groundingVerifyMock).not.toHaveBeenCalled();
+    // groundingMetadata should have no entry for r1
+    expect(result.groundingMetadata).toHaveLength(0);
+  });
 });
