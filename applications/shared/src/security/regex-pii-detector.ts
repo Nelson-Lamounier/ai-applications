@@ -28,7 +28,7 @@ export class RegexPiiDetector implements IPiiDetector {
     detect(text: string): PiiSpan[] {
         const spans: PiiSpan[] = [];
         for (const { type, regex } of RULES) {
-            regex.lastIndex = 0;
+            regex.lastIndex = 0; // RegExp /g is stateful; reset before reuse (detect() is sync, safe single-threaded)
             let m: RegExpExecArray | null;
             while ((m = regex.exec(text)) !== null) {
                 spans.push({ start: m.index, end: m.index + m[0].length, type, value: m[0] });
