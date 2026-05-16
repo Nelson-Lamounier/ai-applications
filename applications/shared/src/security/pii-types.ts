@@ -3,7 +3,15 @@
  * PII types — shared contract for detection + redaction.
  *
  * Mirrors the storage-agnostic IReranker pattern: one interface, swappable
- * implementations (RegexPiiDetector now, ComprehendPiiDetector later).
+ * implementations.
+ *
+ * Implementations:
+ *   - RegexPiiDetector — deterministic, zero-infra default
+ *   - ComprehendPiiDetector — Amazon Comprehend; higher recall (stub for now)
+ *
+ * Failure semantics are implementation-defined: RegexPiiDetector returns []
+ * on input it cannot match; the Comprehend stub throws until implemented.
+ * Callers should not assume detect() never throws.
  */
 
 export type PiiType =
