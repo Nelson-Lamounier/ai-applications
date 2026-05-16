@@ -10,7 +10,7 @@
  * 'review'. The admin-api owns the eventual transition to 'published'.
  */
 import type { PipelineContext } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent } from './agents/research-agent.js';
@@ -20,10 +20,12 @@ import { parseEnv }             from './env.js';
 import { getPool, closePool }   from './lib/pg.js';
 import {
     updatePipelineRun,
+    updatePipelineRunMetadata,
     persistArticle,
 } from './lib/pipeline-runs.js';
 
 const piiScrubber = new PiiScrubber();
+const groundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
 const obs = bootstrapK8sObservability({ serviceName: 'article-pipeline' });
 const log = obs.logger;
 
@@ -91,8 +93,42 @@ async function main(): Promise<void> {
             research.data.mode,
         ));
 
+        // Grounding check (flag mode) — always-on, never blocks persist.
+        // Runs post-QA, pre-persist. Fail-open: any verifier error is logged and
+        // ignored so the article always proceeds to 'review'.
+        const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
+        let groundingMeta: { status: string; reason: string; ungroundedClaims: string[] } | undefined;
+        try {
+            const g = await groundingVerifier.verify({
+                query:        (research.data.draftContent ?? '').slice(0, 500),
+                contextChunks: (research.data.kbPassages ?? []).map((p) => p.text),
+                answer:       writer.data.content,
+            });
+            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
+                { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
+                { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },
+                { name: 'UngroundedClaimCount',  value: g.ungroundedClaims.length,             unit: 'Count' },
+            ]);
+            groundingMeta = { status: g.status, reason: g.reason, ungroundedClaims: [...g.ungroundedClaims] };
+        } catch (e) {
+            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: 'ERROR' }, [
+                { name: 'GroundingError', value: 1, unit: 'Count' },
+            ]);
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                slug:          env.slug,
+                error:         (e as Error).message,
+            }, 'Grounding verifier failed — proceeding');
+        }
+
         // Final persist — write the rendered MDX back to platform RDS.
-        await persistArticle(pool, env.slug, piiScrubber.scrub(writer.data.content).redacted);
+        // Use scrubbedContent computed above; grounding flag mode never alters it.
+        await persistArticle(pool, env.slug, scrubbedContent);
+
+        // Attach grounding result to pipeline_runs.metadata (JSONB — no migration needed).
+        if (groundingMeta !== undefined) {
+            await updatePipelineRunMetadata(pool, env.pipelineRunId, { grounding: groundingMeta });
+        }
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
         outcome = 'success';

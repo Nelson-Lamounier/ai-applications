@@ -15,10 +15,12 @@ const mockPersistArticle = jest.fn<() => Promise<void>>().mockImplementation((..
     return Promise.resolve();
 });
 const mockUpdatePipelineRun = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+const mockUpdatePipelineRunMetadata = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
 
 jest.mock('../lib/pipeline-runs.js', () => ({
-    persistArticle:    mockPersistArticle,
-    updatePipelineRun: mockUpdatePipelineRun,
+    persistArticle:            mockPersistArticle,
+    updatePipelineRun:         mockUpdatePipelineRun,
+    updatePipelineRunMetadata: mockUpdatePipelineRunMetadata,
 }));
 
 // Mock the pg pool so no real DB connection is attempted.
@@ -90,6 +92,15 @@ jest.mock('../agents/qa-agent.js', () => ({
         .mockResolvedValue(fakeAgentResult(mockQaData)),
 }));
 
+// ─── Grounding mock handles ──────────────────────────────────────────────────
+// groundingVerifyMock is the spy injected as the `verify` method on every
+// BedrockGroundingVerifier instance created by the module under test.
+// emitEmfMetricMock lets tests assert what metrics were emitted.
+const groundingVerifyMock = jest.fn<() => Promise<unknown>>().mockResolvedValue({
+    status: 'GROUNDED', reason: '', ungroundedClaims: [], answer: 'ok',
+});
+const emitEmfMetricMock = jest.fn<() => void>();
+
 // Observability stubs — avoid real Prometheus setup in tests.
 jest.mock('@bedrock/shared', () => {
     const actual = jest.requireActual<Record<string, unknown>>('@bedrock/shared');
@@ -105,6 +116,10 @@ jest.mock('@bedrock/shared', () => {
                 findings: [],
             }),
         })),
+        BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
+            verify: groundingVerifyMock,
+        })),
+        emitEmfMetric: emitEmfMetricMock,
         bootstrapK8sObservability: jest.fn().mockReturnValue({
             logger:   { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
             registry: {},
@@ -136,6 +151,14 @@ Object.assign(process.env, {
     QA_MODEL:        'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
 });
 
+// ─── Shared state captured before clearMocks resets per-test ────────────────
+// clearMocks: true in jest.config resets mock.calls between tests.
+// We capture what we need in the first describe's beforeAll while the mock
+// calls from the module-level main() run are still intact.
+
+let sharedPersistArgs: unknown[];
+let sharedEmittedMetrics: Array<{ name: string; value: number }> = [];
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('run-pipeline — MDX-persist PII scrub', () => {
@@ -147,6 +170,11 @@ describe('run-pipeline — MDX-persist PII scrub', () => {
     beforeAll(async () => {
         await import('../run-pipeline.js');
         persistArgs = await persistLatch;
+        sharedPersistArgs = persistArgs;
+        // Capture EMF calls NOW — before clearMocks resets them between tests.
+        sharedEmittedMetrics = emitEmfMetricMock.mock.calls.flatMap(
+            (call) => (call as unknown[])[2] as Array<{ name: string; value: number }>,
+        );
     }, 10_000);
 
     it('calls persistArticle with redacted MDX — raw PII email is absent', () => {
@@ -158,4 +186,146 @@ describe('run-pipeline — MDX-persist PII scrub', () => {
         const contentArg = persistArgs[2] as string;
         expect(contentArg).toContain('[EMAIL]');
     });
+});
+
+// ─── Grounding (flag-mode) tests ─────────────────────────────────────────────
+// The scrubbed MDX that persistArticle should always receive (flag mode never alters it).
+const EXPECTED_SCRUBBED_CONTENT = `# My Article\n\nContact [EMAIL] for more info.\n`;
+
+describe('run-pipeline — grounding flag-mode post-QA (happy path, GROUNDED)', () => {
+    // This describe re-uses the single run already triggered above.
+    // groundingVerifyMock defaults to GROUNDED, so the happy path run
+    // exercises the success EMF branch.
+
+    it('persists exactly the scrubbed writer MDX — flag mode never alters content', async () => {
+        // Wait until the module-level run has completed.
+        await persistLatch;
+        const persistedContent = sharedPersistArgs[2] as string;
+        expect(persistedContent).toBe(EXPECTED_SCRUBBED_CONTENT);
+    });
+
+    it('emits GroundingChecked=1 and GroundingFailed=0 on a GROUNDED result', async () => {
+        await persistLatch;
+        // Use sharedEmittedMetrics captured in beforeAll — clearMocks: true would
+        // have wiped emitEmfMetricMock.mock.calls by the time this test runs.
+        expect(sharedEmittedMetrics).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'GroundingChecked', value: 1 }),
+            expect.objectContaining({ name: 'GroundingFailed',  value: 0 }),
+        ]));
+    });
+});
+
+describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open)', () => {
+    /**
+     * Drive a fresh pipeline run with custom @bedrock/shared and pipeline-runs mocks.
+     *
+     * jest.resetModules() + jest.mock() + require() is the standard pattern for
+     * re-executing a module that has side effects at the top level (main() call).
+     * We reset after each call to keep the module registry clean for subsequent tests.
+     */
+    async function runPipelineWithMocks(opts: {
+        verifyImpl: () => Promise<unknown>;
+        emitImpl?: () => void;
+    }): Promise<{ persistArgs: unknown[]; emitCalls: unknown[][] }> {
+        let resolveLatch!: (args: unknown[]) => void;
+        const latch = new Promise<unknown[]>((res) => { resolveLatch = res; });
+
+        const localPersist = jest.fn<() => Promise<void>>().mockImplementation((...args) => {
+            resolveLatch(args);
+            return Promise.resolve();
+        });
+        const localEmitCalls: unknown[][] = [];
+        const localEmit = jest.fn<() => void>().mockImplementation((...args) => {
+            localEmitCalls.push(args);
+            opts.emitImpl?.(...(args as []));
+        });
+        const verifyFn = jest.fn<() => Promise<unknown>>().mockImplementation(opts.verifyImpl);
+
+        // Reset and re-register all mocks so the module re-evaluates (runs main()).
+        jest.resetModules();
+        jest.mock('../lib/pipeline-runs.js', () => ({
+            persistArticle:            localPersist,
+            updatePipelineRun:         jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+            updatePipelineRunMetadata: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        }));
+        jest.mock('@bedrock/shared', () => {
+            const actual = jest.requireActual<Record<string, unknown>>('@bedrock/shared');
+            return {
+                ...actual,
+                PiiScrubber: jest.fn().mockImplementation(() => ({
+                    scrub: (text: string) => ({
+                        redacted: text.replace(
+                            /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+                            '[EMAIL]',
+                        ),
+                        findings: [],
+                    }),
+                })),
+                BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
+                    verify: verifyFn,
+                })),
+                emitEmfMetric: localEmit,
+                bootstrapK8sObservability: jest.fn().mockReturnValue({
+                    logger:   { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
+                    registry: {},
+                    shutdown: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+                }),
+                pushFinalMetrics: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+            };
+        });
+        jest.mock('../lib/pg.js', () => ({
+            getPool:   jest.fn().mockReturnValue({ query: jest.fn() }),
+            closePool: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        }));
+        jest.mock('../agents/research-agent.js', () => ({
+            executeResearchAgent: jest.fn<() => Promise<unknown>>()
+                .mockResolvedValue(fakeAgentResult(mockResearchData)),
+        }));
+        jest.mock('../agents/writer-agent.js', () => ({
+            executeWriterAgent: jest.fn<() => Promise<unknown>>()
+                .mockResolvedValue(fakeAgentResult(mockWriterData)),
+        }));
+        jest.mock('../agents/qa-agent.js', () => ({
+            executeQaAgent: jest.fn<() => Promise<unknown>>()
+                .mockResolvedValue(fakeAgentResult(mockQaData)),
+        }));
+        jest.mock('prom-client', () => ({
+            Counter:   jest.fn().mockImplementation(() => ({ inc: jest.fn() })),
+            Histogram: jest.fn().mockImplementation(() => ({ observe: jest.fn() })),
+        }));
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        require('../run-pipeline.js');
+
+        const persistArgs = await latch;
+        return { persistArgs, emitCalls: localEmitCalls };
+    }
+
+    it('runs flag-mode grounding, never blocks, emits GroundingFailed=1 on NOT_GROUNDED', async () => {
+        const { persistArgs, emitCalls } = await runPipelineWithMocks({
+            verifyImpl: () => Promise.resolve({
+                status: 'NOT_GROUNDED', reason: 'r', ungroundedClaims: ['c'], answer: 'IGNORED_IN_FLAG',
+            }),
+        });
+
+        // FLAG mode must NEVER alter the persisted content — even when NOT_GROUNDED.
+        const persistedContent = persistArgs[2] as string;
+        expect(persistedContent).toBe(EXPECTED_SCRUBBED_CONTENT);
+
+        // Must emit at least one metric containing GroundingFailed=1.
+        const emitted = emitCalls.flatMap(
+            (call) => (call as unknown[])[2] as Array<{ name: string; value: number }>,
+        );
+        expect(emitted).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'GroundingFailed', value: 1 }),
+        ]));
+    }, 15_000);
+
+    it('does not hard-fail when the grounding verifier throws (fail-open)', async () => {
+        const result = runPipelineWithMocks({
+            verifyImpl: () => Promise.reject(new Error('bedrock down')),
+        });
+        // Pipeline must still resolve (persistArticle is called) — fail-open.
+        await expect(result).resolves.toBeDefined();
+    }, 15_000);
 });
