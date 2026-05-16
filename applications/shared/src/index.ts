@@ -301,3 +301,13 @@ export type {
     GroundingResult,
     IGroundingVerifier,
 } from './grounding/index.js';
+
+// ─── Cache (Semantic Response Cache) ─────────────────────────────────────────
+export { PgSemanticCache } from './cache/index.js';
+export type {
+    ISemanticCache,
+    SemanticCacheConfig,
+    SemanticCacheGetInput,
+    SemanticCacheGetResult,
+    SemanticCachePutInput,
+} from './cache/index.js';
