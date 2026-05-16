@@ -125,7 +125,7 @@ added to the top-level `shared/src/index.ts` export.
   Promise<GroundingResult>` where `GroundingInput = { query: string;
   contextChunks: string[]; answer: string }` and `GroundingResult =
   { status: 'GROUNDED' | 'NOT_GROUNDED'; reason: string;
-  ungroundedClaims: string[] }`.
+  ungroundedClaims: string[] }` plus `answer` (original answer, or the fallback string when mode=block and NOT_GROUNDED).
 - **`BedrockGroundingVerifier`** (impl): runs the checklist §6 prompt pattern
   on Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) via the existing Bedrock
   runtime client. Parses the model's `GROUNDED | NOT_GROUNDED` verdict,
