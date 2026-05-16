@@ -215,92 +215,95 @@ describe('run-pipeline — grounding flag-mode post-QA (happy path, GROUNDED)', 
     });
 });
 
-describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open)', () => {
-    /**
-     * Drive a fresh pipeline run with custom @bedrock/shared and pipeline-runs mocks.
-     *
-     * jest.resetModules() + jest.mock() + require() is the standard pattern for
-     * re-executing a module that has side effects at the top level (main() call).
-     * We reset after each call to keep the module registry clean for subsequent tests.
-     */
-    async function runPipelineWithMocks(opts: {
-        verifyImpl: () => Promise<unknown>;
-        emitImpl?: () => void;
-    }): Promise<{ persistArgs: unknown[]; emitCalls: unknown[][] }> {
-        let resolveLatch!: (args: unknown[]) => void;
-        const latch = new Promise<unknown[]>((res) => { resolveLatch = res; });
+/**
+ * Drive a fresh pipeline run with custom @bedrock/shared and pipeline-runs mocks.
+ *
+ * jest.resetModules() + jest.mock() + require() is the standard pattern for
+ * re-executing a module that has side effects at the top level (main() call).
+ * We reset after each call to keep the module registry clean for subsequent tests.
+ *
+ * Defined at module scope (not inside a describe) to avoid S7721: functions
+ * should not be defined in a nested scope when they can live at the outer scope.
+ */
+async function runPipelineWithMocks(opts: {
+    verifyImpl: () => Promise<unknown>;
+    emitImpl?: () => void;
+}): Promise<{ persistArgs: unknown[]; emitCalls: unknown[][] }> {
+    let resolveLatch!: (args: unknown[]) => void;
+    const latch = new Promise<unknown[]>((res) => { resolveLatch = res; });
 
-        const localPersist = jest.fn<() => Promise<void>>().mockImplementation((...args) => {
-            resolveLatch(args);
-            return Promise.resolve();
-        });
-        const localEmitCalls: unknown[][] = [];
-        const localEmit = jest.fn<() => void>().mockImplementation((...args) => {
-            localEmitCalls.push(args);
-            opts.emitImpl?.(...(args as []));
-        });
-        const verifyFn = jest.fn<() => Promise<unknown>>().mockImplementation(opts.verifyImpl);
+    const localPersist = jest.fn<() => Promise<void>>().mockImplementation((...args) => {
+        resolveLatch(args);
+        return Promise.resolve();
+    });
+    const localEmitCalls: unknown[][] = [];
+    const localEmit = jest.fn<() => void>().mockImplementation((...args) => {
+        localEmitCalls.push(args);
+        opts.emitImpl?.(...(args as [])); // S4325 false-positive: `args` is unknown[], TS requires the cast to spread into () => void
+    });
+    const verifyFn = jest.fn<() => Promise<unknown>>().mockImplementation(opts.verifyImpl);
 
-        // Reset and re-register all mocks so the module re-evaluates (runs main()).
-        jest.resetModules();
-        jest.mock('../lib/pipeline-runs.js', () => ({
-            persistArticle:            localPersist,
-            updatePipelineRun:         jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-            updatePipelineRunMetadata: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-        }));
-        jest.mock('@bedrock/shared', () => {
-            const actual = jest.requireActual<Record<string, unknown>>('@bedrock/shared');
-            return {
-                ...actual,
-                PiiScrubber: jest.fn().mockImplementation(() => ({
-                    scrub: (text: string) => ({
-                        redacted: text.replace(
-                            /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
-                            '[EMAIL]',
-                        ),
-                        findings: [],
-                    }),
-                })),
-                BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
-                    verify: verifyFn,
-                })),
-                emitEmfMetric: localEmit,
-                bootstrapK8sObservability: jest.fn().mockReturnValue({
-                    logger:   { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
-                    registry: {},
-                    shutdown: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    // Reset and re-register all mocks so the module re-evaluates (runs main()).
+    jest.resetModules();
+    jest.mock('../lib/pipeline-runs.js', () => ({
+        persistArticle:            localPersist,
+        updatePipelineRun:         jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        updatePipelineRunMetadata: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    }));
+    jest.mock('@bedrock/shared', () => {
+        const actual = jest.requireActual<Record<string, unknown>>('@bedrock/shared');
+        return {
+            ...actual,
+            PiiScrubber: jest.fn().mockImplementation(() => ({
+                scrub: (text: string) => ({
+                    redacted: text.replace(
+                        /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+                        '[EMAIL]',
+                    ),
+                    findings: [],
                 }),
-                pushFinalMetrics: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-            };
-        });
-        jest.mock('../lib/pg.js', () => ({
-            getPool:   jest.fn().mockReturnValue({ query: jest.fn() }),
-            closePool: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-        }));
-        jest.mock('../agents/research-agent.js', () => ({
-            executeResearchAgent: jest.fn<() => Promise<unknown>>()
-                .mockResolvedValue(fakeAgentResult(mockResearchData)),
-        }));
-        jest.mock('../agents/writer-agent.js', () => ({
-            executeWriterAgent: jest.fn<() => Promise<unknown>>()
-                .mockResolvedValue(fakeAgentResult(mockWriterData)),
-        }));
-        jest.mock('../agents/qa-agent.js', () => ({
-            executeQaAgent: jest.fn<() => Promise<unknown>>()
-                .mockResolvedValue(fakeAgentResult(mockQaData)),
-        }));
-        jest.mock('prom-client', () => ({
-            Counter:   jest.fn().mockImplementation(() => ({ inc: jest.fn() })),
-            Histogram: jest.fn().mockImplementation(() => ({ observe: jest.fn() })),
-        }));
+            })),
+            BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
+                verify: verifyFn,
+            })),
+            emitEmfMetric: localEmit,
+            bootstrapK8sObservability: jest.fn().mockReturnValue({
+                logger:   { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
+                registry: {},
+                shutdown: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+            }),
+            pushFinalMetrics: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        };
+    });
+    jest.mock('../lib/pg.js', () => ({
+        getPool:   jest.fn().mockReturnValue({ query: jest.fn() }),
+        closePool: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    }));
+    jest.mock('../agents/research-agent.js', () => ({
+        executeResearchAgent: jest.fn<() => Promise<unknown>>()
+            .mockResolvedValue(fakeAgentResult(mockResearchData)),
+    }));
+    jest.mock('../agents/writer-agent.js', () => ({
+        executeWriterAgent: jest.fn<() => Promise<unknown>>()
+            .mockResolvedValue(fakeAgentResult(mockWriterData)),
+    }));
+    jest.mock('../agents/qa-agent.js', () => ({
+        executeQaAgent: jest.fn<() => Promise<unknown>>()
+            .mockResolvedValue(fakeAgentResult(mockQaData)),
+    }));
+    jest.mock('prom-client', () => ({
+        Counter:   jest.fn().mockImplementation(() => ({ inc: jest.fn() })),
+        Histogram: jest.fn().mockImplementation(() => ({ observe: jest.fn() })),
+    }));
 
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        require('../run-pipeline.js');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('../run-pipeline.js');
 
-        const persistArgs = await latch;
-        return { persistArgs, emitCalls: localEmitCalls };
-    }
+    const persistArgs = await latch;
+    return { persistArgs, emitCalls: localEmitCalls };
+}
 
+describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open)', () => {
     it('runs flag-mode grounding, never blocks, emits GroundingFailed=1 on NOT_GROUNDED', async () => {
         const { persistArgs, emitCalls } = await runPipelineWithMocks({
             verifyImpl: () => Promise.resolve({
@@ -314,7 +317,8 @@ describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open
 
         // Must emit at least one metric containing GroundingFailed=1.
         const emitted = emitCalls.flatMap(
-            (call) => (call as unknown[])[2] as Array<{ name: string; value: number }>,
+            // S4325 false-positive: call[2] is unknown; cast is required for .flatMap to type the return
+            (call) => call[2] as Array<{ name: string; value: number }>,
         );
         expect(emitted).toEqual(expect.arrayContaining([
             expect.objectContaining({ name: 'GroundingFailed', value: 1 }),
@@ -328,4 +332,29 @@ describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open
         // Pipeline must still resolve (persistArticle is called) — fail-open.
         await expect(result).resolves.toBeDefined();
     }, 15_000);
+});
+
+// ─── updatePipelineRunMetadata — metadata merge unit test ────────────────────
+
+describe('updatePipelineRunMetadata — non-destructive JSONB merge', () => {
+    it('issues a COALESCE || merge query, not a bare overwrite', async () => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { updatePipelineRunMetadata } = jest.requireActual<typeof import('../lib/pipeline-runs.js')>('../lib/pipeline-runs.js');
+        const mockQuery = jest.fn<() => Promise<{ rowCount: number }>>().mockResolvedValue({ rowCount: 1 });
+        const pool = { query: mockQuery } as unknown as import('pg').Pool;
+
+        await updatePipelineRunMetadata(pool, 'run-abc', { groundingStatus: 'GROUNDED', score: 1 });
+
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        const [sql, params] = mockQuery.mock.calls[0] as unknown as [string, unknown[]];
+
+        // Assert the SET expression uses COALESCE||merge, not a bare overwrite.
+        expect(sql).toContain('COALESCE(metadata');
+        expect(sql).toContain('||');
+        expect(sql).not.toMatch(/SET metadata\s*=\s*\$2[^:]/); // no bare overwrite
+
+        // Params: [$1 = id, $2 = JSON string of payload]
+        expect(params[0]).toBe('run-abc');
+        expect(JSON.parse(params[1] as string)).toEqual({ groundingStatus: 'GROUNDED', score: 1 });
+    });
 });
