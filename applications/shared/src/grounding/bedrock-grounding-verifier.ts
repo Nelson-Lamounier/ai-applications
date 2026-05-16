@@ -10,6 +10,7 @@
 import {
     BedrockRuntimeClient,
     ConverseCommand,
+    type ConverseCommandOutput,
 } from '@aws-sdk/client-bedrock-runtime';
 
 import { emitEmfMetric } from '../emf.js';
@@ -21,8 +22,6 @@ import {
     type IGroundingVerifier,
 } from './grounding-types.js';
 
-const DEFAULT_MODEL_ID =
-    process.env.GROUNDING_MODEL_ID ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 const METRIC_NAMESPACE = 'BedrockSharedSafety';
 
 export interface BedrockGroundingVerifierConfig {
@@ -52,6 +51,12 @@ function parse(text: string): { status: 'GROUNDED' | 'NOT_GROUNDED'; reason: str
     const reason = /Reason:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
     const claimsRaw = /Claims:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
     const claims = claimsRaw ? claimsRaw.split(';').map(c => c.trim()).filter(Boolean) : [];
+    if (!grounded) {
+        console.warn(
+            '[grounding-verifier] non-GROUNDED verdict — raw text snippet:',
+            text.substring(0, 200),
+        );
+    }
     return { status: grounded ? 'GROUNDED' : 'NOT_GROUNDED', reason, claims };
 }
 
@@ -63,7 +68,7 @@ export class BedrockGroundingVerifier implements IGroundingVerifier {
 
     constructor(config: BedrockGroundingVerifierConfig) {
         this.mode = config.mode;
-        this.modelId = config.modelId ?? DEFAULT_MODEL_ID;
+        this.modelId = config.modelId ?? process.env.GROUNDING_MODEL_ID ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
         this.fallback = config.fallback ?? DEFAULT_GROUNDING_FALLBACK;
         this.client = config.client ?? new BedrockRuntimeClient({});
     }
@@ -74,10 +79,11 @@ export class BedrockGroundingVerifier implements IGroundingVerifier {
             messages: [{ role: 'user', content: [{ text: buildPrompt(input) }] }],
             inferenceConfig: { maxTokens: 512 },
         });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const response = await (this.client.send(command) as Promise<any>);
+        const response: ConverseCommandOutput = await this.client.send(command);
         const text =
-            response?.output?.message?.content?.find((b: { text?: string }) => typeof b.text === 'string')?.text ?? '';
+            response.output?.message?.content?.find(
+                (b): b is { text: string } => typeof (b as { text?: unknown }).text === 'string',
+            )?.text ?? '';
         const { status, reason, claims } = parse(text);
 
         emitEmfMetric(

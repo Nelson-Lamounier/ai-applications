@@ -9,7 +9,7 @@ jest.mock('../emf.js', () => ({ emitEmfMetric: (...a: unknown[]) => emitMock(...
 import { BedrockGroundingVerifier } from './bedrock-grounding-verifier.js';
 
 function modelReply(text: string) {
-    return { output: { message: { content: [{ text }] } } };
+    return { output: { message: { content: [{ text }] } } } as unknown as import('@aws-sdk/client-bedrock-runtime').ConverseCommandOutput;
 }
 
 describe('BedrockGroundingVerifier', () => {
