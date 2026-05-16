@@ -552,7 +552,7 @@ describe('Bedrock invoke-agent handler', () => {
         it('returns the cached answer and skips the agent on a cache hit', async () => {
             mockCacheGet.mockResolvedValueOnce({ hit: true, response: 'CACHED ANSWER' });
             const event = makeCitationEvent({ prompt: 'tell me about the portfolio' });
-            const res = await handler(event as never);
+            const res = await handler(event);
             expect(JSON.parse(res.body).response).toBe('CACHED ANSWER');
             expect(mockSend).not.toHaveBeenCalled();
         });
@@ -563,7 +563,7 @@ describe('Bedrock invoke-agent handler', () => {
                 status: 'GROUNDED', reason: 'ok', ungroundedClaims: [], answer: 'This is the agent answer.',
             });
             const event = makeCitationEvent({ prompt: 'tell me about the portfolio' });
-            await handler(event as never);
+            await handler(event);
             expect(mockSend).toHaveBeenCalled();
             expect(mockCachePut).toHaveBeenCalled();
         });
@@ -574,14 +574,14 @@ describe('Bedrock invoke-agent handler', () => {
                 status: 'NOT_GROUNDED', reason: 'x', ungroundedClaims: ['c'], answer: 'I do not have grounded info.',
             });
             const event = makeCitationEvent({ prompt: 'q' });
-            await handler(event as never);
+            await handler(event);
             expect(mockCachePut).not.toHaveBeenCalled();
         });
 
         it('cache get throwing does not break the request (fail-open)', async () => {
             mockCacheGet.mockRejectedValueOnce(new Error('db down'));
             const event = makeCitationEvent({ prompt: 'q' });
-            const res = await handler(event as never);
+            const res = await handler(event);
             expect(res.statusCode).toBe(200);
         });
     });
