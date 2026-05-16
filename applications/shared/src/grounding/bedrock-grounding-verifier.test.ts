@@ -37,4 +37,27 @@ describe('BedrockGroundingVerifier', () => {
         const r = await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input);
         expect(r.status).toBe('NOT_GROUNDED');
     });
+
+    it('substitutes the fallback in block mode when NOT_GROUNDED', async () => {
+        sendMock.mockResolvedValueOnce(modelReply('NOT_GROUNDED\nReason: invented'));
+        const r = await new BedrockGroundingVerifier({ mode: 'block', fallback: 'NOPE' }).verify(input);
+        expect(r.status).toBe('NOT_GROUNDED');
+        expect(r.answer).toBe('NOPE');
+    });
+
+    it('keeps the answer in block mode when GROUNDED', async () => {
+        sendMock.mockResolvedValueOnce(modelReply('GROUNDED\nReason: ok'));
+        const r = await new BedrockGroundingVerifier({ mode: 'block' }).verify(input);
+        expect(r.answer).toBe('A is true');
+    });
+
+    it('emits GroundingChecked=1 and GroundingFailed=1 on NOT_GROUNDED', async () => {
+        sendMock.mockResolvedValueOnce(modelReply('NOT_GROUNDED\nReason: x'));
+        await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input);
+        const metrics = emitMock.mock.calls.at(-1)?.[2];
+        expect(metrics).toEqual([
+            { name: 'GroundingChecked', value: 1, unit: 'Count' },
+            { name: 'GroundingFailed', value: 1, unit: 'Count' },
+        ]);
+    });
 });
