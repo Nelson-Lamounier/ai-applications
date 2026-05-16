@@ -368,7 +368,7 @@ async function main(): Promise<void> {
                     gap_report_generated_at = NOW(),
                     updated_at = NOW()
               WHERE id = $2::uuid`,
-            [JSON.stringify(gap.data), env.importId],
+            [JSON.stringify({ report: gap.data, groundingMetadata: gap.groundingMetadata ?? [], verifiedAt: new Date().toISOString() }), env.importId],
           );
           span.setAttribute('gap.roles', gap.data.perRole.length);
         } catch (err) {

@@ -16,6 +16,8 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockGroundingVerifier } from '@bedrock/shared';
+import type { GroundingResult } from '@bedrock/shared';
 import type { ResumeExperience } from './extract-career.js';
 import type { SearchResult } from '../tools/tavily.js';
 
@@ -48,9 +50,10 @@ export interface GapAnalysisReport {
 }
 
 export interface GapAnalysisResult {
-  data:         GapAnalysisReport;
-  inputTokens:  number;
-  outputTokens: number;
+  data:              GapAnalysisReport;
+  inputTokens:       number;
+  outputTokens:      number;
+  groundingMetadata?: GroundingResult[];
 }
 
 const MODEL_ID = process.env['GAP_ANALYSIS_MODEL_ID']
@@ -210,27 +213,65 @@ export async function generateGapAnalysis(
 ): Promise<GapAnalysisResult> {
   const client = new BedrockRuntimeClient({ region });
 
+  // ── Produce base result (single-call or batched-merged) ──────────────────
+  let base: GapAnalysisResult;
+
   if (roles.length <= MAX_ROLES_PER_CALL) {
-    return invokeOnce(client, roles, rolesSkipped);
+    base = await invokeOnce(client, roles, rolesSkipped);
+  } else {
+    const batches: GapAnalysisRole[][] = [];
+    for (let i = 0; i < roles.length; i += MAX_ROLES_PER_CALL) {
+      batches.push(roles.slice(i, i + MAX_ROLES_PER_CALL));
+    }
+
+    const results = await Promise.all(
+      batches.map((b, idx) => invokeOnce(client, b, idx === 0 ? rolesSkipped : 0)),
+    );
+
+    const head = results[0]!;
+    const merged: GapAnalysisReport = {
+      ...head.data,
+      perRole: results.flatMap((r) => r.data.perRole),
+    };
+    base = {
+      data:         merged,
+      inputTokens:  results.reduce((s, r) => s + r.inputTokens, 0),
+      outputTokens: results.reduce((s, r) => s + r.outputTokens, 0),
+    };
   }
 
-  const batches: GapAnalysisRole[][] = [];
-  for (let i = 0; i < roles.length; i += MAX_ROLES_PER_CALL) {
-    batches.push(roles.slice(i, i + MAX_ROLES_PER_CALL));
+  // ── Flag-mode grounding: attach metadata per role, never block ───────────
+  type MinLogger = { warn?: (obj: object, msg: string) => void };
+  const gLog: MinLogger =
+    (globalThis as { __obsHandle?: { logger: MinLogger } }).__obsHandle?.logger ?? {};
+  const verifier = new BedrockGroundingVerifier({ mode: 'flag' });
+  const groundingMetadata: GroundingResult[] = [];
+
+  for (const perRole of base.data.perRole) {
+    const roleData = roles.find((r) => r.roleId === perRole.roleId);
+    if (!roleData) continue;
+    const contextChunks = [
+      ...roleData.experience.highlights,
+      ...((roleData.publicContext ?? []).map((p) => p.content)),
+    ];
+    const answer = perRole.suggestedAdditions
+      .map((s) => `${s.bullet} (${s.rationale})`)
+      .join('\n');
+    try {
+      groundingMetadata.push(
+        await verifier.verify({
+          query: `gap suggestions for ${roleData.experience.title}`,
+          contextChunks,
+          answer,
+        }),
+      );
+    } catch (e) {
+      gLog.warn?.(
+        { event: 'gap_grounding.failed', err: (e as Error).message },
+        'grounding verify failed; continuing',
+      );
+    }
   }
 
-  const results = await Promise.all(
-    batches.map((b, idx) => invokeOnce(client, b, idx === 0 ? rolesSkipped : 0)),
-  );
-
-  const head = results[0]!;
-  const merged: GapAnalysisReport = {
-    ...head.data,
-    perRole: results.flatMap((r) => r.data.perRole),
-  };
-  return {
-    data:         merged,
-    inputTokens:  results.reduce((s, r) => s + r.inputTokens, 0),
-    outputTokens: results.reduce((s, r) => s + r.outputTokens, 0),
-  };
+  return { ...base, groundingMetadata };
 }
