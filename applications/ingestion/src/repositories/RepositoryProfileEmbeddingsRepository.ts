@@ -1,4 +1,8 @@
+import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
+import { PiiScrubber } from '@bedrock/shared';
+
+const piiScrubber = new PiiScrubber();
 
 export interface ProfileEmbeddingRow {
     userId:      string;
@@ -33,12 +37,14 @@ export class RepositoryProfileEmbeddingsRepository {
                         `Non-finite value in embedding for profileId=${row.profileId} chunkType=${row.chunkType}`,
                     );
                 }
+                const scrubbedContent = piiScrubber.scrub(row.content).redacted;
+                const scrubbedHash = createHash('sha256').update(scrubbedContent, 'utf8').digest('hex');
                 values.push(
                     row.userId,
                     row.profileId,
                     row.chunkType,
-                    row.content,
-                    row.contentHash,
+                    scrubbedContent,
+                    scrubbedHash,
                     `[${row.embedding.join(',')}]`,
                     JSON.stringify(row.metadata ?? {}),
                 );
