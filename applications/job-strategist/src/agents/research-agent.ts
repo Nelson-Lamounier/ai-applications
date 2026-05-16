@@ -17,6 +17,7 @@ import {
     runAgent,
     parseJsonResponse,
     InputSanitiser,
+    PiiScrubber,
     BedrockReranker,
     RdsVectorStore,
     TitanEmbeddingProvider,
@@ -52,6 +53,9 @@ const inputSanitiser = new InputSanitiser({
     maxLength: 50_000,
     piiPatterns: STRATEGIST_PII_PATTERNS,
 });
+
+/** Module-scoped PII scrubber — always-on redaction before retrieval, Bedrock, and logs */
+const piiScrubber = new PiiScrubber();
 
 // =============================================================================
 // CONFIGURATION
@@ -124,7 +128,7 @@ async function querySingleRds(query: string, userId: string, store: RdsVectorSto
 
     log('INFO', 'Querying RDS vector store', {
         agent:        'strategist-research',
-        queryPreview: query.substring(0, 80),
+        queryPreview: piiScrubber.scrub(query.substring(0, 80)).redacted,
         retrieveK:    overfetch,
         finalK:       MAX_KB_PASSAGES,
         rerank:       reranker !== null,
@@ -364,6 +368,7 @@ export async function executeResearchAgent(
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
     const { sanitised, warnings, injectionDetected } = inputSanitiser.sanitiseWithWarnings(ctx.jobDescription);
+    const jd = piiScrubber.scrub(sanitised).redacted;
 
     if (injectionDetected) {
         log('WARN', 'Injection attempt detected — proceeding with sanitised input', { agent: 'strategist-research' });
@@ -385,11 +390,11 @@ export async function executeResearchAgent(
 
     const [factual1, factual2, factual3, factual4] = await Promise.all([
         // Query 1 — full JD text: surfaces skill/tech matches from across the user's docs
-        querySingleRds(sanitised.substring(0, 1000), userId, store),
+        querySingleRds(jd.substring(0, 1000), userId, store),
         // Query 2 — JD tail + experience signal: surfaces role-relevant work history
-        querySingleRds(`professional experience skills qualifications ${sanitised.substring(500, 1000)}`, userId, store),
+        querySingleRds(`professional experience skills qualifications ${jd.substring(500, 1000)}`, userId, store),
         // Query 3 — JD-aware project query: surfaces project templates matching this role
-        querySingleRds(`portfolio project implementation achievements ${sanitised.substring(0, 500)}`, userId, store),
+        querySingleRds(`portfolio project implementation achievements ${jd.substring(0, 500)}`, userId, store),
         // Query 4 — DORA metrics and outcome measurements
         querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
     ]);
@@ -413,7 +418,7 @@ export async function executeResearchAgent(
     }
 
     // 4. Build user message
-    const userMessage = buildResearchMessage(sanitised, kbContext, resumeData);
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData);
 
     // 5. Run agent
     const result = await runAgent<StrategistResearchResult>({
