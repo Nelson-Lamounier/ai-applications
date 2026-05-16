@@ -102,7 +102,7 @@ async function main(): Promise<void> {
             const g = await groundingVerifier.verify({
                 query:        `${env.slug} ${research.data.authorDirection ?? ''}`.trim().slice(0, 500),
                 contextChunks: (research.data.kbPassages ?? []).map((p) => p.text),
-                answer:       writer.data.content,
+                answer:       scrubbedContent,
             });
             emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
                 { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },

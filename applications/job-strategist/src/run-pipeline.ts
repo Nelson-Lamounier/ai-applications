@@ -114,23 +114,32 @@ export async function main(): Promise<void> {
         // ── Grounding verification (block mode, fail-open) ─────────────────
         // Run after analysis is produced and KB context is available, before
         // any persistence so the verified (or fallback) text is what is stored.
+        // Skip entirely when the KB returned no passages — block mode would
+        // replace a perfectly good analysis with a one-line fallback.
         const contextChunks = (research.data.kbContext ?? '')
             .split(KB_CONTEXT_SEPARATOR)
             .filter((s: string) => s.trim().length > 0);
         let finalAnalysis = analysis.data.analysisXml;
-        try {
-            const g = await groundingVerifier.verify({
-                query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
-                contextChunks,
-                answer: analysis.data.analysisXml,
-            });
-            finalAnalysis = g.answer;
-        } catch (e) {
-            log.warn({
+        if (contextChunks.length > 0) {
+            try {
+                const g = await groundingVerifier.verify({
+                    query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
+                    contextChunks,
+                    answer: analysis.data.analysisXml,
+                });
+                finalAnalysis = g.answer;
+            } catch (e) {
+                log.warn({
+                    pipelineRunId: env.pipelineRunId,
+                    error: (e as Error).message,
+                }, 'Grounding verifier failed — keeping original analysis');
+                strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_error' });
+            }
+        } else {
+            log.info({
                 pipelineRunId: env.pipelineRunId,
-                error: (e as Error).message,
-            }, 'Grounding verifier failed — keeping original analysis');
-            strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_error' });
+            }, 'Grounding verification skipped — no KB context passages');
+            strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_skipped_no_context' });
         }
 
         // Resume-builder persist (Option A): the Strategist already produced

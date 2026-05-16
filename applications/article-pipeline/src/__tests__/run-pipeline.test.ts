@@ -305,15 +305,30 @@ async function runPipelineWithMocks(opts: {
 
 describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open)', () => {
     it('runs flag-mode grounding, never blocks, emits GroundingFailed=1 on NOT_GROUNDED', async () => {
+        // Capture the arg the pipeline passes to verify() via a shared slot.
+        // mockImplementation forwards all runtime args even when the TS type says ()
+        // — the captured object is what the Bedrock ConverseCommand would receive.
+        let capturedVerifyArg: Record<string, unknown> | undefined;
         const { persistArgs, emitCalls } = await runPipelineWithMocks({
-            verifyImpl: () => Promise.resolve({
-                status: 'NOT_GROUNDED', reason: 'r', ungroundedClaims: ['c'], answer: 'IGNORED_IN_FLAG',
-            }),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            verifyImpl: ((...args: any[]) => {
+                capturedVerifyArg = args[0] as Record<string, unknown>;
+                return Promise.resolve({
+                    status: 'NOT_GROUNDED', reason: 'r', ungroundedClaims: ['c'], answer: 'IGNORED_IN_FLAG',
+                });
+            }) as () => Promise<unknown>,
         });
 
         // FLAG mode must NEVER alter the persisted content — even when NOT_GROUNDED.
         const persistedContent = persistArgs[2] as string;
         expect(persistedContent).toBe(EXPECTED_SCRUBBED_CONTENT);
+
+        // The grounding verifier must receive the scrubbed content (no raw PII).
+        expect(capturedVerifyArg).toBeDefined();
+        expect(capturedVerifyArg!.answer).not.toContain(RAW_PII_EMAIL);
+        expect(capturedVerifyArg!.answer).toContain('[EMAIL]');
+        // The answer passed to verify must equal the same scrubbed string persisted.
+        expect(capturedVerifyArg!.answer).toBe(EXPECTED_SCRUBBED_CONTENT);
 
         // Must emit at least one metric containing GroundingFailed=1.
         const emitted = emitCalls.flatMap(

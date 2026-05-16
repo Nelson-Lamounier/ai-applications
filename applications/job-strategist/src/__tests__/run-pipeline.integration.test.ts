@@ -595,4 +595,22 @@ describe('job-strategist run-pipeline — grounding (block mode, in-process)', (
         const [, , metadata] = updatePipelineRunMetadata.mock.calls[0] as [unknown, unknown, { analysis: { analysisXml: string } }];
         expect(metadata.analysis.analysisXml).toBe(FAKE_ANALYSIS_DATA.analysisXml);
     });
+
+    it('skips grounding and preserves original analysis when KB context is empty', async () => {
+        // Override research data so kbContext is empty — simulates sparse-portfolio user.
+        const emptyKbResearch = { ...FAKE_RESEARCH_DATA, kbContext: '' };
+        executeResearchAgent.mockResolvedValueOnce({ data: emptyKbResearch });
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { main } = require('../run-pipeline') as { main: () => Promise<void> };
+        await main();
+
+        // Verifier must NOT have been called when there are no context chunks.
+        expect(groundingVerifyMock).not.toHaveBeenCalled();
+
+        // Persisted metadata must contain the original analysisXml — NOT a fallback.
+        expect(updatePipelineRunMetadata).toHaveBeenCalledTimes(1);
+        const [, , metadata] = updatePipelineRunMetadata.mock.calls[0] as [unknown, unknown, { analysis: { analysisXml: string } }];
+        expect(metadata.analysis.analysisXml).toBe(FAKE_ANALYSIS_DATA.analysisXml);
+    });
 });
