@@ -21,8 +21,6 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost, PiiScrubber } from '@bedrock/shared';
-
-const piiScrubber = new PiiScrubber();
 import {
   careerEntriesTotal,
   seedZeroSeries as seedSubStepSeries,
@@ -37,6 +35,8 @@ import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
 import { CachedSearchTool } from './tools/tavily-cache.js';
 import { fanOutRoleSearches, type FanoutRole } from './tools/tavily-fanout.js';
 import { generateGapAnalysis, type GapAnalysisRole } from './bedrock/gap-analysis.js';
+
+const piiScrubber = new PiiScrubber();
 
 // One-shot K8s Job — bootstrap observability before any AWS / pg client
 // loads so OTel auto-instrumentation picks them up. Metrics push to

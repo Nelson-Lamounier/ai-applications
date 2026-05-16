@@ -24,8 +24,6 @@
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber } from '@bedrock/shared';
-
-const piiScrubber = new PiiScrubber();
 import {
   embeddingsCreatedTotal,
   seedZeroSeries as seedSubStepSeries,
@@ -36,6 +34,8 @@ import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
 import { CachedSearchTool } from './tools/tavily-cache.js';
 import { enrichAndEmbedRole } from './enrichment.js';
 import type { ResumeExperience } from './bedrock/extract-career.js';
+
+const piiScrubber = new PiiScrubber();
 
 const obs = bootstrapK8sObservability({ serviceName: 'resume-enrichment-processor' });
 const log = obs.logger;

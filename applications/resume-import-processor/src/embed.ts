@@ -58,13 +58,16 @@ function buildChunks(
   experience: ResumeExperience,
   enriched: EnrichedRoleData | null,
 ): EmbedChunk[] {
-  const base = { company: experience.company, title: experience.title, period: experience.period };
+  const sTitle   = piiScrubber.scrub(experience.title).redacted;
+  const sCompany = piiScrubber.scrub(experience.company).redacted;
+  const sPeriod  = piiScrubber.scrub(experience.period).redacted;
+  const base = { company: sCompany, title: sTitle, period: sPeriod };
   const chunks: EmbedChunk[] = [];
 
   // Always embed a role description chunk
   chunks.push({
     chunkType: 'role_description',
-    content:   `${experience.title} at ${experience.company} (${experience.period})`,
+    content:   `${sTitle} at ${sCompany} (${sPeriod})`,
     metadata:  base,
   });
 
