@@ -31,4 +31,31 @@ describe('PiiScrubber', () => {
             .scrub('a@b.com');
         expect(r.redacted).toBe('<<E>>');
     });
+
+    describe('adversarial inputs (checklist section 5)', () => {
+        const s = new PiiScrubber();
+        it('redacts spaced/dashed SSN and credit card variants', () => {
+            expect(s.scrub('ssn 123-45-6789').redacted).toBe('ssn [SSN]');
+            expect(s.scrub('card 4111-1111-1111-1111').found).toBe(true);
+            expect(s.scrub('card 4111 1111 1111 1111').found).toBe(true);
+        });
+        it('redacts email with plus-addressing and subdomains', () => {
+            expect(s.scrub('a.b+tag@mail.corp.example.co').redacted).toBe('[EMAIL]');
+        });
+        it('flags IP only with 4 octets, not version strings', () => {
+            expect(s.scrub('build 1.2.3 shipped').found).toBe(false);
+            expect(s.scrub('host 192.168.1.10').found).toBe(true);
+        });
+        it('does not throw or corrupt on overlapping spans', () => {
+            const fake: IPiiDetector = {
+                detect: (): PiiSpan[] => [
+                    { start: 0, end: 10, type: 'EMAIL', value: 'a@b.com xx' },
+                    { start: 5, end: 8, type: 'IP', value: 'com' },
+                ],
+            };
+            const r = new PiiScrubber({ detector: fake }).scrub('a@b.com xx');
+            expect(typeof r.redacted).toBe('string');
+            expect(r.found).toBe(true);
+        });
+    });
 });

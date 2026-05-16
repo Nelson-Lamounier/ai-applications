@@ -22,3 +22,10 @@ export type {
     SanitiseInputResult,
     SanitisationResult,
 } from './types.js';
+
+export { PiiScrubber } from './pii-scrubber.js';
+export type { PiiScrubberConfig, PiiScrubResult } from './pii-scrubber.js';
+export { RegexPiiDetector } from './regex-pii-detector.js';
+export { ComprehendPiiDetector } from './comprehend-pii-detector.js';
+export { DEFAULT_REDACTION_POLICY } from './pii-types.js';
+export type { IPiiDetector, PiiSpan, PiiType, RedactionPolicy } from './pii-types.js';
