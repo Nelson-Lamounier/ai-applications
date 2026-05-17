@@ -12,8 +12,12 @@ module.exports = {
   testTimeout: 10000,
   verbose: true,
   forceExit: true,
-  transform: { '^.+\\.ts$': 'ts-jest' },
+  transform: {
+    '^.+\\.ts$': [
+      'ts-jest',
+      { useESM: false, tsconfig: '<rootDir>/smoke/tsconfig.json' },
+    ],
+  },
   moduleFileExtensions: ['ts', 'js', 'json', 'node'],
   moduleNameMapper: { '^(\\.{1,2}/.*)\\.js$': '$1' },
-  globals: { 'ts-jest': { useESM: false } },
 };
