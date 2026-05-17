@@ -30,10 +30,28 @@ export function bearer(idToken: string): Record<string, string> {
   return { Authorization: `Bearer ${idToken}` };
 }
 
-/* ----------------------------------------------------------------------------
- * Temporary compat shims so the pre-existing admin-api-client.ts/.test.ts
- * still COMPILE against the new contract until Group 3 rewrites them.
- * These are not part of the real contract and carry no behaviour change.
- * -------------------------------------------------------------------------- */
-export interface StartResponse { pipelineRunId: string; slug?: string }
-export function authHeader(t: string): Record<string, string> { return bearer(t); }
+/** Pipeline-trigger response. The admin-api (separate tucaken-app repo)
+ *  is the source of truth for the id field name; we accept both camel and
+ *  snake case so a casing mismatch can never silently break the harness. */
+export interface StartResponse {
+  pipelineRunId: string;
+  applicationId?: string;
+  slug?: string;
+  importId?: string;
+}
+
+/** Normalise the trigger response: read the run id from pipelineRunId |
+ *  pipeline_run_id | id, and surface application/import/slug under stable
+ *  names regardless of the admin-api's casing. */
+export function normaliseStartResponse(raw: Record<string, unknown>): StartResponse {
+  const s = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.length > 0 ? v : undefined;
+  const pipelineRunId =
+    s(raw.pipelineRunId) ?? s(raw.pipeline_run_id) ?? s(raw.runId) ?? s(raw.id) ?? '';
+  return {
+    pipelineRunId,
+    applicationId: s(raw.applicationId) ?? s(raw.application_id),
+    importId: s(raw.importId) ?? s(raw.import_id),
+    slug: s(raw.slug),
+  };
+}

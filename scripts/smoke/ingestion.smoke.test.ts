@@ -11,23 +11,25 @@ const REPO = process.env.SMOKE_INGEST_REPO ?? 'sindresorhus/is';
 const TIMEOUT = Number(process.env.SMOKE_FLOW_TIMEOUT ?? '600000');
 
 describe('ingestion e2e', () => {
-  it('admin-api -> ingest -> document_embeddings', async () => {
+  it('admin-api -> ingest -> repo_sync_state + document_embeddings', async () => {
     const rds = await connectRds({
       host: ep.pgHost, port: ep.pgPort, database: ep.pgDatabase,
       user: ep.pgUser, password: ep.pgPassword, testUserId: TEST_USER_ID,
     });
     try {
-      const api = new AdminApiClient(ep.adminApiBaseUrl, ep.adminApiToken);
-      const { pipelineRunId } = await api.startIngestion({ userId: TEST_USER_ID, repoFullName: REPO });
-      recordCleanup({ flow: 'ingestion', pipelineRunId });
+      const api = new AdminApiClient(ep.adminApiBaseUrl, ep.cognitoIdToken);
+      const { pipelineRunId } = await api.startIngestion({ repoFullName: REPO });
+      recordCleanup({ flow: 'ingestion', pipelineRunId, repoFullName: REPO });
 
-      const status = await rds.waitForPipelineStatus(pipelineRunId, TIMEOUT, 5000);
+      // Ingestion progress is tracked on repo_sync_state (user_id + repo),
+      // not pipeline_runs — OK 'complete', FAIL 'error'.
+      const status = await rds.waitForRepoSync(REPO, TIMEOUT, 5000);
       expect(status).toBe('complete');
       await rds.assertRows(
-        'SELECT 1 FROM document_embeddings WHERE user_id = $1 LIMIT 1', [TEST_USER_ID],
-        'document_embeddings rows');
+        'SELECT 1 FROM document_embeddings WHERE user_id = $1 AND repo_full_name = $2 LIMIT 1',
+        [TEST_USER_ID, REPO], 'document_embeddings rows for the repo');
     } finally {
       await rds.close();
     }
-  }, Number(process.env.SMOKE_FLOW_TIMEOUT ?? '600000') + 60_000);
+  }, TIMEOUT + 60_000);
 });

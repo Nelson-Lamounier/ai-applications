@@ -6,7 +6,8 @@ import type { CleanupTarget, FlowName } from './types.js';
  *  No-op when unset so flow suites can run standalone. Best-effort:
  *  a write failure must never fail the test. */
 export function recordCleanup(rec: {
-  flow: FlowName; pipelineRunId?: string; slug?: string; s3Keys?: string[]; chatSessionId?: string;
+  flow: FlowName; pipelineRunId?: string; slug?: string; applicationId?: string;
+  importId?: string; repoFullName?: string; s3Keys?: string[]; chatSessionId?: string;
 }): void {
   const file = process.env.SMOKE_CLEANUP_FILE;
   if (!file) return;
@@ -15,6 +16,9 @@ export function recordCleanup(rec: {
       flow: rec.flow,
       pipelineRunId: rec.pipelineRunId,
       slug: rec.slug,
+      applicationId: rec.applicationId,
+      importId: rec.importId,
+      repoFullName: rec.repoFullName,
       s3Keys: rec.s3Keys ?? [],
       chatSessionId: rec.chatSessionId,
     }) + '\n');
@@ -37,6 +41,9 @@ export function readCleanupTargets(file: string): CleanupTarget[] {
         flow: o.flow,
         pipelineRunId: o.pipelineRunId,
         slug: o.slug,
+        applicationId: o.applicationId,
+        importId: o.importId,
+        repoFullName: o.repoFullName,
         s3Keys: o.s3Keys ?? [],
         chatSessionId: o.chatSessionId,
       });

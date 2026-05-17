@@ -19,24 +19,31 @@ describe('article-pipeline e2e', () => {
       user: ep.pgUser, password: ep.pgPassword, testUserId: TEST_USER_ID,
     });
     try {
-      const s3Key = `smoke/article-${Date.now()}/draft.md`;
+      const stamp = Date.now();
+      const slug = `smoke-article-${stamp}`;
+      const s3Key = `smoke/article-${stamp}/draft.md`;
       const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'eu-west-1' });
       await s3.send(new PutObjectCommand({
         Bucket: BUCKET, Key: s3Key, Body: readFileSync(`${__dirname}/fixtures/article-draft.md`),
       }));
 
-      const api = new AdminApiClient(ep.adminApiBaseUrl, ep.adminApiToken);
-      const { pipelineRunId } = await api.startArticle({ userId: TEST_USER_ID, s3Key });
-      recordCleanup({ flow: 'article-pipeline', pipelineRunId, s3Keys: [s3Key] });
+      const api = new AdminApiClient(ep.adminApiBaseUrl, ep.cognitoIdToken);
+      const started = await api.startArticle({ s3Key, slug });
+      const { pipelineRunId } = started;
+      // Prefer the slug the admin-api echoes back; fall back to ours.
+      const effectiveSlug = started.slug ?? slug;
+      recordCleanup({ flow: 'article-pipeline', pipelineRunId, slug: effectiveSlug, s3Keys: [s3Key] });
 
       const status = await rds.waitForPipelineStatus(pipelineRunId, TIMEOUT, 5000);
       expect(status).toBe('complete');
       const rows = await rds.assertRows(
-        'SELECT status FROM articles WHERE user_id = $1 AND pipeline_run_id = $2',
-        [TEST_USER_ID, pipelineRunId], 'articles row');
-      expect(['review', 'published']).toContain((rows[0] as { status: string }).status);
+        'SELECT status, content_md FROM articles WHERE slug = $1 AND author_id = $2',
+        [effectiveSlug, TEST_USER_ID], 'articles row for the generated slug');
+      const a = rows[0] as { status: string; content_md: string };
+      expect(['review', 'published']).toContain(a.status);
+      expect((a.content_md ?? '').length).toBeGreaterThan(0);
     } finally {
       await rds.close();
     }
-  }, Number(process.env.SMOKE_FLOW_TIMEOUT ?? '600000') + 60_000);
+  }, TIMEOUT + 60_000);
 });

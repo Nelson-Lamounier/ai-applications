@@ -17,12 +17,18 @@ describe('cleanup-file', () => {
   it('appends one JSON line per record and reads them back', () => {
     process.env.SMOKE_CLEANUP_FILE = file;
     try {
-      recordCleanup({ flow: 'article-pipeline', pipelineRunId: 'r1', s3Keys: ['smoke/r1/a.md'] });
+      recordCleanup({ flow: 'article-pipeline', pipelineRunId: 'r1', slug: 'p1', s3Keys: ['smoke/r1/a.md'] });
+      recordCleanup({ flow: 'job-strategist', pipelineRunId: 'r2', applicationId: 'app-2' });
+      recordCleanup({ flow: 'resume-import', importId: 'imp-3', s3Keys: ['smoke/r3/r.pdf'] });
+      recordCleanup({ flow: 'ingestion', repoFullName: 'o/r' });
       recordCleanup({ flow: 'chatbots', chatSessionId: 's-9' });
       const targets = readCleanupTargets(file);
       expect(targets).toEqual([
-        { flow: 'article-pipeline', pipelineRunId: 'r1', s3Keys: ['smoke/r1/a.md'], chatSessionId: undefined },
-        { flow: 'chatbots', pipelineRunId: undefined, s3Keys: [], chatSessionId: 's-9' },
+        { flow: 'article-pipeline', pipelineRunId: 'r1', slug: 'p1', applicationId: undefined, importId: undefined, repoFullName: undefined, s3Keys: ['smoke/r1/a.md'], chatSessionId: undefined },
+        { flow: 'job-strategist', pipelineRunId: 'r2', slug: undefined, applicationId: 'app-2', importId: undefined, repoFullName: undefined, s3Keys: [], chatSessionId: undefined },
+        { flow: 'resume-import', pipelineRunId: undefined, slug: undefined, applicationId: undefined, importId: 'imp-3', repoFullName: undefined, s3Keys: ['smoke/r3/r.pdf'], chatSessionId: undefined },
+        { flow: 'ingestion', pipelineRunId: undefined, slug: undefined, applicationId: undefined, importId: undefined, repoFullName: 'o/r', s3Keys: [], chatSessionId: undefined },
+        { flow: 'chatbots', pipelineRunId: undefined, slug: undefined, applicationId: undefined, importId: undefined, repoFullName: undefined, s3Keys: [], chatSessionId: 's-9' },
       ]);
     } finally { delete process.env.SMOKE_CLEANUP_FILE; }
   });
