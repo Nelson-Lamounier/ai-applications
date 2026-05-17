@@ -56,3 +56,55 @@ describe('assertSafeToMutate', () => {
     expect(() => assertSafeToMutate(' tucaken', okUser)).toThrow(/refusing.*database/i);
   });
 });
+
+import { RdsClient } from '../rds-client';
+
+function fakePool(responses: Array<{ rows: unknown[] }>) {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  let i = 0;
+  return {
+    calls,
+    query: async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      return responses[Math.min(i++, responses.length - 1)] ?? { rows: [] };
+    },
+    end: async () => {},
+  };
+}
+const U = '31f4686a-979b-4765-a17c-22a1e71cec59';
+
+describe('RdsClient.waitForPipelineStatus', () => {
+  it('resolves when status becomes terminal', async () => {
+    const pool = fakePool([{ rows: [{ status: 'researching' }] }, { rows: [{ status: 'complete' }] }]);
+    const c = new RdsClient(pool as never, 'tucaken', U);
+    expect(await c.waitForPipelineStatus('run-1', 50, 5)).toBe('complete');
+  });
+  it('throws SmokeAssertionError when status is failed', async () => {
+    const pool = fakePool([{ rows: [{ status: 'failed', error: { msg: 'boom' } }] }]);
+    const c = new RdsClient(pool as never, 'tucaken', U);
+    await expect(c.waitForPipelineStatus('run-1', 50, 5)).rejects.toThrow(/failed.*boom/s);
+  });
+  it('throws SmokeInfraError on timeout', async () => {
+    const pool = fakePool([{ rows: [{ status: 'researching' }] }]);
+    const c = new RdsClient(pool as never, 'tucaken', U);
+    await expect(c.waitForPipelineStatus('run-1', 10, 5)).rejects.toThrow(/timed out/i);
+  });
+});
+
+describe('RdsClient.cleanupRun', () => {
+  it('deletes children before parents, test-user scoped, guard-checked', async () => {
+    const pool = fakePool([{ rows: [] }]);
+    const c = new RdsClient(pool as never, 'tucaken', U);
+    await c.cleanupRun({ flow: 'job-strategist', pipelineRunId: 'run-9', s3Keys: [] });
+    const tables = pool.calls.map(x => x.sql.match(/DELETE FROM (\w+)/)?.[1]);
+    expect(tables).toEqual(['coaching_content', 'resumes', 'articles', 'pipeline_runs', 'job_applications']);
+    for (const call of pool.calls) expect(call.params).toContain(U);
+  });
+  it('refuses cleanup when the safety guard fails', async () => {
+    const pool = fakePool([{ rows: [] }]);
+    const c = new RdsClient(pool as never, 'prod_db', U);
+    await expect(c.cleanupRun({ flow: 'job-strategist', pipelineRunId: 'r', s3Keys: [] }))
+      .rejects.toThrow(/refusing.*database/i);
+    expect(pool.calls).toHaveLength(0);
+  });
+});
