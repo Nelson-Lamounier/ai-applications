@@ -270,27 +270,13 @@ export type {
 export { BedrockReranker, PgVectorRetriever } from './retrieval/index.js';
 
 // ─── Security (Input/Output Sanitisation + PII Scrubbing) ────────────────────
-export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';
-export type { InputSanitiserConfig } from './security/input-sanitiser.js';
-export { OutputSanitiser } from './security/output-sanitiser.js';
-export type { OutputSanitiserConfig } from './security/output-sanitiser.js';
-export type {
-    InputPattern,
-    OutputRedactionRule,
-    PiiPattern,
-    SanitiseInputResult,
-    SanitisationResult,
-} from './security/types.js';
-export { PiiScrubber } from './security/pii-scrubber.js';
-export type { PiiScrubberConfig, PiiScrubResult } from './security/pii-scrubber.js';
-export { RegexPiiDetector } from './security/regex-pii-detector.js';
-export { ComprehendPiiDetector } from './security/comprehend-pii-detector.js';
-export { DEFAULT_REDACTION_POLICY } from './security/pii-types.js';
-export type { IPiiDetector, PiiSpan, PiiType, RedactionPolicy } from './security/pii-types.js';
+// Single source of truth — re-export the security barrel rather than
+// re-listing every symbol (kept these two lists in lockstep otherwise).
+export * from './security/index.js';
 
 // ─── Chatbot utilities ────────────────────────────────────────────────────────
-export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT } from './chatbot/index.js';
-export type { Metric, ChatbotResponse } from './chatbot/index.js';
+export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT, recordZeroResultRetrieval } from './chatbot/index.js';
+export type { Metric, ChatbotResponse, ZeroResultRetrievalParams } from './chatbot/index.js';
 
 // ─── Grounding (Answer Self-Correction / Verification) ───────────────────────
 export { BedrockGroundingVerifier, DEFAULT_GROUNDING_FALLBACK } from './grounding/index.js';
