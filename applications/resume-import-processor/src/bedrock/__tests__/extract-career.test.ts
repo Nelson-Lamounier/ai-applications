@@ -62,6 +62,82 @@ describe('extractCareerData', () => {
     expect(result.outputTokens).toBe(0);
   });
 
+  it('throws a typed schema_validation_failed error when a required field is missing', async () => {
+    const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
+    (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
+      send: (jest.fn() as any).mockResolvedValue({
+        body: Buffer.from(JSON.stringify({
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [{
+            type: 'tool_use',
+            input: {
+              // profile is missing entirely — model violated the schema
+              summary:         '',
+              experience:      [],
+              skills:          [],
+              education:       [],
+              certifications:  [],
+              projects:        [],
+              keyAchievements: [],
+            },
+          }],
+        })),
+      }),
+    } as any));
+
+    await expect(extractCareerData('resume text', 'eu-west-1')).rejects.toMatchObject({
+      name: 'CareerExtractionError',
+      code: 'schema_validation_failed',
+    });
+  });
+
+  it('rejects model output that injects an unknown field', async () => {
+    const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
+    (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
+      send: (jest.fn() as any).mockResolvedValue({
+        body: Buffer.from(JSON.stringify({
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [{
+            type: 'tool_use',
+            input: {
+              profile:         { name: 'Jane', title: 'Engineer', email: 'j@ex.com', location: 'Dublin' },
+              summary:         '',
+              experience:      [],
+              skills:          [],
+              education:       [],
+              certifications:  [],
+              projects:        [],
+              keyAchievements: [],
+              injected:        'unexpected',
+            },
+          }],
+        })),
+      }),
+    } as any));
+
+    await expect(extractCareerData('resume text', 'eu-west-1')).rejects.toMatchObject({
+      name: 'CareerExtractionError',
+      code: 'schema_validation_failed',
+    });
+  });
+
+  it('throws a typed no_tool_use_block error when Bedrock returns no tool_use', async () => {
+    const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
+    (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
+      send: (jest.fn() as any).mockResolvedValue({
+        body: Buffer.from(JSON.stringify({
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [{ type: 'text', text: 'I cannot do that.' }],
+        })),
+      }),
+    } as any));
+
+    await expect(extractCareerData('resume text', 'eu-west-1')).rejects.toMatchObject({
+      name: 'CareerExtractionError',
+      code: 'no_tool_use_block',
+    });
+  });
+
   it('redacts PII from resume text before the Bedrock request body', async () => {
     const awsSdk = await import('@aws-sdk/client-bedrock-runtime');
     const invokeModelCommandMock = awsSdk.InvokeModelCommand as unknown as jest.Mock;

@@ -16,10 +16,25 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import { z } from 'zod';
 import { BedrockGroundingVerifier } from '@bedrock/shared';
 import type { GroundingResult } from '@bedrock/shared';
 import type { ResumeExperience } from './extract-career.js';
 import type { SearchResult } from '../tools/tavily.js';
+
+/**
+ * Typed failure for gap analysis. Fail-fast: a malformed report must never be
+ * cast and persisted to pipeline_runs (structure-output-checklist §7).
+ */
+export class GapAnalysisError extends Error {
+  constructor(
+    public readonly code: 'no_tool_use_block' | 'schema_validation_failed',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GapAnalysisError';
+  }
+}
 
 export interface GapAnalysisRole {
   roleId:        string;
@@ -88,6 +103,40 @@ export const MAX_ROLES_PER_CALL = 8;
 
 const MAX_SNIPPET_CHARS = 800;
 
+/**
+ * Runtime safety-net mirror of {@link GapAnalysisReport}. `.strict()` is the
+ * Zod twin of JSON-Schema `additionalProperties:false`.
+ */
+const GapAnalysisReportSchema = z.object({
+  overallScore: z.number(),
+  perRole: z.array(z.object({
+    roleId:                      z.string(),
+    company:                     z.string(),
+    title:                       z.string(),
+    period:                      z.string(),
+    completenessScore:           z.number(),
+    coveredResponsibilities:     z.array(z.string()),
+    missingResponsibilities:     z.array(z.string()),
+    suggestedAdditions: z.array(z.object({
+      bullet:    z.string(),
+      rationale: z.string(),
+    }).strict()),
+    quantificationOpportunities: z.array(z.string()),
+    keywordsForATS:              z.array(z.string()),
+    externalValidation:          z.enum(['full', 'limited']),
+  }).strict()),
+  skillsGap: z.object({
+    present:  z.array(z.string()),
+    missing:  z.array(z.string()),
+    emerging: z.array(z.string()),
+  }).strict(),
+  narrativeFeedback: z.string(),
+  freeTierLimit: z.object({
+    rolesSkipped: z.number(),
+    upgradeCta:   z.string().nullable(),
+  }).strict(),
+}).strict();
+
 const PER_ROLE_SCHEMA = {
   type: 'object',
   properties: {
@@ -107,6 +156,7 @@ const PER_ROLE_SCHEMA = {
           rationale: { type: 'string' },
         },
         required: ['bullet', 'rationale'],
+        additionalProperties: false,
       },
     },
     quantificationOpportunities: { type: 'array', items: { type: 'string' } },
@@ -118,6 +168,7 @@ const PER_ROLE_SCHEMA = {
     'coveredResponsibilities', 'missingResponsibilities', 'suggestedAdditions',
     'quantificationOpportunities', 'keywordsForATS', 'externalValidation',
   ],
+        additionalProperties: false,
 };
 
 const GAP_TOOL_SCHEMA = {
@@ -136,6 +187,7 @@ const GAP_TOOL_SCHEMA = {
           emerging: { type: 'array', items: { type: 'string' } },
         },
         required: ['present', 'missing', 'emerging'],
+        additionalProperties: false,
       },
       narrativeFeedback: { type: 'string', description: '2-3 paragraphs of reviewer prose' },
       freeTierLimit: {
@@ -145,9 +197,11 @@ const GAP_TOOL_SCHEMA = {
           upgradeCta:   { type: ['string', 'null'] },
         },
         required: ['rolesSkipped', 'upgradeCta'],
+        additionalProperties: false,
       },
     },
     required: ['overallScore', 'perRole', 'skillsGap', 'narrativeFeedback', 'freeTierLimit'],
+    additionalProperties: false,
   },
 };
 
@@ -214,10 +268,20 @@ async function invokeOnce(
   const parsed = JSON.parse(Buffer.from(response.body).toString('utf-8'));
   const toolUse = parsed.content?.find((b: { type: string }) => b.type === 'tool_use');
   if (!toolUse?.input) {
-    throw new Error('generateGapAnalysis: Bedrock returned no tool_use block');
+    throw new GapAnalysisError(
+      'no_tool_use_block',
+      'generateGapAnalysis: Bedrock returned no tool_use block',
+    );
+  }
+  const validated = GapAnalysisReportSchema.safeParse(toolUse.input);
+  if (!validated.success) {
+    throw new GapAnalysisError(
+      'schema_validation_failed',
+      `generateGapAnalysis: schema validation failed: ${validated.error.message}`,
+    );
   }
   return {
-    data:         toolUse.input as GapAnalysisReport,
+    data:         validated.data as GapAnalysisReport,
     inputTokens:  parsed.usage?.input_tokens  ?? 0,
     outputTokens: parsed.usage?.output_tokens ?? 0,
   };
