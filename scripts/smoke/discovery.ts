@@ -1,7 +1,7 @@
 /** @format */
 import { getSSMParameter, resolveAuth } from '@repo/script-utils/aws.js';
 import { capture } from './exec-wrapper.js';
-import { ADMIN_API, CHATBOT_AUTH } from './admin-api-contract.js';
+import { COGNITO } from './admin-api-contract.js';
 import { SmokeSetupError } from './types.js';
 
 export function decodeK8sSecret(b64: string): string {
@@ -31,30 +31,59 @@ async function ssmRequired(
   return value;
 }
 
+/**
+ * All three chatbot URLs share a single API base (SSM `/<prefix>/api-url`);
+ * they differ only by path (/invoke, /invoke-public, /invoke-authenticated),
+ * which the suites append. We return the stripped base for all three.
+ */
 export async function resolveChatbotUrls(
   namePrefix: string,
   cfg: { region: string; profile?: string },
 ): Promise<{ chatbotUrl: string; chatbotPublicUrl: string; chatbotAuthenticatedUrl: string }> {
   const strip = (u: string) => u.replace(/\/+$/, '');
-  const [u, p, a] = await Promise.all([
-    ssmRequired(`/${namePrefix}/api-url`, cfg),
-    ssmRequired(`/${namePrefix}/chatbot-public-api-url`, cfg),
-    ssmRequired(`/${namePrefix}/chatbot-authenticated-api-url`, cfg),
-  ]);
-  return { chatbotUrl: strip(u), chatbotPublicUrl: strip(p), chatbotAuthenticatedUrl: strip(a) };
+  const base = strip(await ssmRequired(`/${namePrefix}/api-url`, cfg));
+  return { chatbotUrl: base, chatbotPublicUrl: base, chatbotAuthenticatedUrl: base };
 }
 
-export async function resolveAdminSecrets(): Promise<{ adminApiToken: string; chatbotAuthJwt: string | null }> {
-  const adminApiToken = await k8sSecret('admin-api', ADMIN_API.tokenSecretName, ADMIN_API.tokenSecretKey);
-  let chatbotAuthJwt: string | null = null;
-  try { chatbotAuthJwt = await k8sSecret('admin-api', CHATBOT_AUTH.jwtSecretName, CHATBOT_AUTH.jwtSecretKey); }
-  catch { chatbotAuthJwt = null; }
-  return { adminApiToken, chatbotAuthJwt };
+/** Optional SecureString agent API key; absent → null (auth is optional). */
+export async function resolveChatbotApiKey(
+  namePrefix: string,
+  cfg: { region: string; profile?: string },
+): Promise<string | null> {
+  try {
+    const v = await getSSMParameter(`/${namePrefix}/agent-api-key`, {
+      region: cfg.region,
+      profile: cfg.profile,
+      environment: 'dev',
+    });
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Cognito app client id: explicit override else the live k8s secret. */
+export async function resolveCognitoClientId(): Promise<string> {
+  if (COGNITO.clientIdOverride) return COGNITO.clientIdOverride;
+  return k8sSecret(COGNITO.secretNamespace, COGNITO.secretName, COGNITO.clientIdKey);
+}
+
+/** RDS connection bits from the platform k8s secret (host/port stay local). */
+export async function resolveRdsConn(): Promise<{
+  database: string;
+  user: string;
+  password: string;
+}> {
+  const [database, user, password] = await Promise.all([
+    k8sSecret('platform', 'platform-rds-credentials', 'PG_DATABASE'),
+    k8sSecret('platform', 'platform-rds-credentials', 'PG_USER'),
+    k8sSecret('platform', 'platform-rds-credentials', 'PG_PASSWORD'),
+  ]);
+  return { database, user, password };
 }
 
 export async function resolvePgPassword(): Promise<string> {
-  return k8sSecret('platform', 'platform-rds-credentials',
-    process.env.SMOKE_PG_SECRET_KEY ?? 'password');
+  return (await resolveRdsConn()).password;
 }
 
 export { resolveAuth };

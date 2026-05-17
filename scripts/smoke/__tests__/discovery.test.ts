@@ -9,7 +9,7 @@ jest.mock('@repo/script-utils/aws.js', () => ({
   resolveAuth: () => ({ credentials: undefined }),
 }));
 
-import { resolveChatbotUrls, decodeK8sSecret } from '../discovery';
+import { resolveChatbotUrls, decodeK8sSecret, resolveRdsConn } from '../discovery';
 
 describe('decodeK8sSecret', () => {
   it('base64-decodes a jsonpath secret value', () => {
@@ -19,16 +19,30 @@ describe('decodeK8sSecret', () => {
 
 describe('resolveChatbotUrls', () => {
   beforeEach(() => getSSMParameter.mockReset());
-  it('reads the three CDK SSM params and strips trailing slashes', async () => {
-    getSSMParameter
-      .mockResolvedValueOnce('https://a.example.com/prod/')
-      .mockResolvedValueOnce('https://b.example.com/prod/')
-      .mockResolvedValueOnce('https://c.example.com/prod/');
-    const r = await resolveChatbotUrls('bedrock-data-development', { region: 'eu-west-1' });
+  it('reads the single api-url param and returns the stripped base for all three', async () => {
+    getSSMParameter.mockResolvedValueOnce('https://x/prod/');
+    const r = await resolveChatbotUrls('bedrock-dev', { region: 'eu-west-1' });
     expect(r).toEqual({
-      chatbotUrl: 'https://a.example.com/prod',
-      chatbotPublicUrl: 'https://b.example.com/prod',
-      chatbotAuthenticatedUrl: 'https://c.example.com/prod',
+      chatbotUrl: 'https://x/prod',
+      chatbotPublicUrl: 'https://x/prod',
+      chatbotAuthenticatedUrl: 'https://x/prod',
     });
+    expect(getSSMParameter).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('resolveRdsConn', () => {
+  beforeEach(() => capture.mockReset());
+  it('reads database/user/password from the platform k8s secret', async () => {
+    const b64 = (s: string) => Buffer.from(s).toString('base64');
+    capture.mockImplementation(async (_c, a) => {
+      const jp = a[a.length - 1];
+      if (jp.includes('PG_DATABASE')) return b64('tucaken');
+      if (jp.includes('PG_USER')) return b64('app_user');
+      if (jp.includes('PG_PASSWORD')) return b64('s3cr3t');
+      return '';
+    });
+    const r = await resolveRdsConn();
+    expect(r).toEqual({ database: 'tucaken', user: 'app_user', password: 's3cr3t' });
   });
 });

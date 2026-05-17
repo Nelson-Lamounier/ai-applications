@@ -9,11 +9,12 @@ export const ALL_FLOWS: readonly FlowName[] = [
 
 export interface Endpoints {
   adminApiBaseUrl: string;
-  adminApiToken: string;
+  cognitoIdToken: string;
+  cognitoSub: string;
   chatbotUrl: string;
   chatbotPublicUrl: string;
   chatbotAuthenticatedUrl: string;
-  chatbotAuthJwt: string | null;
+  chatbotApiKey: string | null;
   pgPassword: string;
   pgHost: string;
   pgPort: number;
@@ -25,6 +26,9 @@ export interface CleanupTarget {
   flow: FlowName;
   pipelineRunId?: string;
   slug?: string;
+  applicationId?: string;
+  importId?: string;
+  repoFullName?: string;
   s3Keys: string[];
   chatSessionId?: string;
 }
