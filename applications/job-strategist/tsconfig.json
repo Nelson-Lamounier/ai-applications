@@ -8,6 +8,9 @@
       "jest"
     ]
   },
+  "references": [
+    { "path": "../shared" }
+  ],
   "include": [
     "src/**/*.ts"
   ],

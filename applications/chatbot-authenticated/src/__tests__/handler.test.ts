@@ -118,7 +118,7 @@ describe('chatbot-authenticated handler', () => {
             { role: 'user',      content: [{ text: 'hello' }] },
             { role: 'assistant', content: [{ text: 'hi'    }] },
         ];
-        (loadHistory as jest.Mock).mockResolvedValueOnce(history);
+        (loadHistory as jest.Mock<() => Promise<unknown>>).mockResolvedValueOnce(history);
         await handler(makeEvent({ prompt: 'next question', sessionId: VALID_SESSION_ID }));
         expect(invokeClaude).toHaveBeenCalledWith(
             'model-id',
@@ -159,7 +159,7 @@ describe('chatbot-authenticated handler', () => {
     });
 
     it('returns 400 when provided sessionId does not exist in DB', async () => {
-        (validateSession as jest.Mock).mockResolvedValueOnce(false);
+        (validateSession as jest.Mock<() => Promise<boolean>>).mockResolvedValueOnce(false);
         const result = await handler(
             makeEvent({ prompt: 'hi', sessionId: VALID_SESSION_ID }),
         );
@@ -183,7 +183,7 @@ describe('chatbot-authenticated handler', () => {
     // ── Error handling ─────────────────────────────────────────────────────────
 
     it('returns 500 when invokeClaude throws', async () => {
-        (invokeClaude as jest.Mock).mockRejectedValueOnce(new Error('Bedrock timeout'));
+        (invokeClaude as jest.Mock<() => Promise<string>>).mockRejectedValueOnce(new Error('Bedrock timeout'));
         const result = await handler(makeEvent({ prompt: 'hi' }));
         expect(result.statusCode).toBe(500);
     });
