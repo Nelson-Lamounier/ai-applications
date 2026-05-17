@@ -73,6 +73,7 @@ const TOOL_SCHEMA = {
             },
         },
         required: ['skills', 'technologies'],
+        additionalProperties: false,
     },
 };
 
