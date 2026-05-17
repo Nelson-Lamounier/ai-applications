@@ -18,6 +18,7 @@ import type {
     SemanticCacheGetInput,
     SemanticCacheGetResult,
     SemanticCachePutInput,
+    SemanticCacheInvalidateInput,
 } from './cache-types.js';
 
 const NS = 'BedrockSharedSafety';
@@ -129,6 +130,32 @@ export class PgSemanticCache implements ISemanticCache {
                 [{ name: 'CacheError', value: 1, unit: 'Count' }]);
             console.warn('[semantic-cache] put failed — skipping store:',
                 (e as Error).message);
+        }
+    }
+
+    async invalidate(input: SemanticCacheInvalidateInput): Promise<number> {
+        try {
+            const params: string[] = [];
+            const clauses: string[] = [];
+            if (input.scope) {
+                params.push(input.scope);
+                clauses.push(`scope = $${params.length}`);
+            }
+            if (input.kbTag) {
+                params.push(input.kbTag);
+                clauses.push(`kb_tag = $${params.length}`);
+            }
+            const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+            const res = await this.pool.query(
+                `DELETE FROM semantic_cache${where}`, params,
+            );
+            return res.rowCount ?? 0;
+        } catch (e) {
+            emitEmfMetric(NS, { Module: 'cache' },
+                [{ name: 'CacheError', value: 1, unit: 'Count' }]);
+            console.warn('[semantic-cache] invalidate failed — no-op:',
+                (e as Error).message);
+            return 0;
         }
     }
 }

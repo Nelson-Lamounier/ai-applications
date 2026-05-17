@@ -78,6 +78,37 @@ describe('PgSemanticCache', () => {
         expect(calls.some(s => /hit_count\s*=\s*hit_count\s*\+\s*1/i.test(s))).toBe(true);
     });
 
+    it('invalidate deletes rows scoped by scope+kbTag and returns the count', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 4 });
+        const c = new PgSemanticCache(cfg);
+        const n = await c.invalidate({ scope: 's', kbTag: 'k' });
+        expect(n).toBe(4);
+        const [sql, params] = queryMock.mock.calls.at(-1) as [string, unknown[]];
+        expect(sql).toMatch(/DELETE FROM semantic_cache/i);
+        expect(sql).toMatch(/scope = \$1/);
+        expect(sql).toMatch(/kb_tag = \$2/);
+        expect(params).toEqual(['s', 'k']);
+    });
+
+    it('invalidate by scope only deletes the whole scope', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 12 });
+        const c = new PgSemanticCache(cfg);
+        const n = await c.invalidate({ scope: 's' });
+        expect(n).toBe(12);
+        const [sql, params] = queryMock.mock.calls.at(-1) as [string, unknown[]];
+        expect(sql).toMatch(/scope = \$1/);
+        expect(sql).not.toMatch(/kb_tag/);
+        expect(params).toEqual(['s']);
+    });
+
+    it('invalidate is fail-open: db error → returns 0, CacheError emitted', async () => {
+        queryMock.mockRejectedValueOnce(new Error('db down'));
+        const c = new PgSemanticCache(cfg);
+        const n = await c.invalidate({ scope: 's', kbTag: 'k' });
+        expect(n).toBe(0);
+        expect(emitMock.mock.calls.some(c => JSON.stringify(c).includes('CacheError'))).toBe(true);
+    });
+
     it('scrubs PII from query_text before inserting into the DB', async () => {
         const { PiiScrubber } = jest.requireMock('../security/index.js') as
             { PiiScrubber: jest.Mock };

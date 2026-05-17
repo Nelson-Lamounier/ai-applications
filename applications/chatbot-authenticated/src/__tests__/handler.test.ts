@@ -48,7 +48,8 @@ jest.mock('../env.js', () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 
 import { handler } from '../index.js';
-import { InputSanitiser } from '@bedrock/shared';
+import { InputSanitiser, emitEmfMetric } from '@bedrock/shared';
+import { multiQueryRetrieve } from '../retrieval.js';
 import { validateSession, createSession, loadHistory, appendMessages } from '../session.js';
 import { invokeClaude } from '../invoke-claude.js';
 
@@ -89,6 +90,22 @@ describe('chatbot-authenticated handler', () => {
 
     afterEach(() => {
         delete process.env['CHATBOT_RETRIEVAL_SOURCE'];
+    });
+
+    it('emits a ZeroResultRetrieval metric when retrieval returns no passages', async () => {
+        (multiQueryRetrieve as jest.Mock<() => Promise<unknown[]>>).mockResolvedValueOnce([]);
+        await handler(makeEvent({ prompt: 'something not in the KB' }));
+        const emitted = JSON.stringify((emitEmfMetric as jest.Mock).mock.calls);
+        expect(emitted).toContain('ZeroResultRetrieval');
+    });
+
+    it('does NOT emit ZeroResultRetrieval when passages are returned', async () => {
+        (multiQueryRetrieve as jest.Mock<() => Promise<unknown[]>>).mockResolvedValueOnce([
+            { text: 'hit', score: 0.9, source: 'chunk', sourceUri: 'f', metadata: { repo_full_name: 'o/r' } },
+        ]);
+        await handler(makeEvent({ prompt: 'known topic' }));
+        const emitted = JSON.stringify((emitEmfMetric as jest.Mock).mock.calls);
+        expect(emitted).not.toContain('ZeroResultRetrieval');
     });
 
     // ── Happy path ─────────────────────────────────────────────────────────────

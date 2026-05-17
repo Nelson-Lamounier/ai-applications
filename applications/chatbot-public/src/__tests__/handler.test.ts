@@ -44,7 +44,8 @@ jest.mock('../env.js', () => ({
 // ── Imports (after mocks are declared so jest.mock hoisting takes effect) ─────
 
 import { handler } from '../index.js';
-import { InputSanitiser } from '@bedrock/shared';
+import { InputSanitiser, emitEmfMetric } from '@bedrock/shared';
+import { multiQueryRetrieve } from '../retrieval.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -117,6 +118,22 @@ describe('chatbot-public handler', () => {
         const result = await (handler as unknown as Handler)(makeEvent({ prompt: 'hello', sessionId }));
         const body = JSON.parse(result.body);
         expect(body.sessionId).toBe(sessionId);
+    });
+
+    it('emits a ZeroResultRetrieval metric when rds retrieval returns no passages', async () => {
+        (multiQueryRetrieve as jest.Mock<() => Promise<unknown[]>>).mockResolvedValueOnce([]);
+        await (handler as unknown as Handler)(makeEvent({ prompt: 'something not in the KB' }));
+        const emitted = JSON.stringify((emitEmfMetric as jest.Mock).mock.calls);
+        expect(emitted).toContain('ZeroResultRetrieval');
+    });
+
+    it('does NOT emit ZeroResultRetrieval when passages are returned', async () => {
+        (multiQueryRetrieve as jest.Mock<() => Promise<unknown[]>>).mockResolvedValueOnce([
+            { text: 'hit', score: 0.9, source: 'chunk', sourceUri: 'f', metadata: { repo_full_name: 'o/r' } },
+        ]);
+        await (handler as unknown as Handler)(makeEvent({ prompt: 'known topic' }));
+        const emitted = JSON.stringify((emitEmfMetric as jest.Mock).mock.calls);
+        expect(emitted).not.toContain('ZeroResultRetrieval');
     });
 
     it('returns friendly message when input is blocked', async () => {

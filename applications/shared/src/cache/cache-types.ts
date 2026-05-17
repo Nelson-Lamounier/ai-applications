@@ -27,4 +27,16 @@ export interface SemanticCachePutInput {
 export interface ISemanticCache {
     get(input: SemanticCacheGetInput): Promise<SemanticCacheGetResult>;
     put(input: SemanticCachePutInput): Promise<void>;
+    /**
+     * Purge cached responses on knowledge-base or model changes. Returns the
+     * number of rows removed. Fail-open: errors degrade to 0 / no-op.
+     */
+    invalidate(input: SemanticCacheInvalidateInput): Promise<number>;
+}
+
+export interface SemanticCacheInvalidateInput {
+    /** Restrict deletion to one app/caller scope. Omit to match any scope. */
+    readonly scope?: string;
+    /** Restrict deletion to one KB-version/model tag. Omit to match any tag. */
+    readonly kbTag?: string;
 }

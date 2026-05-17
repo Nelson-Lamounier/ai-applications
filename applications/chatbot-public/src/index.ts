@@ -130,6 +130,17 @@ export const handler = withSpan('chatbot-public.handler', async (
 
         if (CHATBOT_RETRIEVAL_SOURCE() === 'rds-pgvector') {
             const passages     = await multiQueryRetrieve(env.portfolioOwnerUserId, inputCheck.sanitised, getPool());
+            if (passages.length === 0) {
+                // Phase 7 — log + meter zero-result events for monitoring and
+                // dataset improvement. The system prompt forces an honest
+                // "I don't have that information" answer when context is empty.
+                log('WARN', 'chatbot-public zero-result retrieval', {
+                    sessionId,
+                    promptHash: createHash('sha256').update(parsed.prompt).digest('hex').slice(0, 16),
+                });
+                emitEmfMetric(EMF_NAMESPACE, { Environment: process.env['CDK_ENV'] ?? 'development' },
+                    [{ name: 'ZeroResultRetrieval', value: 1, unit: 'Count' }], { sessionId });
+            }
             const context      = buildChatContext(passages);
             const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
             rawResponse        = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised);
