@@ -110,7 +110,7 @@ jest.mock('@bedrock/shared', () => {
             scrub: (text: string) => ({
                 // Minimal scrub: replace email patterns with [EMAIL]
                 redacted: text.replace(
-                    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+                    /[^\s@]+@[^\s@]+\.[^\s@]+/g,
                     '[EMAIL]',
                 ),
                 findings: [],
@@ -257,7 +257,7 @@ async function runPipelineWithMocks(opts: {
             PiiScrubber: jest.fn().mockImplementation(() => ({
                 scrub: (text: string) => ({
                     redacted: text.replace(
-                        /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+                        /[^\s@]+@[^\s@]+\.[^\s@]+/g,
                         '[EMAIL]',
                     ),
                     findings: [],

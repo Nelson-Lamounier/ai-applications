@@ -15,7 +15,7 @@ describe('RegexPiiDetector', () => {
     it('detects phone, SSN, credit card, and IPv4', () => {
         const text = 'call 415-555-2671, ssn 123-45-6789, cc 4111 1111 1111 1111, ip 10.0.0.1';
         expect(d.detect(text)).toHaveLength(4);
-        const types = d.detect(text).map(s => s.type).sort();
+        const types = d.detect(text).map(s => s.type).sort((a, b) => a.localeCompare(b));
         expect(types).toEqual(['CREDIT_CARD', 'IP', 'PHONE', 'SSN']);
     });
 
