@@ -22,7 +22,7 @@ describe('assertSafeToMutate', () => {
     process.env.SMOKE_ALLOWED_DBS = '';
     try {
       expect(() => assertSafeToMutate('', okUser)).toThrow(/refusing.*database/i);
-      expect(() => assertSafeToMutate('tucaken', okUser)).not.toThrow(); // default restored
+      expect(() => assertSafeToMutate('tucaken', okUser)).not.toThrow(); // '' falls back to default 'tucaken' via || operator
     } finally {
       if (prev === undefined) delete process.env.SMOKE_ALLOWED_DBS;
       else process.env.SMOKE_ALLOWED_DBS = prev;
@@ -105,6 +105,23 @@ describe('RdsClient.cleanupRun', () => {
     const c = new RdsClient(pool as never, 'prod_db', U);
     await expect(c.cleanupRun({ flow: 'job-strategist', pipelineRunId: 'r', s3Keys: [] }))
       .rejects.toThrow(/refusing.*database/i);
+    expect(pool.calls).toHaveLength(0);
+  });
+});
+
+describe('RdsClient.cleanupChatSession', () => {
+  it('deletes chat history scoped to user + session, guard-checked', async () => {
+    const pool = fakePool([{ rows: [] }]);
+    const c = new RdsClient(pool as never, 'tucaken', U);
+    await c.cleanupChatSession('sess-1');
+    expect(pool.calls).toHaveLength(1);
+    expect(pool.calls[0].sql).toMatch(/DELETE FROM \w+ WHERE user_id = \$1 AND session_id = \$2/);
+    expect(pool.calls[0].params).toEqual([U, 'sess-1']);
+  });
+  it('refuses when the safety guard fails', async () => {
+    const pool = fakePool([{ rows: [] }]);
+    const c = new RdsClient(pool as never, 'prod_db', U);
+    await expect(c.cleanupChatSession('s')).rejects.toThrow(/refusing.*database/i);
     expect(pool.calls).toHaveLength(0);
   });
 });

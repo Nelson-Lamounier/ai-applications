@@ -97,6 +97,20 @@ export class RdsClient {
     }
   }
 
+  /** Delete chat-history rows for one authenticated-chatbot session. Table
+   *  name is configurable (SMOKE_CHAT_HISTORY_TABLE, default chat_history)
+   *  and the delete is wrapped so a missing table never aborts cleanup. */
+  async cleanupChatSession(sessionId: string): Promise<void> {
+    this.guard();
+    const table = (process.env.SMOKE_CHAT_HISTORY_TABLE || 'chat_history').replace(/[^a-z0-9_]/gi, '');
+    try {
+      await this.pool.query(
+        `DELETE FROM ${table} WHERE user_id = $1 AND session_id = $2`,
+        [this.testUserId, sessionId],
+      );
+    } catch (e) { console.warn(`[smoke] cleanup skip: ${(e as Error).message}`); }
+  }
+
   async close(): Promise<void> { await this.pool.end(); }
 }
 
