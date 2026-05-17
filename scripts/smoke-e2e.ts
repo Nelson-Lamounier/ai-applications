@@ -8,6 +8,7 @@ import { ALL_FLOWS, type FlowName, type Endpoints } from './smoke/types.js';
 import { resolveChatbotUrls, resolveAdminSecrets, resolvePgPassword, resolveAuth } from './smoke/discovery.js';
 import { startPortForward } from './smoke/port-forward.js';
 import { connectRds } from './smoke/rds-client.js';
+import { readCleanupTargets } from './smoke/cleanup-file.js';
 
 const REGION = process.env.AWS_REGION ?? 'eu-west-1';
 const PROFILE = process.env.AWS_PROFILE ?? 'dev-account';
@@ -36,6 +37,7 @@ async function main() {
   const stops: Array<() => void> = [];
   const tmp = mkdtempSync(join(tmpdir(), 'smoke-'));
   const epFile = join(tmp, 'endpoints.json');
+  const cleanupFile = join(tmp, 'cleanup.jsonl');
   let failed = false;
 
   try {
@@ -61,6 +63,7 @@ async function main() {
     };
     writeFileSync(epFile, JSON.stringify(ep));
     process.env.SMOKE_ENDPOINTS_FILE = epFile;
+    process.env.SMOKE_CLEANUP_FILE = cleanupFile;
 
     if (cleanFirst) {
       const rds = await connectRds({
@@ -86,23 +89,39 @@ async function main() {
       try {
         let pw = '';
         try { pw = JSON.parse(readFileSync(epFile, 'utf-8')).pgPassword as string; } catch { pw = ''; }
+        const targets = readCleanupTargets(cleanupFile);
         if (pw) {
           const rds = await connectRds({
             host: '127.0.0.1', port: 15432, database: PG_DATABASE,
             user: PG_USER, password: pw, testUserId: TEST_USER_ID,
           });
-          await rds.cleanupRun({ flow: 'job-strategist', s3Keys: [] });
-          await rds.cleanupUserScoped();
+          let userScopedNeeded = false;
+          for (const t of targets) {
+            if (t.pipelineRunId) await rds.cleanupRun(t);
+            if (t.chatSessionId) await rds.cleanupChatSession(t.chatSessionId);
+            if (t.flow === 'ingestion' || t.flow === 'resume-import') userScopedNeeded = true;
+          }
+          // user-scoped tables (no run fk) only when a flow that writes them ran
+          if (userScopedNeeded) await rds.cleanupUserScoped();
           await rds.close();
         }
-        const s3 = new S3Client({ region: REGION });
-        void s3; void DeleteObjectCommand;
-        console.log('[smoke] cleanup done');
+        const s3Keys = targets.flatMap(t => t.s3Keys);
+        if (s3Keys.length > 0) {
+          const s3 = new S3Client({ region: REGION });
+          const bucket = process.env.SMOKE_ASSETS_BUCKET;
+          if (bucket) {
+            for (const Key of s3Keys) {
+              await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key })).catch(
+                (e: unknown) => console.warn(`[smoke] s3 cleanup skip ${Key}: ${(e as Error).message}`));
+            }
+          }
+        }
+        console.log(`[smoke] cleanup done (${targets.length} targets)`);
       } catch (e) {
         console.warn(`[smoke] cleanup error (non-fatal): ${(e as Error).message}`);
       }
     } else {
-      console.log(`[smoke] SKIP_CLEANUP=1 — retained rows for ${TEST_USER_ID}; endpoints: ${epFile}`);
+      console.log(`[smoke] SKIP_CLEANUP=1 — retained rows for ${TEST_USER_ID}; endpoints: ${epFile}; cleanup-file: ${cleanupFile}`);
     }
     for (const stop of stops.reverse()) try { stop(); } catch { /* noop */ }
     if (!skipCleanup) rmSync(tmp, { recursive: true, force: true });
