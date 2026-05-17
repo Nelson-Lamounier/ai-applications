@@ -5,7 +5,7 @@ jest.mock('@aws-sdk/client-cognito-identity-provider', () => ({
   CognitoIdentityProviderClient: jest.fn(() => ({ send })),
   InitiateAuthCommand: jest.fn((i: unknown) => ({ i })),
 }));
-import { decodeJwtSub, mintCognitoJwt } from '../cognito-auth';
+import { decodeJwtSub, decodeJwtClaim, mintCognitoJwt } from '../cognito-auth';
 
 function jwt(payload: object): string {
   const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -22,13 +22,20 @@ describe('decodeJwtSub', () => {
   });
 });
 
+describe('decodeJwtClaim', () => {
+  it('returns the claim when present, undefined when absent', () => {
+    expect(decodeJwtClaim(jwt({ email: 'dev@example.com' }), 'email')).toBe('dev@example.com');
+    expect(decodeJwtClaim(jwt({ sub: 's' }), 'email')).toBeUndefined();
+  });
+});
+
 describe('mintCognitoJwt', () => {
   beforeEach(() => send.mockReset());
   it('returns idToken + sub from USER_PASSWORD_AUTH', async () => {
-    const idToken = jwt({ sub: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
+    const idToken = jwt({ sub: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', email: 'dev@example.com' });
     (send as any).mockResolvedValueOnce({ AuthenticationResult: { IdToken: idToken } });
     const r = await mintCognitoJwt({ clientId: 'cid', username: 'u', password: 'p', region: 'eu-west-1' });
-    expect(r).toEqual({ idToken, sub: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
+    expect(r).toEqual({ idToken, sub: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', email: 'dev@example.com' });
   });
   it('throws SmokeSetupError when Cognito returns no IdToken', async () => {
     (send as any).mockResolvedValueOnce({});

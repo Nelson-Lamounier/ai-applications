@@ -151,10 +151,12 @@ describe('RdsClient.cleanupRun', () => {
   it('ingestion: deletes embeddings + sync state by user + repo', async () => {
     const pool = fakePool([{ rows: [] }]);
     const c = new RdsClient(pool as never, 'tucaken', U);
-    await c.cleanupRun({ flow: 'ingestion', repoFullName: 'o/r', s3Keys: [] });
+    await c.cleanupRun({ flow: 'ingestion', repoFullName: 'o/r', pipelineRunId: 'run-i', s3Keys: [] });
     const tables = pool.calls.map(x => x.sql.match(/DELETE FROM (\w+)/)?.[1]);
-    expect(tables).toEqual(['document_embeddings', 'repo_sync_state']);
-    for (const call of pool.calls) expect(call.params).toEqual([U, 'o/r']);
+    expect(tables).toEqual(['document_embeddings', 'repo_sync_state', 'pipeline_runs']);
+    expect(pool.calls[0].params).toEqual([U, 'o/r']);
+    expect(pool.calls[1].params).toEqual([U, 'o/r']);
+    expect(pool.calls[2].params).toEqual([U, 'run-i']);
   });
   it('refuses cleanup when the safety guard fails', async () => {
     const pool = fakePool([{ rows: [] }]);

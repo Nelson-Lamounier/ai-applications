@@ -46,8 +46,11 @@ export interface StartResponse {
 export function normaliseStartResponse(raw: Record<string, unknown>): StartResponse {
   const s = (v: unknown): string | undefined =>
     typeof v === 'string' && v.length > 0 ? v : undefined;
+  // Deliberately NOT falling back to raw.id — a generic `id` is often the
+  // new application/import id, and treating it as a run id would make the
+  // poller wait the full timeout on a row that never exists.
   const pipelineRunId =
-    s(raw.pipelineRunId) ?? s(raw.pipeline_run_id) ?? s(raw.runId) ?? s(raw.id) ?? '';
+    s(raw.pipelineRunId) ?? s(raw.pipeline_run_id) ?? s(raw.runId) ?? '';
   return {
     pipelineRunId,
     applicationId: s(raw.applicationId) ?? s(raw.application_id),

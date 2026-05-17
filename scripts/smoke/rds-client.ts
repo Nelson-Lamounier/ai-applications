@@ -144,6 +144,9 @@ export class RdsClient {
       await this.runStmts([
         ['DELETE FROM document_embeddings WHERE user_id = $1 AND ($2::text IS NULL OR repo_full_name = $2)', [uid, repo]],
         ['DELETE FROM repo_sync_state WHERE user_id = $1 AND ($2::text IS NULL OR repo_full_name = $2)', [uid, repo]],
+        // Ingestion tracks progress on repo_sync_state, but a pipeline_runs
+        // row may still be created for the trigger — clean it if recorded.
+        ['DELETE FROM pipeline_runs WHERE user_id = $1 AND ($2::uuid IS NULL OR id = $2)', [uid, rid]],
       ]);
     }
   }
@@ -179,6 +182,35 @@ export class RdsClient {
   }
 
   async close(): Promise<void> { await this.pool.end(); }
+}
+
+/** Resolve the platform `users.id` (gen_random_uuid, NOT the Cognito sub)
+ *  for the dedicated test user by email. Read-only — no mutation, so the
+ *  assertSafeToMutate guard does not apply; every downstream mutating call
+ *  is then scoped to this real users.id. */
+export async function resolvePlatformUserId(opts: {
+  host: string; port: number; database: string; user: string; password: string; email: string;
+}): Promise<string> {
+  const { Pool } = await import('pg');
+  const pool = new Pool({
+    host: opts.host, port: opts.port, database: opts.database,
+    user: opts.user, password: opts.password, max: 1,
+    connectionTimeoutMillis: 10_000,
+  });
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1', [opts.email]);
+    const id = (rows[0] as { id?: string } | undefined)?.id;
+    if (!id) {
+      throw new SmokeSetupError(
+        `No platform users row for "${opts.email}". The dev Cognito test `
+        + `user has not been provisioned in RDS yet — trigger one `
+        + `authenticated flow (or seed the row) before running the smoke suite.`);
+    }
+    return id;
+  } finally {
+    await pool.end();
+  }
 }
 
 export async function connectRds(opts: {

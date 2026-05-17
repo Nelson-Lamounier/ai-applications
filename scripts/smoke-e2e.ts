@@ -12,7 +12,7 @@ import {
 import { COGNITO } from './smoke/admin-api-contract.js';
 import { mintCognitoJwt } from './smoke/cognito-auth.js';
 import { startPortForward } from './smoke/port-forward.js';
-import { connectRds } from './smoke/rds-client.js';
+import { connectRds, resolvePlatformUserId } from './smoke/rds-client.js';
 import { readCleanupTargets } from './smoke/cleanup-file.js';
 
 const REGION = process.env.AWS_REGION ?? 'eu-west-1';
@@ -63,18 +63,25 @@ async function main() {
       resolveRdsConn(),
     ]);
 
-    // Mint the Cognito JWT once per run; the sub IS the test user id (the
-    // server derives identity from the JWT, never from request bodies).
-    const { idToken, sub } = await mintCognitoJwt({
+    // Mint the Cognito JWT once per run (server derives identity from the
+    // JWT, never from request bodies). The Cognito `sub` is NOT the
+    // platform users.id — resolve the real users.id by email so every
+    // RDS assertion/cleanup is scoped to the rows the pipelines wrote.
+    const { idToken, sub, email } = await mintCognitoJwt({
       clientId,
       username: COGNITO.username,
       password: COGNITO.password,
       region: COGNITO.region,
     });
-    testUserId = sub;
     rdsDatabase = rds.database;
-    process.env.SMOKE_TEST_USER_ID = sub;
-    console.log(`[smoke] flows=${flows.join(',')} user=${sub} db=${rds.database} profile=${PROFILE}`);
+    const testEmail = email ?? COGNITO.username;
+    const platformUserId = await resolvePlatformUserId({
+      host: '127.0.0.1', port: 15432, database: rds.database,
+      user: rds.user, password: rds.password, email: testEmail,
+    });
+    testUserId = platformUserId;
+    process.env.SMOKE_TEST_USER_ID = platformUserId;
+    console.log(`[smoke] flows=${flows.join(',')} user=${platformUserId} (cognito sub=${sub}) db=${rds.database} profile=${PROFILE}`);
 
     const ep: Endpoints = {
       adminApiBaseUrl: 'http://127.0.0.1:13002',
@@ -92,7 +99,7 @@ async function main() {
     if (cleanFirst) {
       const c = await connectRds({
         host: '127.0.0.1', port: 15432, database: rds.database,
-        user: rds.user, password: rds.password, testUserId: sub,
+        user: rds.user, password: rds.password, testUserId: platformUserId,
       });
       await c.cleanupUserScoped();
       await c.close();
