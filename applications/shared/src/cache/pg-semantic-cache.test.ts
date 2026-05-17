@@ -113,7 +113,7 @@ describe('PgSemanticCache', () => {
         const { PiiScrubber } = jest.requireMock('../security/index.js') as
             { PiiScrubber: jest.Mock };
         PiiScrubber.mockImplementationOnce(() => ({
-            scrub: (t: string) => ({ redacted: t.replace(/[^\s@]+@[^\s@]+/, '[EMAIL]') }),
+            scrub: (t: string) => ({ redacted: t.replace(/\S+/g, w => (w.includes('@') ? '[EMAIL]' : w)) }),
         }));
         queryMock.mockResolvedValueOnce({ rows: [] });
         const c = new PgSemanticCache(cfg);

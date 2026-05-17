@@ -108,11 +108,8 @@ jest.mock('@bedrock/shared', () => {
         ...actual,
         PiiScrubber: jest.fn().mockImplementation(() => ({
             scrub: (text: string) => ({
-                // Minimal scrub: replace email patterns with [EMAIL]
-                redacted: text.replace(
-                    /[^\s@]+@[^\s@]+\.[^\s@]+/g,
-                    '[EMAIL]',
-                ),
+                // Minimal scrub: replace any whitespace token containing '@'
+                redacted: text.replace(/\S+/g, (w) => (w.includes('@') ? '[EMAIL]' : w)),
                 findings: [],
             }),
         })),
@@ -256,10 +253,7 @@ async function runPipelineWithMocks(opts: {
             ...actual,
             PiiScrubber: jest.fn().mockImplementation(() => ({
                 scrub: (text: string) => ({
-                    redacted: text.replace(
-                        /[^\s@]+@[^\s@]+\.[^\s@]+/g,
-                        '[EMAIL]',
-                    ),
+                    redacted: text.replace(/\S+/g, (w) => (w.includes('@') ? '[EMAIL]' : w)),
                     findings: [],
                 }),
             })),
