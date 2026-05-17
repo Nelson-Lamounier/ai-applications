@@ -1,5 +1,6 @@
 /** @format */
 import { readFileSync } from 'node:fs';
+import { recordCleanup } from './cleanup-file.js';
 import type { Endpoints } from './types.js';
 
 const ep: Endpoints = JSON.parse(readFileSync(process.env.SMOKE_ENDPOINTS_FILE!, 'utf-8'));
@@ -33,6 +34,6 @@ describe('chatbots', () => {
     const { status } = await ask(`${ep.chatbotAuthenticatedUrl}/invoke-authenticated`,
       { question: QUESTION, sessionId }, { Authorization: `Bearer ${ep.chatbotAuthJwt}` });
     expect(status).toBe(200);
-    console.log(`SMOKE_CHAT_SESSION=${sessionId}`);
+    recordCleanup({ flow: 'chatbots', chatSessionId: sessionId });
   }, 120_000);
 });

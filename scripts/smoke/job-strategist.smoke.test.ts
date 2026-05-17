@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { connectRds } from './rds-client.js';
 import { AdminApiClient } from './admin-api-client.js';
+import { recordCleanup } from './cleanup-file.js';
 import type { Endpoints } from './types.js';
 
 const ep: Endpoints = JSON.parse(readFileSync(process.env.SMOKE_ENDPOINTS_FILE!, 'utf-8'));
@@ -26,7 +27,7 @@ describe('job-strategist e2e', () => {
         userId: TEST_USER_ID, targetCompany: 'Smoke Test Co',
         targetRole: 'Senior SRE', jobDescription: jd, resumeId,
       });
-      console.log(`SMOKE_CLEANUP job-strategist ${pipelineRunId}`);
+      recordCleanup({ flow: 'job-strategist', pipelineRunId });
 
       const status = await rds.waitForPipelineStatus(pipelineRunId, TIMEOUT, 5000);
       expect(status).toBe('complete');

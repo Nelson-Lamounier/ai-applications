@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { connectRds } from './rds-client.js';
 import { AdminApiClient } from './admin-api-client.js';
+import { recordCleanup } from './cleanup-file.js';
 import type { Endpoints } from './types.js';
 
 const ep: Endpoints = JSON.parse(readFileSync(process.env.SMOKE_ENDPOINTS_FILE!, 'utf-8'));
@@ -18,7 +19,7 @@ describe('ingestion e2e', () => {
     try {
       const api = new AdminApiClient(ep.adminApiBaseUrl, ep.adminApiToken);
       const { pipelineRunId } = await api.startIngestion({ userId: TEST_USER_ID, repoFullName: REPO });
-      console.log(`SMOKE_CLEANUP ingestion ${pipelineRunId}`);
+      recordCleanup({ flow: 'ingestion', pipelineRunId });
 
       const status = await rds.waitForPipelineStatus(pipelineRunId, TIMEOUT, 5000);
       expect(status).toBe('complete');
