@@ -31,7 +31,7 @@ function makeMockPool(queryResponses: Record<string, unknown> = {}): {
     });
 
     const pool = {
-        connect: jest.fn<Pool['connect']>().mockResolvedValue(client as unknown as PoolClient),
+        connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient),
     } as unknown as Pool;
 
     return { pool, client };
@@ -47,7 +47,7 @@ describe('validateSession', () => {
             if (q.startsWith('SELECT id FROM chat_sessions')) return { rows: [{ id: 'session-uuid' }] };
             return { rows: [], rowCount: 0 };
         });
-        const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+        const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;
         expect(await validateSession(pool, 'user-1', 'session-uuid')).toBe(true);
     });
 
@@ -58,7 +58,7 @@ describe('validateSession', () => {
             if (q.startsWith('SELECT id FROM chat_sessions')) return { rows: [] };
             return { rows: [], rowCount: 0 };
         });
-        const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+        const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;
         expect(await validateSession(pool, 'user-1', 'missing-uuid')).toBe(false);
     });
 
@@ -116,7 +116,7 @@ describe('createSession', () => {
             return { rows: [], rowCount: 0 };
         });
         const pool = {
-            connect: jest.fn().mockResolvedValue(client),
+            connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient),
         } as unknown as Pool;
 
         await expect(createSession(pool, 'user-1')).rejects.toThrow('db error');
@@ -159,7 +159,7 @@ describe('appendMessages', () => {
             if (n === 3) throw new Error('insert failed');
             return { rows: [], rowCount: 0 };
         });
-        const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+        const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;
         await expect(appendMessages(pool, 'u', 's', 'q', 'a')).rejects.toThrow('insert failed');
         expect(client.query.mock.calls.map(c => c[0])).toContain('ROLLBACK');
         expect(client.release).toHaveBeenCalled();
@@ -189,7 +189,7 @@ describe('loadHistory', () => {
             }
             return { rows: [], rowCount: 0 };
         });
-        const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+        const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;
         const history = await loadHistory(pool, 'user-1', 'session-uuid');
         expect(history).toEqual([
             { role: 'user',      content: [{ text: 'hello' }] },
@@ -213,10 +213,10 @@ describe('loadHistory', () => {
             }
             return { rows: [], rowCount: 0 };
         });
-        const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+        const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;
         const history = await loadHistory(pool, 'user-1', 'session-uuid');
-        expect(history[0].content[0]).toEqual({ text: 'first' });
-        expect(history[2].content[0]).toEqual({ text: 'third' });
+        expect(history[0].content![0]).toEqual({ text: 'first' });
+        expect(history[2].content![0]).toEqual({ text: 'third' });
     });
 
     it('sets RLS user before select', async () => {
@@ -238,7 +238,7 @@ describe('loadHistory', () => {
             if (n === 3) throw new Error('select failed');
             return { rows: [], rowCount: 0 };
         });
-        const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+        const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;
         await expect(loadHistory(pool, 'u', 's')).rejects.toThrow('select failed');
         expect(client.release).toHaveBeenCalled();
     });

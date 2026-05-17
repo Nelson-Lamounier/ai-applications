@@ -1,10 +1,18 @@
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 const sendMock = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const groundingVerifyMock = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 
 jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
   BedrockRuntimeClient: jest.fn().mockImplementation(() => ({ send: sendMock })),
   InvokeModelCommand: jest.fn().mockImplementation((args: unknown) => ({ args })),
+}));
+
+jest.mock('@bedrock/shared', () => ({
+  ...jest.requireActual<object>('@bedrock/shared'),
+  BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
+    verify: groundingVerifyMock,
+  })),
 }));
 
 import { generateGapAnalysis, MAX_ROLES_PER_CALL, type GapAnalysisRole } from '../gap-analysis.js';
@@ -36,7 +44,8 @@ function bedrockReplyWith(perRole: Array<{ roleId: string }>) {
           perRole: perRole.map((p) => ({
             roleId: p.roleId, company: 'C', title: 'T', period: 'P',
             completenessScore: 60, coveredResponsibilities: [], missingResponsibilities: [],
-            suggestedAdditions: [], quantificationOpportunities: [], keywordsForATS: [],
+            suggestedAdditions: [{ bullet: 'add metric', rationale: 'ATS boost' }],
+            quantificationOpportunities: [], keywordsForATS: [],
             externalValidation: 'limited',
           })),
           skillsGap: { present: ['a'], missing: ['b'], emerging: ['c'] },
@@ -49,7 +58,16 @@ function bedrockReplyWith(perRole: Array<{ roleId: string }>) {
 }
 
 describe('generateGapAnalysis', () => {
-  beforeEach(() => sendMock.mockReset());
+  beforeEach(() => {
+    sendMock.mockReset();
+    groundingVerifyMock.mockReset();
+    groundingVerifyMock.mockResolvedValue({
+      status: 'GROUNDED',
+      reason: 'supported by highlights',
+      ungroundedClaims: [],
+      answer: 'add metric (ATS boost)',
+    });
+  });
 
   it('single call for <= MAX_ROLES_PER_CALL roles, returns parsed report + tokens', async () => {
     sendMock.mockResolvedValue(bedrockReplyWith([{ roleId: 'r1' }, { roleId: 'r2' }]));
@@ -86,5 +104,80 @@ describe('generateGapAnalysis', () => {
     });
     await expect(generateGapAnalysis([role(1)], 0, 'eu-west-1'))
       .rejects.toThrow('no tool_use block');
+  });
+
+  it('attaches grounding metadata per role and never blocks (flag mode)', async () => {
+    groundingVerifyMock.mockResolvedValue({
+      status: 'NOT_GROUNDED',
+      reason: 'unsupported',
+      ungroundedClaims: ['inflated bullet'],
+      answer: 'ORIGINAL',
+    });
+    sendMock.mockResolvedValue(bedrockReplyWith([{ roleId: 'r1' }]));
+
+    const result = await generateGapAnalysis([role(1, true)], 0, 'eu-west-1');
+
+    expect(result.data).toBeDefined();               // report NOT mutated/blocked
+    expect((result.groundingMetadata ?? []).length).toBeGreaterThan(0);
+    expect(result.groundingMetadata?.[0].status).toBe('NOT_GROUNDED');
+  });
+
+  it('grounding metadata is attached for each role in a batched call', async () => {
+    const roles = Array.from({ length: MAX_ROLES_PER_CALL + 1 }, (_, i) => role(i + 1));
+    const firstIds  = roles.slice(0, MAX_ROLES_PER_CALL).map((r) => ({ roleId: r.roleId }));
+    const secondIds = roles.slice(MAX_ROLES_PER_CALL).map((r) => ({ roleId: r.roleId }));
+    sendMock
+      .mockResolvedValueOnce(bedrockReplyWith(firstIds))
+      .mockResolvedValueOnce(bedrockReplyWith(secondIds));
+
+    const res = await generateGapAnalysis(roles, 0, 'eu-west-1');
+
+    expect(res.groundingMetadata).toHaveLength(roles.length);
+  });
+
+  it('is fail-open: a verify error does not throw and metadata entry is skipped', async () => {
+    groundingVerifyMock.mockRejectedValue(new Error('Bedrock timeout'));
+    sendMock.mockResolvedValue(bedrockReplyWith([{ roleId: 'r1' }]));
+
+    const result = await generateGapAnalysis([role(1)], 0, 'eu-west-1');
+
+    expect(result.data).toBeDefined();
+    // Error swallowed — metadata array exists but may be empty or partial
+    expect(result.groundingMetadata).toBeDefined();
+  });
+
+  it('skips grounding for roles with empty suggestedAdditions (no misleading NOT_GROUNDED entry)', async () => {
+    // Bedrock returns a role whose suggestedAdditions array is empty.
+    sendMock.mockResolvedValue({
+      body: Buffer.from(JSON.stringify({
+        usage: { input_tokens: 100, output_tokens: 50 },
+        content: [{
+          type: 'tool_use',
+          input: {
+            overallScore: 55,
+            perRole: [{
+              roleId: 'r1', company: 'C', title: 'T', period: 'P',
+              completenessScore: 40,
+              coveredResponsibilities: [],
+              missingResponsibilities: ['missing X'],
+              suggestedAdditions: [],          // empty — must skip verify
+              quantificationOpportunities: [],
+              keywordsForATS: [],
+              externalValidation: 'limited',
+            }],
+            skillsGap: { present: [], missing: [], emerging: [] },
+            narrativeFeedback: 'needs work',
+            freeTierLimit: { rolesSkipped: 0, upgradeCta: null },
+          },
+        }],
+      })),
+    });
+
+    const result = await generateGapAnalysis([role(1)], 0, 'eu-west-1');
+
+    // verify must NOT have been called for the empty-additions role
+    expect(groundingVerifyMock).not.toHaveBeenCalled();
+    // groundingMetadata should have no entry for r1
+    expect(result.groundingMetadata).toHaveLength(0);
   });
 });

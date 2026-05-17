@@ -307,3 +307,177 @@ describe('Strategist Research — Fixed parseResponse (proposed fix)', () => {
         expect(techInv.languages).toEqual([]);  // Missing in the wrapped JSON too
     });
 });
+
+// =============================================================================
+// PII REDACTION — executeResearchAgent integration (mocked infra)
+// =============================================================================
+
+/**
+ * Minimal stub for the AgentResult shape returned by runAgent.
+ * Only the fields used by executeResearchAgent's parseResponse are present.
+ */
+const STUB_AGENT_RESULT = {
+    data: {
+        targetRole: 'Senior Engineer',
+        targetCompany: 'Acme Corp',
+        seniority: 'senior',
+        domain: 'cloud',
+        overallFitRating: 'STRONG' as const,
+        fitSummary: 'Good fit.',
+        hardRequirements: [],
+        softRequirements: [],
+        implicitRequirements: [],
+        verifiedMatches: [],
+        partialMatches: [],
+        gaps: [],
+        technologyInventory: { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
+        experienceSignals: { yearsExpected: '5+', domainExperience: 'cloud', leadershipExpectation: 'none', scaleIndicators: 'mid' },
+        resumeData: null,
+        kbContext: '',
+        resumeConstraints: '',
+    },
+    usage: { input: 10, output: 10, thinking: 0 },
+    costUsd: 0.001,
+    durationMs: 100,
+    agentName: 'strategist-research' as const,
+};
+
+/**
+ * Captured call data returned by runResearchAgentForTest.
+ * queryArgs: all queryText values passed to store.querySimilar across the 4 parallel calls.
+ * bedrockUserMessage: the userMessage passed to runAgent.
+ */
+interface CapturedCallData {
+    queryArgs: string[];
+    bedrockUserMessage: string;
+}
+
+/**
+ * Drives executeResearchAgent with mocked infra and returns captured call data.
+ * Uses jest.isolateModules so the module re-executes with env + mocks in place.
+ */
+async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
+    const capturedQueryTexts: string[] = [];
+    let capturedUserMessage = '';
+
+    // Mock querySimilar — returns empty results (no KB passages) so kbContext is empty string.
+    const mockQuerySimilar = jest.fn().mockResolvedValue([]);
+
+    // Mock embed — returns a zero-vector (embedding value not checked by test).
+    const mockEmbed = jest.fn().mockResolvedValue(new Array(1024).fill(0));
+
+    // Mock runAgent — captures userMessage and returns stub result.
+    // parseResponse is invoked inside runAgent in production; here we bypass it
+    // by having runAgent return the stub directly.
+    const mockRunAgent = jest.fn().mockImplementation(
+        async (opts: { userMessage: string; parseResponse?: (text: string) => any }) => {
+            capturedUserMessage = opts.userMessage;
+            // Invoke the parseResponse with a minimal JSON so the agent's
+            // defensive defaults are exercised without needing real Bedrock.
+            const parsed = opts.parseResponse?.(JSON.stringify({
+                targetRole: 'Senior Engineer',
+                targetCompany: 'Acme Corp',
+                seniority: 'senior',
+                domain: 'cloud',
+                overallFitRating: 'STRONG',
+                fitSummary: 'Good fit.',
+                hardRequirements: [],
+                softRequirements: [],
+                implicitRequirements: [],
+                verifiedMatches: [],
+                partialMatches: [],
+                gaps: [],
+                technologyInventory: { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
+                experienceSignals: { yearsExpected: '5+', domainExperience: 'cloud', leadershipExpectation: 'none', scaleIndicators: 'mid' },
+            }));
+            return { ...STUB_AGENT_RESULT, data: parsed ?? STUB_AGENT_RESULT.data };
+        },
+    );
+
+    let executeResearchAgent!: (ctx: any) => Promise<any>;
+
+    jest.isolateModules(() => {
+        // Set required env before the module executes.
+        process.env['RESEARCH_MODEL'] = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+        process.env['RERANKER_DISABLED'] = '1'; // Disable reranker to simplify mock surface.
+
+        // Mock @bedrock/shared — keep real PiiScrubber + InputSanitiser; stub infra.
+        jest.mock('@bedrock/shared', () => {
+            const actual = jest.requireActual<Record<string, unknown>>('@bedrock/shared');
+            return {
+                ...actual,
+                runAgent:     mockRunAgent,
+                log:          jest.fn(),
+                TitanEmbeddingProvider: {
+                    fromEnvironment: jest.fn().mockReturnValue({ embed: mockEmbed }),
+                },
+                BedrockReranker: {
+                    fromEnvironment: jest.fn().mockReturnValue(null),
+                },
+                RdsVectorStore: {
+                    fromEnvironment: jest.fn().mockReturnValue({ querySimilar: mockQuerySimilar }),
+                },
+            };
+        });
+
+        // Mock sub-dependencies that research-agent imports transitively.
+        jest.mock('../services/resume-service.js', () => ({
+            formatResumeForPrompt: jest.fn().mockReturnValue(''),
+        }));
+        jest.mock('../prompts/research-persona.js', () => ({
+            RESEARCH_PERSONA_SYSTEM_PROMPT: 'stub-system-prompt',
+        }));
+        jest.mock('../prompts/resume-constraints.js', () => ({
+            RESUME_CONSTRAINTS: '',
+        }));
+
+        // Dynamically require to pick up mocks + env.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        ({ executeResearchAgent } = require('./research-agent'));
+    });
+
+    await executeResearchAgent({
+        pipelineId: 'test-pipeline-001',
+        userId: 'user-test-0001',
+        targetRole: 'Senior Engineer',
+        jobDescription: jd,
+        resumeData: null,
+        environment: 'test',
+        cumulativeTokens: { input: 0, output: 0, thinking: 0 },
+        cumulativeCostUsd: 0,
+    });
+
+    // Collect queryText from all querySimilar calls.
+    for (const call of mockQuerySimilar.mock.calls) {
+        const params = call[0] as { queryText?: string };
+        if (params.queryText) {
+            capturedQueryTexts.push(params.queryText);
+        }
+    }
+
+    return {
+        queryArgs: capturedQueryTexts,
+        bedrockUserMessage: capturedUserMessage,
+    };
+}
+
+describe('Strategist Research Agent — PII redaction before retrieval and Bedrock', () => {
+    it('redacts PII from the job description before retrieval and Bedrock', async () => {
+        const jd = 'Contact recruiter@acme.com or 415-555-2671. Senior role: AWS, TypeScript, Kubernetes across teams, 5+ years.';
+        const captured = await runResearchAgentForTest(jd);
+
+        const queryText = captured.queryArgs.join(' ');
+
+        // Retrieval queries must NOT contain raw PII.
+        expect(queryText).not.toContain('recruiter@acme.com');
+        expect(queryText).not.toContain('415-555-2671');
+
+        // Bedrock user message must NOT contain raw PII.
+        expect(captured.bedrockUserMessage).not.toContain('recruiter@acme.com');
+        expect(captured.bedrockUserMessage).not.toContain('415-555-2671');
+
+        // Bedrock user message MUST contain the redaction tokens.
+        expect(captured.bedrockUserMessage).toContain('[EMAIL]');
+        expect(captured.bedrockUserMessage).toContain('[PHONE]');
+    });
+});

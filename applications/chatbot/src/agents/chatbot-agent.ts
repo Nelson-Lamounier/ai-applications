@@ -83,6 +83,7 @@ export async function invokeChatbotAgent(
         agentAliasId: config.agentAliasId,
         sessionId,
         inputText: prompt,
+        enableTrace: true,
         // Gap A3: Inject caller context as session attributes so the agent
         // instruction can adapt response framing via:
         // $session.promptSessionAttributes.callerRole
@@ -98,16 +99,27 @@ export async function invokeChatbotAgent(
     }
 
     const chunks: string[] = [];
+    const contextChunks: string[] = [];
 
     for await (const event of response.completion) {
         if ('chunk' in event && event.chunk?.bytes) {
             const text = new TextDecoder('utf-8').decode(event.chunk.bytes);
             chunks.push(text);
+
+            // Collect citation text from Agent trace attribution
+            for (const citation of event.chunk.attribution?.citations ?? []) {
+                for (const ref of citation.retrievedReferences ?? []) {
+                    if (ref.content?.text && typeof ref.content.text === 'string' && ref.content.text.length > 0) {
+                        contextChunks.push(ref.content.text);
+                    }
+                }
+            }
         }
     }
 
     return {
         response: chunks.join(''),
+        contextChunks,
         durationMs: Date.now() - startTime,
     };
 }

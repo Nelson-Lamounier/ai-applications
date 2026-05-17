@@ -46,15 +46,17 @@ jest.mock('@aws-sdk/client-s3', () => ({
 jest.mock('@aws-sdk/client-dynamodb', () => ({
     DynamoDBClient: jest.fn().mockImplementation(() => ({})),
 }));
+const mockDdbSend = jest.fn<() => Promise<unknown>>().mockResolvedValue({});
 jest.mock('@aws-sdk/lib-dynamodb', () => ({
-    DynamoDBDocumentClient: { from: jest.fn().mockReturnValue({ send: jest.fn() }) },
+    DynamoDBDocumentClient: { from: jest.fn().mockReturnValue({ send: mockDdbSend }) },
     GetCommand: jest.fn(),
 }));
 
 // ─── Set required env before importing ────────────────────────────────────────
 
 const REQUIRED_ENV: Record<string, string> = {
-    RESEARCH_MODEL: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+    RESEARCH_MODEL:      'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+    PIPELINE_TABLE_NAME: 'test-table',
 };
 Object.assign(process.env, REQUIRED_ENV);
 
@@ -98,6 +100,7 @@ describe('executeResearchAgent — retrieval source', () => {
         MockPgVectorRetriever.mockClear();
         MockTitanEmbeddingProvider.mockClear();
         mockS3Send.mockClear();
+        mockDdbSend.mockClear();
     });
 
     // Mock S3 read so executeResearchAgent can progress past the draft read
@@ -172,5 +175,123 @@ describe('executeResearchAgent — retrieval source', () => {
         const ctxWithoutUserId = makeCtx({ userId: undefined });
         await expect(executeResearchAgent(ctxWithoutUserId, fakePool))
             .rejects.toThrow('userId');
+    });
+
+    it('redacts PII in previousVersionContent before it reaches the ResearchResult', async () => {
+        process.env['RESEARCH_RETRIEVAL_SOURCE'] = 'pgvector';
+
+        const piiPreviousContent = 'Previous article by editor@corp.io. SSN 123-45-6789.';
+
+        // First S3 call → current draft; second S3 call → previous version MDX
+        mockS3Send
+            .mockResolvedValueOnce({
+                Body: { transformToString: jest.fn<() => Promise<string>>().mockResolvedValue('# Current Draft') },
+            })
+            .mockResolvedValueOnce({
+                Body: { transformToString: jest.fn<() => Promise<string>>().mockResolvedValue(piiPreviousContent) },
+            });
+
+        // DynamoDB returns a contentRef for the previous version
+        mockDdbSend.mockResolvedValueOnce({
+            Item: { contentRef: 's3://my-bucket/review/v1/test-article.mdx' },
+        });
+
+        const { runAgent } = jest.requireMock<{
+            runAgent: jest.MockedFunction<typeof import('@bedrock/shared').runAgent>;
+        }>('@bedrock/shared');
+
+        let capturedPreviousVersionContent: string | undefined;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (runAgent as any).mockImplementationOnce(async (opts: { parseResponse?: (t: string) => unknown }) => {
+            // Invoke the real parseResponse closure so previousVersionContent is computed
+            const parsed = opts.parseResponse?.('{"outline":[],"technicalFacts":[],"suggestedTitle":"T","suggestedTags":[]}') as Record<string, unknown> | undefined;
+            capturedPreviousVersionContent = parsed?.previousVersionContent as string | undefined;
+            return {
+                data: {
+                    ...(parsed ?? {}),
+                    mode:                   'kb-augmented',
+                    draftContent:           '',
+                    complexity:             { tier: 'LOW', budgetTokens: 2048, reason: '', signals: {} },
+                    kbPassages:             [],
+                    outline:                [],
+                    technicalFacts:         [],
+                    suggestedTitle:         'T',
+                    suggestedTags:          [],
+                    authorDirection:        '',
+                    previousVersionContent: capturedPreviousVersionContent,
+                },
+                tokenUsage: { input: 0, output: 0, thinking: 0 },
+                durationMs: 0,
+                agentName:  'research',
+                modelId:    'test',
+                costUsd:    0,
+            };
+        });
+
+        const result = await executeResearchAgent(makeCtx({ version: 2 }), fakePool);
+
+        // The previousVersionContent captured via parseResponse must not contain raw PII
+        expect(capturedPreviousVersionContent).toBeDefined();
+        expect(capturedPreviousVersionContent).not.toContain('editor@corp.io');
+        expect(capturedPreviousVersionContent).not.toContain('123-45-6789');
+        expect(capturedPreviousVersionContent).toContain('[EMAIL]');
+        // And the result data also must not expose raw PII
+        expect(result.data.previousVersionContent).not.toContain('editor@corp.io');
+    });
+
+    it('redacts PII from the author draft before KB query and Bedrock', async () => {
+        process.env['RESEARCH_RETRIEVAL_SOURCE'] = 'pgvector';
+
+        const piiDraft = 'Draft by author@example.com about serverless. Phone 415-555-2671.';
+
+        // Override S3 mock to return PII-containing draft
+        mockS3Send.mockResolvedValueOnce({
+            Body: {
+                transformToString: jest.fn<() => Promise<string>>().mockResolvedValue(piiDraft),
+            },
+        });
+
+        const { runAgent } = jest.requireMock<{
+            runAgent: jest.MockedFunction<typeof import('@bedrock/shared').runAgent>;
+        }>('@bedrock/shared');
+
+        let capturedUserMessage = '';
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (runAgent as any).mockImplementationOnce(async (opts: { userMessage?: string }) => {
+            capturedUserMessage = opts.userMessage ?? '';
+            return {
+                data: {
+                    mode: 'kb-augmented',
+                    draftContent: '',
+                    complexity: { tier: 'LOW', budgetTokens: 2048, reason: '', signals: {} },
+                    kbPassages: [],
+                    outline: [],
+                    technicalFacts: [],
+                    suggestedTitle: 'T',
+                    suggestedTags: [],
+                    authorDirection: '',
+                },
+                tokenUsage: { input: 0, output: 0, thinking: 0 },
+                durationMs: 0,
+                agentName: 'research',
+                modelId: 'test',
+                costUsd: 0,
+            };
+        });
+
+        // pgvector retrieve args are captured via mockRetrieve
+        mockRetrieve.mockResolvedValueOnce([]);
+
+        await executeResearchAgent(makeCtx(), fakePool);
+
+        // The user message passed to Bedrock must not contain raw PII
+        expect(capturedUserMessage).not.toContain('author@example.com');
+        expect(capturedUserMessage).not.toContain('415-555-2671');
+        expect(capturedUserMessage).toContain('[EMAIL]');
+
+        // The KB query (retrieve first arg) must not contain raw PII
+        const queryArgs = mockRetrieve.mock.calls[0] as unknown[];
+        const queryString = (queryArgs ?? []).join(' ');
+        expect(queryString).not.toContain('author@example.com');
     });
 });

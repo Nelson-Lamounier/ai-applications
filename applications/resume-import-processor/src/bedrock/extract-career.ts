@@ -13,6 +13,9 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import { PiiScrubber } from '@bedrock/shared';
+
+const piiScrubber = new PiiScrubber();
 
 export interface ResumeProfile {
   name: string;
@@ -222,7 +225,7 @@ export async function extractCareerData(
 ): Promise<CareerExtractionResult> {
   const client = new BedrockRuntimeClient({ region });
 
-  const safeText = resumeText.slice(0, MAX_RESUME_CHARS);
+  const safeText = piiScrubber.scrub(resumeText).redacted.slice(0, MAX_RESUME_CHARS);
 
   const requestBody = {
     anthropic_version: 'bedrock-2023-05-31',

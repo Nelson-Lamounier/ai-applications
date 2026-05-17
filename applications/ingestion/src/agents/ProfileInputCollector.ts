@@ -1,5 +1,10 @@
 import type { GitHubAdapter } from '@bedrock/shared';
+import { PiiScrubber } from '@bedrock/shared';
 import type { FileFetchCache } from '../util/FileFetchCache.js';
+
+const piiScrubber = new PiiScrubber();
+const scrub = (s: string | null | undefined): string | null | undefined =>
+    s == null ? s : piiScrubber.scrub(s).redacted;
 
 export interface ProfileInputBundle {
     repo_full_name:          string;
@@ -42,10 +47,19 @@ export class ProfileInputCollector {
             this.fetchWorkflows(repoFullName),
         ]);
 
+        const scrubbedManifests: Record<string, string> = {};
+        for (const [k, v] of Object.entries(manifests)) {
+            scrubbedManifests[k] = piiScrubber.scrub(v).redacted;
+        }
+        const scrubbedWorkflows: Record<string, string> = {};
+        for (const [k, v] of Object.entries(workflows)) {
+            scrubbedWorkflows[k] = piiScrubber.scrub(v).redacted;
+        }
+
         return {
             repo_full_name:         repoFullName,
             primary_language:       meta.primary_language,
-            description:            meta.description,
+            description:            scrub(meta.description) ?? null,
             topics:                 meta.topics,
             stars:                  meta.stars,
             forks:                  meta.forks,
@@ -53,11 +67,11 @@ export class ProfileInputCollector {
             created_at:             meta.created_at,
             pushed_at:              meta.pushed_at,
             commit_count:           commits.length,
-            readme,
-            manifests,
-            changelog,
-            workflows,
-            recent_commit_messages: commits.map(c => c.message),
+            readme:                 scrub(readme) ?? null,
+            manifests:              scrubbedManifests,
+            changelog:              scrub(changelog) ?? null,
+            workflows:              scrubbedWorkflows,
+            recent_commit_messages: commits.map(c => piiScrubber.scrub(c.message).redacted),
         };
     }
 

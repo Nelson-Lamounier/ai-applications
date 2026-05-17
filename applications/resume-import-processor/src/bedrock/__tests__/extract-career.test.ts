@@ -61,4 +61,24 @@ describe('extractCareerData', () => {
     expect(result.inputTokens).toBe(0);
     expect(result.outputTokens).toBe(0);
   });
+
+  it('redacts PII from resume text before the Bedrock request body', async () => {
+    const awsSdk = await import('@aws-sdk/client-bedrock-runtime');
+    const invokeModelCommandMock = awsSdk.InvokeModelCommand as unknown as jest.Mock;
+    invokeModelCommandMock.mockClear();
+
+    await extractCareerData(
+      'John Doe, john.doe@mail.com, SSN 123-45-6789. Senior Engineer with AWS, TS, k8s. 6 yrs.',
+      'eu-west-1',
+    );
+
+    // InvokeModelCommand receives the request as its first constructor argument;
+    // the body field is a Buffer containing the JSON-encoded Bedrock request.
+    const constructorArg = invokeModelCommandMock.mock.calls.at(-1)?.[0] as { body: Buffer };
+    const sent = JSON.stringify(JSON.parse(Buffer.from(constructorArg.body).toString('utf-8')));
+
+    expect(sent).not.toContain('john.doe@mail.com');
+    expect(sent).not.toContain('123-45-6789');
+    expect(sent).toContain('[EMAIL]');
+  });
 });

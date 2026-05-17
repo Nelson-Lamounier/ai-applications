@@ -21,7 +21,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
 import {
-    runAgent, parseJsonResponse, log, PgVectorRetriever, TitanEmbeddingProvider,
+    runAgent, parseJsonResponse, log, PgVectorRetriever, TitanEmbeddingProvider, PiiScrubber,
     type AgentConfig,
     type AgentResult,
     type ComplexityAnalysis,
@@ -90,6 +90,7 @@ const PREVIOUS_VERSION_CONTENT_CAP = 3000;
 const s3Client = new S3Client({});
 const bedrockAgentClient = new BedrockAgentRuntimeClient({});
 const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const piiScrubber = new PiiScrubber();
 
 // =============================================================================
 // COMPLEXITY ANALYSIS
@@ -353,7 +354,8 @@ async function fetchPreviousVersionContent(
         log('INFO', 'Reading previous version from S3', { agent: 'research', bucket: ctx.bucket, s3Key });
 
         const content = await readDraftFromS3(ctx.bucket, s3Key);
-        const capped = content.substring(0, PREVIOUS_VERSION_CONTENT_CAP);
+        const redacted = piiScrubber.scrub(content).redacted;
+        const capped = redacted.substring(0, PREVIOUS_VERSION_CONTENT_CAP);
 
         log('INFO', 'Previous version loaded', { agent: 'research', originalLength: content.length, cappedLength: capped.length });
 
@@ -481,7 +483,7 @@ export async function executeResearchAgent(
 ): Promise<AgentResult<ResearchResult>> {
     // 1. Read draft from S3
     log('INFO', 'Reading draft from S3', { agent: 'research', bucket: ctx.bucket, sourceKey: ctx.sourceKey });
-    const draftContent = await readDraftFromS3(ctx.bucket, ctx.sourceKey);
+    const draftContent = piiScrubber.scrub(await readDraftFromS3(ctx.bucket, ctx.sourceKey)).redacted;
 
     // 2. Detect pipeline mode
     const mode: PipelineMode = draftContent.length <= KB_AUGMENTED_THRESHOLD

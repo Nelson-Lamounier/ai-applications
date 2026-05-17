@@ -115,6 +115,8 @@ export interface ChatbotAgentConfig {
 export interface ChatbotInvocationResult {
     /** The raw agent response text (before sanitisation) */
     readonly response: string;
+    /** Citation text chunks collected from Agent trace attribution (used for grounding) */
+    readonly contextChunks: string[];
     /** Invocation duration in milliseconds */
     readonly durationMs: number;
 }

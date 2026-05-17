@@ -20,7 +20,7 @@
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
-import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost, PiiScrubber } from '@bedrock/shared';
 import {
   careerEntriesTotal,
   seedZeroSeries as seedSubStepSeries,
@@ -35,6 +35,8 @@ import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
 import { CachedSearchTool } from './tools/tavily-cache.js';
 import { fanOutRoleSearches, type FanoutRole } from './tools/tavily-fanout.js';
 import { generateGapAnalysis, type GapAnalysisRole } from './bedrock/gap-analysis.js';
+
+const piiScrubber = new PiiScrubber();
 
 // One-shot K8s Job — bootstrap observability before any AWS / pg client
 // loads so OTel auto-instrumentation picks them up. Metrics push to
@@ -132,7 +134,7 @@ async function updateImportStatus(
   }
   if (extras?.errorDetails !== undefined) {
     setParts.push(`error_details = $${idx++}`);
-    values.push(JSON.stringify(extras.errorDetails));
+    values.push(piiScrubber.scrub(JSON.stringify(extras.errorDetails)).redacted);
   }
 
   values.push(importId);
@@ -366,7 +368,7 @@ async function main(): Promise<void> {
                     gap_report_generated_at = NOW(),
                     updated_at = NOW()
               WHERE id = $2::uuid`,
-            [JSON.stringify(gap.data), env.importId],
+            [JSON.stringify({ report: gap.data, groundingMetadata: gap.groundingMetadata ?? [], verifiedAt: new Date().toISOString() }), env.importId],
           );
           span.setAttribute('gap.roles', gap.data.perRole.length);
         } catch (err) {
@@ -399,7 +401,7 @@ async function main(): Promise<void> {
               error_details = $1,
               completed_at = NOW()
         WHERE id = $2::uuid`,
-      [JSON.stringify({ message: (err as Error).message }), env.importId],
+      [JSON.stringify({ message: piiScrubber.scrub((err as Error).message).redacted }), env.importId],
     ).catch(() => {}); // best-effort — don't mask the original error
     await pool.end().catch(() => {});
   } finally {

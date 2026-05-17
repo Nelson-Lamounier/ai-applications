@@ -22,6 +22,24 @@ export async function updatePipelineRun(
 }
 
 /**
+ * Update the metadata JSON column on a pipeline_runs row.
+ *
+ * Used to attach run-level metadata (e.g. grounding result) to the pipeline_runs
+ * record after the pipeline completes. The metadata column is an unconstrained
+ * JSONB blob — no migration required to add new keys.
+ */
+export async function updatePipelineRunMetadata(
+    pool: Pool,
+    id: string,
+    metadata: Record<string, unknown>,
+): Promise<void> {
+    await pool.query(
+        `UPDATE pipeline_runs SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb, updated_at = NOW() WHERE id = $1`,
+        [id, JSON.stringify(metadata)],
+    );
+}
+
+/**
  * Persist the rendered article markdown back to platform RDS.
  *
  * Sets status='review' — admin-api owns the eventual transition to 'published'.
