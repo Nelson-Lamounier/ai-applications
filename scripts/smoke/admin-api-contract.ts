@@ -7,6 +7,7 @@ export const ADMIN_API = {
   routes: {
     strategist: env('SMOKE_ROUTE_STRATEGIST', '/api/admin/pipelines/strategist-job'),
     article:    env('SMOKE_ROUTE_ARTICLE',    '/api/admin/pipelines/article-job'), // + /:slug
+    // GET (query params: filename, contentType, fileSizeBytes) — not POST.
     resumeUploadUrl: env('SMOKE_ROUTE_RESUME_UPLOAD', '/api/admin/resume-imports/upload-url'),
     resumeComplete:  env('SMOKE_ROUTE_RESUME_COMPLETE', '/api/admin/resume-imports'), // + /:id/complete
     ingestion:  env('SMOKE_ROUTE_INGESTION',  '/api/admin/ingestion/trigger'),

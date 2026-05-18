@@ -21,14 +21,16 @@ describe('article-pipeline e2e', () => {
     try {
       const stamp = Date.now();
       const slug = `smoke-article-${stamp}`;
-      const s3Key = `smoke/article-${stamp}/draft.md`;
+      // admin-api derives the draft key as drafts/<slug>.md in the assets
+      // bucket — the article route ignores any client-supplied s3Key.
+      const s3Key = `drafts/${slug}.md`;
       const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'eu-west-1' });
       await s3.send(new PutObjectCommand({
         Bucket: BUCKET, Key: s3Key, Body: readFileSync(`${__dirname}/fixtures/article-draft.md`),
       }));
 
       const api = new AdminApiClient(ep.adminApiBaseUrl, ep.cognitoIdToken);
-      const started = await api.startArticle({ s3Key, slug });
+      const started = await api.startArticle({ slug });
       const { pipelineRunId } = started;
       // Prefer the slug the admin-api echoes back; fall back to ours.
       const effectiveSlug = started.slug ?? slug;

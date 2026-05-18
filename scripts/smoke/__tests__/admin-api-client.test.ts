@@ -22,14 +22,16 @@ describe('AdminApiClient — auth + routes', () => {
     expect(JSON.parse(calls[0].init.body as string)).not.toHaveProperty('userId');
   });
 
-  it('startArticle posts s3Key and accepts snake_case pipeline_run_id', async () => {
+  it('startArticle puts the slug in the path (not the body) and accepts snake_case pipeline_run_id', async () => {
     const { fn, calls } = mockFetch(() =>
-      new Response(JSON.stringify({ pipeline_run_id: 'run-9', slug: 'my-post' }), { status: 200 }));
+      new Response(JSON.stringify({ pipeline_run_id: 'run-9', slug: 'my-post' }), { status: 202 }));
     const c = new AdminApiClient('http://h', 't', fn);
-    const r = await c.startArticle({ s3Key: 'smoke/x.md', slug: 'my-post' });
+    const r = await c.startArticle({ slug: 'my-post' });
     expect(r.pipelineRunId).toBe('run-9');
     expect(r.slug).toBe('my-post');
-    expect(calls[0].url).toMatch(/\/api\/admin\/pipelines\/article-job$/);
+    expect(calls[0].init.method).toBe('POST');
+    expect(calls[0].url).toMatch(/\/api\/admin\/pipelines\/article-job\/my-post$/);
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({});
   });
 
   it('startIngestion posts repoFullName', async () => {
@@ -44,7 +46,7 @@ describe('AdminApiClient — auth + routes', () => {
   it('throws SmokeAssertionError on non-2xx with status + body', async () => {
     const { fn } = mockFetch(() => new Response('nope', { status: 500 }));
     const c = new AdminApiClient('http://h', 't', fn);
-    await expect(c.startArticle({ s3Key: 'smoke/x.md' })).rejects.toThrow(/500.*nope/s);
+    await expect(c.startArticle({ slug: 'x' })).rejects.toThrow(/500.*nope/s);
   });
 
   it('throws when the response carries no run id', async () => {
@@ -62,7 +64,10 @@ describe('AdminApiClient — resume-import 3-step upload', () => {
     const c = new AdminApiClient('http://h', 't', fn);
     const r = await c.requestResumeUpload({ filename: 'r.pdf', contentType: 'application/pdf', fileSizeBytes: 1234 });
     expect(r).toEqual({ uploadUrl: 'https://s3/put', importId: 'imp-1', s3Key: 'smoke/r.pdf' });
-    expect(calls[0].url).toMatch(/\/api\/admin\/resume-imports\/upload-url$/);
+    expect(calls[0].init.method).toBe('GET');
+    expect(calls[0].url).toMatch(
+      /\/api\/admin\/resume-imports\/upload-url\?filename=r\.pdf&contentType=application%2Fpdf&fileSizeBytes=1234$/,
+    );
   });
 
   it('putResumeBytes does a raw PUT with Content-Type and Content-Length (no auth header)', async () => {

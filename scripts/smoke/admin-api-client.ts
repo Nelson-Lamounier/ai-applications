@@ -51,22 +51,34 @@ export class AdminApiClient {
     return this.postJson(ADMIN_API.routes.strategist, b);
   }
 
-  startArticle(b: { s3Key: string; slug?: string }): Promise<StartResponse> {
-    return this.postJson(ADMIN_API.routes.article, b);
+  /** Article route takes the slug as a PATH param and reads the draft from
+   *  `drafts/<slug>.md` in the server's assets bucket — the body only carries
+   *  an optional `mode`; any s3Key in the body is ignored by admin-api. */
+  startArticle(b: { slug: string; mode?: string }): Promise<StartResponse> {
+    const route = `${ADMIN_API.routes.article}/${encodeURIComponent(b.slug)}`;
+    return this.postJson(route, b.mode ? { mode: b.mode } : {});
   }
 
   startIngestion(b: { repoFullName: string }): Promise<StartResponse> {
     return this.postJson(ADMIN_API.routes.ingestion, b);
   }
 
-  /** Step 1 of resume-import: ask for a presigned S3 PUT url + import id. */
+  /** Step 1 of resume-import: ask for a presigned S3 PUT url + import id.
+   *  admin-api exposes this as GET with query params (filename, contentType,
+   *  fileSizeBytes) — not a JSON body. */
   async requestResumeUpload(b: {
     filename: string; contentType: string; fileSizeBytes: number;
   }): Promise<ResumeUploadTicket> {
-    const text = await this.send('POST', `${this.baseUrl}${ADMIN_API.routes.resumeUploadUrl}`, {
-      headers: { 'content-type': 'application/json', ...bearer(this.idToken) },
-      body: JSON.stringify(b),
+    const qs = new URLSearchParams({
+      filename: b.filename,
+      contentType: b.contentType,
+      fileSizeBytes: String(b.fileSizeBytes),
     });
+    const text = await this.send(
+      'GET',
+      `${this.baseUrl}${ADMIN_API.routes.resumeUploadUrl}?${qs}`,
+      { headers: { ...bearer(this.idToken) } },
+    );
     const j = JSON.parse(text) as Record<string, unknown>;
     const uploadUrl = j.uploadUrl ?? j.upload_url ?? j.url;
     const importId = j.importId ?? j.import_id ?? j.id;
