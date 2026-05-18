@@ -82,6 +82,43 @@ describe('enrichRole', () => {
     expect(result.data?.careerLevel).toBe('senior');
   });
 
+  it('skips gracefully (null) when the model output fails schema validation', async () => {
+    const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
+    (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
+      send: (jest.fn() as any).mockResolvedValue({
+        body: Buffer.from(JSON.stringify({
+          usage: { input_tokens: 9, output_tokens: 9 },
+          content: [{
+            type: 'tool_use',
+            input: {
+              // careerLevel missing + responsibilities wrong type + unknown field
+              roleDescription: 'x',
+              responsibilities: 'not-an-array',
+              transferableSkills: [],
+              industryContext: 'y',
+              typicalTechStack: [],
+              injected: 'nope',
+            },
+          }],
+        })),
+      }),
+    } as any));
+
+    const searchTool = {
+      search: jest.fn(async () => [
+        { title: 'Result', url: '', content: 'ctx', score: 0 },
+      ]) as any,
+    };
+
+    const result = await enrichRole(
+      { title: 'Eng', company: 'Co', period: '2020-2023', highlights: ['h'], confidenceFlags: [] },
+      searchTool,
+      'eu-west-1',
+    );
+
+    expect(result).toEqual({ data: null, inputTokens: 0, outputTokens: 0 });
+  });
+
   it('returns zero tokens when search returns empty array', async () => {
     const experience: ResumeExperience = {
       title: 'Senior Engineer',

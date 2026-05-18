@@ -283,3 +283,31 @@ run-resume-processor import_id user_id s3_key:
 [group('ci')]
 gh-dispatch workflow *ARGS:
     gh workflow run {{workflow}} --repo nelson-lamounier/ai-applications {{ARGS}}
+
+# ── E2E Smoke (real Bedrock, dev account — NEVER in CI) ──────────────────────
+
+# Run the end-to-end smoke suite against the deployed dev account.
+# Usage: just smoke-e2e                 # all flows
+#        just smoke-e2e job-strategist  # one flow
+#        just smoke-e2e chatbots SKIP_CLEANUP=1
+[group('smoke')]
+smoke-e2e *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f .env.smoke ]]; then
+      while IFS='=' read -r key value || [[ -n "$key" ]]; do
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${key// }" ]] && continue
+        key="${key// /}"; value="${value// /}"
+        [[ -n "$value" && -z "${!key:-}" ]] && export "$key=$value"
+      done < .env.smoke
+    fi
+    flows=(); for arg in {{ARGS}}; do
+      if [[ "$arg" == *=* ]]; then export "$arg"; else flows+=("$arg"); fi
+    done
+    npx tsx scripts/smoke-e2e.ts "${flows[@]:-all}"
+
+# Open the pgbouncer tunnel for manual psql inspection during a smoke run.
+[group('smoke')]
+smoke-tunnel:
+    kubectl port-forward svc/pgbouncer 15432:5432 -n platform

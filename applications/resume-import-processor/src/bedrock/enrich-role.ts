@@ -20,6 +20,7 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import { z } from 'zod';
 import type { Logger } from 'pino';
 import { PiiScrubber } from '@bedrock/shared';
 import type { WebSearchTool } from '../tools/tavily.js';
@@ -42,6 +43,21 @@ export interface RoleEnrichmentResult {
   outputTokens: number;
 }
 
+/**
+ * Runtime safety-net mirror of {@link EnrichedRoleData}. `.strict()` is the
+ * Zod twin of JSON-Schema `additionalProperties:false`. Enrichment is optional:
+ * a validation failure must skip gracefully (null), never crash the import
+ * (structure-output-checklist §6).
+ */
+const EnrichedRoleDataSchema = z.object({
+  roleDescription:    z.string(),
+  responsibilities:   z.array(z.string()),
+  transferableSkills: z.array(z.string()),
+  industryContext:    z.string(),
+  typicalTechStack:   z.array(z.string()),
+  careerLevel:        z.enum(['junior', 'mid', 'senior', 'principal', 'executive']),
+}).strict();
+
 const ENRICH_TOOL_SCHEMA = {
   name: 'enrich_role_data',
   description: 'Synthesise enriched role data from web research snippets',
@@ -56,6 +72,7 @@ const ENRICH_TOOL_SCHEMA = {
       careerLevel:        { type: 'string', enum: ['junior', 'mid', 'senior', 'principal', 'executive'] },
     },
     required: ['roleDescription', 'responsibilities', 'transferableSkills', 'industryContext', 'typicalTechStack', 'careerLevel'],
+    additionalProperties: false,
   },
 };
 
@@ -170,8 +187,21 @@ export async function enrichRole(
     return { data: null, inputTokens: 0, outputTokens: 0 };
   }
 
+  const validated = EnrichedRoleDataSchema.safeParse(toolUseBlock.input);
+  if (!validated.success) {
+    log.warn(
+      {
+        event: 'enrich_role.schema_validation_failed',
+        title: piiScrubber.scrub(experience.title).redacted,
+        err:   validated.error.message,
+      },
+      'enrichment output failed schema validation; skipping',
+    );
+    return { data: null, inputTokens: 0, outputTokens: 0 };
+  }
+
   return {
-    data:         toolUseBlock.input as EnrichedRoleData,
+    data:         validated.data as EnrichedRoleData,
     inputTokens:  parsed.usage?.input_tokens  ?? 0,
     outputTokens: parsed.usage?.output_tokens ?? 0,
   };

@@ -106,6 +106,54 @@ describe('generateGapAnalysis', () => {
       .rejects.toThrow('no tool_use block');
   });
 
+  it('throws a typed schema_validation_failed error on a malformed report', async () => {
+    sendMock.mockResolvedValue({
+      body: Buffer.from(JSON.stringify({
+        content: [{
+          type: 'tool_use',
+          input: {
+            // overallScore missing + perRole entries missing required keys
+            perRole: [{ roleId: 'r1' }],
+            skillsGap: { present: [], missing: [], emerging: [] },
+            narrativeFeedback: 'x',
+            freeTierLimit: { rolesSkipped: 0, upgradeCta: null },
+          },
+        }],
+      })),
+    });
+    await expect(generateGapAnalysis([role(1)], 0, 'eu-west-1')).rejects.toMatchObject({
+      name: 'GapAnalysisError',
+      code: 'schema_validation_failed',
+    });
+  });
+
+  it('rejects a report that injects an unknown top-level field', async () => {
+    sendMock.mockResolvedValue({
+      body: Buffer.from(JSON.stringify({
+        content: [{
+          type: 'tool_use',
+          input: {
+            overallScore: 70,
+            perRole: [{
+              roleId: 'r1', company: 'C', title: 'T', period: 'P',
+              completenessScore: 60, coveredResponsibilities: [], missingResponsibilities: [],
+              suggestedAdditions: [], quantificationOpportunities: [], keywordsForATS: [],
+              externalValidation: 'limited',
+            }],
+            skillsGap: { present: [], missing: [], emerging: [] },
+            narrativeFeedback: 'x',
+            freeTierLimit: { rolesSkipped: 0, upgradeCta: null },
+            injected: 'nope',
+          },
+        }],
+      })),
+    });
+    await expect(generateGapAnalysis([role(1)], 0, 'eu-west-1')).rejects.toMatchObject({
+      name: 'GapAnalysisError',
+      code: 'schema_validation_failed',
+    });
+  });
+
   it('attaches grounding metadata per role and never blocks (flag mode)', async () => {
     groundingVerifyMock.mockResolvedValue({
       status: 'NOT_GROUNDED',

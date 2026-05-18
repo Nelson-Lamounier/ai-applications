@@ -12,6 +12,7 @@
  * Pipeline position: API → Research → Strategist → **Coach** → DynamoDB
  */
 
+import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { COACH_PERSONA_SYSTEM_PROMPT } from '../prompts/coach-persona.js';
 import type {
@@ -52,8 +53,122 @@ const EFFECTIVE_MODEL_ID = process.env.INFERENCE_PROFILE_ARN ?? COACH_MODEL;
 /** Maximum output tokens */
 const COACH_MAX_TOKENS = 8192;
 
-/** Thinking budget for coaching preparation */
-const COACH_THINKING_BUDGET = 4096;
+/**
+ * Thinking budget. Forced tool_use (constrained decoding) is incompatible
+ * with extended thinking on Claude, so the coach trades thinking for a
+ * guaranteed schema-compliant payload. See structure-output-checklist §2.
+ */
+const COACH_THINKING_BUDGET = 0;
+
+// =============================================================================
+// STRUCTURED OUTPUT — tool schema + Zod safety-net
+// =============================================================================
+
+const INTERVIEW_QUESTION_SCHEMA = {
+    type: 'object',
+    properties: {
+        question:        { type: 'string' },
+        answerFramework: { type: 'string' },
+        sourceProject:   { type: 'string' },
+        difficulty:      { type: 'string', enum: ['easy', 'medium', 'hard'] },
+        keyPoints:       { type: 'array', items: { type: 'string' } },
+    },
+    required: ['question', 'answerFramework', 'sourceProject', 'difficulty', 'keyPoints'],
+    additionalProperties: false,
+};
+
+/** Tool the model is forced to call — input is the coaching brief. */
+const COACH_TOOL = {
+    name: 'emit_interview_coaching',
+    description: 'Emit the structured, stage-specific interview coaching brief.',
+    inputSchema: {
+        type: 'object',
+        properties: {
+            stageDescription:     { type: 'string' },
+            technicalQuestions:   { type: 'array', items: INTERVIEW_QUESTION_SCHEMA },
+            behaviouralQuestions: { type: 'array', items: INTERVIEW_QUESTION_SCHEMA },
+            difficultQuestions: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        question:        { type: 'string' },
+                        answerFramework: { type: 'string' },
+                        bridgeStrategy:  { type: 'string' },
+                    },
+                    required: ['question', 'answerFramework', 'bridgeStrategy'],
+                    additionalProperties: false,
+                },
+            },
+            technicalPrepChecklist: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        topic:              { type: 'string' },
+                        priority:           { type: 'string', enum: ['high', 'medium', 'low'] },
+                        rationale:          { type: 'string' },
+                        suggestedResources: { type: 'array', items: { type: 'string' } },
+                    },
+                    required: ['topic', 'priority', 'rationale', 'suggestedResources'],
+                    additionalProperties: false,
+                },
+            },
+            questionsToAsk: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        question:  { type: 'string' },
+                        rationale: { type: 'string' },
+                    },
+                    required: ['question', 'rationale'],
+                    additionalProperties: false,
+                },
+            },
+            coachingNotes: { type: 'string' },
+        },
+        required: [
+            'stageDescription', 'technicalQuestions', 'behaviouralQuestions',
+            'difficultQuestions', 'technicalPrepChecklist', 'questionsToAsk', 'coachingNotes',
+        ],
+        additionalProperties: false,
+    },
+};
+
+const InterviewQuestionSchema = z.object({
+    question:        z.string(),
+    answerFramework: z.string(),
+    sourceProject:   z.string(),
+    difficulty:      z.enum(['easy', 'medium', 'hard']),
+    keyPoints:       z.array(z.string()),
+}).strict();
+
+/**
+ * Runtime safety-net. `stage` is injected from pipeline context (not model
+ * output) so it is omitted here. `.strict()` mirrors additionalProperties:false.
+ */
+const CoachOutputSchema = z.object({
+    stageDescription:     z.string(),
+    technicalQuestions:   z.array(InterviewQuestionSchema),
+    behaviouralQuestions: z.array(InterviewQuestionSchema),
+    difficultQuestions:   z.array(z.object({
+        question:        z.string(),
+        answerFramework: z.string(),
+        bridgeStrategy:  z.string(),
+    }).strict()),
+    technicalPrepChecklist: z.array(z.object({
+        topic:              z.string(),
+        priority:           z.enum(['high', 'medium', 'low']),
+        rationale:          z.string(),
+        suggestedResources: z.array(z.string()),
+    }).strict()),
+    questionsToAsk: z.array(z.object({
+        question:  z.string(),
+        rationale: z.string(),
+    }).strict()),
+    coachingNotes: z.string(),
+}).strict();
 
 // =============================================================================
 // USER MESSAGE BUILDER
@@ -104,6 +219,7 @@ const COACH_CONFIG: AgentConfig = {
     maxTokens: COACH_MAX_TOKENS,
     thinkingBudget: COACH_THINKING_BUDGET,
     systemPrompt: COACH_PERSONA_SYSTEM_PROMPT,
+    tool: COACH_TOOL,
 };
 
 /**
@@ -158,17 +274,23 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
         _input: CoachAgentInput,
         ctx: StrategistPipelineContext,
     ): InterviewCoachResult {
-        const parsed = parseJsonResponse<InterviewCoachResult>(responseText, 'strategist-coach');
+        // responseText is the forced tool_use input serialised as JSON.
+        // parseJsonResponse handles the unwrap; the Zod safety-net then
+        // guarantees the shape before it reaches DynamoDB (fail-fast,
+        // structure-output-checklist §7). `stage` is authoritative from
+        // pipeline context, not model output.
+        const raw = parseJsonResponse<unknown>(responseText, 'strategist-coach');
+        const validated = CoachOutputSchema.safeParse(raw);
+        if (!validated.success) {
+            throw new Error(
+                `strategist-coach: coaching output failed schema validation: ${validated.error.message}`,
+            );
+        }
 
         return {
-            ...parsed,
+            ...validated.data,
             stage: ctx.interviewStage,
-            technicalQuestions: Array.isArray(parsed.technicalQuestions) ? parsed.technicalQuestions : [],
-            behaviouralQuestions: Array.isArray(parsed.behaviouralQuestions) ? parsed.behaviouralQuestions : [],
-            difficultQuestions: Array.isArray(parsed.difficultQuestions) ? parsed.difficultQuestions : [],
-            technicalPrepChecklist: Array.isArray(parsed.technicalPrepChecklist) ? parsed.technicalPrepChecklist : [],
-            questionsToAsk: Array.isArray(parsed.questionsToAsk) ? parsed.questionsToAsk : [],
-        };
+        } as InterviewCoachResult;
     }
 
     /**

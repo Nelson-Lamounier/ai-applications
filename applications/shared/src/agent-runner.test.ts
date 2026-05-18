@@ -642,3 +642,78 @@ describe('runAgent — Edge Cases', () => {
         expect(result.data).toBe('Large budget output');
     });
 });
+
+// =============================================================================
+// TESTS: Forced tool_use (constrained decoding) path
+// =============================================================================
+
+describe('runAgent — forced tool_use', () => {
+    const TOOL = {
+        name: 'emit_result',
+        description: 'Emit the structured result.',
+        inputSchema: {
+            type: 'object',
+            properties: { verdict: { type: 'string' } },
+            required: ['verdict'],
+            additionalProperties: false,
+        },
+    };
+
+    function configWithTool(): AgentConfig {
+        return { ...buildConfig(VALID_MAX_TOKENS, DISABLED_THINKING_BUDGET), tool: TOOL };
+    }
+
+    function toolUseResponse(input: unknown): Record<string, unknown> {
+        return {
+            output: { message: { content: [{ toolUse: { toolUseId: 't1', name: 'emit_result', input } }] } },
+            usage: { inputTokens: 100, outputTokens: 50 },
+            stopReason: 'tool_use',
+        };
+    }
+
+    beforeEach(() => mockSend.mockReset());
+
+    it('sends a Converse toolConfig with forced toolChoice when config.tool is set', async () => {
+        const { ConverseCommand } = jest.requireMock('@aws-sdk/client-bedrock-runtime') as {
+            ConverseCommand: jest.Mock;
+        };
+        ConverseCommand.mockClear();
+        mockSend.mockResolvedValueOnce(toolUseResponse({ verdict: 'ok' }));
+
+        await runAgent({
+            config: configWithTool(),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => JSON.parse(t),
+            pipelineContext: buildPipelineContext(),
+        });
+
+        const sent = ConverseCommand.mock.calls.at(-1)?.[0] as any;
+        expect(sent.toolConfig.tools[0].toolSpec.name).toBe('emit_result');
+        expect(sent.toolConfig.tools[0].toolSpec.inputSchema.json).toEqual(TOOL.inputSchema);
+        expect(sent.toolConfig.toolChoice).toEqual({ tool: { name: 'emit_result' } });
+    });
+
+    it('passes the tool_use input to parseResponse as a JSON string', async () => {
+        mockSend.mockResolvedValueOnce(toolUseResponse({ verdict: 'shipped' }));
+
+        const result = await runAgent<{ verdict: string }>({
+            config: configWithTool(),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => JSON.parse(t) as { verdict: string },
+            pipelineContext: buildPipelineContext(),
+        });
+
+        expect(result.data.verdict).toBe('shipped');
+    });
+
+    it('fails fast (AgentExecutionError) when a forced-tool call returns no toolUse block', async () => {
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse('I refuse to comply.'));
+
+        await expect(runAgent({
+            config: configWithTool(),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => JSON.parse(t),
+            pipelineContext: buildPipelineContext(),
+        })).rejects.toBeInstanceOf(AgentExecutionError);
+    });
+});

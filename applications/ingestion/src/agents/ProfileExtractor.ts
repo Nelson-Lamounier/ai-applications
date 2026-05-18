@@ -27,10 +27,10 @@ export const ExtractedRepoDataSchema = z.object({
         commit_count:     z.number().int().nonnegative(),
         primary_language: z.string().nullable(),
         last_active_at:   z.string().nullable(),
-    }),
+    }).strict(),
     confidence: z.number().min(0).max(1),
     missing:    z.array(z.string()).default([]),
-});
+}).strict();
 
 export type ExtractedRepoData = z.infer<typeof ExtractedRepoDataSchema>;
 
@@ -78,12 +78,14 @@ const EXTRACT_TOOL = {
                 },
                 required: ['has_readme','has_tests','has_ci','has_changelog','has_manifest',
                            'commit_count','primary_language','last_active_at'],
+                additionalProperties: false,
             },
             confidence: { type: 'number', minimum: 0, maximum: 1 },
             missing:    { type: 'array', items: { type: 'string' } },
         },
         required: ['project_name','one_liner','description','domain','tech_stack',
                    'role_inferred','complexity','highlights','signals','confidence','missing'],
+        additionalProperties: false,
     },
 } as const;
 

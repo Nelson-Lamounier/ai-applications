@@ -123,6 +123,12 @@ describe('ProfileExtractor', () => {
             .rejects.toMatchObject({ code: 'schema_validation_failed' });
     });
 
+    it('throws schema_validation_failed when the model injects an unknown field', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, injected_field: 'unexpected' });
+        await expect(extractor.extract('user-123', makeBundle()))
+            .rejects.toMatchObject({ code: 'schema_validation_failed' });
+    });
+
     it('calls recordBedrockCost once with pipeline profile-extraction', async () => {
         mockBedrockResponse(VALID_TOOL_INPUT);
         await extractor.extract('user-123', makeBundle());

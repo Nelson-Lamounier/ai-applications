@@ -166,6 +166,24 @@ export interface AgentConfig {
      * Written to prompt_invocations.prompt_id.
      */
     readonly promptId?: string;
+
+    /**
+     * Forced tool_use (constrained decoding). When set, runAgent sends a
+     * Converse `toolConfig` with `toolChoice: { tool: { name } }` so the
+     * model is architecturally blocked from producing anything outside the
+     * schema, and the tool input — not free-form text — is what reaches
+     * `parseResponse` (as a JSON string).
+     *
+     * NOTE: Anthropic forbids forced tool_use together with extended
+     * thinking. Configure `tool` only on agents with `thinkingBudget: 0`.
+     * See structure-output-checklist §2.
+     */
+    readonly tool?: {
+        readonly name: string;
+        readonly description: string;
+        /** JSON Schema for the tool input. Set additionalProperties:false. */
+        readonly inputSchema: Record<string, unknown>;
+    };
 }
 
 // =============================================================================
