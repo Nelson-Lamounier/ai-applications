@@ -12,7 +12,7 @@ import {
     BedrockRuntimeClient,
     InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
-import { trace } from '@opentelemetry/api';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import {
     recordBedrockCost,
@@ -162,9 +162,11 @@ export class RetrievalProbe implements IRetrievalProbe {
         userId: string,
         repoFullName: string,
     ): RetrievalProbe | undefined {
+        // Operator opted out — probe is intentionally disabled for this run.
         if (process.env['RETRIEVAL_PROBE_DISABLED'] === '1') return undefined;
         const modelId = process.env['RETRIEVAL_PROBE_MODEL_ID']
             ?? process.env['PROFILE_EXTRACTOR_MODEL_ID'];
+        // No model configured — cannot run the probe; pipeline proceeds without it.
         if (!modelId) return undefined;
         return new RetrievalProbe(
             new BedrockQuestionGenerator(modelId, pool, userId, repoFullName),
@@ -188,6 +190,7 @@ export class RetrievalProbe implements IRetrievalProbe {
 
                 const perQuestion: RetrievalQuestionResult[] = [];
                 for (const q of questions) {
+                    // sourceIndex is LLM-controlled and may be out of range — skip defensively.
                     const source = sample[q.sourceIndex];
                     if (!source) continue;
                     const embedding = await args.embedder.embed(q.question);
@@ -226,6 +229,7 @@ export class RetrievalProbe implements IRetrievalProbe {
             } catch (err) {
                 // Best-effort: never throw.
                 span.recordException(err instanceof Error ? err : new Error(String(err)));
+                span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
                 return ZERO('failed');
             } finally {
                 span.end();

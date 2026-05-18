@@ -65,6 +65,8 @@ describe('RetrievalProbe.evaluate', () => {
         expect(res.version).toBe(1);
         expect(res.score).toBeGreaterThanOrEqual(0);
         expect(res.score).toBeLessThanOrEqual(1);
-        expect(res.perQuestion.length).toBe(res.sampled);
+        expect(res.sampled).toBe(5);
+        expect(res.perQuestion).toHaveLength(5);
+        expect(res.perQuestion.every(q => q.sourceIndex >= 0 && q.sourceIndex < 5)).toBe(true);
     });
 });
