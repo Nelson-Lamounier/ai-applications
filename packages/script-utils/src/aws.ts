@@ -99,8 +99,10 @@ export async function getSSMParameter(
   })
 
   try {
+    // WithDecryption is required for SecureString params and is ignored
+    // by SSM for String / StringList, so it is always safe to set.
     const result = await ssm.send(
-      new GetParameterCommand({ Name: name }),
+      new GetParameterCommand({ Name: name, WithDecryption: true }),
     )
     const value = result.Parameter?.Value
     if (value && value !== 'None') {

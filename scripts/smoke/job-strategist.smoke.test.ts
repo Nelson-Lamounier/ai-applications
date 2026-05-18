@@ -16,16 +16,17 @@ describe('job-strategist e2e', () => {
       user: ep.pgUser, password: ep.pgPassword, testUserId: TEST_USER_ID,
     });
     try {
-      const seed = await rds.assertRows(
-        'SELECT id FROM resumes WHERE user_id = $1 ORDER BY generated_at DESC LIMIT 1', [TEST_USER_ID],
-        'a seed resume for the test user (run resume-import first or seed one)');
-      const resumeId = (seed[0] as { id: string }).id;
+      // resumeId is optional in the admin-api contract — pass an existing
+      // seed resume if the test user has one, otherwise omit it.
+      const seed = await rds.maybeRows(
+        'SELECT id FROM resumes WHERE user_id = $1 ORDER BY generated_at DESC LIMIT 1', [TEST_USER_ID]);
+      const resumeId = (seed[0] as { id: string } | undefined)?.id;
 
       const api = new AdminApiClient(ep.adminApiBaseUrl, ep.cognitoIdToken);
       const jd = readFileSync(`${__dirname}/fixtures/strategist-jd.txt`, 'utf-8');
       const { pipelineRunId, applicationId } = await api.startStrategist({
         targetCompany: 'Smoke Test Co', targetRole: 'Senior SRE',
-        jobDescription: jd, resumeId,
+        jobDescription: jd, ...(resumeId ? { resumeId } : {}),
       });
       recordCleanup({ flow: 'job-strategist', pipelineRunId, applicationId });
 

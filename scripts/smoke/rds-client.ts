@@ -1,4 +1,5 @@
 /** @format */
+import { Pool } from 'pg';
 import { SmokeSetupError, SmokeAssertionError, SmokeInfraError } from './types.js';
 import type { CleanupTarget } from './types.js';
 
@@ -76,12 +77,19 @@ export class RdsClient {
     });
   }
 
-  /** resume_imports. OK 'completed', FAIL 'failed'. Scoped to id + test user. */
-  async waitForImportStatus(importId: string, timeoutMs: number, intervalMs: number): Promise<string> {
+  /** resume_imports. FAIL 'failed', scoped to id + test user. okStatus
+   *  defaults to 'ready_for_review' — the terminal state of the automated
+   *  extraction (user_career_history is populated here). Reaching
+   *  'completed' additionally requires the human-confirm + per-role
+   *  enrichment pipeline, which is out of smoke scope. */
+  async waitForImportStatus(
+    importId: string, timeoutMs: number, intervalMs: number,
+    okStatus = 'ready_for_review',
+  ): Promise<string> {
     return pollStatus(this.pool, {
       sql: 'SELECT status, error_code, error_details FROM resume_imports WHERE id = $1 AND user_id = $2 LIMIT 1',
       params: [importId, this.testUserId], statusCol: 'status',
-      okValue: 'completed', failValue: 'failed',
+      okValue: okStatus, failValue: 'failed',
       what: `resume-import ${importId}`, timeoutMs, intervalMs,
     });
   }
@@ -102,6 +110,13 @@ export class RdsClient {
     return rows;
   }
 
+  /** Non-throwing read for optional preconditions (e.g. an optional seed
+   *  row). Returns [] when nothing matches. */
+  async maybeRows(sql: string, params: unknown[]): Promise<unknown[]> {
+    const { rows } = await this.pool.query(sql, params);
+    return rows;
+  }
+
   private async runStmts(stmts: Array<[string, unknown[]]>): Promise<void> {
     for (const [sql, params] of stmts) {
       try { await this.pool.query(sql, params); }
@@ -115,7 +130,10 @@ export class RdsClient {
   async cleanupRun(t: CleanupTarget): Promise<void> {
     this.guard();
     const uid = this.testUserId;
-    const rid = t.pipelineRunId ?? null;
+    // normaliseStartResponse yields '' (not undefined) when there is no
+    // run id (e.g. ingestion); coalesce to null so the ::uuid cast is
+    // skipped instead of failing on ''::uuid.
+    const rid = t.pipelineRunId || null;
     if (t.flow === 'job-strategist') {
       const app = t.applicationId ?? null;
       await this.runStmts([
@@ -191,7 +209,6 @@ export class RdsClient {
 export async function resolvePlatformUserId(opts: {
   host: string; port: number; database: string; user: string; password: string; email: string;
 }): Promise<string> {
-  const { Pool } = await import('pg');
   const pool = new Pool({
     host: opts.host, port: opts.port, database: opts.database,
     user: opts.user, password: opts.password, max: 1,
@@ -217,7 +234,6 @@ export async function connectRds(opts: {
   host: string; port: number; database: string; user: string; password: string; testUserId: string;
 }): Promise<RdsClient> {
   assertSafeToMutate(opts.database, opts.testUserId);
-  const { Pool } = await import('pg');
   const pool = new Pool({
     host: opts.host, port: opts.port, database: opts.database,
     user: opts.user, password: opts.password, max: 4,

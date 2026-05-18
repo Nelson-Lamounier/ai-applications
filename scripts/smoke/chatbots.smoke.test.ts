@@ -1,5 +1,6 @@
 /** @format */
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { recordCleanup } from './cleanup-file.js';
 import type { Endpoints } from './types.js';
 
@@ -30,7 +31,9 @@ async function ask(url: string, body: object, headers: Record<string, string> = 
 
 describe('chatbots', () => {
   it('public chatbot answers', async () => {
-    const { status, text, json } = await ask(`${ep.chatbotPublicUrl}/invoke-public`,
+    // Deployed agent API exposes a single POST /invoke; public vs
+    // authenticated is distinguished by body/headers, not by path.
+    const { status, text, json } = await ask(`${ep.chatbotPublicUrl}/invoke`,
       { prompt: QUESTION });
     expect(status).toBe(200);
     expect((json.response ?? json.message ?? text).length).toBeGreaterThan(2);
@@ -38,13 +41,13 @@ describe('chatbots', () => {
 
   it('default chatbot answers', async () => {
     const { status, text, json } = await ask(`${ep.chatbotUrl}/invoke`,
-      { prompt: QUESTION, sessionId: `smoke-${Date.now()}` });
+      { prompt: QUESTION, sessionId: randomUUID() });
     expect(status).toBe(200);
     expect((json.response ?? json.message ?? text).length).toBeGreaterThan(2);
   }, 120_000);
 
   (ep.cognitoIdToken ? it : it.skip)('authenticated chatbot answers and persists a session', async () => {
-    const { status, json } = await ask(`${ep.chatbotAuthenticatedUrl}/invoke-authenticated`,
+    const { status, json } = await ask(`${ep.chatbotAuthenticatedUrl}/invoke`,
       { prompt: QUESTION, callerRole: 'user' },
       { Authorization: `Bearer ${ep.cognitoIdToken}` });
     expect(status).toBe(200);

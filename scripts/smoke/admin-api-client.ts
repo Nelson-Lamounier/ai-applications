@@ -30,23 +30,30 @@ export class AdminApiClient {
     return text;
   }
 
-  private async postJson(route: string, body: unknown): Promise<StartResponse> {
+  /** POST + parse + normalise. Does NOT assert a run id — ingestion is
+   *  tracked by repo_sync_state (user+repo), not pipeline_runs, so its
+   *  trigger response carries no pipelineRunId/importId. */
+  private async postJsonRaw(route: string, body: unknown): Promise<StartResponse> {
     const text = await this.send('POST', `${this.baseUrl}${route}`, {
       headers: { 'content-type': 'application/json', ...bearer(this.idToken) },
       body: JSON.stringify(body),
     });
-    let raw: Record<string, unknown>;
-    try { raw = JSON.parse(text) as Record<string, unknown>; }
+    try { return normaliseStartResponse(JSON.parse(text) as Record<string, unknown>); }
     catch { throw new SmokeAssertionError(`admin-api ${route} returned non-JSON: ${text}`); }
-    const res = normaliseStartResponse(raw);
+  }
+
+  private async postJson(route: string, body: unknown): Promise<StartResponse> {
+    const res = await this.postJsonRaw(route, body);
     if (!res.pipelineRunId && !res.importId) {
-      throw new SmokeAssertionError(`admin-api ${route} returned no run id / import id: ${text}`);
+      throw new SmokeAssertionError(`admin-api ${route} returned no run id / import id`);
     }
     return res;
   }
 
+  /** resumeId is optional in the admin-api contract
+   *  (`body.resumeId?.trim() || ''`); omit it when no seed resume exists. */
   startStrategist(b: {
-    targetCompany: string; targetRole: string; jobDescription: string; resumeId: string;
+    targetCompany: string; targetRole: string; jobDescription: string; resumeId?: string;
   }): Promise<StartResponse> {
     return this.postJson(ADMIN_API.routes.strategist, b);
   }
@@ -59,8 +66,10 @@ export class AdminApiClient {
     return this.postJson(route, b.mode ? { mode: b.mode } : {});
   }
 
+  /** Ingestion returns { status, jobName, repoFullName, ... } with no run
+   *  id — progress is tracked in repo_sync_state by user+repo. */
   startIngestion(b: { repoFullName: string }): Promise<StartResponse> {
-    return this.postJson(ADMIN_API.routes.ingestion, b);
+    return this.postJsonRaw(ADMIN_API.routes.ingestion, b);
   }
 
   /** Step 1 of resume-import: ask for a presigned S3 PUT url + import id.
