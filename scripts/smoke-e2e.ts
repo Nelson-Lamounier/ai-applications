@@ -107,10 +107,15 @@ async function main() {
     }
 
     const patterns = flows.map(f => `${f}.smoke.test.ts`).join('|');
+    // --experimental-vm-modules: the AWS SDK's credential-provider-node
+    // chain (and other deps) use dynamic import(); Jest's CJS sandbox
+    // rejects that without this flag. Required for any flow that
+    // constructs an AWS SDK client (e.g. S3Client in article-pipeline).
+    const nodeOpts = `${process.env.NODE_OPTIONS ?? ''} --experimental-vm-modules`.trim();
     const res = spawnSync('node_modules/.bin/jest', [
       '--config', 'scripts/smoke/jest.smoke.config.cjs',
       '--runInBand', '--testPathPattern', patterns,
-    ], { stdio: 'inherit', env: process.env });
+    ], { stdio: 'inherit', env: { ...process.env, NODE_OPTIONS: nodeOpts } });
     failed = res.status !== 0;
   } catch (e) {
     failed = true;
