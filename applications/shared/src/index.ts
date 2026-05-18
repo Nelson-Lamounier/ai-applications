@@ -241,6 +241,12 @@ export type {
     KbQualityFactor,
     KbQualityBreakdown,
     KbQualityResult,
+    IRetrievalProbe,
+    RetrievalProbeArgs,
+    RetrievalBreakdown,
+    RetrievalQuestionResult,
+    RetrievalStatus,
+    RankCandidate,
 } from './rds/index.js';
 
 export {
@@ -250,6 +256,10 @@ export {
     BedrockChunkEnricher,
     IngestionPipeline,
     computeKbQuality,
+    sampleChunks,
+    matchRank,
+    scoreRetrieval,
+    buildRetrievalSuggestions,
     recordBedrockCost,
     computeCostCents,
 } from './rds/index.js';
