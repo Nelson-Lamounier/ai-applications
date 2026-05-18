@@ -36,6 +36,7 @@ import { Pool } from 'pg';
 import { parseEnv } from './env.js';
 import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
 import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
+import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
@@ -51,6 +52,7 @@ import {
     chunkIngestDurationSeconds,
     kbQualityScoreHist,
     profileExtractCallsTotal,
+    retrievalScoreHist,
     seedZeroSeries as seedIngestionSubStepSeries,
 } from './metrics.js';
 
@@ -183,7 +185,9 @@ async function main(): Promise<void> {
         ? undefined
         : BedrockChunkEnricher.fromEnvironment();
 
-    const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher });
+    const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);
+
+    const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher, retrievalProbe });
     const orchestrator = new RepoIngestionOrchestrator(repoAdapter, fileFilter, chunkerReg, pipeline);
 
     const fileCache        = new FileFetchCache();
@@ -267,6 +271,9 @@ async function main(): Promise<void> {
         chunksProcessed.inc({ phase: 'embedded' }, report.embedded);
         chunksProcessed.inc({ phase: 'skipped' },  report.skipped);
         chunksProcessed.inc({ phase: 'pruned' },   report.pruned);
+        if (typeof report.retrievalScore === 'number') {
+            retrievalScoreHist().observe(report.retrievalScore);
+        }
         rootSpan.setAttributes({
             'chunks.embedded': report.embedded,
             'chunks.pruned':   report.pruned,
@@ -288,6 +295,7 @@ async function main(): Promise<void> {
             pruned:           report.pruned,
             duration_ms:      report.durationMs,
             kb_quality_score: report.kbQualityScore,
+            retrieval_score:  report.retrievalScore,
         }, 'complete');
 
     } catch (err) {
