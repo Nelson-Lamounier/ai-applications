@@ -130,7 +130,10 @@ export class RdsClient {
   async cleanupRun(t: CleanupTarget): Promise<void> {
     this.guard();
     const uid = this.testUserId;
-    const rid = t.pipelineRunId ?? null;
+    // normaliseStartResponse yields '' (not undefined) when there is no
+    // run id (e.g. ingestion); coalesce to null so the ::uuid cast is
+    // skipped instead of failing on ''::uuid.
+    const rid = t.pipelineRunId || null;
     if (t.flow === 'job-strategist') {
       const app = t.applicationId ?? null;
       await this.runStmts([
