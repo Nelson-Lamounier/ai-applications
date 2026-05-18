@@ -12,9 +12,11 @@
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 
+import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
 
 import { ApplicationInferenceProfile } from '../../constructs/observability/application-inference-profile';
@@ -75,6 +77,9 @@ export class BedrockDataStack extends cdk.Stack {
 
     /** The bucket name (for SSM export) */
     public readonly bucketName: string;
+
+    /** SM secret name the ingestion ESO ExternalSecret reads (GITHUB_TOKEN) */
+    public readonly ingestionGithubTokenSecretName: string;
 
     /** Application Inference Profile ARN — Article Pipeline Haiku 4.5 */
     public readonly articleHaikuProfileArn: string;
@@ -179,6 +184,49 @@ export class BedrockDataStack extends cdk.Stack {
                     maxAge: 3000,
                 },
             ],
+        });
+
+        // =================================================================
+        // Ingestion GitHub token — IaC ownership of the SM secret that the
+        // ingestion-worker Jobs consume via ESO (kubernetes-bootstrap
+        // charts/ingestion/external-secrets/ingestion-secrets.yaml maps it
+        // to the GITHUB_TOKEN env var).
+        //
+        // secretName is the LITERAL legacy path the ExternalSecret remoteRef
+        // expects — intentionally NOT `${namePrefix}/…`: the removed legacy
+        // CDK IngestionStack used the full-env prefix ('bedrock-development')
+        // whereas namePrefix here is short-env ('bedrock-dev'). Renaming
+        // would also require editing the kubernetes-bootstrap ExternalSecret
+        // + an ESO re-sync, so the literal name is kept here.
+        //
+        // CDK owns the resource (name, RETAIN lifecycle, IAM surface). The
+        // PAT *value* is a third-party credential and is injected
+        // out-of-band (never in source / CloudFormation) — see the cutover
+        // runbook. No generateSecretString (a real GitHub PAT cannot be
+        // synthesised); no rotation (manual external credential).
+        // =================================================================
+        const ingestionGithubToken = new secretsmanager.Secret(this, 'IngestionGithubTokenSecret', {
+            secretName: 'bedrock-development/github-token',
+            description:
+                'GitHub PAT consumed by ingestion-worker Jobs via ESO '
+                + '(ingestion-secrets → GITHUB_TOKEN). Value injected post-deploy.',
+        });
+        // A credential must survive `cdk destroy`; never auto-delete.
+        ingestionGithubToken.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+        NagSuppressions.addResourceSuppressions(ingestionGithubToken, [
+            {
+                id: 'AwsSolutions-SMG4',
+                reason:
+                    'GitHub PAT is an externally-issued third-party credential injected '
+                    + 'out-of-band; Secrets Manager cannot mint/rotate a GitHub token. '
+                    + 'Rotated manually on PAT expiry (mirrors AgentApiKeySecret rationale).',
+            },
+        ]);
+        this.ingestionGithubTokenSecretName = ingestionGithubToken.secretName;
+
+        new cdk.CfnOutput(this, 'IngestionGithubTokenSecretName', {
+            value: ingestionGithubToken.secretName,
+            description: 'SM secret name the ingestion ESO ExternalSecret reads',
         });
 
         // =================================================================
