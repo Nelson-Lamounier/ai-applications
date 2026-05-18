@@ -68,7 +68,9 @@ export interface RankCandidate {
     readonly similarity: number;
 }
 
-const SYNTHETIC_TAGS = new Set(['_commits', 'commit_history']);
+// Primary guard is fileType (below). Tag '_commits' catches synthetic
+// commit-history chunks that are identified by their leading tag.
+const SYNTHETIC_TAGS = new Set(['_commits']);
 
 function isEligible(c: RawChunk): boolean {
     if (c.fileType === 'commit_history') return false;
@@ -127,6 +129,8 @@ export function sampleChunks(
         const next = arr.shift();
         if (next) out.push(next);
         if (arr.length === 0) {
+            // Do not increment i: splice shifts remaining tags left, so the
+            // current slot already points to the next tag in sequence.
             order.splice(i % order.length, 1);
         } else {
             i++;

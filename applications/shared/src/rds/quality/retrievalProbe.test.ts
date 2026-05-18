@@ -32,6 +32,15 @@ describe('sampleChunks', () => {
     it('returns empty when fewer than 2 eligible chunks', () => {
         expect(sampleChunks([chunk('a.md', 0, 'root')], 'owner/repo', 5)).toEqual([]);
     });
+
+    it('spreads the sample across tag buckets', () => {
+        const chunks = Array.from({ length: 10 }, (_, i) =>
+            chunk(`t${i % 3}/f${i}.md`, 0, `tag${i % 3}`),
+        );
+        const out = sampleChunks(chunks, 'owner/repo', 6);
+        const tags = new Set(out.map(c => c.tags![0]));
+        expect(tags.size).toBe(3);
+    });
 });
 
 describe('matchRank', () => {
