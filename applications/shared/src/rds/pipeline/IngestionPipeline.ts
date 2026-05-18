@@ -220,6 +220,11 @@ export class IngestionPipeline {
                         span.setAttributes({ 'retrieval.status': r.status, 'retrieval.score': r.score });
                         return r;
                     } catch (err) {
+                        // Best-effort: probe failures MUST NOT break ingestion.
+                        // IRetrievalProbe.evaluate() is contracted to return
+                        // status:'failed' rather than throw, so reaching here means an
+                        // unexpected error — log it, swallow it, continue ingestion.
+                        console.error('[IngestionPipeline] retrieval probe threw unexpectedly:', err);
                         span.recordException(err instanceof Error ? err : new Error(String(err)));
                         span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
                         return undefined;

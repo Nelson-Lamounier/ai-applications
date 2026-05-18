@@ -258,13 +258,28 @@ describe('IngestionPipeline — OTel spans', () => {
         exporter.reset();
     });
 
-    it('creates ingestion.chunk, ingestion.enrich, ingestion.embed_upsert, ingestion.prune spans', async () => {
+    it('creates ingestion.chunk, ingestion.enrich, ingestion.embed_upsert, ingestion.prune, ingestion.retrieval_probe spans', async () => {
+        const fakeProbe: IRetrievalProbe = {
+            evaluate: async () => ({
+                version:           1,
+                status:            'ok',
+                sampled:           1,
+                recallAt3:         1,
+                mrr:               1,
+                meanTopSimilarity: 1,
+                score:             1,
+                perQuestion:       [],
+                suggestions:       [],
+            }),
+        };
+
         const rootSpan = trace.getTracer('test').startSpan('test.root');
         await context.with(trace.setSpan(context.active(), rootSpan), async () => {
             const pipeline = new IngestionPipeline(
                 new FakeVectorStore(),
                 new FakeSyncState(),
                 new FakeEmbedder(),
+                { retrievalProbe: fakeProbe },
             );
             const chunk: RawChunk = {
                 filePath:    'src/index.ts',
@@ -282,10 +297,17 @@ describe('IngestionPipeline — OTel spans', () => {
         expect(spanNames).toContain('ingestion.enrich');
         expect(spanNames).toContain('ingestion.embed_upsert');
         expect(spanNames).toContain('ingestion.prune');
+        expect(spanNames).toContain('ingestion.retrieval_probe');
 
         // Phase spans must be children of the test root span
         const rootSpanId = rootSpan.spanContext().spanId;
-        const phaseSpanNames = ['ingestion.chunk', 'ingestion.enrich', 'ingestion.embed_upsert', 'ingestion.prune'];
+        const phaseSpanNames = [
+            'ingestion.chunk',
+            'ingestion.enrich',
+            'ingestion.embed_upsert',
+            'ingestion.prune',
+            'ingestion.retrieval_probe',
+        ];
         for (const name of phaseSpanNames) {
             const span = allSpans.find(s => s.name === name);
             expect(span).toBeDefined();
