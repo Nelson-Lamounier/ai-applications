@@ -37,6 +37,7 @@ let _profileExtractDuration: Histogram<never> | undefined;
 let _profileEmbedDuration:   Histogram<never> | undefined;
 let _chunkIngestDuration:    Histogram<'outcome'> | undefined;
 let _kbQualityScore:         Histogram<never> | undefined;
+let _retrievalScore:         Histogram<never> | undefined;
 let _profileExtractCalls:    Counter<'outcome'> | undefined;
 
 export const profileCollectDurationSeconds = (): Histogram<never> =>
@@ -75,6 +76,13 @@ export const kbQualityScoreHist = (): Histogram<never> =>
         buckets: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
     });
 
+export const retrievalScoreHist = (): Histogram<never> =>
+    _retrievalScore ??= makeHistogram({
+        name:    'ingestion_retrieval_score',
+        help:    'Retrieval-probe score (0..1) of each ingested repository.',
+        buckets: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
+    });
+
 export const profileExtractCallsTotal = (): Counter<'outcome'> =>
     _profileExtractCalls ??= makeCounter({
         name:       'ingestion_profile_extract_calls_total',
@@ -91,4 +99,5 @@ export function seedZeroSeries(): void {
         profileExtractCallsTotal().inc({ outcome }, 0);
     }
     kbQualityScoreHist().observe(0);
+    retrievalScoreHist().observe(0);
 }
