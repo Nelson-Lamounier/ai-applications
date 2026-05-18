@@ -1,5 +1,6 @@
 /** @format */
 import { getSSMParameter, resolveAuth } from '@repo/script-utils/aws.js';
+import type { AwsConfig } from '@repo/script-utils/aws.js';
 import { capture } from './exec-wrapper.js';
 import { COGNITO } from './admin-api-contract.js';
 import { SmokeSetupError } from './types.js';
@@ -16,15 +17,20 @@ async function k8sSecret(ns: string, name: string, key: string): Promise<string>
   return decodeK8sSecret(b64);
 }
 
-async function ssmRequired(
-  name: string,
-  cfg: { region: string; profile?: string },
-): Promise<string> {
+/** SSM/AWS config the orchestrator resolves once and threads through.
+ *  `credentials` MUST be forwarded — getSSMParameter authenticates via
+ *  config.credentials, NOT config.profile; dropping it makes every SSM
+ *  call fall back to an empty default chain and fail closed as
+ *  "not found". */
+type SsmCfg = Pick<AwsConfig, 'region' | 'profile' | 'credentials'>;
+
+async function ssmRequired(name: string, cfg: SsmCfg): Promise<string> {
   // getSSMParameter returns string | undefined; treat a missing param as a
   // setup error so callers never operate on undefined endpoints.
   const value = await getSSMParameter(name, {
     region: cfg.region,
     profile: cfg.profile,
+    credentials: cfg.credentials,
     environment: 'dev',
   });
   if (!value) throw new SmokeSetupError(`SSM parameter "${name}" not found or empty`);
@@ -38,7 +44,7 @@ async function ssmRequired(
  */
 export async function resolveChatbotUrls(
   namePrefix: string,
-  cfg: { region: string; profile?: string },
+  cfg: SsmCfg,
 ): Promise<{ chatbotUrl: string; chatbotPublicUrl: string; chatbotAuthenticatedUrl: string }> {
   const strip = (u: string) => u.replace(/\/+$/, '');
   const base = strip(await ssmRequired(`/${namePrefix}/api-url`, cfg));
@@ -48,12 +54,13 @@ export async function resolveChatbotUrls(
 /** Optional SecureString agent API key; absent → null (auth is optional). */
 export async function resolveChatbotApiKey(
   namePrefix: string,
-  cfg: { region: string; profile?: string },
+  cfg: SsmCfg,
 ): Promise<string | null> {
   try {
     const v = await getSSMParameter(`/${namePrefix}/agent-api-key`, {
       region: cfg.region,
       profile: cfg.profile,
+      credentials: cfg.credentials,
       environment: 'dev',
     });
     return v || null;
