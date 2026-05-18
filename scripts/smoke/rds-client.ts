@@ -1,4 +1,5 @@
 /** @format */
+import { Pool } from 'pg';
 import { SmokeSetupError, SmokeAssertionError, SmokeInfraError } from './types.js';
 import type { CleanupTarget } from './types.js';
 
@@ -102,6 +103,13 @@ export class RdsClient {
     return rows;
   }
 
+  /** Non-throwing read for optional preconditions (e.g. an optional seed
+   *  row). Returns [] when nothing matches. */
+  async maybeRows(sql: string, params: unknown[]): Promise<unknown[]> {
+    const { rows } = await this.pool.query(sql, params);
+    return rows;
+  }
+
   private async runStmts(stmts: Array<[string, unknown[]]>): Promise<void> {
     for (const [sql, params] of stmts) {
       try { await this.pool.query(sql, params); }
@@ -191,7 +199,6 @@ export class RdsClient {
 export async function resolvePlatformUserId(opts: {
   host: string; port: number; database: string; user: string; password: string; email: string;
 }): Promise<string> {
-  const { Pool } = await import('pg');
   const pool = new Pool({
     host: opts.host, port: opts.port, database: opts.database,
     user: opts.user, password: opts.password, max: 1,
@@ -217,7 +224,6 @@ export async function connectRds(opts: {
   host: string; port: number; database: string; user: string; password: string; testUserId: string;
 }): Promise<RdsClient> {
   assertSafeToMutate(opts.database, opts.testUserId);
-  const { Pool } = await import('pg');
   const pool = new Pool({
     host: opts.host, port: opts.port, database: opts.database,
     user: opts.user, password: opts.password, max: 4,
