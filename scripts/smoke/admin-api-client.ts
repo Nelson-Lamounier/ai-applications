@@ -45,8 +45,10 @@ export class AdminApiClient {
     return res;
   }
 
+  /** resumeId is optional in the admin-api contract
+   *  (`body.resumeId?.trim() || ''`); omit it when no seed resume exists. */
   startStrategist(b: {
-    targetCompany: string; targetRole: string; jobDescription: string; resumeId: string;
+    targetCompany: string; targetRole: string; jobDescription: string; resumeId?: string;
   }): Promise<StartResponse> {
     return this.postJson(ADMIN_API.routes.strategist, b);
   }
