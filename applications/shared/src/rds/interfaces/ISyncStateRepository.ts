@@ -24,6 +24,8 @@ export interface ISyncStateRepository {
      * and (optionally) the computed KB quality score and per-factor
      * breakdown. Both quality fields are nullable for back-compat with
      * runs that pre-date pick #4 (KB quality scoring).
+     * retrievalScore / retrievalBreakdown are nullable for back-compat with
+     * runs that pre-date the retrieval-quality probe.
      */
     markComplete(
         userId: string,
@@ -32,6 +34,8 @@ export interface ISyncStateRepository {
         chunkCount: number,
         kbQualityScore?: number,
         kbQualityBreakdown?: Record<string, unknown>,
+        retrievalScore?: number,
+        retrievalBreakdown?: Record<string, unknown>,
     ): Promise<void>;
 
     /** Shorthand: set status to 'error', record the failure reason. */
