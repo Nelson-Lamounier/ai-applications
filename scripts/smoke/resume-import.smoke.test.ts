@@ -34,8 +34,10 @@ describe('resume-import e2e', () => {
       await api.putResumeBytes(ticket.uploadUrl, bytes, contentType);
       await api.completeResumeImport(ticket.importId);
 
+      // Terminal for the automated extraction. 'completed' would require
+      // the human-confirm (POST /:id/confirm) + enrichment pipeline.
       const status = await rds.waitForImportStatus(ticket.importId, TIMEOUT, 5000);
-      expect(status).toBe('completed');
+      expect(status).toBe('ready_for_review');
       await rds.assertRows(
         'SELECT 1 FROM user_career_history WHERE user_id = $1 AND import_id = $2 LIMIT 1',
         [TEST_USER_ID, ticket.importId], 'user_career_history rows for the import');

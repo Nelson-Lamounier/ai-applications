@@ -93,12 +93,17 @@ describe('RdsClient.waitForPipelineStatus', () => {
 });
 
 describe('RdsClient.waitForImportStatus', () => {
-  it('resolves on completed; scopes to id + user', async () => {
-    const pool = fakePool([{ rows: [{ status: 'parsing' }] }, { rows: [{ status: 'completed' }] }]);
+  it('resolves on ready_for_review by default; scopes to id + user', async () => {
+    const pool = fakePool([{ rows: [{ status: 'parsing' }] }, { rows: [{ status: 'ready_for_review' }] }]);
     const c = new RdsClient(pool as never, 'tucaken', U);
-    expect(await c.waitForImportStatus('imp-1', 50, 5)).toBe('completed');
+    expect(await c.waitForImportStatus('imp-1', 50, 5)).toBe('ready_for_review');
     expect(pool.calls[0].sql).toMatch(/FROM resume_imports WHERE id = \$1 AND user_id = \$2/);
     expect(pool.calls[0].params).toEqual(['imp-1', U]);
+  });
+  it('honours an explicit okStatus override', async () => {
+    const pool = fakePool([{ rows: [{ status: 'completed' }] }]);
+    const c = new RdsClient(pool as never, 'tucaken', U);
+    expect(await c.waitForImportStatus('imp-1', 50, 5, 'completed')).toBe('completed');
   });
   it('throws with error_code/error_details on failed', async () => {
     const pool = fakePool([{ rows: [{ status: 'failed', error_code: 'PARSE', error_details: { x: 1 } }] }]);

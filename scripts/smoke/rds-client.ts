@@ -77,12 +77,19 @@ export class RdsClient {
     });
   }
 
-  /** resume_imports. OK 'completed', FAIL 'failed'. Scoped to id + test user. */
-  async waitForImportStatus(importId: string, timeoutMs: number, intervalMs: number): Promise<string> {
+  /** resume_imports. FAIL 'failed', scoped to id + test user. okStatus
+   *  defaults to 'ready_for_review' — the terminal state of the automated
+   *  extraction (user_career_history is populated here). Reaching
+   *  'completed' additionally requires the human-confirm + per-role
+   *  enrichment pipeline, which is out of smoke scope. */
+  async waitForImportStatus(
+    importId: string, timeoutMs: number, intervalMs: number,
+    okStatus = 'ready_for_review',
+  ): Promise<string> {
     return pollStatus(this.pool, {
       sql: 'SELECT status, error_code, error_details FROM resume_imports WHERE id = $1 AND user_id = $2 LIMIT 1',
       params: [importId, this.testUserId], statusCol: 'status',
-      okValue: 'completed', failValue: 'failed',
+      okValue: okStatus, failValue: 'failed',
       what: `resume-import ${importId}`, timeoutMs, intervalMs,
     });
   }
