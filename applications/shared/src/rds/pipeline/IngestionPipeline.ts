@@ -30,6 +30,7 @@ import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { computeKbQuality } from '../quality/computeKbQuality.js';
+import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
     DocumentChunk,
     IngestionReport,
@@ -60,6 +61,12 @@ export interface IngestionPipelineOptions {
      * `MAX_ENRICHMENT_PER_INGESTION` env var or 2000.
      */
     readonly maxEnrichmentPerRun?: number;
+    /**
+     * Optional retrieval-quality probe. When omitted, the probe phase is
+     * skipped entirely and `retrievalScore` / `retrievalBreakdown` are absent
+     * from the report. A probe failure MUST NOT fail ingestion.
+     */
+    readonly retrievalProbe?: IRetrievalProbe;
 }
 
 export class IngestionPipeline {
@@ -67,6 +74,7 @@ export class IngestionPipeline {
     private readonly syncState: ISyncStateRepository;
     private readonly embedder: IEmbeddingProvider;
     private readonly enricher?: IChunkEnricher;
+    private readonly retrievalProbe?: IRetrievalProbe;
     private readonly maxEnrichmentPerRun: number;
 
     constructor(
@@ -75,10 +83,11 @@ export class IngestionPipeline {
         embedder: IEmbeddingProvider,
         options: IngestionPipelineOptions = {},
     ) {
-        this.vectorStore = vectorStore;
-        this.syncState   = syncState;
-        this.embedder    = embedder;
-        this.enricher    = options.enricher;
+        this.vectorStore    = vectorStore;
+        this.syncState      = syncState;
+        this.embedder       = embedder;
+        this.enricher       = options.enricher;
+        this.retrievalProbe = options.retrievalProbe;
         this.maxEnrichmentPerRun =
             options.maxEnrichmentPerRun
             ?? parseEnrichmentCapFromEnv()
@@ -197,6 +206,30 @@ export class IngestionPipeline {
             const currentFilePaths = [...new Set(rawChunks.map(c => c.filePath))];
             const quality = computeKbQuality(rawChunks);
 
+            let retrieval: RetrievalBreakdown | undefined;
+            if (this.retrievalProbe) {
+                retrieval = await tracer.startActiveSpan('ingestion.retrieval_probe', async (span) => {
+                    try {
+                        const r = await this.retrievalProbe!.evaluate({
+                            userId,
+                            repoFullName,
+                            rawChunks,
+                            embedder:    this.embedder,
+                            vectorStore: this.vectorStore,
+                        });
+                        span.setAttributes({ 'retrieval.status': r.status, 'retrieval.score': r.score });
+                        return r;
+                    } catch (err) {
+                        span.recordException(err instanceof Error ? err : new Error(String(err)));
+                        span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+                        return undefined;
+                    } finally {
+                        span.end();
+                    }
+                });
+            }
+            const persistRetrieval = retrieval && retrieval.status === 'ok' ? retrieval : undefined;
+
             await this.syncState.markComplete(
                 userId,
                 repoFullName,
@@ -204,6 +237,8 @@ export class IngestionPipeline {
                 rawChunks.length,
                 quality.score,
                 quality.breakdown as unknown as Record<string, unknown>,
+                persistRetrieval?.score,
+                persistRetrieval as unknown as Record<string, unknown> | undefined,
             );
 
             return {
@@ -217,6 +252,8 @@ export class IngestionPipeline {
                 durationMs:         Date.now() - startMs,
                 kbQualityScore:     quality.score,
                 kbQualityBreakdown: quality.breakdown as unknown as Record<string, unknown>,
+                retrievalScore:     persistRetrieval?.score,
+                retrievalBreakdown: persistRetrieval as unknown as Record<string, unknown> | undefined,
             };
 
         } catch (err) {

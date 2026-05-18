@@ -12,6 +12,7 @@ import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnrich
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
     ChunkIdentity,
     DocumentChunk,
@@ -52,8 +53,9 @@ class FakeVectorStore implements IVectorStore {
 }
 
 class FakeSyncState implements ISyncStateRepository {
+    public markCompleteCalls: unknown[][] = [];
     async markStarted(): Promise<void> {}
-    async markComplete(): Promise<void> {}
+    async markComplete(...args: unknown[]): Promise<void> { this.markCompleteCalls.push(args); }
     async markError(): Promise<void> {}
     async get(): Promise<undefined> { return undefined; }
     async upsert(): Promise<void> {}
@@ -179,6 +181,65 @@ describe('IngestionPipeline enrichment', () => {
             expect(c.skills).toEqual([]);
             expect(c.technologies).toEqual([]);
         });
+    });
+});
+
+describe('IngestionPipeline retrieval probe', () => {
+    let store: FakeVectorStore;
+    let sync:  FakeSyncState;
+    let embed: FakeEmbedder;
+
+    beforeEach(() => {
+        store = new FakeVectorStore();
+        sync  = new FakeSyncState();
+        embed = new FakeEmbedder();
+    });
+
+    it('folds probe result into report and markComplete when probe returns ok', async () => {
+        const okBreakdown: RetrievalBreakdown = {
+            version: 1,
+            status: 'ok',
+            sampled: 5,
+            recallAt3: 0.8,
+            mrr: 0.7,
+            meanTopSimilarity: 0.75,
+            score: 0.76,
+            perQuestion: [],
+            suggestions: [],
+        };
+        const probe: IRetrievalProbe = {
+            evaluate: async () => okBreakdown,
+        };
+
+        const pipeline = new IngestionPipeline(store, sync, embed, { retrievalProbe: probe });
+        const report = await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)]);
+
+        expect(report.retrievalScore).toBe(0.76);
+        expect(report.retrievalBreakdown).toMatchObject({ status: 'ok' });
+
+        const callArgs = sync.markCompleteCalls[0];
+        expect(callArgs[6]).toBe(0.76);
+        expect(callArgs[7]).toEqual(expect.objectContaining({ status: 'ok' }));
+    });
+
+    it('leaves retrievalScore and retrievalBreakdown undefined when no probe is injected', async () => {
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const report = await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)]);
+
+        expect(report.retrievalScore).toBeUndefined();
+        expect(report.retrievalBreakdown).toBeUndefined();
+    });
+
+    it('resolves ingestion and preserves kbQualityScore when probe throws', async () => {
+        const probe: IRetrievalProbe = {
+            evaluate: async () => { throw new Error('probe explosion'); },
+        };
+
+        const pipeline = new IngestionPipeline(store, sync, embed, { retrievalProbe: probe });
+        const report = await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)]);
+
+        expect(report.retrievalScore).toBeUndefined();
+        expect(typeof report.kbQualityScore).toBe('number');
     });
 });
 
