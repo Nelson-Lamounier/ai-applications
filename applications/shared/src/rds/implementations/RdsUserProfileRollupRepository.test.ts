@@ -133,6 +133,7 @@ describe('RdsUserProfileRollupRepository reconciliation', () => {
         const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
         expect(up.sql).toMatch(/reconciliation/i);
         expect(up.params.some(p => typeof p === 'string' && p.includes('"resumeRef"'))).toBe(true);
+        expect(up.params[7]).toBeInstanceOf(Date);
     });
     it('upsert preserves prior reconciliation when omitted (COALESCE)', async () => {
         const client = fakeClient([]);
