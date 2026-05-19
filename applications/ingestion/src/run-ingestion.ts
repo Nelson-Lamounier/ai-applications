@@ -31,6 +31,7 @@ import {
     RepoIngestionOrchestrator,
     bootstrapK8sObservability,
     pushFinalMetrics,
+    RdsUserProfileRollupRepository,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -42,6 +43,7 @@ import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
+import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
 import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
 import { RepositoryProfileEmbeddingsRepository } from './repositories/RepositoryProfileEmbeddingsRepository.js';
 import type { ExtractedRepoData } from './agents/ProfileExtractor.js';
@@ -194,6 +196,7 @@ async function main(): Promise<void> {
 
     const fileCache        = new FileFetchCache();
     const profileRepo      = new RepositoryProfileRepository(pgPool);
+    const rollupRepo       = new RdsUserProfileRollupRepository(pgPool);
     const embRepo          = new RepositoryProfileEmbeddingsRepository(pgPool);
     const profileExtractor = new ProfileExtractor(env.profileExtractorModelId, pgPool);
     const profileCollector = new ProfileInputCollector(repoAdapter, fileCache);
@@ -248,6 +251,7 @@ async function main(): Promise<void> {
             stopEmbed();
             await profileRepo.updateStatus(profileId, env.userId, 'completed');
             profileExtractCallsTotal().inc({ outcome: 'success' });
+            await refreshUserProfileRollup(rollupRepo, env.userId);
 
             log.info({
                 repoFullName:  env.repoFullName,
