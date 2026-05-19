@@ -123,3 +123,29 @@ describe('RdsUserProfileRollupRepository direction', () => {
         expect(sel.sql).toMatch(/direction/i);
     });
 });
+
+describe('RdsUserProfileRollupRepository reconciliation', () => {
+    it('upsert writes reconciliation when provided', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup, undefined, undefined, undefined,
+            { unsupportedClaims: [{ claim: 'c', resumeRef: 'Acme', whyUnsupported: 'w' }], undersold: [] });
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/reconciliation/i);
+        expect(up.params.some(p => typeof p === 'string' && p.includes('"resumeRef"'))).toBe(true);
+    });
+    it('upsert preserves prior reconciliation when omitted (COALESCE)', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup);
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/reconciliation\s*=\s*COALESCE\(\s*EXCLUDED\.reconciliation\s*,\s*user_profile_rollup\.reconciliation\s*\)/i);
+    });
+    it('getRollup selects reconciliation', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.getRollup('11111111-1111-1111-1111-111111111111');
+        const sel = client.calls.find(c => /SELECT[\s\S]*FROM user_profile_rollup/i.test(c.sql))!;
+        expect(sel.sql).toMatch(/reconciliation/i);
+    });
+});
