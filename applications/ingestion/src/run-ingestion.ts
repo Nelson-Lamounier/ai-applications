@@ -40,6 +40,7 @@ import { parseEnv } from './env.js';
 import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
 import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
 import { RetrievalProbe } from './agents/RetrievalProbe.js';
+import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
@@ -251,7 +252,8 @@ async function main(): Promise<void> {
             stopEmbed();
             await profileRepo.updateStatus(profileId, env.userId, 'completed');
             profileExtractCallsTotal().inc({ outcome: 'success' });
-            await refreshUserProfileRollup(rollupRepo, env.userId);
+            const mirrorSynth = MirrorRevealSynthesizer.fromEnvironment(pgPool, env.userId);
+            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth);
 
             log.info({
                 repoFullName:  env.repoFullName,
