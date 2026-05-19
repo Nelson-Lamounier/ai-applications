@@ -66,6 +66,9 @@ export type {
 export type { IUserProfileRollupRepository, MirrorJson, RevealJson, ArchetypeFit, SeniorityCall, DirectionJson, RollupRow } from './interfaces/IUserProfileRollupRepository.js';
 export { RdsUserProfileRollupRepository } from './implementations/RdsUserProfileRollupRepository.js';
 
+export type { ICareerHistoryReadRepository, ResumeForReconciliation, ResumeSkillGroup, ResumeExperienceEntry, ResumeProjectEntry } from './interfaces/ICareerHistoryReadRepository.js';
+export { RdsCareerHistoryReadRepository } from './implementations/RdsCareerHistoryReadRepository.js';
+
 export type {
     IRetrievalProbe,
     RetrievalProbeArgs,

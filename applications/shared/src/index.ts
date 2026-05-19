@@ -260,6 +260,11 @@ export type {
     SeniorityCall,
     DirectionJson,
     RollupRow,
+    ICareerHistoryReadRepository,
+    ResumeForReconciliation,
+    ResumeSkillGroup,
+    ResumeExperienceEntry,
+    ResumeProjectEntry,
 } from './rds/index.js';
 
 export {
@@ -277,6 +282,7 @@ export {
     computeCostCents,
     computeUserProfileRollup,
     RdsUserProfileRollupRepository,
+    RdsCareerHistoryReadRepository,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
