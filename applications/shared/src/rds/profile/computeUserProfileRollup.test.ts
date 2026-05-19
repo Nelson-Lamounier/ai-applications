@@ -74,6 +74,15 @@ describe('computeUserProfileRollup — aggregates', () => {
         expect(res.rollup.domains.dominant).toBe('infra');
     });
 
+    it('domains: dominant tie-breaks alphabetically first', () => {
+        const res = computeUserProfileRollup([
+            row({ repoFullName: 'o/a', domain: 'web' }),
+            row({ repoFullName: 'o/b', domain: 'infra' }),
+        ]);
+        expect(res.rollup.domains.counts).toEqual({ web: 1, infra: 1 });
+        expect(res.rollup.domains.dominant).toBe('infra'); // tie → alphabetically first
+    });
+
     it('complexity + roles counts', () => {
         const res = computeUserProfileRollup([
             row({ repoFullName: 'o/a', complexity: 'complex', roleInferred: 'creator' }),
@@ -116,6 +125,14 @@ describe('computeUserProfileRollup — aggregates', () => {
         expect(res.rollup.domains).toEqual({ counts: {}, dominant: null });
         expect(res.rollup.totals.activeYearsApprox).toBe(0);
         expect(res.rollup.methodology.version).toBe(1);
+    });
+
+    it('activeYearsApprox is 0 for a single dated repo', () => {
+        const res = computeUserProfileRollup([
+            row({ repoFullName: 'o/solo', lastActiveAt: '2025-06-01T00:00:00Z' }),
+        ]);
+        expect(res.rollup.totals.latestActivity).toBe('2025-06-01T00:00:00Z');
+        expect(res.rollup.totals.activeYearsApprox).toBe(0);
     });
 
     it('is deterministic for the same input', () => {

@@ -124,11 +124,11 @@ export function computeUserProfileRollup(
         if (!r.domain) continue;
         domainCounts[r.domain] = (domainCounts[r.domain] ?? 0) + 1;
     }
-    let dominant: string | null = null;
-    let dominantN = -1;
-    for (const [d, n] of Object.entries(domainCounts).sort((a, b) => a[0].localeCompare(b[0]))) {
-        if (n > dominantN) { dominant = d; dominantN = n; }
-    }
+    // Dominant = highest repo-count; ties broken by domain name ascending.
+    // Sort by count desc, then name asc, and take the first entry.
+    const domainEntries = Object.entries(domainCounts)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const dominant: string | null = domainEntries.length > 0 ? domainEntries[0][0] : null;
 
     const complexity = { simple: 0, moderate: 0, complex: 0 };
     const roles      = { creator: 0, maintainer: 0, contributor: 0 };
@@ -165,18 +165,22 @@ export function computeUserProfileRollup(
     const earliestActivity = dated.length > 0 ? dated[0].lastActiveAt! : null;
     const latestActivity   = dated.length > 0 ? dated[dated.length - 1].lastActiveAt! : null;
     let activeYearsApprox = 0;
+    // activeYearsApprox needs two endpoints to span; a single dated repo
+    // (or zero) yields 0 by design — consumers must not read it as "0 years
+    // of experience".
     if (dated.length >= 2 && earliestActivity && latestActivity) {
         const ms = new Date(latestActivity).getTime() - new Date(earliestActivity).getTime();
         activeYearsApprox = round1(ms / (365.25 * 24 * 60 * 60 * 1000));
     }
 
-    const classificationCounts: Record<string, number> & { hiddenCount: number } =
-        { hiddenCount: 0 } as Record<string, number> & { hiddenCount: number };
+    const classCountAccum: Record<string, number> = {};
+    let hiddenCount = 0;
     for (const r of rows) {
-        classificationCounts[r.classification] =
-            (classificationCounts[r.classification] ?? 0) + 1;
-        if (r.isHidden) classificationCounts.hiddenCount += 1;
+        classCountAccum[r.classification] = (classCountAccum[r.classification] ?? 0) + 1;
+        if (r.isHidden) hiddenCount += 1;
     }
+    const classificationCounts: Record<string, number> & { hiddenCount: number } =
+        { ...classCountAccum, hiddenCount };
 
     const rollup: UserProfileRollup = {
         version: 1,
