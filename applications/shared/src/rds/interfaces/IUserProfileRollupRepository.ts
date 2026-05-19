@@ -11,7 +11,7 @@ export interface SeniorityCall { readonly area: string; readonly level: string; 
 export interface DirectionJson {
   readonly archetypes: ReadonlyArray<ArchetypeFit>;
   readonly seniority:  ReadonlyArray<SeniorityCall>;
-  readonly whatToDeepen: string[];
+  readonly whatToDeepen: ReadonlyArray<string>;
 }
 export interface RollupRow {
   readonly rollup: unknown;

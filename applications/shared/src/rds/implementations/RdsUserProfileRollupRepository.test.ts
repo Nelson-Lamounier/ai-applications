@@ -106,6 +106,7 @@ describe('RdsUserProfileRollupRepository direction', () => {
         const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
         expect(up.sql).toMatch(/direction/i);
         expect(up.params.some(p => typeof p === 'string' && p.includes('"archetype"'))).toBe(true);
+        expect(up.params[7]).toBeInstanceOf(Date);
     });
     it('upsert preserves prior direction when omitted (COALESCE)', async () => {
         const client = fakeClient([]);
