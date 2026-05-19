@@ -63,7 +63,7 @@ export type {
     UserProfileRollupResult,
 } from './profile/computeUserProfileRollup.js';
 
-export type { IUserProfileRollupRepository } from './interfaces/IUserProfileRollupRepository.js';
+export type { IUserProfileRollupRepository, MirrorJson, RevealJson, RollupRow } from './interfaces/IUserProfileRollupRepository.js';
 export { RdsUserProfileRollupRepository } from './implementations/RdsUserProfileRollupRepository.js';
 
 export type {

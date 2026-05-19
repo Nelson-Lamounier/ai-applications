@@ -63,3 +63,36 @@ describe('RdsUserProfileRollupRepository.upsert', () => {
         expect(client.release).toHaveBeenCalled();
     });
 });
+
+describe('RdsUserProfileRollupRepository mirror/reveal', () => {
+    it('upsert writes mirror/reveal/synthesis_refreshed_at when provided', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup,
+            { paragraph: 'p'.repeat(130) },
+            { reveals: [{ insight: 'i'.repeat(25), evidence: 'role distribution' }] });
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/mirror/i);
+        expect(up.sql).toMatch(/synthesis_refreshed_at/i);
+        expect(up.params.some(p => typeof p === 'string' && p.includes('"paragraph"'))).toBe(true);
+    });
+    it('upsert preserves prior mirror/reveal when omitted (COALESCE, no synth ts bump)', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup);
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/mirror\s*=\s*COALESCE\(\s*EXCLUDED\.mirror\s*,\s*user_profile_rollup\.mirror\s*\)/i);
+        expect(up.sql).toMatch(/synthesis_refreshed_at\s*=\s*COALESCE\(/i);
+    });
+    it('getRollup sets RLS user, selects the row, returns null when absent', async () => {
+        const client = fakeClient([]);                          // SELECT returns rows:[]
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        const out = await repo.getRollup('11111111-1111-1111-1111-111111111111');
+        const cfg = client.calls.find(c => c.sql.includes('set_config'))!;
+        expect(cfg.params[0]).toBe('11111111-1111-1111-1111-111111111111');
+        const sel = client.calls.find(c => /SELECT[\s\S]*FROM user_profile_rollup/i.test(c.sql))!;
+        expect(sel.sql).toMatch(/mirror/i);
+        expect(sel.sql).toMatch(/reveal/i);
+        expect(out).toBeNull();
+    });
+});
