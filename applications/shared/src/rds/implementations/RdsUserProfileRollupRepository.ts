@@ -66,9 +66,9 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
         try {
             await client.query('BEGIN');
             await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-            // Stamp synthesis_refreshed_at when any synthesis output (mirror, reveal, or
-            // direction) is supplied. A rollup-only refresh passes null for all three;
-            // COALESCE in ON CONFLICT then preserves the prior values instead of clobbering.
+            // Stamp synthesis_refreshed_at when any synthesis output (mirror, reveal,
+            // direction, or reconciliation) is supplied. A rollup-only refresh passes
+            // null for all four; COALESCE then preserves the prior values.
             const mirrorVal    = mirror == null ? null : JSON.stringify(mirror);
             const revealVal    = reveal == null ? null : JSON.stringify(reveal);
             const directionVal = direction == null ? null : JSON.stringify(direction);
