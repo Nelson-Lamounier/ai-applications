@@ -13,6 +13,8 @@ import { computeUserProfileRollup } from '@bedrock/shared';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
 import type { MirrorRevealSynthesizer } from '../agents/MirrorRevealSynthesizer.js';
 import type { DirectionSynthesizer } from '../agents/DirectionSynthesizer.js';
+import type { ReconciliationSynthesizer } from '../agents/ReconciliationSynthesizer.js';
+import type { ICareerHistoryReadRepository } from '@bedrock/shared';
 
 const tracer = trace.getTracer('ingestion-worker');
 
@@ -21,6 +23,8 @@ export async function refreshUserProfileRollup(
     userId: string,
     synthesizer?: MirrorRevealSynthesizer,
     directionSynthesizer?: DirectionSynthesizer,
+    reconciliationSynthesizer?: ReconciliationSynthesizer,
+    careerRepo?: ICareerHistoryReadRepository,
 ): Promise<void> {
     await tracer.startActiveSpan('ingestion.profile_rollup', async (span) => {
         try {
@@ -36,11 +40,19 @@ export async function refreshUserProfileRollup(
                 try { dir = await directionSynthesizer.synthesize(result.rollup); }
                 catch { dir = undefined; }
             }
-            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction);
+            let recon: Awaited<ReturnType<ReconciliationSynthesizer['synthesize']>> | undefined;
+            if (reconciliationSynthesizer && careerRepo) {
+                try {
+                    const resume = await careerRepo.getResumeForReconciliation(userId);
+                    if (resume) recon = await reconciliationSynthesizer.synthesize({ rollup: result.rollup, resume });
+                } catch { recon = undefined; }
+            }
+            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation);
             span.setAttributes({
                 'profile_rollup.project_repos': result.projectRepoCount,
                 'profile_rollup.synthesized':   Boolean(synth),
                 'profile_rollup.directioned':   Boolean(dir),
+                'profile_rollup.reconciled':    Boolean(recon),
             });
         } catch (err) {
             // Best-effort: a rollup failure MUST NOT break ingestion.

@@ -3,6 +3,12 @@ import { refreshUserProfileRollup } from '../refreshUserProfileRollup.js';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
 import type { MirrorRevealSynthesizer } from '../../agents/MirrorRevealSynthesizer.js';
 import type { DirectionSynthesizer } from '../../agents/DirectionSynthesizer.js';
+import type { ReconciliationSynthesizer } from '../../agents/ReconciliationSynthesizer.js';
+import type { ICareerHistoryReadRepository } from '@bedrock/shared';
+
+const careerOk = {
+  getResumeForReconciliation: jest.fn(async () => ({ skills: [{ category: 'Cloud', skills: ['AWS'] }], experience: [], projects: [] })),
+} as unknown as ICareerHistoryReadRepository;
 
 const rows = [{
     repoFullName: 'o/r', classification: 'project', isHidden: false,
@@ -94,6 +100,40 @@ describe('refreshUserProfileRollup', () => {
         const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
         const dir = { synthesize: jest.fn(async () => { throw new Error('x'); }) } as never;
         await expect(refreshUserProfileRollup(repo, 'u1', undefined, dir)).resolves.toBeUndefined();
+        expect(upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('reconciliationSynth + careerRepo present → upsert carries reconciliation (6th arg)', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        const rec = { synthesize: jest.fn(async () => ({ reconciliation: { unsupportedClaims: [{ claim:'a claim text', resumeRef:'Acme', whyUnsupported:'why text here' }], undersold: [] } })) } as unknown as ReconciliationSynthesizer;
+        await expect(refreshUserProfileRollup(repo, 'u1', undefined, undefined, rec, careerOk)).resolves.toBeUndefined();
+        const call = upsert.mock.calls[0] as unknown as unknown[];
+        expect(call[5]).toMatchObject({ unsupportedClaims: expect.any(Array) });
+    });
+
+    it('reconciliationSynth absent → upsert reconciliation arg undefined; other paths unaffected', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        await expect(refreshUserProfileRollup(repo, 'u1')).resolves.toBeUndefined();
+        expect((upsert.mock.calls[0] as unknown[])[5]).toBeUndefined();
+    });
+
+    it('career read throws → still resolves, reconciliation skipped, ingestion never fails', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        const rec = { synthesize: jest.fn(async () => ({ reconciliation: { unsupportedClaims: [], undersold: [] } })) } as never;
+        const careerThrows = { getResumeForReconciliation: jest.fn(async () => { throw new Error('db'); }) } as never;
+        await expect(refreshUserProfileRollup(repo, 'u1', undefined, undefined, rec, careerThrows)).resolves.toBeUndefined();
+        expect((upsert.mock.calls[0] as unknown[])[5]).toBeUndefined();
+        expect(upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('reconciliationSynth throws → still resolves, mirror/reveal/direction independent', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        const rec = { synthesize: jest.fn(async () => { throw new Error('x'); }) } as never;
+        await expect(refreshUserProfileRollup(repo, 'u1', undefined, undefined, rec, careerOk)).resolves.toBeUndefined();
         expect(upsert).toHaveBeenCalledTimes(1);
     });
 });
