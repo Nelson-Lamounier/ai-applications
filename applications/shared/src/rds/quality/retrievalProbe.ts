@@ -88,6 +88,10 @@ export function sampleChunks(
     repoFullName: string,
     n: number,
 ): RawChunk[] {
+    // Cheap pre-filter on raw count; the real "enough signal" decision is the
+    // caller's (RetrievalProbe.run skips when the post-filter sample < 2). We
+    // intentionally do NOT guard on eligible.length here so a repo with one
+    // eligible chunk still yields that chunk for the caller to decide on.
     if (chunks.length < 2) return [];
     const eligible = chunks.filter(isEligible);
     if (eligible.length === 0) return [];
