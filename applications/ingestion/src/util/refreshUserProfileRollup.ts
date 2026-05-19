@@ -12,6 +12,7 @@ import { trace, SpanStatusCode } from '@opentelemetry/api';
 import { computeUserProfileRollup } from '@bedrock/shared';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
 import type { MirrorRevealSynthesizer } from '../agents/MirrorRevealSynthesizer.js';
+import type { DirectionSynthesizer } from '../agents/DirectionSynthesizer.js';
 
 const tracer = trace.getTracer('ingestion-worker');
 
@@ -19,6 +20,7 @@ export async function refreshUserProfileRollup(
     repo: IUserProfileRollupRepository,
     userId: string,
     synthesizer?: MirrorRevealSynthesizer,
+    directionSynthesizer?: DirectionSynthesizer,
 ): Promise<void> {
     await tracer.startActiveSpan('ingestion.profile_rollup', async (span) => {
         try {
@@ -29,11 +31,16 @@ export async function refreshUserProfileRollup(
                 try { synth = await synthesizer.synthesize(result.rollup); }
                 catch { synth = undefined; }
             }
-            if (synth) await repo.upsert(userId, result, synth.mirror, synth.reveal);
-            else       await repo.upsert(userId, result);
+            let dir: Awaited<ReturnType<DirectionSynthesizer['synthesize']>> | undefined;
+            if (directionSynthesizer) {
+                try { dir = await directionSynthesizer.synthesize(result.rollup); }
+                catch { dir = undefined; }
+            }
+            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction);
             span.setAttributes({
                 'profile_rollup.project_repos': result.projectRepoCount,
                 'profile_rollup.synthesized':   Boolean(synth),
+                'profile_rollup.directioned':   Boolean(dir),
             });
         } catch (err) {
             // Best-effort: a rollup failure MUST NOT break ingestion.

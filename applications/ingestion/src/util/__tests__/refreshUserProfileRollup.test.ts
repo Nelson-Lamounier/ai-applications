@@ -2,6 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import { refreshUserProfileRollup } from '../refreshUserProfileRollup.js';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
 import type { MirrorRevealSynthesizer } from '../../agents/MirrorRevealSynthesizer.js';
+import type { DirectionSynthesizer } from '../../agents/DirectionSynthesizer.js';
 
 const rows = [{
     repoFullName: 'o/r', classification: 'project', isHidden: false,
@@ -60,7 +61,8 @@ describe('refreshUserProfileRollup', () => {
         const upsert = jest.fn(async () => {});
         const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
         await expect(refreshUserProfileRollup(repo, 'u1')).resolves.toBeUndefined();
-        expect((upsert.mock.calls[0] as unknown[]).slice(2)).toEqual([]);
+        const noSynthArgs = (upsert.mock.calls[0] as unknown[]).slice(2);
+        expect(noSynthArgs.every((a) => a === undefined)).toBe(true);
     });
 
     it('synthesizer throws → still rollup-only, never throws', async () => {
@@ -68,6 +70,30 @@ describe('refreshUserProfileRollup', () => {
         const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
         const synth = { synthesize: jest.fn(async () => { throw new Error('x'); }) } as never;
         await expect(refreshUserProfileRollup(repo, 'u1', synth)).resolves.toBeUndefined();
+        expect(upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('directionSynth present → upsert carries direction (5th arg)', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        const dir = { synthesize: jest.fn(async () => ({ direction: { archetypes: [{ archetype: 'platform', fit: 'strong', rationale: 'domain mix' }], seniority: [], whatToDeepen: [] } })) } as unknown as DirectionSynthesizer;
+        await expect(refreshUserProfileRollup(repo, 'u1', undefined, dir)).resolves.toBeUndefined();
+        const call = upsert.mock.calls[0] as unknown as unknown[];
+        expect(call[4]).toMatchObject({ archetypes: expect.any(Array) });
+    });
+
+    it('directionSynth absent → upsert direction arg undefined; mirror path unaffected', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        await expect(refreshUserProfileRollup(repo, 'u1')).resolves.toBeUndefined();
+        expect((upsert.mock.calls[0] as unknown[])[4]).toBeUndefined();
+    });
+
+    it('directionSynth throws → still resolves, mirror/reveal independent, ingestion never fails', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        const dir = { synthesize: jest.fn(async () => { throw new Error('x'); }) } as never;
+        await expect(refreshUserProfileRollup(repo, 'u1', undefined, dir)).resolves.toBeUndefined();
         expect(upsert).toHaveBeenCalledTimes(1);
     });
 });
