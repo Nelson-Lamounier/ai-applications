@@ -14,6 +14,7 @@
  *   RETRIEVAL_PROBE_DISABLED — set to "1" to skip the best-effort retrieval-quality probe
  *   RETRIEVAL_PROBE_MODEL_ID — Bedrock model for probe question generation (falls back to PROFILE_EXTRACTOR_MODEL_ID)
  *   MIRROR_REVEAL_MODEL_ID — Bedrock model for profile Mirror/Reveal synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; synthesis disabled when neither is set)
+ *   DIRECTION_MODEL_ID — Bedrock model for Direction synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; direction synthesis disabled when neither is set)
  *
  * Exit codes:
  *   0 — ingestion complete (sync state set to 'complete')
@@ -42,6 +43,7 @@ import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
 import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
 import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
+import { DirectionSynthesizer } from './agents/DirectionSynthesizer.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
@@ -254,7 +256,8 @@ async function main(): Promise<void> {
             await profileRepo.updateStatus(profileId, env.userId, 'completed');
             profileExtractCallsTotal().inc({ outcome: 'success' });
             const mirrorSynth = MirrorRevealSynthesizer.fromEnvironment(pgPool, env.userId);
-            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth);
+            const directionSynth = DirectionSynthesizer.fromEnvironment(pgPool, env.userId);
+            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth);
 
             log.info({
                 repoFullName:  env.repoFullName,
