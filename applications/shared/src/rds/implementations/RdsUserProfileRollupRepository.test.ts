@@ -1,3 +1,4 @@
+import { describe, it, expect, jest } from '@jest/globals';
 import { RdsUserProfileRollupRepository } from './RdsUserProfileRollupRepository.js';
 import type { UserProfileRollupResult } from '../profile/computeUserProfileRollup.js';
 

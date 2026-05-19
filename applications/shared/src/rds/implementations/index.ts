@@ -12,3 +12,5 @@ export { TitanEmbeddingProvider } from './TitanEmbeddingProvider.js';
 
 export { BedrockChunkEnricher }   from './BedrockChunkEnricher.js';
 export type { BedrockChunkEnricherConfig } from './BedrockChunkEnricher.js';
+
+export { RdsUserProfileRollupRepository } from './RdsUserProfileRollupRepository.js';

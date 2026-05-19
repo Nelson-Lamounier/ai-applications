@@ -46,6 +46,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                 techStack:   Array.isArray(r.techStack) ? r.techStack : [],
             }));
         } catch (err) {
+            // Best-effort: do not shadow the original error if ROLLBACK fails.
             await client.query('ROLLBACK').catch(() => {});
             throw err;
         } finally {
@@ -79,6 +80,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
             );
             await client.query('COMMIT');
         } catch (err) {
+            // Best-effort: do not shadow the original error if ROLLBACK fails.
             await client.query('ROLLBACK').catch(() => {});
             throw err;
         } finally {
