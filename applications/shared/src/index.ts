@@ -247,6 +247,12 @@ export type {
     RetrievalQuestionResult,
     RetrievalStatus,
     RankCandidate,
+    ProfileAggInput,
+    LanguageStat,
+    TechStat,
+    ActivityArcEntry,
+    UserProfileRollup,
+    UserProfileRollupResult,
 } from './rds/index.js';
 
 export {
@@ -262,6 +268,7 @@ export {
     buildRetrievalSuggestions,
     recordBedrockCost,
     computeCostCents,
+    computeUserProfileRollup,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
