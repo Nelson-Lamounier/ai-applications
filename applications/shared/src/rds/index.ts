@@ -52,6 +52,21 @@ export type {
     KbQualityResult,
 } from './quality/computeKbQuality.js';
 
+export type {
+    IRetrievalProbe,
+    RetrievalProbeArgs,
+    RetrievalBreakdown,
+    RetrievalQuestionResult,
+    RetrievalStatus,
+    RankCandidate,
+} from './quality/retrievalProbe.js';
+export {
+    sampleChunks,
+    matchRank,
+    scoreRetrieval,
+    buildRetrievalSuggestions,
+} from './quality/retrievalProbe.js';
+
 // Bedrock cost tracking
 export { recordBedrockCost, computeCostCents } from './bedrock-cost.js';
 export type { CostRecord } from './bedrock-cost.js';

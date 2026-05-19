@@ -152,6 +152,10 @@ export interface RepoSyncState {
     readonly kbQualityScore?: number;
     /** Per-factor breakdown matching `KbQualityBreakdown`. */
     readonly kbQualityBreakdown?: Record<string, unknown>;
+    /** Retrieval-probe score in [0, 1], rounded to 2 decimals. */
+    readonly retrievalScore?: number;
+    /** Per-question breakdown matching `RetrievalBreakdown`. */
+    readonly retrievalBreakdown?: Record<string, unknown>;
 }
 
 // =============================================================================
@@ -179,4 +183,13 @@ export interface IngestionReport {
      * so the UI can show *why* the score is what it is.
      */
     readonly kbQualityBreakdown?: Record<string, unknown>;
+    /**
+     * Retrieval-probe score in [0, 1] (rounded to 2 decimals). Best-effort —
+     * absent when the probe is not configured, skipped, or failed. See
+     * `quality/retrievalProbe.ts`. Persisted to
+     * `repo_sync_state.retrieval_score`.
+     */
+    readonly retrievalScore?: number;
+    /** Per-question breakdown matching `RetrievalBreakdown`. Persisted as JSONB. */
+    readonly retrievalBreakdown?: Record<string, unknown>;
 }
