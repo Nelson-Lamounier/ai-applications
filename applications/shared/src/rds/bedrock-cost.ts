@@ -25,7 +25,7 @@ const DEFAULT_MONTHLY_LIMIT_CENTS = 500;
 export interface CostRecord {
   userId:       string;
   modelId:      string;
-  pipeline:     'resume-import' | 'repo-sync' | 'profile-extraction' | 'retrieval-probe';
+  pipeline:     'resume-import' | 'repo-sync' | 'profile-extraction' | 'retrieval-probe' | 'profile-synthesis';
   inputTokens:  number;
   outputTokens: number;
   importId?:    string;
