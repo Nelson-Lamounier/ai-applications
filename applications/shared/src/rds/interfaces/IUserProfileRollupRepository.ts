@@ -6,10 +6,18 @@ import type {
 
 export interface MirrorJson { readonly paragraph: string }
 export interface RevealJson { readonly reveals: ReadonlyArray<{ insight: string; evidence: string }> }
+export interface ArchetypeFit  { readonly archetype: string; readonly fit: string; readonly rationale: string }
+export interface SeniorityCall { readonly area: string; readonly level: string; readonly evidence: string }
+export interface DirectionJson {
+  readonly archetypes: ReadonlyArray<ArchetypeFit>;
+  readonly seniority:  ReadonlyArray<SeniorityCall>;
+  readonly whatToDeepen: string[];
+}
 export interface RollupRow {
   readonly rollup: unknown;
   readonly mirror: MirrorJson | null;
   readonly reveal: RevealJson | null;
+  readonly direction: DirectionJson | null;
   readonly refreshedAt: string;
   readonly synthesisRefreshedAt: string | null;
 }
@@ -19,7 +27,7 @@ export interface IUserProfileRollupRepository {
     listProfilesForRollup(userId: string): Promise<ProfileAggInput[]>;
     /** Upsert the precomputed rollup for the user (one row per user). */
     upsert(userId: string, result: UserProfileRollupResult,
-           mirror?: MirrorJson, reveal?: RevealJson): Promise<void>;
+           mirror?: MirrorJson, reveal?: RevealJson, direction?: DirectionJson): Promise<void>;
     /** Read the persisted rollup row for the user, or null if absent. */
     getRollup(userId: string): Promise<RollupRow | null>;
 }

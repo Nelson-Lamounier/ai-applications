@@ -96,3 +96,29 @@ describe('RdsUserProfileRollupRepository mirror/reveal', () => {
         expect(out).toBeNull();
     });
 });
+
+describe('RdsUserProfileRollupRepository direction', () => {
+    it('upsert writes direction when provided', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup, undefined, undefined,
+            { archetypes: [{ archetype: 'platform', fit: 'strong', rationale: 'domain mix' }], seniority: [], whatToDeepen: [] });
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/direction/i);
+        expect(up.params.some(p => typeof p === 'string' && p.includes('"archetype"'))).toBe(true);
+    });
+    it('upsert preserves prior direction when omitted (COALESCE)', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup);
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/direction\s*=\s*COALESCE\(\s*EXCLUDED\.direction\s*,\s*user_profile_rollup\.direction\s*\)/i);
+    });
+    it('getRollup selects direction', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.getRollup('11111111-1111-1111-1111-111111111111');
+        const sel = client.calls.find(c => /SELECT[\s\S]*FROM user_profile_rollup/i.test(c.sql))!;
+        expect(sel.sql).toMatch(/direction/i);
+    });
+});

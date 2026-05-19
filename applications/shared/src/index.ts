@@ -256,6 +256,9 @@ export type {
     IUserProfileRollupRepository,
     MirrorJson,
     RevealJson,
+    ArchetypeFit,
+    SeniorityCall,
+    DirectionJson,
     RollupRow,
 } from './rds/index.js';
 
