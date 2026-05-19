@@ -13,6 +13,7 @@
  *   AWS_REGION (or AWS_DEFAULT_REGION) — for Bedrock InvokeModel via IRSA
  *   RETRIEVAL_PROBE_DISABLED — set to "1" to skip the best-effort retrieval-quality probe
  *   RETRIEVAL_PROBE_MODEL_ID — Bedrock model for probe question generation (falls back to PROFILE_EXTRACTOR_MODEL_ID)
+ *   MIRROR_REVEAL_MODEL_ID — Bedrock model for profile Mirror/Reveal synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; synthesis disabled when neither is set)
  *
  * Exit codes:
  *   0 — ingestion complete (sync state set to 'complete')
@@ -40,6 +41,7 @@ import { parseEnv } from './env.js';
 import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
 import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
 import { RetrievalProbe } from './agents/RetrievalProbe.js';
+import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
@@ -251,7 +253,8 @@ async function main(): Promise<void> {
             stopEmbed();
             await profileRepo.updateStatus(profileId, env.userId, 'completed');
             profileExtractCallsTotal().inc({ outcome: 'success' });
-            await refreshUserProfileRollup(rollupRepo, env.userId);
+            const mirrorSynth = MirrorRevealSynthesizer.fromEnvironment(pgPool, env.userId);
+            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth);
 
             log.info({
                 repoFullName:  env.repoFullName,

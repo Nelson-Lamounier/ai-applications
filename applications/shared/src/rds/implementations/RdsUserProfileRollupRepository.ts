@@ -7,7 +7,7 @@
  * set_config RLS idiom.
  */
 import type { Pool } from 'pg';
-import type { IUserProfileRollupRepository } from '../interfaces/IUserProfileRollupRepository.js';
+import type { IUserProfileRollupRepository, MirrorJson, RevealJson, RollupRow } from '../interfaces/IUserProfileRollupRepository.js';
 import type {
     ProfileAggInput,
     UserProfileRollupResult,
@@ -54,31 +54,79 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
         }
     }
 
-    async upsert(userId: string, result: UserProfileRollupResult): Promise<void> {
+    async upsert(
+        userId: string,
+        result: UserProfileRollupResult,
+        mirror?: MirrorJson,
+        reveal?: RevealJson,
+    ): Promise<void> {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
             await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+            // Only stamp synthesis_refreshed_at when mirror/reveal is supplied. A
+            // rollup-only refresh passes null here; COALESCE in ON CONFLICT then
+            // preserves the prior synthesis instead of clobbering it.
+            const mirrorVal = mirror == null ? null : JSON.stringify(mirror);
+            const revealVal = reveal == null ? null : JSON.stringify(reveal);
+            const synthTs   = (mirror == null && reveal == null) ? null : new Date();
             await client.query(
                 `INSERT INTO user_profile_rollup (
                      user_id, project_repo_count, total_repo_count,
-                     methodology_version, rollup, refreshed_at
-                 ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, now())
+                     methodology_version, rollup, refreshed_at,
+                     mirror, reveal, synthesis_refreshed_at
+                 ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, now(), $6::jsonb, $7::jsonb, $8)
                  ON CONFLICT (user_id) DO UPDATE SET
-                     project_repo_count  = EXCLUDED.project_repo_count,
-                     total_repo_count    = EXCLUDED.total_repo_count,
-                     methodology_version = EXCLUDED.methodology_version,
-                     rollup              = EXCLUDED.rollup,
-                     refreshed_at        = EXCLUDED.refreshed_at`,
+                     project_repo_count     = EXCLUDED.project_repo_count,
+                     total_repo_count       = EXCLUDED.total_repo_count,
+                     methodology_version    = EXCLUDED.methodology_version,
+                     rollup                 = EXCLUDED.rollup,
+                     refreshed_at           = EXCLUDED.refreshed_at,
+                     mirror                 = COALESCE(EXCLUDED.mirror, user_profile_rollup.mirror),
+                     reveal                 = COALESCE(EXCLUDED.reveal, user_profile_rollup.reveal),
+                     synthesis_refreshed_at = COALESCE(EXCLUDED.synthesis_refreshed_at, user_profile_rollup.synthesis_refreshed_at)`,
                 [
                     userId,
                     result.projectRepoCount,
                     result.totalRepoCount,
                     result.methodologyVersion,
                     JSON.stringify(result.rollup),
+                    mirrorVal,
+                    revealVal,
+                    synthTs,
                 ],
             );
             await client.query('COMMIT');
+        } catch (err) {
+            // Best-effort: do not shadow the original error if ROLLBACK fails.
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    async getRollup(userId: string): Promise<RollupRow | null> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+            const { rows } = await client.query(
+                `SELECT rollup, mirror, reveal, refreshed_at, synthesis_refreshed_at
+                   FROM user_profile_rollup
+                  WHERE user_id = $1::uuid`,
+                [userId],
+            );
+            await client.query('COMMIT');
+            if (rows.length === 0) return null;
+            const row = rows[0];
+            return {
+                rollup:               row.rollup,
+                mirror:               (row.mirror as MirrorJson | null) ?? null,
+                reveal:               (row.reveal as RevealJson | null) ?? null,
+                refreshedAt:          (row.refreshed_at as Date | null)?.toISOString() ?? '',
+                synthesisRefreshedAt: (row.synthesis_refreshed_at as Date | null)?.toISOString() ?? null,
+            };
         } catch (err) {
             // Best-effort: do not shadow the original error if ROLLBACK fails.
             await client.query('ROLLBACK').catch(() => {});

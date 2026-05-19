@@ -254,6 +254,9 @@ export type {
     UserProfileRollup,
     UserProfileRollupResult,
     IUserProfileRollupRepository,
+    MirrorJson,
+    RevealJson,
+    RollupRow,
 } from './rds/index.js';
 
 export {
