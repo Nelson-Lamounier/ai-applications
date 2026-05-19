@@ -21,7 +21,7 @@ export const SynthSchema = z.object({
     evidence: z.string().min(8).max(160),
   }).strict()).min(1).max(5),
 }).strict();
-export type SynthResult = z.infer<typeof SynthSchema>;
+type SynthResult = z.infer<typeof SynthSchema>;
 
 export interface MirrorRevealOutput {
   readonly mirror: { readonly paragraph: string };
@@ -126,7 +126,11 @@ export class MirrorRevealSynthesizer {
       try {
         const raw = await this.invoker.invoke(rollup);
         const parsed = SynthSchema.safeParse(raw);
-        if (!parsed.success) { span.setAttribute('synthesis.status', 'schema_invalid'); return undefined; }
+        if (!parsed.success) {
+          span.setAttribute('synthesis.status', 'schema_invalid');
+          span.setStatus({ code: SpanStatusCode.ERROR, message: 'synthesis schema validation failed' });
+          return undefined;
+        }
         const grounded = parsed.data.reveals.filter(r =>
           GROUNDING_KEYWORDS.some(k => r.evidence.toLowerCase().includes(k)));
         span.setAttributes({ 'synthesis.status': 'ok', 'synthesis.reveals': grounded.length });
