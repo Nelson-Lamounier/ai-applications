@@ -129,11 +129,31 @@ describe('refreshUserProfileRollup', () => {
         expect(upsert).toHaveBeenCalledTimes(1);
     });
 
-    it('reconciliationSynth throws → still resolves, mirror/reveal/direction independent', async () => {
+    it('reconciliationSynth throws → upsert proceeds, mirror/reveal/direction unaffected', async () => {
         const upsert = jest.fn(async () => {});
         const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        const synth = { synthesize: jest.fn(async () => ({
+            mirror: { paragraph: 'p'.repeat(130) },
+            reveal: { reveals: [{ insight: 'i'.repeat(25), evidence: 'role distribution' }] },
+        })) } as unknown as MirrorRevealSynthesizer;
+        const dir = { synthesize: jest.fn(async () => ({ direction: { archetypes: [{ archetype: 'platform', fit: 'strong', rationale: 'domain mix' }], seniority: [], whatToDeepen: [] } })) } as unknown as DirectionSynthesizer;
         const rec = { synthesize: jest.fn(async () => { throw new Error('x'); }) } as never;
-        await expect(refreshUserProfileRollup(repo, 'u1', undefined, undefined, rec, careerOk)).resolves.toBeUndefined();
+        await expect(refreshUserProfileRollup(repo, 'u1', synth, dir, rec, careerOk)).resolves.toBeUndefined();
+        const call = upsert.mock.calls[0] as unknown[];
+        expect(call[2]).toMatchObject({ paragraph: expect.any(String) });
+        expect(call[3]).toMatchObject({ reveals: expect.any(Array) });
+        expect(call[4]).toMatchObject({ archetypes: expect.any(Array) });
+        expect(call[5]).toBeUndefined();
+        expect(upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('reconciliationSynth present but careerRepo absent → reconciliation skipped, upsert once', async () => {
+        const upsert = jest.fn(async () => {});
+        const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
+        const rec = { synthesize: jest.fn(async () => ({ reconciliation: { unsupportedClaims: [], undersold: [] } })) } as unknown as ReconciliationSynthesizer;
+        await expect(refreshUserProfileRollup(repo, 'u1', undefined, undefined, rec)).resolves.toBeUndefined();
+        expect((upsert.mock.calls[0] as unknown[])[5]).toBeUndefined();
+        expect(rec.synthesize).not.toHaveBeenCalled();
         expect(upsert).toHaveBeenCalledTimes(1);
     });
 });
