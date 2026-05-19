@@ -253,6 +253,7 @@ export type {
     ActivityArcEntry,
     UserProfileRollup,
     UserProfileRollupResult,
+    IUserProfileRollupRepository,
 } from './rds/index.js';
 
 export {
@@ -269,6 +270,7 @@ export {
     recordBedrockCost,
     computeCostCents,
     computeUserProfileRollup,
+    RdsUserProfileRollupRepository,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
