@@ -14,3 +14,4 @@ export { BedrockChunkEnricher }   from './BedrockChunkEnricher.js';
 export type { BedrockChunkEnricherConfig } from './BedrockChunkEnricher.js';
 
 export { RdsUserProfileRollupRepository } from './RdsUserProfileRollupRepository.js';
+export { RdsCareerHistoryReadRepository } from './RdsCareerHistoryReadRepository.js';
