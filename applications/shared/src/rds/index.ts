@@ -52,6 +52,20 @@ export type {
     KbQualityResult,
 } from './quality/computeKbQuality.js';
 
+// Profile
+export { computeUserProfileRollup } from './profile/computeUserProfileRollup.js';
+export type {
+    ProfileAggInput,
+    LanguageStat,
+    TechStat,
+    ActivityArcEntry,
+    UserProfileRollup,
+    UserProfileRollupResult,
+} from './profile/computeUserProfileRollup.js';
+
+export type { IUserProfileRollupRepository } from './interfaces/IUserProfileRollupRepository.js';
+export { RdsUserProfileRollupRepository } from './implementations/RdsUserProfileRollupRepository.js';
+
 export type {
     IRetrievalProbe,
     RetrievalProbeArgs,
