@@ -133,6 +133,10 @@ export class MirrorRevealSynthesizer {
         }
         const grounded = parsed.data.reveals.filter(r =>
           GROUNDING_KEYWORDS.some(k => r.evidence.toLowerCase().includes(k)));
+        if (grounded.length === 0) {
+          span.setAttribute('synthesis.status', 'no_grounded_reveals');
+          return undefined;
+        }
         span.setAttributes({ 'synthesis.status': 'ok', 'synthesis.reveals': grounded.length });
         return { mirror: { paragraph: parsed.data.mirror.paragraph }, reveal: { reveals: grounded } };
       } catch (err) {

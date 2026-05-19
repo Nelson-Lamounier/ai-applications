@@ -49,4 +49,15 @@ describe('MirrorRevealSynthesizer.synthesize', () => {
     const s = new MirrorRevealSynthesizer({ invoke: jest.fn(async () => { throw new Error('bedrock down'); }) } as never);
     await expect(s.synthesize(rollup)).resolves.toBeUndefined();
   });
+
+  it('returns undefined when ALL reveals are ungrounded (degraded, do not overwrite prior)', async () => {
+    const s = new MirrorRevealSynthesizer(gen({
+      mirror: { paragraph: 'A'.repeat(130) },
+      reveals: [
+        { insight: 'You vibe nocturnally for sure.', evidence: 'your late-night energy' },
+        { insight: 'You seem creative somehow here.', evidence: 'a general gut feeling' },
+      ],
+    }) as never);
+    await expect(s.synthesize(rollup)).resolves.toBeUndefined();
+  });
 });
