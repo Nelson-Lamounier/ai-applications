@@ -158,7 +158,7 @@ export class DirectionSynthesizer {
           return undefined;
         }
         const seniority = parsed.data.seniority.filter(s => refersToDimension(s.evidence));
-        span.setAttributes({ 'direction.status': 'ok', 'direction.archetypes': archetypes.length });
+        span.setAttributes({ 'direction.status': 'ok', 'direction.archetypes': archetypes.length, 'direction.seniority': seniority.length });
         return { direction: { archetypes, seniority, whatToDeepen: parsed.data.whatToDeepen } };
       } catch (err) {
         span.recordException(err instanceof Error ? err : new Error(String(err)));

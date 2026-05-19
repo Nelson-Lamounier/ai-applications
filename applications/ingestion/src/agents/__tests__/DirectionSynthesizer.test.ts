@@ -70,4 +70,19 @@ describe('DirectionSynthesizer.synthesize', () => {
     const s = new DirectionSynthesizer({ invoke: jest.fn(async () => { throw new Error('bedrock down'); }) } as never);
     await expect(s.synthesize(rollup)).resolves.toBeUndefined();
   });
+
+  it('keeps grounded archetypes even when all seniority is ungrounded (deliberate: not degraded)', async () => {
+    const s = new DirectionSynthesizer(gen({
+      archetypes: [
+        { archetype: 'platform', fit: 'strong', rationale: 'grounded in domain mix (infra)' },
+        { archetype: 'backend',  fit: 'moderate', rationale: 'TypeScript language share' },
+        { archetype: 'ml',       fit: 'weak', rationale: 'no ml domain present' },
+      ],
+      seniority: [{ area: 'infra', level: 'senior', evidence: 'gut feeling, nothing concrete' }],
+      whatToDeepen: ['Surface incident-response evidence in repo docs.'],
+    }) as never);
+    const r = await s.synthesize(rollup);
+    expect(r?.direction.archetypes.map(a => a.archetype)).toEqual(['platform', 'backend', 'ml']);
+    expect(r?.direction.seniority).toEqual([]);
+  });
 });
