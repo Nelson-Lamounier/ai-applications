@@ -159,7 +159,7 @@ export class ReconciliationSynthesizer {
           ...r.skills.flatMap(s => [s.category, ...s.skills]),
           ...r.experience.flatMap(e => [e.company, e.title]),
           ...r.projects.map(p => p.name),
-        ].map(t => t.toLowerCase()).filter(Boolean);
+        ].map(t => t.toLowerCase()).filter(t => t.length >= 3);
         const refMatches = (ref: string) => {
           const lo = ref.toLowerCase();
           return resumeTokens.some(t => t.length > 0 && (lo.includes(t) || t.includes(lo)));

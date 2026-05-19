@@ -104,4 +104,26 @@ describe('ReconciliationSynthesizer.synthesize', () => {
     const s = new ReconciliationSynthesizer({ invoke: jest.fn(async () => { throw new Error('bedrock down'); }) } as never);
     await expect(s.synthesize({ rollup, resume })).resolves.toBeUndefined();
   });
+
+  it('does not let a short résumé skill token over-accept a hallucinated resumeRef', async () => {
+    const shortSkillResume = {
+      skills: [{ category: 'Lang', skills: ['Go'] }],
+      experience: [],
+      projects: [],
+    } as unknown as typeof resume;
+    const s = new ReconciliationSynthesizer(gen({
+      unsupportedClaims: [
+        { claim: 'Built a global trading platform', resumeRef: 'Goldman Sachs Trading Desk', whyUnsupported: 'no such evidence in the rollup' },
+      ],
+      undersold: [
+        { evidence: 'Strong TypeScript output across repos', rollupDimension: 'language share', suggestion: 'add a TypeScript depth bullet here' },
+      ],
+    }) as never);
+    const r = await s.synthesize({ rollup, resume: shortSkillResume });
+    // 'go' (2 chars) is filtered out of resumeTokens, so the hallucinated
+    // resumeRef matches nothing → unsupportedClaims dropped. 'Lang' category
+    // (4 chars) survives but does not substring-match the ref either.
+    expect(r?.reconciliation.unsupportedClaims).toEqual([]);
+    expect(r?.reconciliation.undersold.map(u => u.evidence)).toEqual(['Strong TypeScript output across repos']);
+  });
 });
