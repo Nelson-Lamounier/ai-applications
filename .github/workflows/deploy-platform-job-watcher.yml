@@ -1,8 +1,9 @@
 # @format
 # Deploy Platform-Job-Watcher (Development)
 # Builds platform-job-watcher, pushes to ECR.
-# ArgoCD Image Updater monitors the ECR repo and triggers the Argo Rollout.
-# The promote job then drives the canary promotion sequence to Healthy.
+# ArgoCD Image Updater monitors the ECR repo and triggers the Argo Rollout;
+# Argo Rollouts then drives the canary promotion sequence to Healthy via its
+# AnalysisRun gates (no GitHub-Actions-driven promote step).
 # Prerequisite: ECR repo provisioned via shared-infra CDK stack.
 
 name: "Deploy Platform-Job-Watcher (Dev)"
@@ -37,42 +38,9 @@ jobs:
     secrets:
       AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
 
-  promote:
-    name: Promote Rollout
-    needs: [deploy]
-    runs-on: k8s-runner
-    timeout-minutes: 20
-    environment: development
-    permissions:
-      id-token: write
-      contents: read
-      deployments: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: ./.github/actions/configure-aws
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Promote Rollout
-        uses: ./.github/actions/promote-rollout
-        with:
-          rollout-name:     platform-job-watcher
-          namespace:        platform-job-watcher
-          image-tag:        "${{ github.sha }}-r${{ github.run_attempt }}"
-          argocd-app:       platform-job-watcher
-          environment:      development
-          prometheus-query: slo:platform-job-watcher:errors_ratio:rate5m
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO:  ${{ github.repository }}
-          GH_SHA:   ${{ github.sha }}
-
   deploy-marker:
     name: Loki deploy marker
-    needs: [deploy, promote]
+    needs: [deploy]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -101,4 +69,4 @@ jobs:
           environment: development
           status:      ${{ steps.agg.outputs.status }}
           git-sha:     ${{ github.sha }}
-          notes:       "platform-job-watcher rollout promoted"
+          notes:       "platform-job-watcher image push (ArgoCD/Argo Rollouts handles rollout)"
