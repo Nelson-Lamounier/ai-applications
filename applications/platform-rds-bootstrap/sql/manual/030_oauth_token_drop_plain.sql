@@ -1,7 +1,11 @@
--- 028_oauth_token_drop_plain.sql
+-- 030_oauth_token_drop_plain.sql
+-- MANUAL migration — NOT picked up by the auto-bootstrap runner. Lives under
+-- sql/manual/ so a fresh deploy never executes it; the runner only sweeps
+-- migrations/.
+--
 -- Enforces NOT NULL on envelope columns, adds length checks, and drops the
 -- plaintext access_token_enc column. Apply ONLY after:
---   1. Migration 027 applied in target env.
+--   1. Migration 029 applied in target env.
 --   2. scripts/backfill-oauth-token-envelope.ts run to completion.
 --   3. Verification:
 --        SELECT COUNT(*) FROM oauth_connections

@@ -122,8 +122,12 @@ export class RdsOAuthConnectionsRepository implements IOAuthConnectionsRepositor
         );
     }
 
+    // TODO(PR-2): add `oauth.token.encrypt` / `oauth.token.decrypt` structured
+    // logs and an `OAuthTokenDecryptFailures` CloudWatch metric (spec
+    // Observability section). Wiring lands with the public-api boot-site work.
+    //
     // Transition-window dual-read: prefer envelope columns, fall back to
-    // plaintext. Remove the fallback branch after migration 028.
+    // plaintext. Remove the fallback branch after migration 030 (sql/manual).
     private async decryptRow(row: Row): Promise<string> {
         if (
             row.access_token_ciphertext &&

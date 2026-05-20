@@ -48,9 +48,9 @@ export async function runBackfill(opts: {
         );
 
         if (sel.rows.length === 0) break;
-        batches++;
 
         const client = await pool.connect();
+        let batchCount = 0;
         try {
             await client.query('BEGIN');
             for (const r of sel.rows) {
@@ -68,9 +68,12 @@ export async function runBackfill(opts: {
                        AND access_token_ciphertext IS NULL`,
                     [r.id, p.ciphertext, p.dek, p.iv, p.tag],
                 );
-                encrypted++;
+                batchCount++;
             }
             await client.query('COMMIT');
+            // Only count rows whose UPDATE survived the COMMIT.
+            encrypted += batchCount;
+            batches++;
         } catch (err) {
             await client.query('ROLLBACK');
             throw err;
