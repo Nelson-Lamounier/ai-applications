@@ -7,7 +7,7 @@
  * set_config RLS idiom.
  */
 import type { Pool } from 'pg';
-import type { IUserProfileRollupRepository, MirrorJson, RevealJson, DirectionJson, ReconciliationJson, RollupRow } from '../interfaces/IUserProfileRollupRepository.js';
+import type { IUserProfileRollupRepository, MirrorJson, RevealJson, DirectionJson, ReconciliationJson, DiagnosticJson, RollupRow } from '../interfaces/IUserProfileRollupRepository.js';
 import type {
     ProfileAggInput,
     UserProfileRollupResult,
@@ -61,25 +61,27 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
         reveal?: RevealJson,
         direction?: DirectionJson,
         reconciliation?: ReconciliationJson,
+        diagnostic?: DiagnosticJson,
     ): Promise<void> {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
             await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
             // Stamp synthesis_refreshed_at when any synthesis output (mirror, reveal,
-            // direction, or reconciliation) is supplied. A rollup-only refresh passes
-            // null for all four; COALESCE then preserves the prior values.
+            // direction, reconciliation, or diagnostic) is supplied. A rollup-only
+            // refresh passes null for all five; COALESCE then preserves the prior values.
             const mirrorVal    = mirror == null ? null : JSON.stringify(mirror);
             const revealVal    = reveal == null ? null : JSON.stringify(reveal);
             const directionVal = direction == null ? null : JSON.stringify(direction);
             const reconciliationVal = reconciliation == null ? null : JSON.stringify(reconciliation);
-            const synthTs   = (mirror == null && reveal == null && direction == null && reconciliation == null) ? null : new Date();
+            const diagnosticVal     = diagnostic == null ? null : JSON.stringify(diagnostic);
+            const synthTs   = (mirror == null && reveal == null && direction == null && reconciliation == null && diagnostic == null) ? null : new Date();
             await client.query(
                 `INSERT INTO user_profile_rollup (
                      user_id, project_repo_count, total_repo_count,
                      methodology_version, rollup, refreshed_at,
-                     mirror, reveal, synthesis_refreshed_at, direction, reconciliation
-                 ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, now(), $6::jsonb, $7::jsonb, $8, $9::jsonb, $10::jsonb)
+                     mirror, reveal, synthesis_refreshed_at, direction, reconciliation, diagnostic
+                 ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, now(), $6::jsonb, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11::jsonb)
                  ON CONFLICT (user_id) DO UPDATE SET
                      project_repo_count     = EXCLUDED.project_repo_count,
                      total_repo_count       = EXCLUDED.total_repo_count,
@@ -90,7 +92,8 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                      reveal                 = COALESCE(EXCLUDED.reveal, user_profile_rollup.reveal),
                      synthesis_refreshed_at = COALESCE(EXCLUDED.synthesis_refreshed_at, user_profile_rollup.synthesis_refreshed_at),
                      direction              = COALESCE(EXCLUDED.direction, user_profile_rollup.direction),
-                     reconciliation         = COALESCE(EXCLUDED.reconciliation, user_profile_rollup.reconciliation)`,
+                     reconciliation         = COALESCE(EXCLUDED.reconciliation, user_profile_rollup.reconciliation),
+                     diagnostic             = COALESCE(EXCLUDED.diagnostic, user_profile_rollup.diagnostic)`,
                 [
                     userId,
                     result.projectRepoCount,
@@ -102,6 +105,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                     synthTs,
                     directionVal,
                     reconciliationVal,
+                    diagnosticVal,
                 ],
             );
             await client.query('COMMIT');
@@ -120,7 +124,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
             await client.query('BEGIN');
             await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
             const { rows } = await client.query(
-                `SELECT rollup, mirror, reveal, direction, reconciliation, refreshed_at, synthesis_refreshed_at
+                `SELECT rollup, mirror, reveal, direction, reconciliation, diagnostic, refreshed_at, synthesis_refreshed_at
                    FROM user_profile_rollup
                   WHERE user_id = $1::uuid`,
                 [userId],
@@ -134,6 +138,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                 reveal:               (row.reveal as RevealJson | null) ?? null,
                 direction:            (row.direction as DirectionJson | null) ?? null,
                 reconciliation:       (row.reconciliation as ReconciliationJson | null) ?? null,
+                diagnostic:           (row.diagnostic as DiagnosticJson | null) ?? null,
                 refreshedAt:          (row.refreshed_at as Date | null)?.toISOString() ?? '',
                 synthesisRefreshedAt: (row.synthesis_refreshed_at as Date | null)?.toISOString() ?? null,
             };

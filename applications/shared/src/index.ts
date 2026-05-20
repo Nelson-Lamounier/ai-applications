@@ -262,6 +262,7 @@ export type {
     UnsupportedClaim,
     UndersoldStrength,
     ReconciliationJson,
+    DiagnosticJson,
     RollupRow,
     ICareerHistoryReadRepository,
     ResumeForReconciliation,
