@@ -299,9 +299,19 @@ export {
     computeUserDiagnostic,
     WEIGHTS,
     KB_SCORE_THRESHOLD,
+    RdsOAuthConnectionsRepository,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
+export type {
+    IOAuthConnectionsRepository,
+    OAuthConnection,
+    NewOAuthConnection,
+} from './rds/index.js';
+
+// ─── Crypto (KMS Envelope Encryption) ────────────────────────────────────────
+export { createKmsEnvelope, KmsEnvelopeError } from './crypto/index.js';
+export type { KmsEnvelope, EncryptedPayload } from './crypto/index.js';
 
 // ─── Retrieval (Reranking + pgvector) ────────────────────────────────────────
 export type {
