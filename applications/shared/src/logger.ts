@@ -38,7 +38,7 @@
 // the dep — important for any consumer that imports just the logger.
 function activeTraceContextSafe(): { trace_id?: string; span_id?: string } {
     try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/consistent-type-imports -- lazy require with module-shape cast
         const otel = require('@opentelemetry/api') as typeof import('@opentelemetry/api');
         const span = otel.trace.getSpan(otel.context.active());
         if (!span) return {};

@@ -63,11 +63,23 @@ export type {
     UserProfileRollupResult,
 } from './profile/computeUserProfileRollup.js';
 
-export type { IUserProfileRollupRepository, MirrorJson, RevealJson, ArchetypeFit, SeniorityCall, DirectionJson, UnsupportedClaim, UndersoldStrength, ReconciliationJson, RollupRow } from './interfaces/IUserProfileRollupRepository.js';
+export type { IUserProfileRollupRepository, MirrorJson, RevealJson, ArchetypeFit, SeniorityCall, DirectionJson, UnsupportedClaim, UndersoldStrength, ReconciliationJson, DiagnosticJson, RollupRow } from './interfaces/IUserProfileRollupRepository.js';
 export { RdsUserProfileRollupRepository } from './implementations/RdsUserProfileRollupRepository.js';
 
 export type { ICareerHistoryReadRepository, ResumeForReconciliation, ResumeSkillGroup, ResumeExperienceEntry, ResumeProjectEntry } from './interfaces/ICareerHistoryReadRepository.js';
 export { RdsCareerHistoryReadRepository } from './implementations/RdsCareerHistoryReadRepository.js';
+
+export type { IDiagnosticInputsReadRepository, DiagnosticInputs, KbStats, ResumeEntryCounts } from './interfaces/IDiagnosticInputsReadRepository.js';
+export { RdsDiagnosticInputsReadRepository } from './implementations/RdsDiagnosticInputsReadRepository.js';
+
+// Diagnostic (pure deterministic formula)
+export { computeUserDiagnostic, WEIGHTS, KB_SCORE_THRESHOLD } from './diagnostic/computeUserDiagnostic.js';
+export type {
+    ComponentKey,
+    ComponentSubScore,
+    DiagnosticComputed,
+    DiagnosticComputeInput,
+} from './diagnostic/computeUserDiagnostic.js';
 
 export type {
     IRetrievalProbe,

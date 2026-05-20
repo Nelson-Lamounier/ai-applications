@@ -14,7 +14,7 @@
  */
 
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as cdk from 'aws-cdk-lib/core';
+import type * as cdk from 'aws-cdk-lib/core';
 
 import { type DeployableEnvironment, Environment, environmentRemovalPolicy } from '../environments';
 import { MODELS } from '../shared/model-registry';

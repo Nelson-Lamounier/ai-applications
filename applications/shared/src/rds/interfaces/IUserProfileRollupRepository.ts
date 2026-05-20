@@ -19,12 +19,23 @@ export interface ReconciliationJson {
   readonly unsupportedClaims: ReadonlyArray<UnsupportedClaim>;
   readonly undersold:         ReadonlyArray<UndersoldStrength>;
 }
+export interface DiagnosticJson {
+  readonly overall:    number;
+  readonly components: Readonly<Record<string, { readonly score: number; readonly blockers: ReadonlyArray<string> }>>;
+  readonly methodology: {
+    readonly version: number;
+    readonly weights: Readonly<Record<string, number>>;
+    readonly notes:   string;
+  };
+  readonly explanation: string | null;
+}
 export interface RollupRow {
   readonly rollup: unknown;
   readonly mirror: MirrorJson | null;
   readonly reveal: RevealJson | null;
   readonly direction: DirectionJson | null;
   readonly reconciliation: ReconciliationJson | null;
+  readonly diagnostic: DiagnosticJson | null;
   readonly refreshedAt: string;
   readonly synthesisRefreshedAt: string | null;
 }
@@ -35,7 +46,7 @@ export interface IUserProfileRollupRepository {
     /** Upsert the precomputed rollup for the user (one row per user). */
     upsert(userId: string, result: UserProfileRollupResult,
            mirror?: MirrorJson, reveal?: RevealJson, direction?: DirectionJson,
-           reconciliation?: ReconciliationJson): Promise<void>;
+           reconciliation?: ReconciliationJson, diagnostic?: DiagnosticJson): Promise<void>;
     /** Read the persisted rollup row for the user, or null if absent. */
     getRollup(userId: string): Promise<RollupRow | null>;
 }

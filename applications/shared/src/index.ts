@@ -262,12 +262,21 @@ export type {
     UnsupportedClaim,
     UndersoldStrength,
     ReconciliationJson,
+    DiagnosticJson,
     RollupRow,
     ICareerHistoryReadRepository,
     ResumeForReconciliation,
     ResumeSkillGroup,
     ResumeExperienceEntry,
     ResumeProjectEntry,
+    IDiagnosticInputsReadRepository,
+    DiagnosticInputs,
+    KbStats,
+    ResumeEntryCounts,
+    ComponentKey,
+    ComponentSubScore,
+    DiagnosticComputed,
+    DiagnosticComputeInput,
 } from './rds/index.js';
 
 export {
@@ -286,6 +295,10 @@ export {
     computeUserProfileRollup,
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,
+    RdsDiagnosticInputsReadRepository,
+    computeUserDiagnostic,
+    WEIGHTS,
+    KB_SCORE_THRESHOLD,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';

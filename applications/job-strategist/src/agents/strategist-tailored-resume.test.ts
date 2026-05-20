@@ -8,7 +8,9 @@
  * be silently dropped (structure-output-checklist §7).
  */
 
-let extractTailoredResumeJson: typeof import('./strategist-agent.js')['extractTailoredResumeJson'];
+import type { extractTailoredResumeJson as ExtractTailoredResumeJsonFn } from './strategist-agent.js';
+
+let extractTailoredResumeJson: typeof ExtractTailoredResumeJsonFn;
 
 beforeAll(async () => {
     ({ extractTailoredResumeJson } = await import('./strategist-agent.js'));
@@ -44,7 +46,7 @@ describe('extractTailoredResumeJson', () => {
     });
 
     it('throws fast when the block is present but fails schema validation', () => {
-        const { profile, ...broken } = VALID_RESUME;
+        const { profile: _profile, ...broken } = VALID_RESUME;
         expect(() => extractTailoredResumeJson(wrap(JSON.stringify(broken))))
             .toThrow(/schema validation/i);
     });

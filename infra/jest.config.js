@@ -33,7 +33,7 @@ module.exports = {
   ...cjsConfig,
   roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],
-  testPathIgnorePatterns: ["/node_modules/", "/dist/", "/cdk\.out/", "/tests/integration/"],
+  testPathIgnorePatterns: ["/node_modules/", "/dist/", "/cdk.out/", "/tests/integration/"],
   // setupFiles runs in EACH worker process before the test framework is installed.
   // This ensures process.cwd() is the infra root in every worker, regardless of
   // where Jest was launched from (repo root vs infra/ directly).

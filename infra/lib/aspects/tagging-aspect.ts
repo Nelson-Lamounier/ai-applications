@@ -29,7 +29,7 @@
 
 import * as cdk from 'aws-cdk-lib/core';
 
-import { IConstruct } from 'constructs';
+import type { IConstruct } from 'constructs';
 
 /**
  * Valid cost-centre values for cost-allocation grouping.

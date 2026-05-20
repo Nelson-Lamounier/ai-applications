@@ -2,7 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 
 jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
   BedrockRuntimeClient: jest.fn().mockImplementation(() => ({
-    send: (jest.fn() as any).mockResolvedValue({
+    send: (jest.fn() as jest.MockedFunction<() => Promise<unknown>>).mockResolvedValue({
       body: Buffer.from(JSON.stringify({
         usage: { input_tokens: 800, output_tokens: 200 },
         content: [{
@@ -42,7 +42,7 @@ describe('enrichRole', () => {
     const searchTool = {
       search: jest.fn(async () => [
         { title: 'Result', url: '', content: 'Generic job context', score: 0 },
-      ]) as any,
+      ]) as unknown as never,
     };
 
     await enrichRole(piiExperience, searchTool, 'eu-west-1');
@@ -71,7 +71,7 @@ describe('enrichRole', () => {
     const searchTool = {
       search: jest.fn(async () => [
         { title: 'Result', url: '', content: 'Some context', score: 0 },
-      ]) as any,
+      ]) as unknown as never,
     };
 
     const result = await enrichRole(experience, searchTool, 'eu-west-1');
@@ -85,7 +85,7 @@ describe('enrichRole', () => {
   it('skips gracefully (null) when the model output fails schema validation', async () => {
     const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
     (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
-      send: (jest.fn() as any).mockResolvedValue({
+      send: (jest.fn() as jest.MockedFunction<() => Promise<unknown>>).mockResolvedValue({
         body: Buffer.from(JSON.stringify({
           usage: { input_tokens: 9, output_tokens: 9 },
           content: [{
@@ -102,12 +102,12 @@ describe('enrichRole', () => {
           }],
         })),
       }),
-    } as any));
+    } as unknown as never));
 
     const searchTool = {
       search: jest.fn(async () => [
         { title: 'Result', url: '', content: 'ctx', score: 0 },
-      ]) as any,
+      ]) as unknown as never,
     };
 
     const result = await enrichRole(
@@ -129,7 +129,7 @@ describe('enrichRole', () => {
     };
 
     const searchTool = {
-      search: jest.fn(async () => []) as any,
+      search: jest.fn(async () => []) as unknown as never,
     };
 
     const result = await enrichRole(experience, searchTool, 'eu-west-1');

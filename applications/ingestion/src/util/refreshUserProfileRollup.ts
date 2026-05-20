@@ -9,12 +9,14 @@
  * best-effort contract as the retrieval probe).
  */
 import { trace, SpanStatusCode } from '@opentelemetry/api';
-import { computeUserProfileRollup } from '@bedrock/shared';
+import { computeUserProfileRollup, computeUserDiagnostic } from '@bedrock/shared';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
 import type { MirrorRevealSynthesizer } from '../agents/MirrorRevealSynthesizer.js';
 import type { DirectionSynthesizer } from '../agents/DirectionSynthesizer.js';
 import type { ReconciliationSynthesizer } from '../agents/ReconciliationSynthesizer.js';
 import type { ICareerHistoryReadRepository } from '@bedrock/shared';
+import type { DiagnosticNarrator } from '../agents/DiagnosticNarrator.js';
+import type { IDiagnosticInputsReadRepository, DiagnosticJson } from '@bedrock/shared';
 
 const tracer = trace.getTracer('ingestion-worker');
 
@@ -25,6 +27,8 @@ export async function refreshUserProfileRollup(
     directionSynthesizer?: DirectionSynthesizer,
     reconciliationSynthesizer?: ReconciliationSynthesizer,
     careerRepo?: ICareerHistoryReadRepository,
+    narrator?: DiagnosticNarrator,
+    diagnosticInputsRepo?: IDiagnosticInputsReadRepository,
 ): Promise<void> {
     await tracer.startActiveSpan('ingestion.profile_rollup', async (span) => {
         try {
@@ -47,12 +51,33 @@ export async function refreshUserProfileRollup(
                     if (resume) recon = await reconciliationSynthesizer.synthesize({ rollup: result.rollup, resume });
                 } catch { recon = undefined; }
             }
-            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation);
+            let diagnostic: DiagnosticJson | undefined;
+            if (diagnosticInputsRepo) {
+                try {
+                    const di = await diagnosticInputsRepo.getDiagnosticInputs(userId);
+                    const computed = computeUserDiagnostic({
+                        rollup:         result.rollup,
+                        mirror:         synth?.mirror         ?? null,
+                        reveal:         synth?.reveal         ?? null,
+                        direction:      dir?.direction        ?? null,
+                        reconciliation: recon?.reconciliation ?? null,
+                        diagnosticInputs: di,
+                    });
+                    let explanation: string | null = null;
+                    if (narrator) {
+                        try { explanation = (await narrator.narrate(computed)) ?? null; }
+                        catch { explanation = null; }
+                    }
+                    diagnostic = { ...computed, explanation };
+                } catch { diagnostic = undefined; }
+            }
+            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation, diagnostic);
             span.setAttributes({
                 'profile_rollup.project_repos': result.projectRepoCount,
                 'profile_rollup.synthesized':   Boolean(synth),
                 'profile_rollup.directioned':   Boolean(dir),
                 'profile_rollup.reconciled':    Boolean(recon),
+                'profile_rollup.diagnosed':     Boolean(diagnostic),
             });
         } catch (err) {
             // Best-effort: a rollup failure MUST NOT break ingestion.

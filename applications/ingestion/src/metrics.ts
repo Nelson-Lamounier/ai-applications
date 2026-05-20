@@ -7,10 +7,11 @@
  * still work, and seedZeroSeries() so Grafana panels read "0" instead of
  * "No data" before the first observation lands.
  */
+import type {
+    Registry} from 'prom-client';
 import {
     Counter,
     Histogram,
-    Registry,
     register as defaultRegister,
 } from 'prom-client';
 

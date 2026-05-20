@@ -41,7 +41,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 
 import { ApplicationInferenceProfile } from '../../constructs/observability/application-inference-profile';
 import { addLambdaObservabilityToAll, OBSERVABILITY_EXTERNAL_MODULES } from '../../utilities/lambda-observability';

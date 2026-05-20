@@ -18,6 +18,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
+import type { Pool } from 'pg';
 import { recordBedrockCost } from '../bedrock-cost.js';
 
 const MODEL_ID = 'amazon.titan-embed-text-v2:0';
@@ -29,7 +30,7 @@ const MODEL_ID = 'amazon.titan-embed-text-v2:0';
 const MAX_INPUT_CHARS = 30_000;
 
 export interface TitanCostContext {
-    pool:     import('pg').Pool;
+    pool:     Pool;
     userId:   string;
     repoName: string;
 }

@@ -19,10 +19,10 @@
  */
 
 import type { IngestionReport, RawChunk } from '../../rds/types.js';
-import { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
+import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
 import type { IFileFilter }   from '../interfaces/IFileFilter.js';
 import type { IRepoAdapter }  from '../interfaces/IRepoAdapter.js';
-import { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
+import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
 
 export interface OrchestratorOptions {

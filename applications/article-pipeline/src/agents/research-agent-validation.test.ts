@@ -3,10 +3,12 @@
  * Article Research Agent — schema validation safety-net tests.
  */
 
+import type { validateArticleResearch as ValidateArticleResearchFn } from './research-agent.js';
+
 // research-agent.ts throws at module load if RESEARCH_MODEL is unset.
 process.env['RESEARCH_MODEL'] = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
-let validateArticleResearch: typeof import('./research-agent.js')['validateArticleResearch'];
+let validateArticleResearch: typeof ValidateArticleResearchFn;
 
 beforeAll(async () => {
     ({ validateArticleResearch } = await import('./research-agent.js'));
@@ -33,14 +35,14 @@ describe('validateArticleResearch', () => {
     });
 
     it('omits seoResearch entirely when absent (optional)', () => {
-        const { seoResearch, ...noSeo } = VALID;
+        const { seoResearch: _seoResearch, ...noSeo } = VALID;
         const r = validateArticleResearch(noSeo);
         expect(r.seoResearch).toBeUndefined();
         expect(r.outline).toHaveLength(1);
     });
 
     it('throws fast when a required field is missing', () => {
-        const { outline, ...broken } = VALID;
+        const { outline: _outline, ...broken } = VALID;
         expect(() => validateArticleResearch(broken)).toThrow(/schema validation/i);
     });
 

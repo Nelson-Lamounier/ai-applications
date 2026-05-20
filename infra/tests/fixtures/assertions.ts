@@ -6,13 +6,13 @@
  * and standard CDK resource validation.
  */
 
-/* eslint-disable jest/no-export */
-// This file exports test helpers, not tests — jest/no-export does not apply.
+// This file exports test helpers, not tests.
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { Template, Match } from 'aws-cdk-lib/assertions';
+import type { Template} from 'aws-cdk-lib/assertions';
+import { Match } from 'aws-cdk-lib/assertions';
 
 
 /**
@@ -251,7 +251,6 @@ export interface EnforceS3ConstructOptions {
  * ```
  */
 export function enforceNoInlineS3Buckets(options: EnforceS3ConstructOptions): void {
-    /* eslint-disable jest/require-top-level-describe */
     // This function generates it() calls intended to run inside the caller's describe().
 
     const { sourceDir, allowedExceptions = new Set() } = options;
@@ -286,5 +285,4 @@ export function enforceNoInlineS3Buckets(options: EnforceS3ConstructOptions): vo
         }
     });
 
-    /* eslint-enable jest/require-top-level-describe */
 }

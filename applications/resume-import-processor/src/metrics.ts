@@ -12,7 +12,8 @@
  *    absent (unit tests), counters register against a throwaway registry
  *    and exposition is a no-op — incrementing them is still safe.
  */
-import { Counter, Histogram, Registry, register as defaultRegister } from 'prom-client';
+import type { Registry} from 'prom-client';
+import { Counter, Histogram, register as defaultRegister } from 'prom-client';
 
 type ObsHandleGlobal = { __obsHandle?: { registry: Registry } };
 

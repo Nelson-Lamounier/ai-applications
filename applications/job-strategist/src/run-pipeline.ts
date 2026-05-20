@@ -13,7 +13,8 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext } from '@bedrock/shared';
+import type { StrategistPipelineContext, StructuredResumeData } from '@bedrock/shared';
+import type { Pool } from 'pg';
 import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, PgSemanticCache, PiiScrubber } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
@@ -59,7 +60,7 @@ const strategistDuration = new Histogram({
  * Build the semantic-cache kb_tag for a user. Fail-open: on any DB error
  * fall back to a model-only tag so the cache still partitions by model.
  */
-async function cacheTagFor(pool: import('pg').Pool, userId: string): Promise<string> {
+async function cacheTagFor(pool: Pool, userId: string): Promise<string> {
     const model = process.env['STRATEGIST_MODEL'] ?? 'default';
     try {
         const r = await pool.query<{ t: string }>(
@@ -110,7 +111,7 @@ export async function main(): Promise<void> {
         targetCompany:     env.targetCompany,
         targetRole:        env.targetRole,
         resumeId:          env.resumeId,
-        resumeData:        resumeData as import('@bedrock/shared').StructuredResumeData | null,
+        resumeData:        resumeData as StructuredResumeData | null,
         interviewStage:    'applied',
         bucket:            process.env['S3_BUCKET'] ?? '',
         environment:       env.environment,

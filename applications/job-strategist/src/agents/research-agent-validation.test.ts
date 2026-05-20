@@ -5,9 +5,11 @@
 
 // research-agent.ts throws at module load if RESEARCH_MODEL is unset (CDK
 // contract). Set it before the dynamic import.
+import type { validateResearchResult as ValidateResearchResultFn } from './research-agent.js';
+
 process.env['RESEARCH_MODEL'] = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
-let validateResearchResult: typeof import('./research-agent.js')['validateResearchResult'];
+let validateResearchResult: typeof ValidateResearchResultFn;
 
 beforeAll(async () => {
     ({ validateResearchResult } = await import('./research-agent.js'));
@@ -49,7 +51,7 @@ describe('validateResearchResult', () => {
     });
 
     it('throws fast when a required model field is missing', () => {
-        const { fitSummary, ...broken } = VALID;
+        const { fitSummary: _fitSummary, ...broken } = VALID;
         expect(() => validateResearchResult(broken, INJECTED)).toThrow(/schema validation/i);
     });
 

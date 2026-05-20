@@ -31,8 +31,6 @@ export const DirectionSchema = z.object({
   }).strict()).min(1).max(4),
   whatToDeepen: z.array(z.string().min(12).max(200)).max(5),
 }).strict();
-type DirectionResult = z.infer<typeof DirectionSchema>;
-
 export interface DirectionOutput {
   readonly direction: {
     readonly archetypes: ReadonlyArray<{ archetype: string; fit: string; rationale: string }>;

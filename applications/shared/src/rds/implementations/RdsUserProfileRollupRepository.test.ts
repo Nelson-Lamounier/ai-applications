@@ -150,3 +150,43 @@ describe('RdsUserProfileRollupRepository reconciliation', () => {
         expect(sel.sql).toMatch(/reconciliation/i);
     });
 });
+
+describe('RdsUserProfileRollupRepository diagnostic', () => {
+    it('upsert writes diagnostic when provided', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup, undefined, undefined, undefined, undefined,
+            {
+                overall: 78,
+                components: {
+                    profileDepth:            { score: 80, blockers: [] },
+                    ragDepth:                { score: 70, blockers: ['No project repos with high KB quality'] },
+                    directionConfidence:     { score: 80, blockers: [] },
+                    reconciliationAlignment: { score: 80, blockers: [] },
+                    resumeCoverage:          { score: 80, blockers: [] },
+                },
+                methodology: { version: 1, weights: { profileDepth:20, ragDepth:20, directionConfidence:20, reconciliationAlignment:20, resumeCoverage:20 }, notes: 'v1' },
+                explanation: 'You score 78 because…',
+            });
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/diagnostic/i);
+        expect(up.params.some(p => typeof p === 'string' && p.includes('"overall"'))).toBe(true);
+        expect(up.params[7]).toBeInstanceOf(Date);   // synthTs set when diagnostic provided
+    });
+
+    it('upsert preserves prior diagnostic when omitted (COALESCE)', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.upsert('u1', sampleRollup);
+        const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
+        expect(up.sql).toMatch(/diagnostic\s*=\s*COALESCE\(\s*EXCLUDED\.diagnostic\s*,\s*user_profile_rollup\.diagnostic\s*\)/i);
+    });
+
+    it('getRollup selects diagnostic', async () => {
+        const client = fakeClient([]);
+        const repo = new RdsUserProfileRollupRepository(fakePool(client));
+        await repo.getRollup('11111111-1111-1111-1111-111111111111');
+        const sel = client.calls.find(c => /SELECT[\s\S]*FROM user_profile_rollup/i.test(c.sql))!;
+        expect(sel.sql).toMatch(/diagnostic/i);
+    });
+});

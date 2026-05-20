@@ -126,7 +126,7 @@ export class IngestionPipeline {
                         chunkIndex: chunk.chunkIndex,
                         contentHash,
                     }));
-                    const { missing, stale, unchanged } = await this.vectorStore.checkContentHashes(
+                    const { missing, stale: _stale, unchanged } = await this.vectorStore.checkContentHashes(
                         userId, repoFullName, candidates,
                     );
                     const unchangedSet = new Set(unchanged.map(c => `${c.filePath}::${c.chunkIndex}`));

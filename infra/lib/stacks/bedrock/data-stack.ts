@@ -17,7 +17,7 @@ import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 
 import { NagSuppressions } from 'cdk-nag';
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 
 import { ApplicationInferenceProfile } from '../../constructs/observability/application-inference-profile';
 
