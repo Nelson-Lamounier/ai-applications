@@ -16,6 +16,7 @@
  *   MIRROR_REVEAL_MODEL_ID — Bedrock model for profile Mirror/Reveal synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; synthesis disabled when neither is set)
  *   DIRECTION_MODEL_ID — Bedrock model for Direction synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; direction synthesis disabled when neither is set)
  *   RECONCILIATION_MODEL_ID — Bedrock model for Reconciliation synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; reconciliation synthesis disabled when neither is set)
+ *   DIAGNOSTIC_MODEL_ID — Bedrock model for Diagnostic narration (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; the deterministic score is computed regardless; only the LLM paragraph is skipped when neither is set)
  *
  * Exit codes:
  *   0 — ingestion complete (sync state set to 'complete')
@@ -36,6 +37,7 @@ import {
     pushFinalMetrics,
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,
+    RdsDiagnosticInputsReadRepository,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -47,6 +49,7 @@ import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
 import { DirectionSynthesizer } from './agents/DirectionSynthesizer.js';
 import { ReconciliationSynthesizer } from './agents/ReconciliationSynthesizer.js';
+import { DiagnosticNarrator } from './agents/DiagnosticNarrator.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
@@ -262,7 +265,9 @@ async function main(): Promise<void> {
             const directionSynth = DirectionSynthesizer.fromEnvironment(pgPool, env.userId);
             const careerRepo = new RdsCareerHistoryReadRepository(pgPool);
             const reconciliationSynth = ReconciliationSynthesizer.fromEnvironment(pgPool, env.userId);
-            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo);
+            const diagnosticInputsRepo = new RdsDiagnosticInputsReadRepository(pgPool);
+            const diagnosticNarrator   = DiagnosticNarrator.fromEnvironment(pgPool, env.userId);
+            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo, diagnosticNarrator, diagnosticInputsRepo);
 
             log.info({
                 repoFullName:  env.repoFullName,
