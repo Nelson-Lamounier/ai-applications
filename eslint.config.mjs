@@ -29,4 +29,11 @@ export default tseslint.config(
       'no-unused-vars':                              'off',
     },
   },
+  // CommonJS config files (jest, etc.) legitimately use require() and are not ESM.
+  {
+    files: ['**/*.cjs', '**/jest.config.js', '**/jest.config.cjs'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
 );
