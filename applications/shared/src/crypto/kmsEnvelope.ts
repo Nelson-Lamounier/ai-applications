@@ -106,11 +106,12 @@ export function createKmsEnvelope(opts: {
                     decipher.final(),
                 ]);
                 return plain.toString('utf8');
-            } catch (err) {
+            } catch (err: unknown) {
                 if (err instanceof KmsEnvelopeError) throw err;
                 // GCM auth failure surfaces as a generic Error from node:crypto.
-                if (err instanceof Error && /unsupported state|unable to authenticate|auth tag/i.test(err.message)) {
-                    throw new IntegrityError(undefined, { cause: err });
+                const message = (err as any)?.message ?? '';
+                if (typeof message === 'string' && /unsupported state|unable to authenticate|auth tag/i.test(message)) {
+                    throw new IntegrityError(undefined, { cause: err as Error });
                 }
                 throw new KmsEnvelopeError('decrypt failed', { cause: err });
             } finally {
