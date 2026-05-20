@@ -1,8 +1,8 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- jest.fn<> generic requires any to match the Bedrock SDK response union
 const mockSend = jest.fn<() => Promise<any>>();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock factory must accept any to satisfy InvokeModelCommand constructor signature
 const invokeModelCommand = jest.fn<(args: any) => any>((args) => ({ args }));
 
 jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
