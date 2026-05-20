@@ -403,5 +403,31 @@ export class BedrockDataStack extends cdk.Stack {
             value: this.accessLogsBucket.bucketName,
             description: 'Server access logs bucket name',
         });
+
+        // ─── OAuth token envelope encryption ──────────────────────────────────
+        // Dedicated CMK for oauth_connections.access_token envelope encryption
+        // (per PR-1 design). The key policy is left at AWS default (root-only);
+        // the EKS node IAM role is granted Encrypt/Decrypt/GenerateDataKey out
+        // of band — see docs/superpowers/specs/2026-05-20-oauth-app-revocation-
+        // foundation-design.md for the deploy runbook.
+        const oauthTokenKey = new kms.Key(this, 'OAuthTokenKey', {
+            alias: 'alias/oauth-token-encryption',
+            description: 'Envelope encryption for oauth_connections.access_token',
+            enableKeyRotation: true,
+            removalPolicy: cdk.RemovalPolicy.RETAIN,
+            pendingWindow: cdk.Duration.days(30),
+        });
+
+        new ssm.StringParameter(this, 'OAuthTokenKeyArnParam', {
+            parameterName: '/oauth/token-encryption-key-arn',
+            stringValue: oauthTokenKey.keyArn,
+            description: 'KMS CMK ARN for oauth_connections token envelope encryption',
+        });
+
+        new cdk.CfnOutput(this, 'OAuthTokenKeyArn', {
+            value: oauthTokenKey.keyArn,
+            description: 'KMS CMK ARN for oauth_connections token envelope encryption',
+            exportName: `${props.namePrefix}-OAuthTokenKeyArn`,
+        });
     }
 }
