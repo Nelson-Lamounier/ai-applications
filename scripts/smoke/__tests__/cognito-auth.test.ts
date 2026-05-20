@@ -33,12 +33,12 @@ describe('mintCognitoJwt', () => {
   beforeEach(() => send.mockReset());
   it('returns idToken + sub from USER_PASSWORD_AUTH', async () => {
     const idToken = jwt({ sub: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', email: 'dev@example.com' });
-    (send as any).mockResolvedValueOnce({ AuthenticationResult: { IdToken: idToken } });
+    (send as jest.Mock).mockResolvedValueOnce({ AuthenticationResult: { IdToken: idToken } });
     const r = await mintCognitoJwt({ clientId: 'cid', username: 'u', password: 'p', region: 'eu-west-1' });
     expect(r).toEqual({ idToken, sub: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', email: 'dev@example.com' });
   });
   it('throws SmokeSetupError when Cognito returns no IdToken', async () => {
-    (send as any).mockResolvedValueOnce({});
+    (send as jest.Mock).mockResolvedValueOnce({});
     await expect(mintCognitoJwt({ clientId: 'cid', username: 'u', password: 'p', region: 'eu-west-1' }))
       .rejects.toThrow(/cognito|idtoken/i);
   });

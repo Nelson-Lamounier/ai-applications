@@ -27,7 +27,7 @@ describe('refreshUserProfileRollup', () => {
         } as never as IUserProfileRollupRepository;
         await expect(refreshUserProfileRollup(repo, 'u1')).resolves.toBeUndefined();
         expect(upsert).toHaveBeenCalledTimes(1);
-        const [userId, result] = upsert.mock.calls[0] as any;
+        const [userId, result] = upsert.mock.calls[0] as unknown as [string, { projectRepoCount: number }];
         expect(userId).toBe('u1');
         expect(result.projectRepoCount).toBe(1);
     });

@@ -2,7 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 
 jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
   BedrockRuntimeClient: jest.fn().mockImplementation(() => ({
-    send: (jest.fn() as any).mockResolvedValue({
+    send: (jest.fn() as jest.MockedFunction<() => Promise<unknown>>).mockResolvedValue({
       body: Buffer.from(JSON.stringify({
         usage: { input_tokens: 1200, output_tokens: 300 },
         content: [{
@@ -37,7 +37,7 @@ describe('extractCareerData', () => {
   it('returns zero tokens when usage is absent', async () => {
     const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
     (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
-      send: (jest.fn() as any).mockResolvedValue({
+      send: (jest.fn() as jest.MockedFunction<() => Promise<unknown>>).mockResolvedValue({
         body: Buffer.from(JSON.stringify({
           // no usage field
           content: [{
@@ -55,7 +55,7 @@ describe('extractCareerData', () => {
           }],
         })),
       }),
-    } as any));
+    } as unknown as never));
 
     const result = await extractCareerData('resume text', 'eu-west-1');
     expect(result.inputTokens).toBe(0);
@@ -65,7 +65,7 @@ describe('extractCareerData', () => {
   it('throws a typed schema_validation_failed error when a required field is missing', async () => {
     const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
     (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
-      send: (jest.fn() as any).mockResolvedValue({
+      send: (jest.fn() as jest.MockedFunction<() => Promise<unknown>>).mockResolvedValue({
         body: Buffer.from(JSON.stringify({
           usage: { input_tokens: 1, output_tokens: 1 },
           content: [{
@@ -83,7 +83,7 @@ describe('extractCareerData', () => {
           }],
         })),
       }),
-    } as any));
+    } as unknown as never));
 
     await expect(extractCareerData('resume text', 'eu-west-1')).rejects.toMatchObject({
       name: 'CareerExtractionError',
@@ -94,7 +94,7 @@ describe('extractCareerData', () => {
   it('rejects model output that injects an unknown field', async () => {
     const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
     (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
-      send: (jest.fn() as any).mockResolvedValue({
+      send: (jest.fn() as jest.MockedFunction<() => Promise<unknown>>).mockResolvedValue({
         body: Buffer.from(JSON.stringify({
           usage: { input_tokens: 1, output_tokens: 1 },
           content: [{
@@ -113,7 +113,7 @@ describe('extractCareerData', () => {
           }],
         })),
       }),
-    } as any));
+    } as unknown as never));
 
     await expect(extractCareerData('resume text', 'eu-west-1')).rejects.toMatchObject({
       name: 'CareerExtractionError',
@@ -124,13 +124,13 @@ describe('extractCareerData', () => {
   it('throws a typed no_tool_use_block error when Bedrock returns no tool_use', async () => {
     const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
     (BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>).mockImplementationOnce(() => ({
-      send: (jest.fn() as any).mockResolvedValue({
+      send: (jest.fn() as jest.MockedFunction<() => Promise<unknown>>).mockResolvedValue({
         body: Buffer.from(JSON.stringify({
           usage: { input_tokens: 1, output_tokens: 1 },
           content: [{ type: 'text', text: 'I cannot do that.' }],
         })),
       }),
-    } as any));
+    } as unknown as never));
 
     await expect(extractCareerData('resume text', 'eu-west-1')).rejects.toMatchObject({
       name: 'CareerExtractionError',
