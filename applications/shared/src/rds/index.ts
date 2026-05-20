@@ -72,6 +72,15 @@ export { RdsCareerHistoryReadRepository } from './implementations/RdsCareerHisto
 export type { IDiagnosticInputsReadRepository, DiagnosticInputs, KbStats, ResumeEntryCounts } from './interfaces/IDiagnosticInputsReadRepository.js';
 export { RdsDiagnosticInputsReadRepository } from './implementations/RdsDiagnosticInputsReadRepository.js';
 
+// Diagnostic (pure deterministic formula)
+export { computeUserDiagnostic, WEIGHTS, KB_SCORE_THRESHOLD } from './diagnostic/computeUserDiagnostic.js';
+export type {
+    ComponentKey,
+    ComponentSubScore,
+    DiagnosticComputed,
+    DiagnosticComputeInput,
+} from './diagnostic/computeUserDiagnostic.js';
+
 export type {
     IRetrievalProbe,
     RetrievalProbeArgs,

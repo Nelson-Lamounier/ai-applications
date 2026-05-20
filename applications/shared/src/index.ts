@@ -272,6 +272,10 @@ export type {
     DiagnosticInputs,
     KbStats,
     ResumeEntryCounts,
+    ComponentKey,
+    ComponentSubScore,
+    DiagnosticComputed,
+    DiagnosticComputeInput,
 } from './rds/index.js';
 
 export {
@@ -291,6 +295,9 @@ export {
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,
     RdsDiagnosticInputsReadRepository,
+    computeUserDiagnostic,
+    WEIGHTS,
+    KB_SCORE_THRESHOLD,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
