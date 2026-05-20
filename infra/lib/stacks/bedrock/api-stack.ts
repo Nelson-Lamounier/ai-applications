@@ -26,7 +26,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 
 import { addLambdaObservability, OBSERVABILITY_EXTERNAL_MODULES } from '../../utilities/lambda-observability';
 

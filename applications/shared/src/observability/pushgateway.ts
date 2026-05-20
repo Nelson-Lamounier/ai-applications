@@ -62,7 +62,7 @@ export async function pushFinalMetrics(
         if (log) {
             log.error(payload, 'pushgateway push failed — metrics for this run will be missing');
         } else {
-            // eslint-disable-next-line no-console
+             
             console.error('[obs] pushgateway failed', payload);
         }
     }

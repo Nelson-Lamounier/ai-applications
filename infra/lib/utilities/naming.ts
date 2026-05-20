@@ -9,7 +9,8 @@
  *   e.g. NextJS-Compute-development, ControlPlane-production
  */
 
-import { EnvironmentName, shortEnv } from '../config/environments';
+import type { EnvironmentName} from '../config/environments';
+import { shortEnv } from '../config/environments';
 import { Project, getProjectConfig } from '../config/projects';
 
 // =============================================================================

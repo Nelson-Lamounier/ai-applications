@@ -8,10 +8,10 @@
  * the target environment.
  */
 
-import * as cdk from 'aws-cdk-lib/core';
+import type * as cdk from 'aws-cdk-lib/core';
 
-import { Environment } from '../config/environments';
-import { Project } from '../config/projects';
+import type { Environment } from '../config/environments';
+import type { Project } from '../config/projects';
 
 /**
  * Base context passed to project factories for stack creation.

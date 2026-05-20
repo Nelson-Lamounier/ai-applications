@@ -347,7 +347,7 @@ describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open
 
 describe('updatePipelineRunMetadata — non-destructive JSONB merge', () => {
     it('issues a COALESCE || merge query, not a bare overwrite', async () => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+         
         const { updatePipelineRunMetadata } = jest.requireActual<typeof import('../lib/pipeline-runs.js')>('../lib/pipeline-runs.js');
         const mockQuery = jest.fn<() => Promise<{ rowCount: number }>>().mockResolvedValue({ rowCount: 1 });
         const pool = { query: mockQuery } as unknown as import('pg').Pool;

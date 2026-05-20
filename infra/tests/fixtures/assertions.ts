@@ -12,7 +12,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { Template, Match } from 'aws-cdk-lib/assertions';
+import type { Template} from 'aws-cdk-lib/assertions';
+import { Match } from 'aws-cdk-lib/assertions';
 
 
 /**

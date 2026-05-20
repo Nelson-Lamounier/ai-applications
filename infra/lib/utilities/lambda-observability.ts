@@ -26,7 +26,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 
 /**
  * Modules the @bedrock/shared barrel reaches into but Lambdas must NEVER

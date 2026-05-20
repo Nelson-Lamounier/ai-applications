@@ -230,7 +230,7 @@ async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
         }));
 
         // Dynamically require to pick up mocks + env.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+         
         ({ executeResearchAgent } = require('./research-agent'));
     });
 
