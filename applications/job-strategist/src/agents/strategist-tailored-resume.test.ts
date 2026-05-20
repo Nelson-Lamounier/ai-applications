@@ -8,7 +8,9 @@
  * be silently dropped (structure-output-checklist §7).
  */
 
-let extractTailoredResumeJson: typeof import('./strategist-agent.js')['extractTailoredResumeJson'];
+import type { extractTailoredResumeJson as ExtractTailoredResumeJsonFn } from './strategist-agent.js';
+
+let extractTailoredResumeJson: typeof ExtractTailoredResumeJsonFn;
 
 beforeAll(async () => {
     ({ extractTailoredResumeJson } = await import('./strategist-agent.js'));

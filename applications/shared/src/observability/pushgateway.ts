@@ -24,6 +24,7 @@
  */
 
 import { Pushgateway, type Registry } from 'prom-client';
+import type { Logger as PinoLogger } from 'pino';
 
 const PUSHGATEWAY_URL = process.env['PUSHGATEWAY_URL']
     ?? 'http://pushgateway.monitoring.svc.cluster.local:9091';
@@ -51,7 +52,7 @@ export async function pushFinalMetrics(
         // identical to "the Job didn't run" in Grafana — see dashboard
         // `resume-import` panels backed by `resume_import_runs_total`.
         const log = (globalThis as {
-            __obsHandle?: { logger: import('pino').Logger };
+            __obsHandle?: { logger: PinoLogger };
         }).__obsHandle?.logger;
         const payload = {
             err:         (err as Error).message,

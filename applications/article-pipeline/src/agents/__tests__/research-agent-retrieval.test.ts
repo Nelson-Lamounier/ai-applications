@@ -1,5 +1,6 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import type { Pool } from 'pg';
+import type { runAgent as RunAgentFn } from '@bedrock/shared';
 
 // ─── Mock @bedrock/shared PgVectorRetriever ───────────────────────────────────
 
@@ -140,7 +141,7 @@ describe('executeResearchAgent — retrieval source', () => {
         };
         mockRetrieve.mockResolvedValueOnce([retrievedPassage]);
 
-        const { runAgent } = jest.requireMock<{ runAgent: jest.MockedFunction<typeof import('@bedrock/shared').runAgent> }>('@bedrock/shared');
+        const { runAgent } = jest.requireMock<{ runAgent: jest.MockedFunction<typeof RunAgentFn> }>('@bedrock/shared');
 
         let passageTextFound = false;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -197,7 +198,7 @@ describe('executeResearchAgent — retrieval source', () => {
         });
 
         const { runAgent } = jest.requireMock<{
-            runAgent: jest.MockedFunction<typeof import('@bedrock/shared').runAgent>;
+            runAgent: jest.MockedFunction<typeof RunAgentFn>;
         }>('@bedrock/shared');
 
         let capturedPreviousVersionContent: string | undefined;
@@ -252,7 +253,7 @@ describe('executeResearchAgent — retrieval source', () => {
         });
 
         const { runAgent } = jest.requireMock<{
-            runAgent: jest.MockedFunction<typeof import('@bedrock/shared').runAgent>;
+            runAgent: jest.MockedFunction<typeof RunAgentFn>;
         }>('@bedrock/shared');
 
         let capturedUserMessage = '';

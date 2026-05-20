@@ -3,10 +3,12 @@
  * Article Research Agent — schema validation safety-net tests.
  */
 
+import type { validateArticleResearch as ValidateArticleResearchFn } from './research-agent.js';
+
 // research-agent.ts throws at module load if RESEARCH_MODEL is unset.
 process.env['RESEARCH_MODEL'] = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
-let validateArticleResearch: typeof import('./research-agent.js')['validateArticleResearch'];
+let validateArticleResearch: typeof ValidateArticleResearchFn;
 
 beforeAll(async () => {
     ({ validateArticleResearch } = await import('./research-agent.js'));

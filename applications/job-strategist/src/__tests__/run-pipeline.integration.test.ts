@@ -53,6 +53,7 @@ const cacheGetMock = jest.fn();
 const cachePutMock = jest.fn();
 
 jest.mock('@bedrock/shared', () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- jest.requireActual<typeof import(...)> needs module-shape generic
     const actual = jest.requireActual<typeof import('@bedrock/shared')>('@bedrock/shared');
     return {
         ...actual,

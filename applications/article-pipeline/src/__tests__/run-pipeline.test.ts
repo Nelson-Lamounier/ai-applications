@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeAll } from '@jest/globals';
+import type { Pool } from 'pg';
 
 // ─── All mocks MUST be declared before the module under test is imported ──────
 // run-pipeline.ts calls main() at the bottom as main().catch(() => process.exit(1)).
@@ -348,9 +349,10 @@ describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open
 describe('updatePipelineRunMetadata — non-destructive JSONB merge', () => {
     it('issues a COALESCE || merge query, not a bare overwrite', async () => {
          
+        // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- jest.requireActual<typeof import(...)> needs the module-shape generic
         const { updatePipelineRunMetadata } = jest.requireActual<typeof import('../lib/pipeline-runs.js')>('../lib/pipeline-runs.js');
         const mockQuery = jest.fn<() => Promise<{ rowCount: number }>>().mockResolvedValue({ rowCount: 1 });
-        const pool = { query: mockQuery } as unknown as import('pg').Pool;
+        const pool = { query: mockQuery } as unknown as Pool;
 
         await updatePipelineRunMetadata(pool, 'run-abc', { groundingStatus: 'GROUNDED', score: 1 });
 

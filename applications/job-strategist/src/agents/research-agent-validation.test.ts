@@ -5,9 +5,11 @@
 
 // research-agent.ts throws at module load if RESEARCH_MODEL is unset (CDK
 // contract). Set it before the dynamic import.
+import type { validateResearchResult as ValidateResearchResultFn } from './research-agent.js';
+
 process.env['RESEARCH_MODEL'] = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
-let validateResearchResult: typeof import('./research-agent.js')['validateResearchResult'];
+let validateResearchResult: typeof ValidateResearchResultFn;
 
 beforeAll(async () => {
     ({ validateResearchResult } = await import('./research-agent.js'));

@@ -7,9 +7,11 @@
  * of papering over malformed output with placeholder defaults.
  */
 
+import type { parseWriterResponse as ParseWriterResponseFn } from './writer-agent.js';
+
 process.env['WRITER_MODEL'] = 'eu.anthropic.claude-sonnet-4-6-20260310-v1:0';
 
-let parseWriterResponse: typeof import('./writer-agent.js')['parseWriterResponse'];
+let parseWriterResponse: typeof ParseWriterResponseFn;
 
 beforeAll(async () => {
     ({ parseWriterResponse } = await import('./writer-agent.js'));
