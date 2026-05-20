@@ -46,7 +46,7 @@ describe('extractTailoredResumeJson', () => {
     });
 
     it('throws fast when the block is present but fails schema validation', () => {
-        const { profile, ...broken } = VALID_RESUME;
+        const { profile: _profile, ...broken } = VALID_RESUME;
         expect(() => extractTailoredResumeJson(wrap(JSON.stringify(broken))))
             .toThrow(/schema validation/i);
     });

@@ -35,14 +35,14 @@ describe('validateArticleResearch', () => {
     });
 
     it('omits seoResearch entirely when absent (optional)', () => {
-        const { seoResearch, ...noSeo } = VALID;
+        const { seoResearch: _seoResearch, ...noSeo } = VALID;
         const r = validateArticleResearch(noSeo);
         expect(r.seoResearch).toBeUndefined();
         expect(r.outline).toHaveLength(1);
     });
 
     it('throws fast when a required field is missing', () => {
-        const { outline, ...broken } = VALID;
+        const { outline: _outline, ...broken } = VALID;
         expect(() => validateArticleResearch(broken)).toThrow(/schema validation/i);
     });
 

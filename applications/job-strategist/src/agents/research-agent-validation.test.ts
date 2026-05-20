@@ -51,7 +51,7 @@ describe('validateResearchResult', () => {
     });
 
     it('throws fast when a required model field is missing', () => {
-        const { fitSummary, ...broken } = VALID;
+        const { fitSummary: _fitSummary, ...broken } = VALID;
         expect(() => validateResearchResult(broken, INJECTED)).toThrow(/schema validation/i);
     });
 

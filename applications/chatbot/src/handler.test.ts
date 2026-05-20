@@ -53,10 +53,6 @@ jest.mock('@bedrock/shared', () => {
     };
 });
 
-// Aliases matching the task spec naming convention
-const cacheGetMock = mockCacheGet;
-const cachePutMock = mockCachePut;
-
 // Import handler and security functions AFTER env vars and mocks are set up
 import type { APIGatewayProxyEvent } from 'aws-lambda';
 

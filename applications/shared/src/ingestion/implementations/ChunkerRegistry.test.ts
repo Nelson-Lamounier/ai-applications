@@ -8,7 +8,6 @@
 
 import { ChunkerRegistry } from './ChunkerRegistry';
 import { DefaultChunker } from './DefaultChunker';
-import { MarkdownChunker } from './MarkdownChunker';
 import type { IChunker } from '../interfaces/IChunker';
 import type { RawChunk } from '../../rds/types';
 
@@ -76,8 +75,6 @@ describe('ChunkerRegistry', () => {
     describe('chunk() — routing', () => {
         const mdChunker      = new StubChunker('md', '.md');
         const tsChunker      = new StubChunker('ts', '.ts');
-        const defaultChunker = new StubChunker('default', '.__never__');
-
         // Override canHandle on default to always return true (catch-all)
         const catchAll: IChunker = {
             canHandle: (_: string) => true,

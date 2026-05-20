@@ -45,7 +45,6 @@ import {
 import {
     DynamoDBClient,
     PutItemCommand as DynamoPutItemCommand,
-    GetItemCommand as DynamoGetItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import {
     S3Client,

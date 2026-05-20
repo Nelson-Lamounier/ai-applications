@@ -15,19 +15,6 @@ const FIXTURE = path.join(__dirname, 'fixtures/Nelson_Lamounier_Resume.pdf');
 const BUCKET = 'test-bucket';
 const REGION = 'us-east-1';
 
-function makeTextractResponses(lines: string[]) {
-  return [
-    // First send() = StartDocumentTextDetection → returns JobId
-    { JobId: 'mock-job-id' },
-    // Second send() = GetDocumentTextDetection → SUCCEEDED with text blocks
-    {
-      JobStatus: 'SUCCEEDED',
-      Blocks: lines.map((t) => ({ BlockType: 'LINE', Text: t })),
-      NextToken: undefined,
-    },
-  ];
-}
-
 beforeEach(() => {
   mockSend.mockReset();
 });

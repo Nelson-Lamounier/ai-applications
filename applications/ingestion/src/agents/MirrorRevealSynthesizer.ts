@@ -21,8 +21,6 @@ export const SynthSchema = z.object({
     evidence: z.string().min(8).max(160),
   }).strict()).min(1).max(5),
 }).strict();
-type SynthResult = z.infer<typeof SynthSchema>;
-
 export interface MirrorRevealOutput {
   readonly mirror: { readonly paragraph: string };
   readonly reveal: { readonly reveals: ReadonlyArray<{ insight: string; evidence: string }> };

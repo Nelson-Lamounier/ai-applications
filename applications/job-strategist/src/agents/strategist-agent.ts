@@ -254,22 +254,6 @@ function extractCoverLetter(xml: string): string {
 }
 
 /**
- * Count specific XML elements in the analysis.
- *
- * @param xml - Raw XML analysis output
- * @param tag - XML tag to count
- * @returns Number of occurrences
- */
-function countXmlElements(xml: string, tag: string): number {
-    const regex = new RegExp(`<${tag}>`, 'g');
-    let count = 0;
-    while (regex.exec(xml) !== null) {
-        count += 1;
-    }
-    return count;
-}
-
-/**
  * Extract structured addition suggestions from the XML analysis.
  *
  * Parses `<addition>` elements within `<resume_tailoring>`, extracting

@@ -32,8 +32,6 @@ export const ReconciliationSchema = z.object({
     suggestion:      z.string().min(8).max(240),
   }).strict()).max(8),
 }).strict();
-type ReconciliationResult = z.infer<typeof ReconciliationSchema>;
-
 export interface ReconciliationOutput {
   readonly reconciliation: {
     readonly unsupportedClaims: ReadonlyArray<{ claim: string; resumeRef: string; whyUnsupported: string }>;
