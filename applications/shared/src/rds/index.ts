@@ -69,6 +69,9 @@ export { RdsUserProfileRollupRepository } from './implementations/RdsUserProfile
 export type { ICareerHistoryReadRepository, ResumeForReconciliation, ResumeSkillGroup, ResumeExperienceEntry, ResumeProjectEntry } from './interfaces/ICareerHistoryReadRepository.js';
 export { RdsCareerHistoryReadRepository } from './implementations/RdsCareerHistoryReadRepository.js';
 
+export type { IDiagnosticInputsReadRepository, DiagnosticInputs, KbStats, ResumeEntryCounts } from './interfaces/IDiagnosticInputsReadRepository.js';
+export { RdsDiagnosticInputsReadRepository } from './implementations/RdsDiagnosticInputsReadRepository.js';
+
 export type {
     IRetrievalProbe,
     RetrievalProbeArgs,

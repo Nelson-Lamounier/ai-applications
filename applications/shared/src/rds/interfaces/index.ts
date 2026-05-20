@@ -9,3 +9,4 @@ export type { IEmbeddingProvider } from './IEmbeddingProvider.js';
 export type { IChunkEnricher, ChunkEnrichment } from './IChunkEnricher.js';
 export type { IUserProfileRollupRepository, MirrorJson, RevealJson, ArchetypeFit, SeniorityCall, DirectionJson, UnsupportedClaim, UndersoldStrength, ReconciliationJson, RollupRow } from './IUserProfileRollupRepository.js';
 export type { ICareerHistoryReadRepository, ResumeForReconciliation, ResumeSkillGroup, ResumeExperienceEntry, ResumeProjectEntry } from './ICareerHistoryReadRepository.js';
+export type { IDiagnosticInputsReadRepository, DiagnosticInputs, KbStats, ResumeEntryCounts } from './IDiagnosticInputsReadRepository.js';

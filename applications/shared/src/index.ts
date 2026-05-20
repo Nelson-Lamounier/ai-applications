@@ -268,6 +268,10 @@ export type {
     ResumeSkillGroup,
     ResumeExperienceEntry,
     ResumeProjectEntry,
+    IDiagnosticInputsReadRepository,
+    DiagnosticInputs,
+    KbStats,
+    ResumeEntryCounts,
 } from './rds/index.js';
 
 export {
@@ -286,6 +290,7 @@ export {
     computeUserProfileRollup,
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,
+    RdsDiagnosticInputsReadRepository,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
