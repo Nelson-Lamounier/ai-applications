@@ -15,6 +15,7 @@
  *   RETRIEVAL_PROBE_MODEL_ID — Bedrock model for probe question generation (falls back to PROFILE_EXTRACTOR_MODEL_ID)
  *   MIRROR_REVEAL_MODEL_ID — Bedrock model for profile Mirror/Reveal synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; synthesis disabled when neither is set)
  *   DIRECTION_MODEL_ID — Bedrock model for Direction synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; direction synthesis disabled when neither is set)
+ *   RECONCILIATION_MODEL_ID — Bedrock model for Reconciliation synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; reconciliation synthesis disabled when neither is set)
  *
  * Exit codes:
  *   0 — ingestion complete (sync state set to 'complete')
@@ -34,6 +35,7 @@ import {
     bootstrapK8sObservability,
     pushFinalMetrics,
     RdsUserProfileRollupRepository,
+    RdsCareerHistoryReadRepository,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -44,6 +46,7 @@ import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
 import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
 import { DirectionSynthesizer } from './agents/DirectionSynthesizer.js';
+import { ReconciliationSynthesizer } from './agents/ReconciliationSynthesizer.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
@@ -257,7 +260,9 @@ async function main(): Promise<void> {
             profileExtractCallsTotal().inc({ outcome: 'success' });
             const mirrorSynth = MirrorRevealSynthesizer.fromEnvironment(pgPool, env.userId);
             const directionSynth = DirectionSynthesizer.fromEnvironment(pgPool, env.userId);
-            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth);
+            const careerRepo = new RdsCareerHistoryReadRepository(pgPool);
+            const reconciliationSynth = ReconciliationSynthesizer.fromEnvironment(pgPool, env.userId);
+            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo);
 
             log.info({
                 repoFullName:  env.repoFullName,

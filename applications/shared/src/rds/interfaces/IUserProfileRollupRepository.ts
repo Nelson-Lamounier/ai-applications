@@ -13,11 +13,18 @@ export interface DirectionJson {
   readonly seniority:  ReadonlyArray<SeniorityCall>;
   readonly whatToDeepen: ReadonlyArray<string>;
 }
+export interface UnsupportedClaim  { readonly claim: string; readonly resumeRef: string; readonly whyUnsupported: string }
+export interface UndersoldStrength { readonly evidence: string; readonly rollupDimension: string; readonly suggestion: string }
+export interface ReconciliationJson {
+  readonly unsupportedClaims: ReadonlyArray<UnsupportedClaim>;
+  readonly undersold:         ReadonlyArray<UndersoldStrength>;
+}
 export interface RollupRow {
   readonly rollup: unknown;
   readonly mirror: MirrorJson | null;
   readonly reveal: RevealJson | null;
   readonly direction: DirectionJson | null;
+  readonly reconciliation: ReconciliationJson | null;
   readonly refreshedAt: string;
   readonly synthesisRefreshedAt: string | null;
 }
@@ -27,7 +34,8 @@ export interface IUserProfileRollupRepository {
     listProfilesForRollup(userId: string): Promise<ProfileAggInput[]>;
     /** Upsert the precomputed rollup for the user (one row per user). */
     upsert(userId: string, result: UserProfileRollupResult,
-           mirror?: MirrorJson, reveal?: RevealJson, direction?: DirectionJson): Promise<void>;
+           mirror?: MirrorJson, reveal?: RevealJson, direction?: DirectionJson,
+           reconciliation?: ReconciliationJson): Promise<void>;
     /** Read the persisted rollup row for the user, or null if absent. */
     getRollup(userId: string): Promise<RollupRow | null>;
 }
