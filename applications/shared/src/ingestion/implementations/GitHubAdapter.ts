@@ -29,8 +29,10 @@ import https from 'https';
 import type {
     IRepoAdapter,
     ListCommitsOptions,
+    ListPullRequestsOptions,
     RepoCommit,
     RepoFile,
+    RepoPullRequest,
 } from '../interfaces/IRepoAdapter.js';
 
 // =============================================================================
@@ -74,6 +76,18 @@ interface GitHubCommitListItem {
         author?:   { name?: string; email?: string; date?: string };
         committer?:{ name?: string; email?: string; date?: string };
     };
+}
+
+/** Subset of GitHub's pull-request-list-item shape we consume. */
+interface GitHubPullRequestListItem {
+    number:       number;
+    title:        string;
+    body:         string | null;
+    state:        'open' | 'closed';
+    user:         { login: string } | null;
+    created_at:   string;
+    merged_at:    string | null;
+    html_url:     string;
 }
 
 // =============================================================================
@@ -299,6 +313,71 @@ export class GitHubAdapter implements IRepoAdapter {
             }
 
             // GitHub returned fewer than perPage → last page reached.
+            if (batch.length < perPage) break;
+        }
+
+        return out;
+    }
+
+    // =========================================================================
+    // IRepoAdapter.listPullRequests
+    // =========================================================================
+
+    /**
+     * List pull requests on the repository. Paginates 100/page like
+     * listCommits; stops on the first short page or when `maxPullRequests`
+     * is reached.
+     *
+     * GitHub returns `merged_at: null` for both closed-without-merge and
+     * still-open PRs; we normalise the merged-state into the `state`
+     * enum: `'merged' | 'closed' | 'open'`.
+     *
+     * @param opts.maxPullRequests - default 100
+     * @param opts.state - 'open' | 'closed' | 'all' (default 'all')
+     * @param opts.since - ISO 8601; only PRs updated at/after included
+     */
+    async listPullRequests(
+        repoFullName: string,
+        opts: ListPullRequestsOptions = {},
+    ): Promise<RepoPullRequest[]> {
+        const max     = opts.maxPullRequests ?? 100;
+        const state   = opts.state ?? 'all';
+        const since   = opts.since;
+        const perPage = 100;
+
+        const out: RepoPullRequest[] = [];
+        for (let page = 1; out.length < max; page++) {
+            const qs: string[] = [
+                `state=${state}`,
+                `sort=updated`,
+                `direction=desc`,
+                `per_page=${perPage}`,
+                `page=${page}`,
+            ];
+
+            const batch = await this.get<GitHubPullRequestListItem[]>(
+                `/repos/${repoFullName}/pulls?${qs.join('&')}`,
+            );
+
+            if (batch.length === 0) break;
+
+            for (const p of batch) {
+                if (out.length >= max) break;
+                if (since && p.created_at < since) continue;
+                const normalisedState: RepoPullRequest['state'] =
+                    p.merged_at ? 'merged' : p.state;
+                out.push({
+                    number:      p.number,
+                    title:       p.title,
+                    body:        p.body,
+                    createdAt:   p.created_at,
+                    mergedAt:    p.merged_at,
+                    state:       normalisedState,
+                    authorLogin: p.user?.login ?? null,
+                    htmlUrl:     p.html_url,
+                });
+            }
+
             if (batch.length < perPage) break;
         }
 
