@@ -52,4 +52,62 @@ describe('getGitHubAppSecrets', () => {
         expect(out.webhookSecret).toBe('whsec_test');
         expect(Object.isFrozen(out)).toBe(true);
     });
+
+    it('serves the cached value on a second call within TTL', async () => {
+        smMock.on(GetSecretValueCommand).resolves({ SecretString: VALID_JSON });
+        const cfg = stubConfig();
+        await getGitHubAppSecrets(cfg);
+        await getGitHubAppSecrets(cfg);
+        expect(smMock.commandCalls(GetSecretValueCommand)).toHaveLength(1);
+    });
+
+    it('re-fetches after the TTL expires', async () => {
+        jest.useFakeTimers();
+        try {
+            jest.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+            smMock.on(GetSecretValueCommand).resolves({ SecretString: VALID_JSON });
+            const cfg = stubConfig();
+            await getGitHubAppSecrets(cfg);
+
+            jest.setSystemTime(new Date('2026-01-01T00:11:00Z'));
+            await getGitHubAppSecrets(cfg);
+
+            expect(smMock.commandCalls(GetSecretValueCommand)).toHaveLength(2);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('throws when SecretString is missing', async () => {
+        smMock.on(GetSecretValueCommand).resolves({});
+        await expect(getGitHubAppSecrets(stubConfig())).rejects.toThrow(/has no value/);
+    });
+
+    it('throws on invalid JSON', async () => {
+        smMock.on(GetSecretValueCommand).resolves({ SecretString: 'not json' });
+        await expect(getGitHubAppSecrets(stubConfig())).rejects.toThrow(/is not valid JSON/);
+    });
+
+    it('throws when a required field is missing', async () => {
+        smMock.on(GetSecretValueCommand).resolves({
+            SecretString: JSON.stringify({ appId: '1', privateKeyPem: 'x' }),
+        });
+        await expect(getGitHubAppSecrets(stubConfig())).rejects.toThrow(/missing one of/);
+    });
+
+    it('accepts appId as a number and coerces to string', async () => {
+        smMock.on(GetSecretValueCommand).resolves({
+            SecretString: JSON.stringify({ appId: 123, privateKeyPem: 'x', webhookSecret: 'y' }),
+        });
+        const out = await getGitHubAppSecrets(stubConfig());
+        expect(out.appId).toBe('123');
+    });
+
+    it('__resetGitHubAppSecretsCacheForTests forces a fresh fetch', async () => {
+        smMock.on(GetSecretValueCommand).resolves({ SecretString: VALID_JSON });
+        await getGitHubAppSecrets(stubConfig());
+        __resetGitHubAppSecretsCacheForTests();
+        await getGitHubAppSecrets(stubConfig());
+        expect(smMock.commandCalls(GetSecretValueCommand)).toHaveLength(2);
+    });
 });
