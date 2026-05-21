@@ -31,9 +31,10 @@ function stubConfig(overrides: Partial<Config> = {}): Config {
 }
 
 const VALID_JSON = JSON.stringify({
-    appId:          '123',
-    privateKeyPem:  '-----BEGIN RSA PRIVATE KEY-----\nFAKE\n-----END RSA PRIVATE KEY-----',
-    webhookSecret:  'whsec_test',
+    appId:            '123',
+    privateKeyPem:    '-----BEGIN RSA PRIVATE KEY-----\nFAKE\n-----END RSA PRIVATE KEY-----',
+    webhookSecret:    'whsec_test',
+    internalApiToken: 'internal_test_token',
 });
 
 beforeEach(() => {
@@ -43,14 +44,26 @@ beforeEach(() => {
 });
 
 describe('getGitHubAppSecrets', () => {
-    it('parses a valid JSON secret into a frozen { appId, privateKeyPem, webhookSecret }', async () => {
+    it('parses a valid JSON secret into a frozen { appId, privateKeyPem, webhookSecret, internalApiToken }', async () => {
         smMock.on(GetSecretValueCommand).resolves({ SecretString: VALID_JSON });
         const cfg = stubConfig();
         const out = await getGitHubAppSecrets(cfg);
         expect(out.appId).toBe('123');
         expect(out.privateKeyPem).toContain('BEGIN RSA PRIVATE KEY');
         expect(out.webhookSecret).toBe('whsec_test');
+        expect(out.internalApiToken).toBe('internal_test_token');
         expect(Object.isFrozen(out)).toBe(true);
+    });
+
+    it('throws when internalApiToken is missing', async () => {
+        smMock.on(GetSecretValueCommand).resolves({
+            SecretString: JSON.stringify({
+                appId:         '1',
+                privateKeyPem: 'x',
+                webhookSecret: 'y',
+            }),
+        });
+        await expect(getGitHubAppSecrets(stubConfig())).rejects.toThrow(/internalApiToken/);
     });
 
     it('serves the cached value on a second call within TTL', async () => {
@@ -97,7 +110,7 @@ describe('getGitHubAppSecrets', () => {
 
     it('accepts appId as a number and coerces to string', async () => {
         smMock.on(GetSecretValueCommand).resolves({
-            SecretString: JSON.stringify({ appId: 123, privateKeyPem: 'x', webhookSecret: 'y' }),
+            SecretString: JSON.stringify({ appId: 123, privateKeyPem: 'x', webhookSecret: 'y', internalApiToken: 'z' }),
         });
         const out = await getGitHubAppSecrets(stubConfig());
         expect(out.appId).toBe('123');

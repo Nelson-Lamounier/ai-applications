@@ -10,9 +10,10 @@ import * as oauthLib from '../../src/lib/oauth.js';
 
 const WEBHOOK_SECRET = 'whsec_test';
 const SECRETS_FIXTURE = {
-    appId:         '123',
-    privateKeyPem: '-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----',
-    webhookSecret: WEBHOOK_SECRET,
+    appId:            '123',
+    privateKeyPem:    '-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----',
+    webhookSecret:    WEBHOOK_SECRET,
+    internalApiToken: 'internal_test_token',
 };
 
 function makeRepoMock(overrides: Partial<{

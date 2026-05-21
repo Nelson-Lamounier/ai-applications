@@ -16,9 +16,10 @@ import {
 import type { Config } from './config.js';
 
 export interface GitHubAppSecrets {
-    readonly appId:          string;
-    readonly privateKeyPem:  string;
-    readonly webhookSecret:  string;
+    readonly appId:            string;
+    readonly privateKeyPem:    string;
+    readonly webhookSecret:    string;
+    readonly internalApiToken: string;
 }
 
 const TTL_MS = 10 * 60 * 1000; // 10 min
@@ -53,12 +54,13 @@ function parseAndValidate(raw: string, arn: string): GitHubAppSecrets {
     const o = json as Record<string, unknown>;
     const appIdRaw       = o['appId'];
     const appId          = (typeof appIdRaw === 'string' || typeof appIdRaw === 'number') ? String(appIdRaw) : undefined;
-    const privateKeyPem  = typeof o['privateKeyPem'] === 'string' && o['privateKeyPem'].length > 0 ? o['privateKeyPem'] : undefined;
-    const webhookSecret  = typeof o['webhookSecret'] === 'string' && o['webhookSecret'].length > 0 ? o['webhookSecret'] : undefined;
-    if (!appId || !privateKeyPem || !webhookSecret) {
-        throw new Error(`[github-app] Secret ${arn} missing one of: appId, privateKeyPem, webhookSecret`);
+    const privateKeyPem    = typeof o['privateKeyPem']    === 'string' && (o['privateKeyPem']    as string).length > 0 ? o['privateKeyPem']    as string : undefined;
+    const webhookSecret    = typeof o['webhookSecret']    === 'string' && (o['webhookSecret']    as string).length > 0 ? o['webhookSecret']    as string : undefined;
+    const internalApiToken = typeof o['internalApiToken'] === 'string' && (o['internalApiToken'] as string).length > 0 ? o['internalApiToken'] as string : undefined;
+    if (!appId || !privateKeyPem || !webhookSecret || !internalApiToken) {
+        throw new Error(`[github-app] Secret ${arn} missing one of: appId, privateKeyPem, webhookSecret, internalApiToken`);
     }
-    return Object.freeze({ appId, privateKeyPem, webhookSecret });
+    return Object.freeze({ appId, privateKeyPem, webhookSecret, internalApiToken });
 }
 
 /** Test seam — clears the cache. */

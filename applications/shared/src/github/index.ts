@@ -10,3 +10,5 @@
 export { signGitHubAppJwt, GitHubAppJwtError } from './appJwt.js';
 export type { AppJwtOptions } from './appJwt.js';
 export { verifyWebhookSignature } from './webhookSignature.js';
+export { revokeInstallation } from './revokeInstallation.js';
+export type { RevokeInstallationOpts, RevokeInstallationResult } from './revokeInstallation.js';
