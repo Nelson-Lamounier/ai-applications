@@ -57,6 +57,7 @@ scripts/local/diagnostics/.troubleshoot-logs/*
 
 # ── Generated Docs & Reports ────────────────────────────────────────────────
 docs/
+!applications/**/docs/
 security-reports/
 
 # ── AI Tooling ───────────────────────────────────────────────────────────────
