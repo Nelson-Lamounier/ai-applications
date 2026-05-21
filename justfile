@@ -185,6 +185,18 @@ test-projects-migration:
 test-projects-clustering:
     npx tsx scripts/test-projects-clustering.ts
 
+# Run the Phase 2B project-case-study E2E test against a local Postgres.
+# Same prerequisites as test-projects-clustering. Injects mocked agent +
+# commit loader + in-memory semantic cache so no AWS or GitHub
+# credentials are required.
+#
+# Usage:
+#   just test-projects-case-study
+#   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres PGSSL=disable just test-projects-case-study
+[group('rds')]
+test-projects-case-study:
+    npx tsx scripts/test-projects-case-study.ts
+
 # Build the job-strategist Docker image locally.
 [group('strategist')]
 build-strategist:
