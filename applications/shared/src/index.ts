@@ -358,3 +358,44 @@ export type {
     SemanticCacheGetResult,
     SemanticCachePutInput,
 } from './cache/index.js';
+
+// ─── Feature Flags (app_config-backed) ───────────────────────────────────────
+export {
+    isFeatureEnabled,
+    clearFeatureFlagCache,
+    upsertFeatureFlag,
+} from './config/feature-flags.js';
+
+// ─── Projects domain (multi-repo case-study) ─────────────────────────────────
+export {
+    PROJECT_COMPONENT_KINDS,
+    ProjectComponentKindSchema,
+    ClusteringComponentSchema,
+    ClusteringProposalSchema,
+    ClusteringResultSchema,
+    buildClusteringSignals,
+    extractNamingPrefixes,
+    extractSharedTechStack,
+    extractSharedTopics,
+    extractEmbeddingPairs,
+    serialiseSignalsForPrompt,
+    bedrockClusteringAgent,
+    loadRepoDigests,
+    loadDescriptionEmbeddings,
+    persistClusteringResult,
+    runClusteringOrchestration,
+} from './projects/index.js';
+export type {
+    ProjectComponentKind,
+    ClusteringComponent,
+    ClusteringProposal,
+    ClusteringResult,
+    ClusteringSignals,
+    RepoClusteringDigest,
+    DescriptionEmbedding,
+    ClusteringAgent,
+    PersistClusteringInput,
+    PersistClusteringSummary,
+    RunClusteringInput,
+    RunClusteringOutput,
+} from './projects/index.js';
