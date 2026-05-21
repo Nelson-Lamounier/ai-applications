@@ -54,3 +54,56 @@ export type {
     RunClusteringInput,
     RunClusteringOutput,
 } from './clustering-orchestrator.js';
+
+// ─── Case study (Phase 2B) ──────────────────────────────────────────────────
+export {
+    SourceSignalSchema,
+    CaseStudySchema,
+    PROJECT_TYPES,
+    PROJECT_STATUS,
+    RESUME_BULLET_ANGLES,
+    STACK_CATEGORIES,
+    TEST_COVERAGE_SIGNALS,
+    CI_MATURITY,
+    DOC_DENSITY,
+} from './case-study-types.js';
+export type {
+    SourceSignal,
+    CaseStudy,
+    CaseStudyContext,
+    StackItem,
+    Decision,
+    Highlight,
+    Challenge,
+    ResumeBulletSet,
+    DepthMarkers,
+    Architecture,
+} from './case-study-types.js';
+
+export {
+    computeContentHash,
+    mergeGroundingResult,
+    flattenSignalToContext,
+} from './source-signals.js';
+
+export { bedrockCaseStudyAgent } from './case-study-agent.js';
+export type { CaseStudyAgent } from './case-study-agent.js';
+
+export { loadCaseStudyContext } from './case-study-loader.js';
+export type {
+    CaseStudyCommit,
+    CommitLoader,
+    LoadCaseStudyContextResult,
+} from './case-study-loader.js';
+
+export { persistCaseStudy } from './case-study-persistence.js';
+export type {
+    PersistCaseStudyInput,
+    PersistCaseStudySummary,
+} from './case-study-persistence.js';
+
+export { runCaseStudyOrchestration } from './case-study-orchestrator.js';
+export type {
+    RunCaseStudyInput,
+    RunCaseStudyOutput,
+} from './case-study-orchestrator.js';
