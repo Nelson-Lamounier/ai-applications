@@ -163,6 +163,17 @@ test-strategist-integration *ARGS:
     for arg in {{ARGS}}; do export "$arg"; done
     npx tsx scripts/test-strategist-integration.ts
 
+# Run the projects-migration (030/031) E2E test against a local Postgres.
+# Creates and drops an ephemeral `tucaken_test_<ts>` database; requires the
+# connecting role to have CREATEDB and a Postgres with pgvector available.
+#
+# Usage:
+#   just test-projects-migration                                    # uses PGHOST/PGUSER/PGPASSWORD from env
+#   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres PGSSL=disable just test-projects-migration
+[group('rds')]
+test-projects-migration:
+    npx tsx scripts/test-projects-migration.ts
+
 # Build the job-strategist Docker image locally.
 [group('strategist')]
 build-strategist:
