@@ -130,7 +130,8 @@ export type AgentName =
     | 'research' | 'writer' | 'qa'
     | 'strategist-research' | 'strategist-writer' | 'strategist-coach'
     | 'resume-builder'
-    | 'project-clustering';
+    | 'project-clustering'
+    | 'project-case-study';
 
 /**
  * Model-agnostic configuration for a single agent.
