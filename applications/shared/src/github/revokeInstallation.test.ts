@@ -31,4 +31,80 @@ describe('revokeInstallation', () => {
         expect(headers['X-GitHub-Api-Version']).toBe('2022-11-28');
         expect(headers['User-Agent']).toBe('ai-applications/oauth-revoke');
     });
+
+    it('404 → { ok: true, status: 404, alreadyDeleted: true }', async () => {
+        const f = fakeFetch({ status: 404, bodyText: 'Not Found' });
+        const res = await revokeInstallation({
+            installationId: 'gone',
+            jwt:            'x',
+            fetch:          f as unknown as typeof globalThis.fetch,
+        });
+        expect(res).toEqual({ ok: true, status: 404, alreadyDeleted: true });
+    });
+
+    it('403 → { ok: false, status: 403, body: <truncated text> }', async () => {
+        const f = fakeFetch({ status: 403, bodyText: 'Forbidden because reasons' });
+        const res = await revokeInstallation({
+            installationId: 'x',
+            jwt:            'x',
+            fetch:          f as unknown as typeof globalThis.fetch,
+        });
+        expect(res).toEqual({ ok: false, status: 403, body: 'Forbidden because reasons' });
+    });
+
+    it('500 → { ok: false, status: 500, body }', async () => {
+        const f = fakeFetch({ status: 500, bodyText: 'boom' });
+        const res = await revokeInstallation({
+            installationId: 'x',
+            jwt:            'x',
+            fetch:          f as unknown as typeof globalThis.fetch,
+        });
+        expect(res).toEqual({ ok: false, status: 500, body: 'boom' });
+    });
+
+    it('truncates long error bodies to 500 chars', async () => {
+        const big = 'x'.repeat(2000);
+        const f = fakeFetch({ status: 502, bodyText: big });
+        const res = await revokeInstallation({
+            installationId: 'x',
+            jwt:            'x',
+            fetch:          f as unknown as typeof globalThis.fetch,
+        });
+        expect(res.ok).toBe(false);
+        if (!res.ok) {
+            expect(res.body.length).toBe(500);
+            expect(res.body).toBe('x'.repeat(500));
+        }
+    });
+
+    it('honors a custom githubBaseUrl', async () => {
+        const f = fakeFetch({ status: 204 });
+        await revokeInstallation({
+            installationId: 'inst-1',
+            jwt:            'x',
+            fetch:          f as unknown as typeof globalThis.fetch,
+            githubBaseUrl:  'https://github.test',
+        });
+        const [url] = f.mock.calls[0]!;
+        expect(String(url)).toBe('https://github.test/app/installations/inst-1');
+    });
+
+    it('aborts on timeout', async () => {
+        const slowFetch = jest.fn((_url: string | URL | Request, init?: RequestInit) => {
+            return new Promise<Response>((_, reject) => {
+                init?.signal?.addEventListener('abort', () => {
+                    const err = new Error('aborted') as Error & { name: string };
+                    err.name = 'AbortError';
+                    reject(err);
+                });
+            });
+        });
+
+        await expect(revokeInstallation({
+            installationId: 'x',
+            jwt:            'x',
+            fetch:          slowFetch as unknown as typeof globalThis.fetch,
+            timeoutMs:      50,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+    });
 });
