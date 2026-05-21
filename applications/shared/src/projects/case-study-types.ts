@@ -52,6 +52,19 @@ export const SourceSignalSchema = z.object({
         authoredAt:   z.string(),
         message:      z.string(),
     }).strict()).default([]),
+    /**
+     * Pull-request evidence. Populated when the orchestrator was given a
+     * `PullRequestLoader` (GitHubAdapter.listPullRequests in production).
+     * The number is the public `#<n>` reference; `htmlUrl` is the
+     * recruiter-visible deep link.
+     */
+    pulls: z.array(z.object({
+        repoFullName: z.string(),
+        number:       z.number().int().positive(),
+        title:        z.string(),
+        htmlUrl:      z.string().url(),
+        mergedAt:     z.string().nullable(),
+    }).strict()).default([]),
     files: z.array(z.object({
         repoFullName: z.string(),
         path:         z.string(),
@@ -199,6 +212,23 @@ export interface CaseStudyContext {
         readonly authoredAt:   string;
         readonly authorName:   string;
         readonly message:      string;
+    }>;
+
+    /**
+     * Recent pull requests across member repos, capped by
+     * `MAX_PULLS_PER_REPO` (default 25). Populated when the orchestrator
+     * was given a `PullRequestLoader`. Absent for cases where the
+     * adapter cannot reach the PR endpoint (e.g. forks with limited
+     * token scope).
+     */
+    readonly pulls: ReadonlyArray<{
+        readonly repoFullName: string;
+        readonly number:       number;
+        readonly title:        string;
+        readonly body:         string | null;
+        readonly state:        'open' | 'closed' | 'merged';
+        readonly mergedAt:     string | null;
+        readonly htmlUrl:      string;
     }>;
 
     /**

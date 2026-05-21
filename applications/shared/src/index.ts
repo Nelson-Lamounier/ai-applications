@@ -213,7 +213,9 @@ export type {
     IRepoAdapter,
     RepoFile,
     RepoCommit,
+    RepoPullRequest,
     ListCommitsOptions,
+    ListPullRequestsOptions,
 } from './ingestion/interfaces/IRepoAdapter.js';
 export type { IFileFilter }         from './ingestion/interfaces/IFileFilter.js';
 export type { IChunker }            from './ingestion/interfaces/IChunker.js';
@@ -428,7 +430,9 @@ export type {
     Architecture,
     CaseStudyAgent,
     CaseStudyCommit,
+    CaseStudyPullRequest,
     CommitLoader,
+    PullRequestLoader,
     LoadCaseStudyContextResult,
     PersistCaseStudyInput,
     PersistCaseStudySummary,

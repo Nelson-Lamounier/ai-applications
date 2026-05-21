@@ -34,6 +34,7 @@ import {
     loadCaseStudyContext,
     type CommitLoader,
     type LoadCaseStudyContextResult,
+    type PullRequestLoader,
 } from './case-study-loader.js';
 import {
     persistCaseStudy,
@@ -57,8 +58,15 @@ export interface RunCaseStudyInput {
     readonly agent:         CaseStudyAgent;
     readonly verifier?:     IGroundingVerifier;
     readonly cache?:        ISemanticCache;
-    readonly commitLoader:  CommitLoader;
-    readonly ctx:           BasePipelineContext;
+    readonly commitLoader:        CommitLoader;
+    /**
+     * Optional. When provided, the case-study agent receives recent PRs
+     * as additional evidence and can cite them in source_signals.pulls.
+     * Phase 3c wires this through GitHubAdapter.listPullRequests; pre-3c
+     * deployments simply omit it.
+     */
+    readonly pullRequestLoader?: PullRequestLoader;
+    readonly ctx:               BasePipelineContext;
 }
 
 export interface RunCaseStudyOutput {
@@ -144,7 +152,12 @@ export async function runCaseStudyOrchestration(
     pool: Pool,
     input: RunCaseStudyInput,
 ): Promise<RunCaseStudyOutput> {
-    const contextLoaded = await loadCaseStudyContext(pool, input.projectId, input.commitLoader);
+    const contextLoaded = await loadCaseStudyContext(
+        pool,
+        input.projectId,
+        input.commitLoader,
+        input.pullRequestLoader,
+    );
     const inputHash     = computeInputHash(contextLoaded);
 
     const cacheScope = `${CACHE_SCOPE_PREFIX}:${contextLoaded.userId}:${input.projectId}`;

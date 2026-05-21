@@ -27,6 +27,17 @@ export interface CaseStudyCommit {
     readonly message:    string;
 }
 
+/** Minimal pull-request shape — matches `RepoPullRequest`. */
+export interface CaseStudyPullRequest {
+    readonly number:    number;
+    readonly title:     string;
+    readonly body:      string | null;
+    readonly state:     'open' | 'closed' | 'merged';
+    readonly mergedAt:  string | null;
+    readonly createdAt: string;
+    readonly htmlUrl:   string;
+}
+
 /**
  * The K8s entrypoint provides a real GitHub-backed loader; tests inject
  * an in-memory map. Signature is intentionally narrow so we never tie
@@ -34,6 +45,15 @@ export interface CaseStudyCommit {
  */
 export interface CommitLoader {
     list(repoFullName: string, options: { maxCommits: number }): Promise<readonly CaseStudyCommit[]>;
+}
+
+/**
+ * Optional. When supplied, the loader pulls PR metadata alongside commits
+ * so the agent can cite PR numbers + titles in source_signals. Absence
+ * simply leaves `context.pulls` empty.
+ */
+export interface PullRequestLoader {
+    list(repoFullName: string, options: { maxPullRequests: number }): Promise<readonly CaseStudyPullRequest[]>;
 }
 
 interface ProjectRow {
@@ -71,6 +91,8 @@ interface KbRow {
 const KB_CHUNK_CAP = 24;
 /** Per-repo commit cap. Multiplied by the number of repos in the project. */
 const COMMITS_PER_REPO = 50;
+/** Per-repo PR cap. Multiplied by the number of repos in the project. */
+const PULLS_PER_REPO = 25;
 
 export interface LoadCaseStudyContextResult {
     readonly userId:  string;
@@ -81,6 +103,7 @@ export async function loadCaseStudyContext(
     pool: Pool,
     projectId: string,
     commitLoader: CommitLoader,
+    pullRequestLoader?: PullRequestLoader,
 ): Promise<LoadCaseStudyContextResult> {
     const project = await pool.query<ProjectRow>(
         `SELECT id, user_id, name, tagline, pitch, user_overrides
@@ -153,6 +176,38 @@ export async function loadCaseStudyContext(
     // Most-recent first across the merged list.
     commits.sort((a, b) => b.authoredAt.localeCompare(a.authoredAt));
 
+    const pulls: CaseStudyContext['pulls'][number][] = [];
+    if (pullRequestLoader) {
+        for (const repo of repos) {
+            // Per-repo failures must not nuke the whole context — PR
+            // listing requires extra GitHub scope (`pull_requests:read`)
+            // which a freshly-connected installation may not yet grant.
+            let repoPulls: readonly CaseStudyPullRequest[] = [];
+            try {
+                repoPulls = await pullRequestLoader.list(repo.full_name, { maxPullRequests: PULLS_PER_REPO });
+            } catch (err) {
+                console.warn(`[case-study-loader] PR listing failed for ${repo.full_name}; continuing without PR evidence`, err);
+            }
+            for (const p of repoPulls) {
+                pulls.push({
+                    repoFullName: repo.full_name,
+                    number:       p.number,
+                    title:        p.title,
+                    body:         p.body,
+                    state:        p.state,
+                    mergedAt:     p.mergedAt,
+                    htmlUrl:      p.htmlUrl,
+                });
+            }
+        }
+        // Newest first across the merged list — mergedAt for merged PRs,
+        // createdAt is a stable fallback for open ones.
+        pulls.sort((a, b) =>
+            (b.mergedAt ?? '').localeCompare(a.mergedAt ?? '')
+            || b.number - a.number,
+        );
+    }
+
     return {
         userId: p.user_id,
         context: {
@@ -171,6 +226,7 @@ export async function loadCaseStudyContext(
                 defaultBranch:    r.default_branch,
             })),
             commits,
+            pulls,
             kbChunks: kb.map((row) => ({
                 repoFullName: row.repo_full_name,
                 filePath:     row.file_path,

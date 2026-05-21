@@ -92,7 +92,9 @@ export type { CaseStudyAgent } from './case-study-agent.js';
 export { loadCaseStudyContext } from './case-study-loader.js';
 export type {
     CaseStudyCommit,
+    CaseStudyPullRequest,
     CommitLoader,
+    PullRequestLoader,
     LoadCaseStudyContextResult,
 } from './case-study-loader.js';
 

@@ -53,6 +53,7 @@ export function computeContentHash(
     }
     h.update(canonicalString({
         commits: signals.commits.map((c) => ({ repo: c.repoFullName, sha: c.sha })),
+        pulls:   signals.pulls.map((p) => ({ repo: p.repoFullName, number: p.number })),
         files:   signals.files.map((f) => ({ repo: f.repoFullName, path: f.path })),
     }));
     return h.digest('hex');
@@ -81,6 +82,7 @@ export function mergeGroundingResult(
 export function flattenSignalToContext(signal: SourceSignal): readonly string[] {
     return [
         ...signal.commits.map((c) => `[${c.sha.slice(0, 8)} ${c.repoFullName}] ${c.message}`),
-        ...signal.files.map((f) => `[${f.repoFullName}:${f.path}]`),
+        ...signal.pulls.map((p)   => `[PR #${p.number} ${p.repoFullName}] ${p.title}`),
+        ...signal.files.map((f)   => `[${f.repoFullName}:${f.path}]`),
     ];
 }
