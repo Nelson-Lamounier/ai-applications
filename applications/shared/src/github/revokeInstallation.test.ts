@@ -4,7 +4,10 @@ import { revokeInstallation } from './revokeInstallation.js';
 
 function fakeFetch(response: { status: number; bodyText?: string }) {
     return jest.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
-        return new Response(response.bodyText ?? '', { status: response.status }) as Response;
+        // 204 (and other null-body statuses) disallow a body in the Response constructor.
+        const nullBodyStatus = response.status === 204 || response.status === 205 || response.status === 304;
+        const body = nullBodyStatus ? null : (response.bodyText ?? '');
+        return new Response(body, { status: response.status }) as Response;
     });
 }
 
