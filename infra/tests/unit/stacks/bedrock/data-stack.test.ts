@@ -225,7 +225,7 @@ describe('BedrockDataStack', () => {
     });
 
     describe('OAuth token envelope encryption', () => {
-        it('creates a KMS key with rotation, RETAIN policy, and the OAuth alias', () => {
+        it('should create a KMS key with rotation, RETAIN policy, and the OAuth alias', () => {
             const { template } = createDataStack();
             template.hasResourceProperties('AWS::KMS::Key', {
                 EnableKeyRotation: true,
@@ -237,7 +237,7 @@ describe('BedrockDataStack', () => {
             });
         });
 
-        it('retains the CMK on stack destroy', () => {
+        it('should retain the CMK on stack destroy', () => {
             const { template } = createDataStack();
             template.hasResource('AWS::KMS::Key', {
                 Properties: { Description: 'Envelope encryption for oauth_connections.access_token' },
@@ -246,7 +246,7 @@ describe('BedrockDataStack', () => {
             });
         });
 
-        it('publishes the CMK ARN to SSM at /oauth/token-encryption-key-arn', () => {
+        it('should publish the CMK ARN to SSM at /oauth/token-encryption-key-arn', () => {
             const { template } = createDataStack();
             template.hasResourceProperties('AWS::SSM::Parameter', {
                 Name: '/oauth/token-encryption-key-arn',
@@ -254,7 +254,7 @@ describe('BedrockDataStack', () => {
             });
         });
 
-        it('exports OAuthTokenKeyArn as a stack output', () => {
+        it('should export OAuthTokenKeyArn as a stack output', () => {
             const { template } = createDataStack();
             template.hasOutput('OAuthTokenKeyArn', {
                 Export: { Name: Match.stringLikeRegexp('.*-OAuthTokenKeyArn$') },
