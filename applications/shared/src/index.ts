@@ -314,8 +314,19 @@ export { createKmsEnvelope, KmsEnvelopeError } from './crypto/index.js';
 export type { KmsEnvelope, EncryptedPayload } from './crypto/index.js';
 
 // ─── GitHub App Helpers ──────────────────────────────────────────────────────
-export { signGitHubAppJwt, GitHubAppJwtError, verifyWebhookSignature, revokeInstallation } from './github/index.js';
-export type { AppJwtOptions, RevokeInstallationOpts, RevokeInstallationResult } from './github/index.js';
+export {
+    signGitHubAppJwt, GitHubAppJwtError,
+    verifyWebhookSignature,
+    revokeInstallation,
+    mintInstallationToken, MintInstallationTokenError,
+    createInstallationTokenProvider,
+} from './github/index.js';
+export type {
+    AppJwtOptions,
+    RevokeInstallationOpts, RevokeInstallationResult,
+    MintInstallationTokenOpts, InstallationToken,
+    InstallationTokenProviderOpts, GitHubTokenProvider,
+} from './github/index.js';
 
 // ─── Retrieval (Reranking + pgvector) ────────────────────────────────────────
 export type {
