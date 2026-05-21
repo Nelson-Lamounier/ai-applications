@@ -12,6 +12,7 @@
  * Writes only populate envelope columns. Remove fallback after 028.
  */
 
+import { performance } from 'node:perf_hooks';
 import type { Pool } from 'pg';
 import type {
     IOAuthConnectionsRepository,
@@ -19,6 +20,9 @@ import type {
     OAuthConnection,
 } from '../interfaces/IOAuthConnectionsRepository.js';
 import type { KmsEnvelope } from '../../crypto/index.js';
+import { IntegrityError } from '../../crypto/index.js';
+import { log } from '../../logger.js';
+import { emitEmfMetric } from '../../emf.js';
 
 interface Row {
     id:                       string;
@@ -47,43 +51,57 @@ export class RdsOAuthConnectionsRepository implements IOAuthConnectionsRepositor
     ) {}
 
     async upsert(c: NewOAuthConnection): Promise<OAuthConnection> {
-        const payload = await this.deps.envelope.encrypt(c.accessToken, {
-            user_id:  c.userId,
-            provider: c.provider,
-        });
+        const start = performance.now();
+        let outcome: 'success' | 'error' = 'success';
+        try {
+            const payload = await this.deps.envelope.encrypt(c.accessToken, {
+                user_id:  c.userId,
+                provider: c.provider,
+            });
 
-        const sql = `
-            INSERT INTO oauth_connections (
-                user_id, provider, provider_user_id, username,
-                access_token_ciphertext, access_token_dek, access_token_iv, access_token_tag,
-                scopes, installation_id
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-            ON CONFLICT (user_id, provider) DO UPDATE SET
-                provider_user_id        = EXCLUDED.provider_user_id,
-                username                = EXCLUDED.username,
-                access_token_ciphertext = EXCLUDED.access_token_ciphertext,
-                access_token_dek        = EXCLUDED.access_token_dek,
-                access_token_iv         = EXCLUDED.access_token_iv,
-                access_token_tag        = EXCLUDED.access_token_tag,
-                scopes                  = EXCLUDED.scopes,
-                installation_id         = EXCLUDED.installation_id,
-                revoked_at              = NULL,
-                suspended_at            = NULL
-            RETURNING *
-        `;
-        const res = await this.deps.pool.query<Row>(sql, [
-            c.userId,
-            c.provider,
-            c.providerUserId,
-            c.username,
-            payload.ciphertext,
-            payload.dek,
-            payload.iv,
-            payload.tag,
-            c.scopes,
-            c.installationId,
-        ]);
-        return this.toModel(res.rows[0]!, c.accessToken);
+            const sql = `
+                INSERT INTO oauth_connections (
+                    user_id, provider, provider_user_id, username,
+                    access_token_ciphertext, access_token_dek, access_token_iv, access_token_tag,
+                    scopes, installation_id
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                ON CONFLICT (user_id, provider) DO UPDATE SET
+                    provider_user_id        = EXCLUDED.provider_user_id,
+                    username                = EXCLUDED.username,
+                    access_token_ciphertext = EXCLUDED.access_token_ciphertext,
+                    access_token_dek        = EXCLUDED.access_token_dek,
+                    access_token_iv         = EXCLUDED.access_token_iv,
+                    access_token_tag        = EXCLUDED.access_token_tag,
+                    scopes                  = EXCLUDED.scopes,
+                    installation_id         = EXCLUDED.installation_id,
+                    revoked_at              = NULL,
+                    suspended_at            = NULL
+                RETURNING *
+            `;
+            const res = await this.deps.pool.query<Row>(sql, [
+                c.userId,
+                c.provider,
+                c.providerUserId,
+                c.username,
+                payload.ciphertext,
+                payload.dek,
+                payload.iv,
+                payload.tag,
+                c.scopes,
+                c.installationId,
+            ]);
+            return this.toModel(res.rows[0]!, c.accessToken);
+        } catch (err) {
+            outcome = 'error';
+            throw err;
+        } finally {
+            log('INFO', 'oauth.token.encrypt', {
+                userId:     c.userId,
+                provider:   c.provider,
+                durationMs: Math.round(performance.now() - start),
+                outcome,
+            });
+        }
     }
 
     async getByUserAndProvider(userId: string, provider: string): Promise<OAuthConnection | null> {
@@ -122,31 +140,56 @@ export class RdsOAuthConnectionsRepository implements IOAuthConnectionsRepositor
         );
     }
 
-    // TODO(PR-2): add `oauth.token.encrypt` / `oauth.token.decrypt` structured
-    // logs and an `OAuthTokenDecryptFailures` CloudWatch metric (spec
-    // Observability section). Wiring lands with the public-api boot-site work.
-    //
     // Transition-window dual-read: prefer envelope columns, fall back to
     // plaintext. Remove the fallback branch after migration 030 (sql/manual).
     private async decryptRow(row: Row): Promise<string> {
-        if (
-            row.access_token_ciphertext &&
-            row.access_token_dek &&
-            row.access_token_iv &&
-            row.access_token_tag
-        ) {
-            return this.deps.envelope.decrypt(
+        const start = performance.now();
+        let outcome: 'success' | 'integrity_error' | 'kms_error' | 'legacy_plaintext' = 'success';
+        let level: 'INFO' | 'ERROR' = 'INFO';
+        try {
+            if (
+                row.access_token_ciphertext &&
+                row.access_token_dek &&
+                row.access_token_iv &&
+                row.access_token_tag
+            ) {
+                return await this.deps.envelope.decrypt(
+                    {
+                        ciphertext: row.access_token_ciphertext,
+                        dek:        row.access_token_dek,
+                        iv:         row.access_token_iv,
+                        tag:        row.access_token_tag,
+                    },
+                    { user_id: row.user_id, provider: row.provider },
+                );
+            }
+            if (row.access_token_enc != null) {
+                outcome = 'legacy_plaintext';
+                return row.access_token_enc;
+            }
+            throw new Error(`oauth_connections row ${row.id} has no token material`);
+        } catch (err) {
+            outcome = err instanceof IntegrityError ? 'integrity_error' : 'kms_error';
+            level = 'ERROR';
+            emitEmfMetric(
+                'Portfolio/OAuth',
+                { Environment: process.env['NODE_ENV'] ?? 'unknown' },
+                [{ name: 'OAuthTokenDecryptFailures', value: 1, unit: 'Count' }],
                 {
-                    ciphertext: row.access_token_ciphertext,
-                    dek:        row.access_token_dek,
-                    iv:         row.access_token_iv,
-                    tag:        row.access_token_tag,
+                    userId:     row.user_id,
+                    provider:   row.provider,
+                    errorClass: err instanceof Error ? err.constructor.name : 'unknown',
                 },
-                { user_id: row.user_id, provider: row.provider },
             );
+            throw err;
+        } finally {
+            log(level, 'oauth.token.decrypt', {
+                userId:     row.user_id,
+                provider:   row.provider,
+                durationMs: Math.round(performance.now() - start),
+                outcome,
+            });
         }
-        if (row.access_token_enc != null) return row.access_token_enc; // TODO remove after 028
-        throw new Error(`oauth_connections row ${row.id} has no token material`);
     }
 
     private toModel(row: Row, plaintext: string): OAuthConnection {

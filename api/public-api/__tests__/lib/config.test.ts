@@ -19,6 +19,7 @@ const VALID_ENV: Record<string, string> = {
   PG_DATABASE: 'platform',
   PG_USER:     'public_api',
   PG_PASSWORD: 'super-secret',
+  OAUTH_TOKEN_KMS_KEY_ARN: 'arn:aws:kms:eu-west-1:123456789012:key/12345678-1234-1234-1234-123456789012',
 };
 
 function setEnv(env: Record<string, string>): void {
@@ -44,6 +45,7 @@ describe('loadConfig()', () => {
     'PORT',
     'BEDROCK_PUBLIC_API_URL',
     'BEDROCK_AUTH_API_URL',
+    'OAUTH_TOKEN_KMS_KEY_ARN',
   ]));
 
   describe('happy path', () => {
@@ -101,6 +103,11 @@ describe('loadConfig()', () => {
       const cfg = loadConfig();
       expect(cfg.bedrockAuthApiUrl).toBe('https://api.example.com/v1/invoke-authenticated');
     });
+
+    it('exposes the ARN on the returned Config when OAUTH_TOKEN_KMS_KEY_ARN is set', () => {
+      const cfg = loadConfig();
+      expect(cfg.oauthTokenKmsKeyArn).toBe('arn:aws:kms:eu-west-1:123456789012:key/12345678-1234-1234-1234-123456789012');
+    });
   });
 
   describe('fail-fast validation', () => {
@@ -127,6 +134,11 @@ describe('loadConfig()', () => {
     it('throws when PG_PASSWORD is missing', () => {
       delete process.env['PG_PASSWORD'];
       expect(() => loadConfig()).toThrow('PG_PASSWORD');
+    });
+
+    it('throws when OAUTH_TOKEN_KMS_KEY_ARN is missing', () => {
+      delete process.env['OAUTH_TOKEN_KMS_KEY_ARN'];
+      expect(() => loadConfig()).toThrow('OAUTH_TOKEN_KMS_KEY_ARN');
     });
 
     it('lists all missing variables in a single error', () => {

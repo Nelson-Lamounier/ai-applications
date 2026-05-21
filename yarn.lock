@@ -5765,7 +5765,9 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@repo/public-api@workspace:api/public-api"
   dependencies:
+    "@aws-sdk/client-kms": "npm:^3.1001.0"
     "@aws-sdk/client-secrets-manager": "npm:^3.758.0"
+    "@bedrock/shared": "workspace:*"
     "@hono/node-server": "npm:^1.14.1"
     "@types/node": "npm:^22.0.0"
     "@types/pg": "npm:^8.20.0"
