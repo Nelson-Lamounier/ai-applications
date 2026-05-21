@@ -32,6 +32,7 @@ import articles from './routes/articles.js';
 import chatbot from './routes/chatbot.js';
 import tags from './routes/tags.js';
 import resumes from './routes/resumes.js';
+import githubWebhook from './routes/github-webhook.js';
 
 const cfg = loadConfig();
 
@@ -66,6 +67,7 @@ app.route('/', articles);
 app.route('/', chatbot);
 app.route('/', tags);
 app.route('/', resumes);
+app.route('/', githubWebhook);
 
 // ---------------------------------------------------------------------------
 // 404 fallback
