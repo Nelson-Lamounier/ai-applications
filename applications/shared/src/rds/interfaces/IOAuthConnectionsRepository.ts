@@ -36,4 +36,10 @@ export interface IOAuthConnectionsRepository {
     getByInstallationId(installationId: string): Promise<OAuthConnection | null>;
     markRevoked(id: string, at: Date): Promise<void>;
     markSuspended(id: string, at: Date): Promise<void>;
+    /**
+     * Plain SQL lookup for `installation_id` — no envelope decryption.
+     * Used by consumers that need the installation reference without
+     * touching the encrypted access token (e.g. ingestion jobs).
+     */
+    getInstallationIdByUserAndProvider(userId: string, provider: string): Promise<string | null>;
 }

@@ -328,3 +328,20 @@ describe('RdsOAuthConnectionsRepository observability', () => {
         expect(decryptLog![2]).toMatchObject({ outcome: 'kms_error' });
     });
 });
+
+describe('RdsOAuthConnectionsRepository.getInstallationIdByUserAndProvider', () => {
+    it('returns installation_id for an existing row', async () => {
+        const pool = fakePool([{ rows: [{ installation_id: 'inst-42' }] }]);
+        const repo = newRepo(pool, fakeEnvelope());
+        const out = await repo.getInstallationIdByUserAndProvider('u1', 'github');
+        expect(out).toBe('inst-42');
+        expect(pool.calls[0]!.sql).toMatch(/SELECT installation_id FROM oauth_connections WHERE user_id = \$1 AND provider = \$2/);
+        expect(pool.calls[0]!.params).toEqual(['u1', 'github']);
+    });
+
+    it('returns null when no row matches', async () => {
+        const pool = fakePool([{ rows: [] }]);
+        const repo = newRepo(pool, fakeEnvelope());
+        expect(await repo.getInstallationIdByUserAndProvider('missing', 'github')).toBeNull();
+    });
+});
