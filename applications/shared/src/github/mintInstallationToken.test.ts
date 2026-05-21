@@ -37,7 +37,51 @@ describe('mintInstallationToken', () => {
         expect(headers['X-GitHub-Api-Version']).toBe('2022-11-28');
         expect(headers['User-Agent']).toBe('ai-applications/installation-token-mint');
     });
-});
 
-// referenced so unused-import lint doesn't trip
-void MintInstallationTokenError;
+    it('403 → throws MintInstallationTokenError with status + body', async () => {
+        const f = fakeFetch({ status: 403, body: 'forbidden' });
+        await expect(mintInstallationToken({
+            installationId: 'x', jwt: 'x',
+            fetch: f as unknown as typeof globalThis.fetch,
+        })).rejects.toMatchObject({ status: 403, body: 'forbidden' });
+    });
+
+    it('500 → throws with status 500', async () => {
+        const f = fakeFetch({ status: 500, body: 'boom' });
+        await expect(mintInstallationToken({
+            installationId: 'x', jwt: 'x',
+            fetch: f as unknown as typeof globalThis.fetch,
+        })).rejects.toMatchObject({ status: 500 });
+    });
+
+    it('honors a custom githubBaseUrl', async () => {
+        const f = fakeFetch({
+            status: 201,
+            body: { token: 't', expires_at: '2026-01-01T01:00:00Z' },
+        });
+        await mintInstallationToken({
+            installationId: 'inst-1', jwt: 'x',
+            fetch:          f as unknown as typeof globalThis.fetch,
+            githubBaseUrl:  'https://github.test',
+        });
+        const [url] = f.mock.calls[0]!;
+        expect(String(url)).toBe('https://github.test/app/installations/inst-1/access_tokens');
+    });
+
+    it('aborts on timeout', async () => {
+        const slowFetch = jest.fn((_url: string | URL | Request, init?: RequestInit) => {
+            return new Promise<Response>((_, reject) => {
+                init?.signal?.addEventListener('abort', () => {
+                    const err = new Error('aborted') as Error & { name: string };
+                    err.name = 'AbortError';
+                    reject(err);
+                });
+            });
+        });
+        await expect(mintInstallationToken({
+            installationId: 'x', jwt: 'x',
+            fetch:          slowFetch as unknown as typeof globalThis.fetch,
+            timeoutMs:      50,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+    });
+});
