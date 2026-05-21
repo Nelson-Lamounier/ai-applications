@@ -50,6 +50,7 @@ import type {
     CaseStudyAgent,
     CaseStudyContext,
     CommitLoader,
+    PullRequestLoader,
 } from '../applications/shared/src/index.js';
 import type {
     ISemanticCache,
@@ -247,6 +248,42 @@ function mockCommitLoader(): CommitLoader {
     };
 }
 
+function mockPullRequestLoader(): PullRequestLoader {
+    return {
+        async list(repoFullName, options) {
+            void options;
+            return [
+                {
+                    number:    42,
+                    title:     `Add grounding verifier (${repoFullName})`,
+                    body:      'Block ungrounded chatbot answers.',
+                    state:     'merged',
+                    mergedAt:  '2025-06-15T11:00:00Z',
+                    createdAt: '2025-06-14T10:00:00Z',
+                    htmlUrl:   `https://github.com/${repoFullName}/pull/42`,
+                },
+                {
+                    number:    51,
+                    title:     `Fix pgvector dim mismatch (${repoFullName})`,
+                    body:      'Pin every embedding column to vector(1024).',
+                    state:     'merged',
+                    mergedAt:  '2025-07-01T11:00:00Z',
+                    createdAt: '2025-06-30T10:00:00Z',
+                    htmlUrl:   `https://github.com/${repoFullName}/pull/51`,
+                },
+            ];
+        },
+    };
+}
+
+function failingPullRequestLoader(): PullRequestLoader {
+    return {
+        async list() {
+            throw new Error('insufficient scope: pull_requests:read missing');
+        },
+    };
+}
+
 function deterministicCaseStudy(context: CaseStudyContext): CaseStudy {
     const apiRepo = context.repositories.find((r) => r.fullName.endsWith('tucaken-api'))!;
     return {
@@ -260,7 +297,7 @@ function deterministicCaseStudy(context: CaseStudyContext): CaseStudy {
                 componentName: 'API',
                 sourceSignals: {
                     commits: [{ repoFullName: apiRepo.fullName, sha: 'a'.repeat(40), authoredAt: '2025-06-01T10:00:00Z', message: 'chore(alice/tucaken-api): initial scaffold' }],
-                    files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
+                    pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
                 },
             },
         ],
@@ -273,7 +310,7 @@ function deterministicCaseStudy(context: CaseStudyContext): CaseStudy {
                 confidence:   'high',
                 sourceSignals: {
                     commits: [{ repoFullName: apiRepo.fullName, sha: 'b'.repeat(40), authoredAt: '2025-06-15T10:00:00Z', message: 'feat(alice/tucaken-api): grounding verifier' }],
-                    files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
+                    pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
                 },
             },
         ],
@@ -283,7 +320,7 @@ function deterministicCaseStudy(context: CaseStudyContext): CaseStudy {
                 description: 'BedrockGroundingVerifier in mode=block on chatbot; mode=flag in case-study so evidence is recorded but not blocked.',
                 sourceSignals: {
                     commits: [{ repoFullName: apiRepo.fullName, sha: 'b'.repeat(40), authoredAt: '2025-06-15T10:00:00Z', message: 'feat(alice/tucaken-api): grounding verifier' }],
-                    files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
+                    pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
                 },
             },
         ],
@@ -293,7 +330,7 @@ function deterministicCaseStudy(context: CaseStudyContext): CaseStudy {
                 solution:      'Pinned vector(1024) across every embedding column and added a dim-asserting migration check.',
                 sourceSignals: {
                     commits: [{ repoFullName: apiRepo.fullName, sha: 'c'.repeat(40), authoredAt: '2025-07-01T10:00:00Z', message: 'fix(alice/tucaken-api): pgvector dim mismatch' }],
-                    files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
+                    pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
                 },
             },
         ],
@@ -462,7 +499,7 @@ async function assertSticky(pool: Pool, seed: Seed): Promise<void> {
                         context:      'x', decision: 'y', consequences: 'z',
                         confidence:   'low',
                         sourceSignals: {
-                            commits: [], files: [],
+                            commits: [], pulls: [], files: [],
                             ungroundedClaims: [], grounding: 'NOT_VERIFIED',
                         },
                     }],
@@ -560,6 +597,114 @@ async function assertCacheHit(pool: Pool, seed: Seed): Promise<void> {
     assert.equal(invocations(), invocationsAfterFirst, 'agent not invoked on cache hit');
 }
 
+// ─── Phase 3c — PR evidence ────────────────────────────────────────────────
+
+async function assertPullRequestEvidence(pool: Pool, seed: Seed): Promise<void> {
+    // Clear any sticky flags + drop the existing case-study children so we
+    // can observe a fresh insertion that includes PR signals.
+    await pool.query(
+        `UPDATE projects SET user_overrides = '{}'::jsonb WHERE id = $1`,
+        [seed.projectId],
+    );
+    await pool.query(`DELETE FROM project_decisions  WHERE project_id = $1`, [seed.projectId]);
+    await pool.query(`DELETE FROM project_highlights WHERE project_id = $1`, [seed.projectId]);
+    await pool.query(`DELETE FROM project_challenges WHERE project_id = $1`, [seed.projectId]);
+
+    // Agent emits a decision that cites a PR by number — mirrors the real
+    // Sonnet output once PR evidence reaches the prompt.
+    const agentWithPullEvidence: CaseStudyAgent = {
+        async invoke(_context, ctx) {
+            const data: CaseStudy = {
+                tagline: 'A grounded multi-repo RAG portfolio platform.',
+                pitch:   'Tucaken pairs an evidence-cited LLM pipeline with a Tailwind UI to surface depth from real code history.',
+                stack: [],
+                decisions: [{
+                    title:        'Grounded answers in chatbot',
+                    context:      'Free-form Bedrock output occasionally invented citations.',
+                    decision:     'Block ungrounded replies via BedrockGroundingVerifier in mode=block.',
+                    consequences: 'Higher latency on the chat path; trustworthy answers.',
+                    confidence:   'high',
+                    sourceSignals: {
+                        commits: [],
+                        pulls: [{
+                            repoFullName: 'alice/tucaken-api',
+                            number:       42,
+                            title:        'Add grounding verifier (alice/tucaken-api)',
+                            htmlUrl:      'https://github.com/alice/tucaken-api/pull/42',
+                            mergedAt:     '2025-06-15T11:00:00Z',
+                        }],
+                        files: [],
+                        ungroundedClaims: [],
+                        grounding: 'NOT_VERIFIED',
+                    },
+                }],
+                highlights: [],
+                challenges: [],
+                depthMarkers: {
+                    hasTests: true, testCoverageSignal: 'moderate', hasCi: true,
+                    ciMaturity: 'deploys_to_prod', documentationDensity: 'docs_dir',
+                    hasDeploymentEvidence: true, deploymentUrl: 'https://example.test',
+                    refactorCount: 3,
+                },
+                architecture: {
+                    diagramFormat: 'mermaid',
+                    diagramSource: 'graph LR\n  A --> B',
+                    nodes: [], edges: [],
+                },
+                resumeBullets: [
+                    { angle: 'backend', bullets: ['Shipped grounded RAG pipeline.'] },
+                ],
+            };
+            return {
+                data, ctx,
+                tokens: { input: 0, output: 0, thinking: 0 },
+                costUsd: 0, durationMs: 0,
+            } as unknown as Awaited<ReturnType<CaseStudyAgent['invoke']>>;
+        },
+    };
+
+    const out = await runCaseStudyOrchestration(pool, {
+        projectId:         seed.projectId,
+        pipelineRunId:     seed.pipelineRunId,
+        model:             'mock',
+        kbTag:             'mock-kb-prs',
+        agent:             agentWithPullEvidence,
+        commitLoader:      mockCommitLoader(),
+        pullRequestLoader: mockPullRequestLoader(),
+        ctx:               ctxFor(seed.pipelineRunId),
+    });
+    assert.equal(out.cacheHit, false);
+    // The orchestrator should have loaded PR rows into the context.
+    assert.ok(out.contextLoaded.context.pulls.length > 0, 'loader populated PR list');
+    const persistedPR = await pool.query<{ source_signals: { pulls: { number: number; htmlUrl: string }[] } }>(
+        `SELECT source_signals FROM project_decisions WHERE project_id = $1`,
+        [seed.projectId],
+    );
+    const decision = persistedPR.rows[0];
+    assert.ok(decision, 'decision row persisted');
+    assert.equal(decision.source_signals.pulls.length, 1, 'PR persisted in source_signals');
+    assert.equal(decision.source_signals.pulls[0].number, 42);
+    assert.match(decision.source_signals.pulls[0].htmlUrl, /\/pull\/42$/);
+}
+
+async function assertPullRequestLoaderFailure(pool: Pool, seed: Seed): Promise<void> {
+    // A failing PR loader (e.g. insufficient OAuth scope) must NOT crash
+    // the run; the case-study should still ship with an empty pulls list.
+    const { agent } = makeMockAgent();
+    const out = await runCaseStudyOrchestration(pool, {
+        projectId:         seed.projectId,
+        pipelineRunId:     seed.pipelineRunId,
+        model:             'mock',
+        kbTag:             'mock-kb-fail',
+        agent,
+        commitLoader:      mockCommitLoader(),
+        pullRequestLoader: failingPullRequestLoader(),
+        ctx:               ctxFor(seed.pipelineRunId),
+    });
+    assert.equal(out.contextLoaded.context.pulls.length, 0, 'failure resulted in empty pulls');
+    assert.ok(out.inputHash, 'orchestration still produced an input hash');
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -609,6 +754,12 @@ async function main(): Promise<void> {
 
             console.log('Asserting semantic-cache hit on second run...');
             await assertCacheHit(pool, seedResult);
+
+            console.log('Asserting PR-evidence wiring (Phase 3c)...');
+            await assertPullRequestEvidence(pool, seedResult);
+
+            console.log('Asserting PR-loader failure is non-fatal...');
+            await assertPullRequestLoaderFailure(pool, seedResult);
 
             console.log('OK — all assertions passed.');
         } finally {
