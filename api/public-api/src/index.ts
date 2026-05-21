@@ -33,6 +33,7 @@ import chatbot from './routes/chatbot.js';
 import tags from './routes/tags.js';
 import resumes from './routes/resumes.js';
 import githubWebhook from './routes/github-webhook.js';
+import internalRevoke from './routes/internal-revoke-github.js';
 
 const cfg = loadConfig();
 
@@ -68,6 +69,7 @@ app.route('/', chatbot);
 app.route('/', tags);
 app.route('/', resumes);
 app.route('/', githubWebhook);
+app.route('/', internalRevoke);
 
 // ---------------------------------------------------------------------------
 // 404 fallback
