@@ -113,22 +113,19 @@ export interface GitHubRepoMeta {
     pushed_at:        string | null;
 }
 
+export type GitHubTokenProvider = () => Promise<string>;
+
 export class GitHubAdapter implements IRepoAdapter {
-    private readonly token: string;
     private readonly apiBase = 'api.github.com';
 
-    constructor(token: string) {
-        this.token = token;
-    }
+    constructor(private readonly tokenProvider: GitHubTokenProvider) {}
 
-    static fromEnvironment(): GitHubAdapter {
-        const token = process.env.GITHUB_TOKEN;
-        if (!token) {
-            throw new Error(
-                'GitHubAdapter: GITHUB_TOKEN environment variable is required',
-            );
-        }
-        return new GitHubAdapter(token);
+    /**
+     * Convenience for callers that have a static token (e.g. smoke
+     * scripts). Wraps the string in a provider that always returns it.
+     */
+    static fromTokenString(token: string): GitHubAdapter {
+        return new GitHubAdapter(async () => token);
     }
 
     // =========================================================================
@@ -339,42 +336,42 @@ export class GitHubAdapter implements IRepoAdapter {
 
     private get<T>(path: string): Promise<T> {
         return new Promise((resolve, reject) => {
-            const options = {
-                hostname: this.apiBase,
-                path,
-                method:   'GET',
-                headers:  {
-                    'Authorization': `Bearer ${this.token}`,
-                    'User-Agent':    'portfolio-ingestion/1.0',
-                    'Accept':        'application/vnd.github+json',
-                    'X-GitHub-Api-Version': '2022-11-28',
-                },
-            };
+            (async () => {
+                const token = await this.tokenProvider();
+                const options = {
+                    hostname: this.apiBase,
+                    path,
+                    method:   'GET',
+                    headers:  {
+                        'Authorization': `Bearer ${token}`,
+                        'User-Agent':    'portfolio-ingestion/1.0',
+                        'Accept':        'application/vnd.github+json',
+                        'X-GitHub-Api-Version': '2022-11-28',
+                    },
+                };
 
-            const req = https.request(options, res => {
-                const chunks: Buffer[] = [];
-
-                res.on('data', (chunk: Buffer) => chunks.push(chunk));
-                res.on('end', () => {
-                    const body = Buffer.concat(chunks).toString('utf-8');
-
-                    if (!res.statusCode || res.statusCode >= 400) {
-                        reject(new Error(
-                            `GitHub API ${path} returned ${res.statusCode}: ${body}`,
-                        ));
-                        return;
-                    }
-
-                    try {
-                        resolve(JSON.parse(body) as T);
-                    } catch {
-                        reject(new Error(`GitHub API ${path}: invalid JSON response`));
-                    }
+                const req = https.request(options, res => {
+                    const chunks: Buffer[] = [];
+                    res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                    res.on('end', () => {
+                        const body = Buffer.concat(chunks).toString('utf-8');
+                        if (!res.statusCode || res.statusCode >= 400) {
+                            reject(new Error(
+                                `GitHub API ${path} returned ${res.statusCode}: ${body}`,
+                            ));
+                            return;
+                        }
+                        try {
+                            resolve(JSON.parse(body) as T);
+                        } catch {
+                            reject(new Error(`GitHub API ${path}: invalid JSON response`));
+                        }
+                    });
                 });
-            });
 
-            req.on('error', reject);
-            req.end();
+                req.on('error', reject);
+                req.end();
+            })().catch(reject);
         });
     }
 }
