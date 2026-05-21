@@ -1,0 +1,99 @@
+// api/public-api/__tests__/routes/internal-revoke-github.test.ts
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { generateKeyPairSync } from 'node:crypto';
+
+import internalRevoke from '../../src/routes/internal-revoke-github.js';
+import { __resetGitHubAppSecretsCacheForTests } from '../../src/lib/githubAppSecrets.js';
+import { __resetOAuthSingletonsForTests } from '../../src/lib/oauth.js';
+import * as ghSecrets from '../../src/lib/githubAppSecrets.js';
+import * as oauthLib from '../../src/lib/oauth.js';
+import * as sharedLib from '@bedrock/shared';
+
+const INTERNAL_TOKEN = 'internal_test_token';
+
+const { privateKey: TEST_PRIVATE_KEY_PEM } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding:  { type: 'spki',  format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+});
+
+const SECRETS_FIXTURE = {
+    appId:            '123',
+    privateKeyPem:    TEST_PRIVATE_KEY_PEM,
+    webhookSecret:    'whsec_test',
+    internalApiToken: INTERNAL_TOKEN,
+};
+
+function makeRepoMock(overrides: Partial<{
+    getByUserAndProvider: (userId: string, provider: string) => Promise<unknown>;
+    markRevoked:          (id: string, at: Date) => Promise<void>;
+}> = {}): {
+    getByUserAndProvider: jest.Mock;
+    markRevoked:          jest.Mock;
+} {
+    const getByUserAndProvider = jest.fn(async (..._args: unknown[]) => ({
+        id: 'row-1', installationId: 'inst-42',
+    }));
+    const markRevoked = jest.fn(async (..._args: unknown[]) => undefined);
+
+    jest.spyOn(oauthLib, 'getOAuthConnectionsRepo').mockReturnValue({
+        getByUserAndProvider: (overrides.getByUserAndProvider ?? getByUserAndProvider) as unknown as never,
+        markRevoked:          (overrides.markRevoked          ?? markRevoked) as unknown as never,
+        markSuspended:        jest.fn() as unknown as never,
+        upsert:               jest.fn() as unknown as never,
+        getByInstallationId:  jest.fn() as unknown as never,
+    });
+    return { getByUserAndProvider, markRevoked };
+}
+
+beforeEach(() => {
+    __resetGitHubAppSecretsCacheForTests();
+    __resetOAuthSingletonsForTests();
+    jest.restoreAllMocks();
+
+    process.env['PG_HOST']                  = 'localhost';
+    process.env['PG_DATABASE']              = 'db';
+    process.env['PG_USER']                  = 'u';
+    process.env['PG_PASSWORD']              = 'p';
+    process.env['OAUTH_TOKEN_KMS_KEY_ARN']  = 'arn:aws:kms:eu-west-1:0:key/abc';
+    process.env['GITHUB_APP_SECRET_ARN']    = 'arn:aws:secretsmanager:eu-west-1:0:secret/gh-app';
+
+    jest.spyOn(ghSecrets, 'getGitHubAppSecrets').mockResolvedValue(SECRETS_FIXTURE);
+    jest.spyOn(sharedLib, 'revokeInstallation').mockResolvedValue({
+        ok: true, status: 204, alreadyDeleted: false,
+    });
+});
+
+async function call(body: object, headers: Record<string, string> = {}): Promise<{ status: number; json: unknown }> {
+    const res = await internalRevoke.request('/internal/revoke-github', {
+        method:  'POST',
+        body:    JSON.stringify(body),
+        headers: {
+            'content-type':  'application/json',
+            'authorization': `Bearer ${INTERNAL_TOKEN}`,
+            ...headers,
+        },
+    });
+    return { status: res.status, json: await res.json().catch(() => null) };
+}
+
+describe('POST /internal/revoke-github', () => {
+    it('happy path: GitHub 204 → 200 ok, markRevoked called, JWT shape verified', async () => {
+        const repo = makeRepoMock();
+        const out = await call({ userId: 'user-uuid-1', reason: 'user_soft_delete' });
+
+        expect(out.status).toBe(200);
+        expect(out.json).toMatchObject({ status: 'ok', alreadyDeleted: false });
+        expect(repo.markRevoked).toHaveBeenCalledTimes(1);
+        expect(repo.markRevoked.mock.calls[0]![0]).toBe('row-1');
+
+        const calls = (sharedLib.revokeInstallation as jest.Mock).mock.calls;
+        expect(calls).toHaveLength(1);
+        const passed = calls[0]![0] as { installationId: string; jwt: string };
+        expect(passed.installationId).toBe('inst-42');
+        const parts = passed.jwt.split('.');
+        expect(parts).toHaveLength(3);
+        const header = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8'));
+        expect(header).toEqual({ alg: 'RS256', typ: 'JWT' });
+    });
+});
