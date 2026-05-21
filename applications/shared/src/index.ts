@@ -349,6 +349,10 @@ export type {
     IGroundingVerifier,
 } from './grounding/index.js';
 
+// ─── AWS — GitHub App Secrets ────────────────────────────────────────────────
+export { getGitHubAppSecrets, __resetGitHubAppSecretsCacheForTests } from './aws/githubAppSecrets.js';
+export type { GitHubAppSecrets, GetGitHubAppSecretsOpts } from './aws/githubAppSecrets.js';
+
 // ─── Cache (Semantic Response Cache) ─────────────────────────────────────────
 export { PgSemanticCache } from './cache/index.js';
 export type {

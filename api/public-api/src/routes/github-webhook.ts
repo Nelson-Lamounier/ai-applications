@@ -14,7 +14,7 @@
 import { Hono } from 'hono';
 import { verifyWebhookSignature, log } from '@bedrock/shared';
 import { loadConfig } from '../lib/config.js';
-import { getGitHubAppSecrets } from '../lib/githubAppSecrets.js';
+import { getGitHubAppSecrets } from '../lib/githubAppSecrets-wrapper.js';
 import { getOAuthConnectionsRepo } from '../lib/oauth.js';
 
 const githubWebhook = new Hono();

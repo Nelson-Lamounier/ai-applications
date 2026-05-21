@@ -3,9 +3,9 @@ import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { generateKeyPairSync } from 'node:crypto';
 
 import internalRevoke from '../../src/routes/internal-revoke-github.js';
-import { __resetGitHubAppSecretsCacheForTests } from '../../src/lib/githubAppSecrets.js';
+import { __resetGitHubAppSecretsCacheForTests } from '../../src/lib/githubAppSecrets-wrapper.js';
 import { __resetOAuthSingletonsForTests } from '../../src/lib/oauth.js';
-import * as ghSecrets from '../../src/lib/githubAppSecrets.js';
+import * as ghSecrets from '../../src/lib/githubAppSecrets-wrapper.js';
 import * as oauthLib from '../../src/lib/oauth.js';
 import * as sharedLib from '@bedrock/shared';
 
