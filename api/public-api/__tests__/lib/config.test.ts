@@ -20,6 +20,7 @@ const VALID_ENV: Record<string, string> = {
   PG_USER:     'public_api',
   PG_PASSWORD: 'super-secret',
   OAUTH_TOKEN_KMS_KEY_ARN: 'arn:aws:kms:eu-west-1:123456789012:key/12345678-1234-1234-1234-123456789012',
+  GITHUB_APP_SECRET_ARN:   'arn:aws:secretsmanager:eu-west-1:123456789012:secret/github-app-test',
 };
 
 function setEnv(env: Record<string, string>): void {
@@ -46,6 +47,7 @@ describe('loadConfig()', () => {
     'BEDROCK_PUBLIC_API_URL',
     'BEDROCK_AUTH_API_URL',
     'OAUTH_TOKEN_KMS_KEY_ARN',
+    'GITHUB_APP_SECRET_ARN',
   ]));
 
   describe('happy path', () => {
@@ -139,6 +141,18 @@ describe('loadConfig()', () => {
     it('throws when OAUTH_TOKEN_KMS_KEY_ARN is missing', () => {
       delete process.env['OAUTH_TOKEN_KMS_KEY_ARN'];
       expect(() => loadConfig()).toThrow('OAUTH_TOKEN_KMS_KEY_ARN');
+    });
+
+    it('throws when GITHUB_APP_SECRET_ARN is missing', () => {
+      delete process.env['GITHUB_APP_SECRET_ARN'];
+      expect(() => loadConfig()).toThrow('GITHUB_APP_SECRET_ARN');
+    });
+
+    it('exposes the GitHub App secret ARN on the returned Config', () => {
+      const cfg = loadConfig();
+      expect(cfg.githubAppSecretArn).toBe(
+        'arn:aws:secretsmanager:eu-west-1:123456789012:secret/github-app-test',
+      );
     });
 
     it('lists all missing variables in a single error', () => {
