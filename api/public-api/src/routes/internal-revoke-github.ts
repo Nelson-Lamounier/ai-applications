@@ -18,7 +18,7 @@ import { Hono } from 'hono';
 import { timingSafeEqual } from 'node:crypto';
 import { signGitHubAppJwt, revokeInstallation, log } from '@bedrock/shared';
 import { loadConfig } from '../lib/config.js';
-import { getGitHubAppSecrets } from '../lib/githubAppSecrets.js';
+import { getGitHubAppSecrets } from '../lib/githubAppSecrets-wrapper.js';
 import { getOAuthConnectionsRepo } from '../lib/oauth.js';
 
 const internalRevoke = new Hono();

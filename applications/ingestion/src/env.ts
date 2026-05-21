@@ -8,7 +8,8 @@ export interface IngestionEnv {
     readonly userId:                   string;
     readonly repoFullName:             string;
     readonly forceReindex:             boolean;
-    readonly githubToken:              string;
+    readonly githubAppSecretArn:       string;
+    readonly awsRegion:                string;
     readonly profileExtractorModelId:  string;
     readonly pg: {
         readonly host:     string;
@@ -30,7 +31,10 @@ export function parseEnv(): IngestionEnv {
         userId:                  required('USER_ID'),
         repoFullName:            required('REPO_FULL_NAME'),
         forceReindex:            (process.env['FORCE_REINDEX'] ?? 'false').toLowerCase() === 'true',
-        githubToken:             required('GITHUB_TOKEN'),
+        githubAppSecretArn:      required('GITHUB_APP_SECRET_ARN'),
+        awsRegion:               process.env['AWS_REGION']
+                              ?? process.env['AWS_DEFAULT_REGION']
+                              ?? 'eu-west-1',
         profileExtractorModelId: process.env['PROFILE_EXTRACTOR_MODEL_ID']
             ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         pg: {

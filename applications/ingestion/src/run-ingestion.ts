@@ -8,7 +8,7 @@
  *
  * Env vars (see env.ts for required set):
  *   USER_ID, REPO_FULL_NAME, FORCE_REINDEX
- *   GITHUB_TOKEN
+ *   GITHUB_APP_SECRET_ARN — Secrets Manager ARN of the GitHub App JSON
  *   PG_HOST, PG_PORT, PG_DATABASE, PG_USER, PG_PASSWORD
  *   AWS_REGION (or AWS_DEFAULT_REGION) — for Bedrock InvokeModel via IRSA
  *   RETRIEVAL_PROBE_DISABLED — set to "1" to skip the best-effort retrieval-quality probe
@@ -38,6 +38,9 @@ import {
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,
     RdsDiagnosticInputsReadRepository,
+    RdsOAuthConnectionsRepository,
+    getGitHubAppSecrets,
+    createInstallationTokenProvider,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -189,7 +192,28 @@ async function main(): Promise<void> {
             : 1024),
         { pool: pgPool, userId: env.userId, repoName: env.repoFullName },
     );
-    const repoAdapter  = new GitHubAdapter(env.githubToken);
+    const oauthRepo = new RdsOAuthConnectionsRepository({ pool: pgPool });
+
+    const installationId = await oauthRepo.getInstallationIdByUserAndProvider(env.userId, 'github');
+    if (!installationId) {
+        throw new Error(
+            `User ${env.userId} has no GitHub App installation linked to their oauth_connections row. ` +
+            `Ingestion cannot run without it. Confirm the user has installed the App in their GitHub account.`,
+        );
+    }
+
+    const secrets = await getGitHubAppSecrets({
+        secretArn: env.githubAppSecretArn,
+        region:    env.awsRegion,
+    });
+
+    const tokenProvider = createInstallationTokenProvider({
+        appId:          secrets.appId,
+        privateKeyPem:  secrets.privateKeyPem,
+        installationId,
+    });
+
+    const repoAdapter  = new GitHubAdapter(tokenProvider);
     const fileFilter   = new FileFilter();
     const chunkerReg   = ChunkerRegistry.withDefaults();
 

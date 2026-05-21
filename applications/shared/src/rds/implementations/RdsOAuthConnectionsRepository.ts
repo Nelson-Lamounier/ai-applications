@@ -45,8 +45,8 @@ interface Row {
 export class RdsOAuthConnectionsRepository implements IOAuthConnectionsRepository {
     constructor(
         private readonly deps: {
-            pool:     Pool;
-            envelope: KmsEnvelope;
+            pool:      Pool;
+            envelope?: KmsEnvelope;
         },
     ) {}
 
@@ -54,6 +54,9 @@ export class RdsOAuthConnectionsRepository implements IOAuthConnectionsRepositor
         const start = performance.now();
         let outcome: 'success' | 'error' = 'success';
         try {
+            if (!this.deps.envelope) {
+                throw new Error('RdsOAuthConnectionsRepository: envelope is required to upsert but was not provided');
+            }
             const payload = await this.deps.envelope.encrypt(c.accessToken, {
                 user_id:  c.userId,
                 provider: c.provider,
@@ -140,6 +143,14 @@ export class RdsOAuthConnectionsRepository implements IOAuthConnectionsRepositor
         );
     }
 
+    async getInstallationIdByUserAndProvider(userId: string, provider: string): Promise<string | null> {
+        const res = await this.deps.pool.query<{ installation_id: string | null }>(
+            `SELECT installation_id FROM oauth_connections WHERE user_id = $1 AND provider = $2`,
+            [userId, provider],
+        );
+        return res.rows[0]?.installation_id ?? null;
+    }
+
     // Transition-window dual-read: prefer envelope columns, fall back to
     // plaintext. Remove the fallback branch after migration 030 (sql/manual).
     private async decryptRow(row: Row): Promise<string> {
@@ -153,6 +164,11 @@ export class RdsOAuthConnectionsRepository implements IOAuthConnectionsRepositor
                 row.access_token_iv &&
                 row.access_token_tag
             ) {
+                if (!this.deps.envelope) {
+                    throw new Error(
+                        `RdsOAuthConnectionsRepository: envelope is required to decrypt row ${row.id} but was not provided`,
+                    );
+                }
                 return await this.deps.envelope.decrypt(
                     {
                         ciphertext: row.access_token_ciphertext,

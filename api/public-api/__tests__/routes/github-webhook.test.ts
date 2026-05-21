@@ -3,9 +3,9 @@ import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { createHmac } from 'node:crypto';
 
 import githubWebhook from '../../src/routes/github-webhook.js';
-import { __resetGitHubAppSecretsCacheForTests } from '../../src/lib/githubAppSecrets.js';
+import { __resetGitHubAppSecretsCacheForTests } from '../../src/lib/githubAppSecrets-wrapper.js';
 import { __resetOAuthSingletonsForTests } from '../../src/lib/oauth.js';
-import * as ghSecrets from '../../src/lib/githubAppSecrets.js';
+import * as ghSecrets from '../../src/lib/githubAppSecrets-wrapper.js';
 import * as oauthLib from '../../src/lib/oauth.js';
 
 const WEBHOOK_SECRET = 'whsec_test';
@@ -35,6 +35,7 @@ function makeRepoMock(overrides: Partial<{
         markSuspended:       (overrides.markSuspended       ?? markSuspended) as unknown as never,
         upsert:              jest.fn() as unknown as never,
         getByUserAndProvider: jest.fn() as unknown as never,
+        getInstallationIdByUserAndProvider: jest.fn() as unknown as never,
     });
     return { markRevoked, markSuspended, getById };
 }
