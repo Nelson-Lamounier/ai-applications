@@ -7,6 +7,7 @@
  */
 
 // This file exports test helpers, not tests.
+/* eslint-disable jest/no-export, jest/require-top-level-describe -- shared assertion-helper module: exports re-usable Template-assertions consumed by *.test.ts files. Not a test runner; the jest plugin's auto-detection treats anything under tests/ as a test file. */
 
 import * as fs from 'fs';
 import * as path from 'path';

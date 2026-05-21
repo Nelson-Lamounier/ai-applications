@@ -9,6 +9,8 @@
  * agent redeployments.
  */
 
+import { NagSuppressions } from 'cdk-nag';
+
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -16,7 +18,6 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 
-import { NagSuppressions } from 'cdk-nag';
 import type { Construct } from 'constructs';
 
 import { ApplicationInferenceProfile } from '../../constructs/observability/application-inference-profile';

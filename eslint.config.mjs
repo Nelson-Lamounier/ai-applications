@@ -14,6 +14,10 @@ export default tseslint.config(
       '**/cdk.out/**',
       'applications/shared/dist/**',
       'applications/*/dist/**',
+      // infra/ has its own eslint config (with jest plugin + import/order rules);
+      // root lints applications/** + bin/** only to avoid double-linting and
+      // cross-config "unknown rule" errors on per-file disable comments.
+      'infra/**',
     ],
   },
   eslint.configs.recommended,
