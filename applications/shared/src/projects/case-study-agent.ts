@@ -62,9 +62,12 @@ be asked about in an interview.
 
 Rules:
   1. Every decision / challenge / stack item MUST cite at least one
-     concrete piece of evidence in \`sourceSignals.commits\` or
-     \`sourceSignals.files\`. If you cannot cite evidence, do not include
-     the row. Loose hand-waving is worse than omitting the section.
+     concrete piece of evidence in \`sourceSignals.commits\`,
+     \`sourceSignals.pulls\`, or \`sourceSignals.files\`. Pull requests
+     are the strongest form of evidence — when one is available for a
+     decision, prefer it over a commit. If you cannot cite evidence,
+     do not include the row. Loose hand-waving is worse than omitting
+     the section.
   2. The \`tagline\` is a single sentence under 200 characters.
      The \`pitch\` is at most three short paragraphs. Both are written
      in the candidate's voice, first-person plural avoided ("I built" /
@@ -111,6 +114,21 @@ const SOURCE_SIGNAL_SCHEMA = {
                 additionalProperties: false,
             },
         },
+        pulls: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    repoFullName: { type: 'string' },
+                    number:       { type: 'integer', minimum: 1 },
+                    title:        { type: 'string' },
+                    htmlUrl:      { type: 'string', format: 'uri' },
+                    mergedAt:     { type: ['string', 'null'] },
+                },
+                required: ['repoFullName', 'number', 'title', 'htmlUrl', 'mergedAt'],
+                additionalProperties: false,
+            },
+        },
         files: {
             type: 'array',
             items: {
@@ -127,7 +145,7 @@ const SOURCE_SIGNAL_SCHEMA = {
         ungroundedClaims: { type: 'array', items: { type: 'string' } },
         grounding:        { type: 'string', enum: ['GROUNDED', 'NOT_GROUNDED', 'NOT_VERIFIED'] },
     },
-    required: ['commits', 'files', 'ungroundedClaims', 'grounding'],
+    required: ['commits', 'pulls', 'files', 'ungroundedClaims', 'grounding'],
     additionalProperties: false,
 };
 
@@ -290,6 +308,7 @@ function buildUserMessage(ctx: CaseStudyContext): string {
         components:   ctx.components,
         repositories: ctx.repositories,
         commits:      ctx.commits,
+        pulls:        ctx.pulls,
     };
     return [
         '<project>',

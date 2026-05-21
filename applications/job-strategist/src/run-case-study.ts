@@ -34,6 +34,7 @@ import {
 import type {
     BasePipelineContext,
     CommitLoader,
+    PullRequestLoader,
 } from '@bedrock/shared';
 
 import { parseCaseStudyEnv } from './env-case-study.js';
@@ -62,8 +63,11 @@ const caseStudyDuration = new Histogram({
     registers:  [obs.registry],
 });
 
-function buildCommitLoader(token: string): CommitLoader {
-    const adapter = new GitHubAdapter(token);
+function buildAdapter(token: string): GitHubAdapter {
+    return new GitHubAdapter(token);
+}
+
+function buildCommitLoader(adapter: GitHubAdapter): CommitLoader {
     return {
         async list(repoFullName, options) {
             const out = await adapter.listCommits(repoFullName, { maxCommits: options.maxCommits });
@@ -72,6 +76,23 @@ function buildCommitLoader(token: string): CommitLoader {
                 authorName: c.authorName,
                 authoredAt: c.authoredAt,
                 message:    c.message,
+            }));
+        },
+    };
+}
+
+function buildPullRequestLoader(adapter: GitHubAdapter): PullRequestLoader {
+    return {
+        async list(repoFullName, options) {
+            const out = await adapter.listPullRequests(repoFullName, { maxPullRequests: options.maxPullRequests });
+            return out.map((p) => ({
+                number:    p.number,
+                title:     p.title,
+                body:      p.body,
+                state:     p.state,
+                mergedAt:  p.mergedAt,
+                createdAt: p.createdAt,
+                htmlUrl:   p.htmlUrl,
             }));
         },
     };
@@ -110,7 +131,9 @@ async function main(): Promise<void> {
             user:     env.pg.user,
             password: env.pg.password,
         });
-        const commitLoader = buildCommitLoader(env.githubToken);
+        const adapter            = buildAdapter(env.githubToken);
+        const commitLoader       = buildCommitLoader(adapter);
+        const pullRequestLoader  = buildPullRequestLoader(adapter);
         const kbTag = `${env.kbVersion}:${env.model}`;
 
         await updatePipelineRun(pool, env.pipelineRunId, 'generating');
@@ -124,6 +147,7 @@ async function main(): Promise<void> {
             verifier,
             cache,
             commitLoader,
+            pullRequestLoader,
             ctx,
         });
 
