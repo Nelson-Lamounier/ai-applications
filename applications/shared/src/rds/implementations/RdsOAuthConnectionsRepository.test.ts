@@ -8,9 +8,12 @@
  * and envelope call shape — no real Postgres, no real KMS.
  */
 
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { RdsOAuthConnectionsRepository } from './RdsOAuthConnectionsRepository.js';
 import type { KmsEnvelope, EncryptedPayload } from '../../crypto/index.js';
+import * as logger from '../../logger.js';
+import * as emf    from '../../emf.js';
+import { IntegrityError } from '../../crypto/index.js';
 
 // ---------- fakes ----------
 
@@ -211,5 +214,117 @@ describe('RdsOAuthConnectionsRepository.markRevoked / markSuspended', () => {
         await repo.markSuspended('row-1', t);
         expect(pool.calls[0]!.sql).toMatch(/UPDATE oauth_connections SET suspended_at = \$2 WHERE id = \$1/);
         expect(pool.calls[0]!.params).toEqual(['row-1', t]);
+    });
+});
+
+describe('RdsOAuthConnectionsRepository observability', () => {
+    let logSpy: ReturnType<typeof jest.spyOn>;
+    let emfSpy: ReturnType<typeof jest.spyOn>;
+
+    beforeEach(() => {
+        logSpy = jest.spyOn(logger, 'log').mockImplementation(() => undefined);
+        emfSpy = jest.spyOn(emf,    'emitEmfMetric').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        logSpy.mockRestore();
+        emfSpy.mockRestore();
+    });
+
+    it('upsert emits oauth.token.encrypt log with outcome=success', async () => {
+        const pool = fakePool([{ rows: [rowFixture()] }]);
+        const env  = fakeEnvelope();
+        const repo = newRepo(pool, env);
+
+        await repo.upsert({
+            userId: 'u1', provider: 'github',
+            providerUserId: '42', username: 'octocat',
+            accessToken: 'tok', scopes: [], installationId: null,
+        });
+
+        const call = logSpy.mock.calls.find((c: unknown[]) => c[1] === 'oauth.token.encrypt');
+        expect(call).toBeDefined();
+        expect(call![0]).toBe('INFO');
+        expect(call![2]).toMatchObject({
+            userId:   'u1',
+            provider: 'github',
+            outcome:  'success',
+        });
+        expect(typeof (call![2] as Record<string, unknown>)['durationMs']).toBe('number');
+    });
+
+    it('getByUserAndProvider on envelope columns emits oauth.token.decrypt log with outcome=success', async () => {
+        const pool = fakePool([{ rows: [rowFixture()] }]);
+        const env  = fakeEnvelope();
+        const repo = newRepo(pool, env);
+
+        await repo.getByUserAndProvider('u1', 'github');
+
+        const call = logSpy.mock.calls.find((c: unknown[]) => c[1] === 'oauth.token.decrypt');
+        expect(call).toBeDefined();
+        expect(call![2]).toMatchObject({ outcome: 'success' });
+    });
+
+    it('legacy plaintext fallback logs outcome=legacy_plaintext at INFO', async () => {
+        const row = rowFixture({
+            access_token_ciphertext: null,
+            access_token_dek:        null,
+            access_token_iv:         null,
+            access_token_tag:        null,
+            access_token_enc:        'legacy',
+        });
+        const pool = fakePool([{ rows: [row] }]);
+        const repo = newRepo(pool, fakeEnvelope());
+
+        await repo.getByUserAndProvider('u1', 'github');
+
+        const call = logSpy.mock.calls.find((c: unknown[]) => c[1] === 'oauth.token.decrypt');
+        expect(call![0]).toBe('INFO');
+        expect(call![2]).toMatchObject({ outcome: 'legacy_plaintext' });
+        expect(emfSpy).not.toHaveBeenCalled();
+    });
+
+    it('decrypt IntegrityError emits ERROR log AND an OAuthTokenDecryptFailures metric', async () => {
+        const row = rowFixture();
+        const pool = fakePool([{ rows: [row] }]);
+        const envBase = fakeEnvelope();
+        const env = {
+            ...envBase,
+            decrypt: jest.fn(async () => { throw new IntegrityError(); }),
+        };
+        const repo = newRepo(pool, env as typeof envBase);
+
+        await expect(repo.getByUserAndProvider('u1', 'github')).rejects.toBeInstanceOf(IntegrityError);
+
+        expect(emfSpy).toHaveBeenCalledTimes(1);
+        const [namespace, dims, metrics, props] = emfSpy.mock.calls[0]! as [string, Record<string, string>, Array<{ name: string; value: number; unit: string }>, Record<string, unknown>];
+        expect(namespace).toBe('Portfolio/OAuth');
+        expect(dims).toEqual({ Environment: expect.any(String) });
+        expect(metrics).toEqual([{ name: 'OAuthTokenDecryptFailures', value: 1, unit: 'Count' }]);
+        expect(props).toMatchObject({ userId: 'u1', provider: 'github', errorClass: 'IntegrityError' });
+
+        const decryptLog = logSpy.mock.calls.find((c: unknown[]) => c[1] === 'oauth.token.decrypt');
+        expect(decryptLog![0]).toBe('ERROR');
+        expect(decryptLog![2]).toMatchObject({ outcome: 'integrity_error' });
+    });
+
+    it('decrypt KMS failure (non-Integrity) emits metric with errorClass and outcome=kms_error', async () => {
+        const row = rowFixture();
+        const pool = fakePool([{ rows: [row] }]);
+        const envBase = fakeEnvelope();
+        const env = {
+            ...envBase,
+            decrypt: jest.fn(async () => { throw new Error('kms boom'); }),
+        };
+        const repo = newRepo(pool, env as typeof envBase);
+
+        await expect(repo.getByUserAndProvider('u1', 'github')).rejects.toThrow(/kms boom/);
+
+        const [, , metrics, props] = emfSpy.mock.calls[0]! as [string, Record<string, string>, Array<{ name: string; value: number; unit: string }>, Record<string, unknown>];
+        expect(metrics[0]!.name).toBe('OAuthTokenDecryptFailures');
+        expect(props).toMatchObject({ errorClass: 'Error' });
+
+        const decryptLog = logSpy.mock.calls.find((c: unknown[]) => c[1] === 'oauth.token.decrypt');
+        expect(decryptLog![2]).toMatchObject({ outcome: 'kms_error' });
     });
 });
