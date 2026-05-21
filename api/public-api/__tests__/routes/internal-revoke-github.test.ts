@@ -96,4 +96,118 @@ describe('POST /internal/revoke-github', () => {
         const header = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8'));
         expect(header).toEqual({ alg: 'RS256', typ: 'JWT' });
     });
+
+    it('GitHub 404 → 200 ok with alreadyDeleted=true; markRevoked still called', async () => {
+        const repo = makeRepoMock();
+        (sharedLib.revokeInstallation as unknown as jest.Mock<() => Promise<unknown>>).mockResolvedValue({
+            ok: true, status: 404, alreadyDeleted: true,
+        });
+        const out = await call({ userId: 'user-uuid-1' });
+        expect(out.status).toBe(200);
+        expect(out.json).toMatchObject({ status: 'ok', alreadyDeleted: true });
+        expect(repo.markRevoked).toHaveBeenCalledTimes(1);
+    });
+
+    it('no oauth_connections row → 200 no_match; no revoke, no mark', async () => {
+        const repo = makeRepoMock({ getByUserAndProvider: async () => null });
+        const out = await call({ userId: 'unknown' });
+        expect(out.status).toBe(200);
+        expect(out.json).toMatchObject({ status: 'no_match' });
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+        expect(sharedLib.revokeInstallation).not.toHaveBeenCalled();
+    });
+
+    it('row with null installationId → 200 no_installation; markRevoked called; revokeInstallation NOT called', async () => {
+        const repo = makeRepoMock({
+            getByUserAndProvider: async () => ({ id: 'row-2', installationId: null }),
+        });
+        const out = await call({ userId: 'user-uuid-2' });
+        expect(out.status).toBe(200);
+        expect(out.json).toMatchObject({ status: 'no_installation' });
+        expect(repo.markRevoked).toHaveBeenCalledTimes(1);
+        expect(sharedLib.revokeInstallation).not.toHaveBeenCalled();
+    });
+
+    it('GitHub 5xx → 500; markRevoked NOT called', async () => {
+        const repo = makeRepoMock();
+        (sharedLib.revokeInstallation as unknown as jest.Mock<() => Promise<unknown>>).mockResolvedValue({
+            ok: false, status: 502, body: 'bad gateway',
+        });
+        const out = await call({ userId: 'user-uuid-1' });
+        expect(out.status).toBe(500);
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+    });
+
+    it('GitHub 403 → 500; markRevoked NOT called', async () => {
+        const repo = makeRepoMock();
+        (sharedLib.revokeInstallation as unknown as jest.Mock<() => Promise<unknown>>).mockResolvedValue({
+            ok: false, status: 403, body: 'forbidden',
+        });
+        const out = await call({ userId: 'user-uuid-1' });
+        expect(out.status).toBe(500);
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+    });
+
+    it('missing Authorization header → 401; no DB lookup attempted', async () => {
+        const repo = makeRepoMock();
+        const res = await internalRevoke.request('/internal/revoke-github', {
+            method: 'POST',
+            body: JSON.stringify({ userId: 'x' }),
+            headers: { 'content-type': 'application/json' },
+        });
+        expect(res.status).toBe(401);
+        expect(repo.getByUserAndProvider).not.toHaveBeenCalled();
+    });
+
+    it('wrong Bearer token → 401', async () => {
+        const repo = makeRepoMock();
+        const out = await call({ userId: 'x' }, { authorization: 'Bearer wrong-token-xyz' });
+        expect(out.status).toBe(401);
+        expect(repo.getByUserAndProvider).not.toHaveBeenCalled();
+    });
+
+    it('same-length but different Bearer token → 401 (timing-safe path)', async () => {
+        const repo = makeRepoMock();
+        const sameLen = 'A'.repeat(INTERNAL_TOKEN.length);
+        const out = await call({ userId: 'x' }, { authorization: `Bearer ${sameLen}` });
+        expect(out.status).toBe(401);
+        expect(repo.getByUserAndProvider).not.toHaveBeenCalled();
+    });
+
+    it('body not JSON → 400', async () => {
+        makeRepoMock();
+        const res = await internalRevoke.request('/internal/revoke-github', {
+            method: 'POST',
+            body: 'not-json',
+            headers: {
+                'content-type':  'application/json',
+                'authorization': `Bearer ${INTERNAL_TOKEN}`,
+            },
+        });
+        expect(res.status).toBe(400);
+    });
+
+    it('body missing userId → 400', async () => {
+        const repo = makeRepoMock();
+        const out = await call({ reason: 'nope' } as unknown as { userId: string });
+        expect(out.status).toBe(400);
+        expect(repo.getByUserAndProvider).not.toHaveBeenCalled();
+    });
+
+    it('reason longer than 200 chars is truncated in the logged payload', async () => {
+        makeRepoMock();
+        const logSpy = jest.spyOn(sharedLib, 'log').mockImplementation(() => undefined);
+        try {
+            const longReason = 'x'.repeat(500);
+            const out = await call({ userId: 'user-uuid-1', reason: longReason });
+            expect(out.status).toBe(200);
+
+            const processedCall = logSpy.mock.calls.find(c => c[1] === 'internal.revoke_github.processed');
+            expect(processedCall).toBeDefined();
+            const payload = processedCall![2] as Record<string, unknown>;
+            expect((payload['reason'] as string).length).toBe(200);
+        } finally {
+            logSpy.mockRestore();
+        }
+    });
 });
