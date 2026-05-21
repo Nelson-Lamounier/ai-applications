@@ -1,6 +1,6 @@
 // applications/shared/src/github/appJwt.test.ts
 import { describe, it, expect, beforeAll } from '@jest/globals';
-import { generateKeyPairSync, constants as cryptoConstants } from 'node:crypto';
+import { generateKeyPairSync, constants as cryptoConstants, createVerify } from 'node:crypto';
 import { signGitHubAppJwt, GitHubAppJwtError } from './appJwt.js';
 
 let privateKeyPem: string;
@@ -39,5 +39,38 @@ describe('signGitHubAppJwt', () => {
             exp: Math.floor(fixedNow / 1000) + 540,
             iss: '42',
         });
+    });
+
+    it('honors a custom ttlSeconds', () => {
+        const fixedNow = 1_700_000_000_000;
+        const token = signGitHubAppJwt({
+            appId:         '99',
+            privateKeyPem,
+            ttlSeconds:    300,
+            now:           () => fixedNow,
+        });
+        const { payload } = decodeJwt(token) as { payload: { iat: number; exp: number } };
+        expect(payload.exp - payload.iat).toBe(360); // 300 + 60 slack
+    });
+
+    it('default ttl is 540 + 60 slack = 600s window', () => {
+        const fixedNow = 1_700_000_000_000;
+        const token = signGitHubAppJwt({ appId: 1, privateKeyPem, now: () => fixedNow });
+        const { payload } = decodeJwt(token) as { payload: { iat: number; exp: number } };
+        expect(payload.exp - payload.iat).toBe(600);
+    });
+
+    it('produces a signature that verifies against the matching public key', () => {
+        const token = signGitHubAppJwt({ appId: 1, privateKeyPem });
+        const { sig, signingInput } = decodeJwt(token);
+        const ok = createVerify('RSA-SHA256')
+            .update(signingInput)
+            .verify({ key: publicKeyPem, padding: cryptoConstants.RSA_PKCS1_PADDING }, sig);
+        expect(ok).toBe(true);
+    });
+
+    it('wraps a malformed private key as GitHubAppJwtError with cause', () => {
+        expect(() => signGitHubAppJwt({ appId: 1, privateKeyPem: 'not-a-pem' }))
+            .toThrow(GitHubAppJwtError);
     });
 });
