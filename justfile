@@ -174,6 +174,17 @@ test-strategist-integration *ARGS:
 test-projects-migration:
     npx tsx scripts/test-projects-migration.ts
 
+# Run the Phase 2A project-clustering E2E test against a local Postgres.
+# Same prerequisites as test-projects-migration. Injects a mocked Bedrock
+# clustering agent so no AWS credentials are required.
+#
+# Usage:
+#   just test-projects-clustering
+#   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres PGSSL=disable just test-projects-clustering
+[group('rds')]
+test-projects-clustering:
+    npx tsx scripts/test-projects-clustering.ts
+
 # Build the job-strategist Docker image locally.
 [group('strategist')]
 build-strategist:
