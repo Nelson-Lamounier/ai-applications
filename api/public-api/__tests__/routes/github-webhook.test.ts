@@ -35,6 +35,7 @@ function makeRepoMock(overrides: Partial<{
         markSuspended:       (overrides.markSuspended       ?? markSuspended) as unknown as never,
         upsert:              jest.fn() as unknown as never,
         getByUserAndProvider: jest.fn() as unknown as never,
+        getInstallationIdByUserAndProvider: jest.fn() as unknown as never,
     });
     return { markRevoked, markSuspended, getById };
 }
