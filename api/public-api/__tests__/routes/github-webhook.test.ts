@@ -83,4 +83,109 @@ describe('POST /webhooks/github', () => {
         expect(repo.markRevoked.mock.calls[0]![0]).toBe('row-1');
         expect(repo.markSuspended).not.toHaveBeenCalled();
     });
+
+    it('valid installation.suspended → 200 ok + markSuspended called', async () => {
+        const repo = makeRepoMock();
+        const out = await post({ action: 'suspended', installation: { id: 42 } });
+        expect(out.status).toBe(200);
+        expect(out.json).toMatchObject({ status: 'ok' });
+        expect(repo.markSuspended).toHaveBeenCalledTimes(1);
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+    });
+
+    it('valid installation.created → 204 ignored, no repo call', async () => {
+        const repo = makeRepoMock();
+        const out = await post({ action: 'created', installation: { id: 42 } });
+        expect(out.status).toBe(204);
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+        expect(repo.markSuspended).not.toHaveBeenCalled();
+    });
+
+    it('event=push with valid signature → 204 ignored', async () => {
+        const repo = makeRepoMock();
+        const raw = Buffer.from(JSON.stringify({ ref: 'main' }), 'utf8');
+        const res = await githubWebhook.request('/webhooks/github', {
+            method: 'POST',
+            body: raw,
+            headers: {
+                'content-type':         'application/json',
+                'x-github-event':       'push',
+                'x-github-delivery':    'delivery-uuid',
+                'x-hub-signature-256':  sign(raw, WEBHOOK_SECRET),
+            },
+        });
+        expect(res.status).toBe(204);
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+    });
+
+    it('bad signature → 401, no repo call', async () => {
+        const repo = makeRepoMock();
+        const raw = Buffer.from(JSON.stringify({ action: 'deleted', installation: { id: 42 } }), 'utf8');
+        const res = await githubWebhook.request('/webhooks/github', {
+            method: 'POST',
+            body: raw,
+            headers: {
+                'content-type':         'application/json',
+                'x-github-event':       'installation',
+                'x-github-delivery':    'delivery-uuid',
+                'x-hub-signature-256':  'sha256=deadbeef',
+            },
+        });
+        expect(res.status).toBe(401);
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+    });
+
+    it('missing X-Hub-Signature-256 → 401', async () => {
+        makeRepoMock();
+        const raw = Buffer.from(JSON.stringify({ action: 'deleted', installation: { id: 42 } }), 'utf8');
+        const res = await githubWebhook.request('/webhooks/github', {
+            method: 'POST',
+            body: raw,
+            headers: {
+                'content-type':      'application/json',
+                'x-github-event':    'installation',
+                'x-github-delivery': 'delivery-uuid',
+            },
+        });
+        expect(res.status).toBe(401);
+    });
+
+    it('body not JSON (signature still valid over raw bytes) → 400', async () => {
+        makeRepoMock();
+        const raw = Buffer.from('not-json', 'utf8');
+        const res = await githubWebhook.request('/webhooks/github', {
+            method: 'POST',
+            body: raw,
+            headers: {
+                'content-type':         'application/json',
+                'x-github-event':       'installation',
+                'x-github-delivery':    'delivery-uuid',
+                'x-hub-signature-256':  sign(raw, WEBHOOK_SECRET),
+            },
+        });
+        expect(res.status).toBe(400);
+    });
+
+    it('installation.deleted with missing installation.id → 400', async () => {
+        const repo = makeRepoMock();
+        const out = await post({ action: 'deleted' });
+        expect(out.status).toBe(400);
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+    });
+
+    it('unknown installation_id → 200 no_match, no repo write', async () => {
+        const repo = makeRepoMock({ getByInstallationId: async () => null });
+        const out = await post({ action: 'deleted', installation: { id: 99999 } });
+        expect(out.status).toBe(200);
+        expect(out.json).toMatchObject({ status: 'no_match' });
+        expect(repo.markRevoked).not.toHaveBeenCalled();
+    });
+
+    it('repo.markRevoked throws → handler propagates → Hono 500', async () => {
+        makeRepoMock({
+            markRevoked: async () => { throw new Error('db down'); },
+        });
+        const out = await post({ action: 'deleted', installation: { id: 42 } });
+        expect(out.status).toBe(500);
+    });
 });
