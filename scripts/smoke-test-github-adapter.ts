@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     if (!token) { console.error('GITHUB_TOKEN required'); process.exit(1); }
     if (!repo)  { console.error('REPO_FULL_NAME required (e.g. nelson-lamounier/cdk-monitoring)'); process.exit(1); }
 
-    const adapter = new GitHubAdapter(token);
+    const adapter = GitHubAdapter.fromTokenString(token);
 
     // ── Step 1: listFiles ────────────────────────────────────────────────────
     console.log(`\n[1/3] listFiles → ${repo}`);
