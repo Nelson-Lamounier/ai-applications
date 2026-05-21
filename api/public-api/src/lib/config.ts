@@ -65,6 +65,12 @@ export interface Config {
    * Optional — if absent POST /api/chatbot/authenticated returns 503.
    */
   readonly bedrockAuthApiUrl: string | undefined;
+  /**
+   * Secrets Manager ARN for the GitHub App JSON secret containing
+   * `{ appId, privateKeyPem, webhookSecret }`. Sourced from the
+   * `GITHUB_APP_SECRET_ARN` env var (ConfigMap).
+   */
+  readonly githubAppSecretArn: string;
 }
 
 /**
@@ -83,6 +89,7 @@ export function loadConfig(): Config {
     'PG_USER',
     'PG_PASSWORD',
     'OAUTH_TOKEN_KMS_KEY_ARN',
+    'GITHUB_APP_SECRET_ARN',
   ] as const;
 
   const missing = required.filter((key) => !process.env[key]);
@@ -108,5 +115,6 @@ export function loadConfig(): Config {
     bedrockApiKeySecretArn: process.env['BEDROCK_API_KEY_SECRET_ARN'] ?? undefined,
     bedrockPublicApiUrl: process.env['BEDROCK_PUBLIC_API_URL'] ?? undefined,
     bedrockAuthApiUrl: process.env['BEDROCK_AUTH_API_URL'] ?? undefined,
+    githubAppSecretArn: process.env['GITHUB_APP_SECRET_ARN'] as string,
   });
 }
