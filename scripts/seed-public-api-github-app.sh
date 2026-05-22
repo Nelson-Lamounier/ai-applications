@@ -21,7 +21,7 @@ DEST_SECRET="k8s/development/public-api-github-app"
 
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
 
-echo "Reading source GitHub App material…"
+echo "Reading source GitHub App material..."
 src=$(aws secretsmanager get-secret-value --secret-id "$SRC_SECRET" --region "$REGION" --query SecretString --output text)
 app_id=$(jq -r '.github_app_id // empty' <<<"$src")
 private_key=$(jq -r '.github_app_private_key // empty' <<<"$src")
@@ -35,7 +35,7 @@ webhook=$(aws ssm get-parameter --name "$WEBHOOK_SSM" --with-decryption --region
 payload=$(jq -n --arg a "$app_id" --arg k "$private_key" --arg w "$webhook" \
   '{appId:$a, privateKeyPem:$k, webhookSecret:$w}')
 
-echo "Writing $DEST_SECRET…"
+echo "Writing ${DEST_SECRET}..."
 aws secretsmanager put-secret-value --secret-id "$DEST_SECRET" --region "$REGION" \
   --secret-string "$payload" >/dev/null
 
