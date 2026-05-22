@@ -90,18 +90,28 @@ export class RedisReadCache {
         try {
             const cached = await this.client.get(key);
             if (cached !== null) {
-                this.metrics.onHit?.(cacheName);
-                return JSON.parse(cached) as T;
+                try {
+                    const parsed = JSON.parse(cached) as T;
+                    this.metrics.onHit?.(cacheName);
+                    return parsed;
+                } catch (err) {
+                    // Corrupt cached value — evict and fall through to recompute.
+                    console.warn('[redis-read-cache] corrupt cached value — evicting:', err);
+                    this.metrics.onError?.(cacheName);
+                    await this.client.del(key).catch(() => { /* fail-open */ });
+                }
             }
             this.metrics.onMiss?.(cacheName);
-        } catch {
+        } catch (err) {
+            console.warn('[redis-read-cache] get failed — treating as miss:', err);
             this.metrics.onError?.(cacheName);
             return compute();
         }
         const fresh = await compute();
         try {
-            await this.client.set(key, JSON.stringify(fresh), 'EX', ttlSeconds || this.defaultTtlSeconds);
-        } catch {
+            await this.client.set(key, JSON.stringify(fresh), 'EX', ttlSeconds > 0 ? ttlSeconds : this.defaultTtlSeconds);
+        } catch (err) {
+            console.warn('[redis-read-cache] set failed — value not cached:', err);
             this.metrics.onError?.(cacheName);
         }
         return fresh;
@@ -110,7 +120,7 @@ export class RedisReadCache {
     /** Explicit write. Fail-open. */
     async set<T>(key: string, value: T, ttlSeconds?: number): Promise<void> {
         try {
-            await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds ?? this.defaultTtlSeconds);
+            await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds !== undefined && ttlSeconds > 0 ? ttlSeconds : this.defaultTtlSeconds);
         } catch { /* fail-open */ }
     }
 
@@ -118,24 +128,26 @@ export class RedisReadCache {
     async invalidate(key: string): Promise<number> {
         try {
             return await this.client.del(key);
-        } catch {
+        } catch (err) {
+            console.warn('[redis-read-cache] invalidate failed:', err);
             return 0;
         }
     }
 
     /** Delete keys matching a glob via non-blocking SCAN. Returns count (0 on error). */
     async invalidatePattern(pattern: string): Promise<number> {
+        let cursor = '0';
+        let total = 0;
         try {
-            let cursor = '0';
-            let total = 0;
             do {
                 const [next, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
                 cursor = next;
                 if (keys.length > 0) total += await this.client.del(...keys);
             } while (cursor !== '0');
             return total;
-        } catch {
-            return 0;
+        } catch (err) {
+            console.warn('[redis-read-cache] invalidatePattern failed:', err);
+            return total;
         }
     }
 }

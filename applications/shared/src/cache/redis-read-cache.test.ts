@@ -1,7 +1,5 @@
 /** @format */
-import { resolveRedisCacheConfig } from './redis-read-cache.js';
-import { RedisReadCache, type RedisLike } from './redis-read-cache.js';
-import { projectCaseStudyKey } from './redis-read-cache.js';
+import { resolveRedisCacheConfig, RedisReadCache, projectCaseStudyKey, type RedisLike } from './redis-read-cache.js';
 
 function fakeRedis(): RedisLike & { store: Map<string, string> } {
     const store = new Map<string, string>();
@@ -9,8 +7,12 @@ function fakeRedis(): RedisLike & { store: Map<string, string> } {
         store,
         async get(k) { return store.get(k) ?? null; },
         async set(k, v) { store.set(k, v); return 'OK'; },
-        async del(...keys) { let n = 0; for (const k of keys) if (store.delete(k)) n++; return n; },
-        async scan() { return ['0', [...store.keys()]]; },
+        async del(...keys) { let n = 0; for (const k of keys) { if (store.delete(k)) n++; } return n; },
+        async scan(_cursor, _m, pattern) {
+            const toRe = (g: string) => new RegExp('^' + g.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+            const re = toRe(pattern);
+            return ['0', [...store.keys()].filter((k) => re.test(k))];
+        },
     };
 }
 
@@ -90,6 +92,30 @@ describe('RedisReadCache', () => {
         expect(v).toBe('fresh');
         await expect(cache.invalidate('k1')).resolves.toBe(0);
         expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it('invalidatePattern deletes only matching keys', async () => {
+        const r = fakeRedis();
+        const cache = new RedisReadCache(r, 3600, {});
+        await cache.set('shared:project:case_study:a:v1', 1);
+        await cache.set('shared:project:case_study:b:v1', 2);
+        await cache.set('other:key', 3);
+        const n = await cache.invalidatePattern('shared:project:case_study:*');
+        expect(n).toBe(2);
+        expect(r.store.has('other:key')).toBe(true);
+        expect(r.store.has('shared:project:case_study:a:v1')).toBe(false);
+    });
+
+    it('fail-open on corrupt cached JSON: evicts, recomputes, fires onError', async () => {
+        const r = fakeRedis();
+        const errors: string[] = [];
+        const cache = new RedisReadCache(r, 3600, { onError: (c) => errors.push(c) });
+        r.store.set('k1', 'not-json{');
+        const v = await cache.getOrCompute('k1', 60, async () => ({ ok: true }), 'proj');
+        expect(v).toEqual({ ok: true });
+        expect(errors).toContain('proj');
+        // corrupt value was evicted then replaced with the fresh computed value
+        expect(JSON.parse(r.store.get('k1')!)).toEqual({ ok: true });
     });
 });
 
