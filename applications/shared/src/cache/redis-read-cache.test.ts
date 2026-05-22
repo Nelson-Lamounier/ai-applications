@@ -1,6 +1,7 @@
 /** @format */
 import { resolveRedisCacheConfig } from './redis-read-cache.js';
 import { RedisReadCache, type RedisLike } from './redis-read-cache.js';
+import { projectCaseStudyKey } from './redis-read-cache.js';
 
 function fakeRedis(): RedisLike & { store: Map<string, string> } {
     const store = new Map<string, string>();
@@ -90,4 +91,10 @@ describe('RedisReadCache', () => {
         await expect(cache.invalidate('k1')).resolves.toBe(0);
         expect(errors.length).toBeGreaterThan(0);
     });
+});
+
+describe('projectCaseStudyKey (cross-repo contract)', () => {
+  it('is shared:project:case_study:{id}:v1', () => {
+    expect(projectCaseStudyKey('abc-123')).toBe('shared:project:case_study:abc-123:v1');
+  });
 });
