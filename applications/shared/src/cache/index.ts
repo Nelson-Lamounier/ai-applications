@@ -11,3 +11,11 @@ export type {
     SemanticCacheGetResult,
     SemanticCachePutInput,
 } from './cache-types.js';
+
+export { RedisExactCache } from './redis-exact-cache.js';
+export type { RedisExactCacheOptions } from './redis-exact-cache.js';
+export {
+    resolveRedisCacheConfig,
+    createRedisCacheClient,
+} from './redis-client.js';
+export type { RedisCacheConfig, RedisLike } from './redis-client.js';
