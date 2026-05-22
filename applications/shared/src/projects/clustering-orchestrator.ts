@@ -11,9 +11,12 @@
  * intentionally does NOT do, so it stays unit-testable against an
  * injected agent.
  */
+import { createHash } from 'node:crypto';
+
 import type { Pool } from 'pg';
 
 import type { BasePipelineContext } from '../base-agent.js';
+import type { ISemanticCache } from '../cache/cache-types.js';
 
 import type { ClusteringAgent } from './clustering-agent.js';
 import {
@@ -25,19 +28,53 @@ import {
     type PersistClusteringSummary,
 } from './clustering-persistence.js';
 import { buildClusteringSignals } from './clustering-signals.js';
-import type { ClusteringResult, RepoClusteringDigest } from './types.js';
+import { ClusteringResultSchema } from './types.js';
+import type { ClusteringResult, ClusteringSignals, RepoClusteringDigest } from './types.js';
+
+const CACHE_SCOPE_PREFIX = 'clustering';
+
+/**
+ * Stable hash over the exact inputs the clustering agent sees: the per-repo
+ * digests (sorted by id) and the deterministic signal block. Identical
+ * inputs hash identically so we can serve the prior result from the cache
+ * instead of re-invoking Haiku.
+ */
+export function computeClusteringInputHash(
+    digests: readonly RepoClusteringDigest[],
+    signals: ClusteringSignals,
+): string {
+    const h = createHash('sha256');
+    const sorted = [...digests].sort((a, b) => a.repositoryId.localeCompare(b.repositoryId));
+    for (const d of sorted) {
+        h.update(d.repositoryId);
+        h.update(d.fullName);
+        h.update(d.primaryLanguage ?? '');
+        h.update([...d.topics].sort().join(','));
+        h.update([...d.techStack].sort().join(','));
+        h.update(d.classification ?? '');
+    }
+    const pairs = [...signals.embeddingPairs]
+        .map((p) => `${p.repoA}|${p.repoB}|${p.score.toFixed(4)}`)
+        .sort();
+    for (const p of pairs) h.update(p);
+    return h.digest('hex');
+}
 
 export interface RunClusteringInput {
     readonly userId:        string;
     readonly pipelineRunId: string;
     readonly agent:         ClusteringAgent;
     readonly ctx:           BasePipelineContext;
+    readonly cache?:        ISemanticCache;
+    readonly kbTag?:        string;
 }
 
 export interface RunClusteringOutput {
     readonly digests:    readonly RepoClusteringDigest[];
     readonly result:     ClusteringResult;
     readonly persisted:  PersistClusteringSummary;
+    readonly cacheHit:   boolean;
+    readonly inputHash:  string;
 }
 
 /**
@@ -67,13 +104,41 @@ export async function runClusteringOrchestration(
                 proposalsSkipped: 0,
                 priorProposalsCleared: 0,
             },
+            cacheHit: false,
+            inputHash: '',
         };
     }
 
     const embeddings = await loadDescriptionEmbeddings(pool, input.userId);
     const signals    = buildClusteringSignals(digests, embeddings);
 
-    const { data: result } = await input.agent.invoke(digests, signals, input.ctx);
+    const inputHash  = computeClusteringInputHash(digests, signals);
+    const cacheScope = `${CACHE_SCOPE_PREFIX}:${input.userId}`;
+    const kbTag      = input.kbTag ?? 'default';
+
+    // 1. Try the cache.
+    let result: ClusteringResult | undefined;
+    let cacheHit = false;
+    if (input.cache) {
+        try {
+            const hit = await input.cache.get({ scope: cacheScope, kbTag, queryText: inputHash });
+            if (hit.hit && hit.response) {
+                const parsed = ClusteringResultSchema.safeParse(hit.response);
+                if (parsed.success) {
+                    result = parsed.data;
+                    cacheHit = true;
+                }
+            }
+        } catch {
+            // Cache failures are non-fatal — fall through to a fresh run.
+        }
+    }
+
+    // 2. Run the agent if the cache missed.
+    if (!result) {
+        const agentResult = await input.agent.invoke(digests, signals, input.ctx);
+        result = agentResult.data;
+    }
 
     const client = await pool.connect();
     let persisted: PersistClusteringSummary;
@@ -87,5 +152,14 @@ export async function runClusteringOrchestration(
         client.release();
     }
 
-    return { digests, result, persisted };
+    // 3. Update the cache. Fail-open — never throw on a cache put.
+    if (input.cache && !cacheHit) {
+        try {
+            await input.cache.put({ scope: cacheScope, kbTag, queryText: inputHash, response: result });
+        } catch {
+            // ignore
+        }
+    }
+
+    return { digests, result, persisted, cacheHit, inputHash };
 }
