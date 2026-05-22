@@ -51,8 +51,13 @@ export function createRedisCacheClient(cfg: RedisCacheConfig): RedisLike {
         port: cfg.port,
         password: cfg.password,
         tls: cfg.tls ? {} : undefined,
+        // Connect on first command. The offline queue MUST stay enabled so
+        // that first command waits for the initial connect instead of
+        // throwing "Stream isn't writeable" — failure when Redis is actually
+        // down is bounded by connectTimeout/commandTimeout/retry caps below,
+        // and the cache's own try/catch degrades any rejection to a miss.
         lazyConnect: true,
-        enableOfflineQueue: false,
+        enableOfflineQueue: true,
         maxRetriesPerRequest: 2,
         connectTimeout: 1000,
         commandTimeout: 500,
