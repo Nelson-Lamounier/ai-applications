@@ -24,7 +24,7 @@ import { Counter, Histogram } from 'prom-client';
 import {
     BedrockGroundingVerifier,
     GitHubAdapter,
-    PgSemanticCache,
+    RedisExactCache,
     bedrockCaseStudyAgent,
     bootstrapK8sObservability,
     isFeatureEnabled,
@@ -124,17 +124,14 @@ async function main(): Promise<void> {
         };
 
         const verifier = new BedrockGroundingVerifier({ mode: 'flag' });
-        const cache    = PgSemanticCache.fromEnvironment({
-            host:     env.pg.host,
-            port:     env.pg.port,
-            database: env.pg.database,
-            user:     env.pg.user,
-            password: env.pg.password,
-        });
+        // Exact-key Redis cache. Reads REDIS_CACHE_* from env; disabled (and
+        // therefore a no-op) when REDIS_CACHE_HOST is unset, so the job is
+        // safe to deploy ahead of the cluster-side Redis wiring.
+        const cache = RedisExactCache.fromEnvironment();
         const adapter            = buildAdapter(env.githubToken);
         const commitLoader       = buildCommitLoader(adapter);
         const pullRequestLoader  = buildPullRequestLoader(adapter);
-        const kbTag = `${env.kbVersion}:${env.model}`;
+        const kbTag = `${env.environment}:${env.kbVersion}:${env.model}`;
 
         await updatePipelineRun(pool, env.pipelineRunId, 'generating');
 

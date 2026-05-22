@@ -23,6 +23,7 @@
 import { Counter, Histogram } from 'prom-client';
 
 import {
+    RedisExactCache,
     bedrockClusteringAgent,
     bootstrapK8sObservability,
     isFeatureEnabled,
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
     const env  = parseClusteringEnv();
     const pool = getPool(env.pg);
     const start = process.hrtime.bigint();
-    let outcome: 'success' | 'skipped' | 'failed' = 'failed';
+    let outcome: 'success' | 'skipped' | 'failed' | 'cache_hit' = 'failed';
 
     try {
         const enabled = await isFeatureEnabled(pool, FEATURE_FLAG, env.userId);
@@ -84,16 +85,25 @@ async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
+        // Exact-key Redis cache. Reads REDIS_CACHE_* from env; disabled (and
+        // therefore a no-op) when REDIS_CACHE_HOST is unset, so the job is
+        // safe to deploy ahead of the cluster-side Redis wiring.
+        const cache = RedisExactCache.fromEnvironment();
+
         const out = await runClusteringOrchestration(pool, {
             userId:        env.userId,
             pipelineRunId: env.pipelineRunId,
             agent:         bedrockClusteringAgent,
             ctx,
+            cache,
+            kbTag:         env.environment,
         });
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+            cacheHit:               out.cacheHit,
+            inputHash:              out.inputHash,
             digestsLoaded:          out.digests.length,
             proposalsEmitted:       out.result.proposals.length,
             proposalsInserted:      out.persisted.proposalsInserted,
@@ -106,7 +116,7 @@ async function main(): Promise<void> {
         });
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
-        outcome = 'success';
+        outcome = out.cacheHit ? 'cache_hit' : 'success';
 
         log.info({
             userId:                env.userId,

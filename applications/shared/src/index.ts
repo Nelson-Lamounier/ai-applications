@@ -353,12 +353,15 @@ export type {
 
 // ─── Cache (Semantic Response Cache) ─────────────────────────────────────────
 export { PgSemanticCache } from './cache/index.js';
+export { RedisExactCache } from './cache/index.js';
 export type {
     ISemanticCache,
     SemanticCacheConfig,
     SemanticCacheGetInput,
     SemanticCacheGetResult,
     SemanticCachePutInput,
+    SemanticCacheInvalidateInput,
+    RedisExactCacheOptions,
 } from './cache/index.js';
 
 // ─── Feature Flags (app_config-backed) ───────────────────────────────────────

@@ -30,6 +30,7 @@
     "@pyroscope/nodejs": "^0.4.5",
     "@types/aws-lambda": "^8.10.159",
     "@types/pg": "^8.20.0",
+    "ioredis": "^5.4.1",
     "pg": "^8.20.0",
     "pino": "^9.5.0",
     "prom-client": "^15.1.3",
