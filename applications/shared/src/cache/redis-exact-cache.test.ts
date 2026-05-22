@@ -6,11 +6,14 @@ import { RedisExactCache } from './redis-exact-cache.js';
 class FakeRedis implements RedisLike {
     store = new Map<string, string>();
     throwOnGet = false;
+    throwOnSet = false;
+    throwOnScan = false;
     async get(key: string): Promise<string | null> {
         if (this.throwOnGet) throw new Error('boom');
         return this.store.has(key) ? this.store.get(key)! : null;
     }
-    async set(key: string, value: string): Promise<unknown> {
+    async set(key: string, value: string, _mode: 'EX', _ttl: number): Promise<unknown> {
+        if (this.throwOnSet) throw new Error('boom');
         this.store.set(key, value);
         return 'OK';
     }
@@ -21,6 +24,7 @@ class FakeRedis implements RedisLike {
         _c: 'COUNT',
         _count: number,
     ): Promise<[string, string[]]> {
+        if (this.throwOnScan) throw new Error('boom');
         const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
         return ['0', [...this.store.keys()].filter((k) => re.test(k))];
     }
@@ -81,6 +85,21 @@ describe('RedisExactCache', () => {
         f.throwOnGet = true;
         const c = make(f);
         await expect(c.get({ scope: 's', kbTag: 'k', queryText: 'q' })).resolves.toEqual({ hit: false });
+    });
+
+    it('fails open: put is a no-op when the client throws', async () => {
+        const f = new FakeRedis();
+        f.throwOnSet = true;
+        const c = make(f);
+        await expect(c.put({ scope: 's', kbTag: 'k', queryText: 'q', response: 1 })).resolves.toBeUndefined();
+        expect(f.store.size).toBe(0);
+    });
+
+    it('fails open: invalidate returns 0 when scan throws', async () => {
+        const f = new FakeRedis();
+        f.throwOnScan = true;
+        const c = make(f);
+        await expect(c.invalidate({ scope: 's' })).resolves.toBe(0);
     });
 
     it('disabled cache always misses and never touches the client', async () => {
