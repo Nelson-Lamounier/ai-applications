@@ -46,12 +46,13 @@ export function computeClusteringInputHash(
     const h = createHash('sha256');
     const sorted = [...digests].sort((a, b) => a.repositoryId.localeCompare(b.repositoryId));
     for (const d of sorted) {
-        h.update(d.repositoryId);
-        h.update(d.fullName);
-        h.update(d.primaryLanguage ?? '');
+        h.update(`${d.repositoryId} ${d.fullName} ${d.primaryLanguage ?? ''} `);
         h.update([...d.topics].sort().join(','));
+        h.update(' ');
         h.update([...d.techStack].sort().join(','));
+        h.update(' ');
         h.update(d.classification ?? '');
+        h.update(' ');
     }
     const pairs = [...signals.embeddingPairs]
         .map((p) => `${p.repoA}|${p.repoB}|${p.score.toFixed(4)}`)
