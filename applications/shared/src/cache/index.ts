@@ -10,6 +10,7 @@ export type {
     SemanticCacheGetInput,
     SemanticCacheGetResult,
     SemanticCachePutInput,
+    SemanticCacheInvalidateInput,
 } from './cache-types.js';
 
 export { RedisExactCache } from './redis-exact-cache.js';

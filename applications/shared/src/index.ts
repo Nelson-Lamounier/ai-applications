@@ -360,6 +360,7 @@ export type {
     SemanticCacheGetInput,
     SemanticCacheGetResult,
     SemanticCachePutInput,
+    SemanticCacheInvalidateInput,
     RedisExactCacheOptions,
 } from './cache/index.js';
 

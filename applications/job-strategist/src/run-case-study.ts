@@ -131,7 +131,7 @@ async function main(): Promise<void> {
         const adapter            = buildAdapter(env.githubToken);
         const commitLoader       = buildCommitLoader(adapter);
         const pullRequestLoader  = buildPullRequestLoader(adapter);
-        const kbTag = `${env.kbVersion}:${env.model}`;
+        const kbTag = `${env.environment}:${env.kbVersion}:${env.model}`;
 
         await updatePipelineRun(pool, env.pipelineRunId, 'generating');
 

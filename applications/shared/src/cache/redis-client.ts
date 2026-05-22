@@ -30,10 +30,11 @@ export interface RedisCacheConfig {
 
 export function resolveRedisCacheConfig(): RedisCacheConfig {
     const host = process.env.REDIS_CACHE_HOST ?? '';
+    const parsedPort = Number(process.env.REDIS_CACHE_PORT ?? '6379');
     return {
         enabled: host.length > 0,
         host,
-        port: Number(process.env.REDIS_CACHE_PORT ?? '6379'),
+        port: Number.isFinite(parsedPort) ? parsedPort : 6379,
         password: process.env.REDIS_CACHE_PASSWORD || undefined,
         tls: (process.env.REDIS_CACHE_TLS ?? 'false') === 'true',
     };
