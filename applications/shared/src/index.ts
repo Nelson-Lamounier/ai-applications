@@ -353,18 +353,21 @@ export type {
 
 // ─── Cache (Semantic Response Cache + Redis Read Cache) ──────────────────────
 export { PgSemanticCache } from './cache/index.js';
+export { RedisExactCache } from './cache/index.js';
 export type {
     ISemanticCache,
     SemanticCacheConfig,
     SemanticCacheGetInput,
     SemanticCacheGetResult,
     SemanticCachePutInput,
+    SemanticCacheInvalidateInput,
+    RedisExactCacheOptions,
 } from './cache/index.js';
 
 export {
     RedisReadCache,
     resolveRedisCacheConfig,
-    createRedisClient,
+    createRedisCacheClient,
     projectCaseStudyKey,
 } from './cache/index.js';
 export type { RedisCacheConfig, RedisLike, CacheMetrics } from './cache/index.js';

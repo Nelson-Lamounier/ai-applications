@@ -1,5 +1,6 @@
 /** @format */
-import { resolveRedisCacheConfig, RedisReadCache, projectCaseStudyKey, type RedisLike } from './redis-read-cache.js';
+import { resolveRedisCacheConfig, type RedisLike } from './redis-client.js';
+import { RedisReadCache, projectCaseStudyKey } from './redis-read-cache.js';
 
 function fakeRedis(): RedisLike & { store: Map<string, string> } {
     const store = new Map<string, string>();
@@ -7,7 +8,7 @@ function fakeRedis(): RedisLike & { store: Map<string, string> } {
         store,
         async get(k) { return store.get(k) ?? null; },
         async set(k, v) { store.set(k, v); return 'OK'; },
-        async del(...keys) { let n = 0; for (const k of keys) { if (store.delete(k)) n++; } return n; },
+        async unlink(...keys) { let n = 0; for (const k of keys) { if (store.delete(k)) n++; } return n; },
         async scan(_cursor, _m, pattern) {
             const toRe = (g: string) => new RegExp('^' + g.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
             const re = toRe(pattern);
@@ -16,7 +17,7 @@ function fakeRedis(): RedisLike & { store: Map<string, string> } {
     };
 }
 
-describe('resolveRedisCacheConfig', () => {
+describe('resolveRedisCacheConfig (read-cache fields)', () => {
     const ENV = process.env;
     beforeEach(() => { process.env = { ...ENV }; });
     afterEach(() => { process.env = ENV; });
@@ -27,7 +28,7 @@ describe('resolveRedisCacheConfig', () => {
         expect(cfg.enabled).toBe(false);
     });
 
-    it('parses host/port/password and defaults', () => {
+    it('parses host/port/password and a default TTL', () => {
         process.env.REDIS_CACHE_HOST = 'redis-cache-master.redis-cache.svc.cluster.local';
         process.env.REDIS_CACHE_PASSWORD = 'secret';
         delete process.env.REDIS_CACHE_PORT;
@@ -83,7 +84,7 @@ describe('RedisReadCache', () => {
         const broken: RedisLike = {
             get: async () => { throw new Error('down'); },
             set: async () => { throw new Error('down'); },
-            del: async () => { throw new Error('down'); },
+            unlink: async () => { throw new Error('down'); },
             scan: async () => { throw new Error('down'); },
         };
         const errors: string[] = [];

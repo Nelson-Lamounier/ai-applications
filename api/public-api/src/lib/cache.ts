@@ -7,7 +7,7 @@
 import {
   RedisReadCache,
   resolveRedisCacheConfig,
-  createRedisClient,
+  createRedisCacheClient,
   type CacheMetrics,
   type RedisLike,
 } from '@bedrock/shared';
@@ -33,14 +33,14 @@ export function getReadCache(): RedisReadCache {
       // Disabled: always a miss (null) so result="miss" not result="error".
       // This keeps result="error" as a reliable real-fault signal on dashboards.
       const disabled: RedisLike = {
-        get:  async () => null,                                   // disabled ⇒ always a miss
-        set:  async () => undefined,                              // no-op write
-        del:  async () => 0,
-        scan: async () => ['0', [] as string[]] as [string, string[]],
+        get:    async () => null,                                   // disabled ⇒ always a miss
+        set:    async () => undefined,                              // no-op write
+        unlink: async () => 0,
+        scan:   async () => ['0', [] as string[]] as [string, string[]],
       };
       _cache = new RedisReadCache(disabled, _cfg.defaultTtlSeconds, metrics);
     } else {
-      _cache = new RedisReadCache(createRedisClient(_cfg), _cfg.defaultTtlSeconds, metrics);
+      _cache = new RedisReadCache(createRedisCacheClient(_cfg), _cfg.defaultTtlSeconds, metrics);
     }
   }
   return _cache;

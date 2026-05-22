@@ -100,3 +100,6 @@ CI-FrontEnd.yml
 
 # E2E smoke fixture (tracked despite *.txt ignore)
 !scripts/smoke/fixtures/strategist-jd.txt
+
+# Claude Code local tooling
+.claude/

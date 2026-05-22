@@ -2,70 +2,23 @@
  * @format
  * RedisReadCache — exact-key, fail-open read-through cache over redis-cache.
  *
- * Backs BFF hot-read paths (NOT the AI-generation semantic cache, which is
- * Postgres+pgvector; see CONTEXT.md). Fail-open: a missing host or any Redis
- * error degrades to a cache miss / no-op — the cache must never throw into a
- * host request. Cross-app entities use the unprefixed `shared:` key scheme so
- * the writing app can invalidate the reading app's entry.
+ * Backs BFF hot-read paths (e.g. public-api project case studies). Shares the
+ * redis-cache instance with the AI-generation exact cache (RedisExactCache),
+ * distinguished by key prefix: read-cache keys are `shared:…`, AI-gen keys are
+ * `aigen:…`. Reuses the shared client/config from redis-client.ts.
+ *
+ * Fail-open: a missing host or any Redis error degrades to a cache miss / no-op
+ * — the cache must never throw into a host request. Cross-app entities use the
+ * unprefixed `shared:` key scheme so the writing app can invalidate the reading
+ * app's entry.
  */
-import Redis, { type RedisOptions } from 'ioredis';
-
-export interface RedisCacheConfig {
-    readonly enabled: boolean;
-    readonly host: string;
-    readonly port: number;
-    readonly password: string | undefined;
-    readonly tls: boolean;
-    readonly defaultTtlSeconds: number;
-}
+import { type RedisLike } from './redis-client.js';
 
 /** Telemetry sink — apps inject adapters that bump their own counters. */
 export interface CacheMetrics {
     onHit?(cache: string): void;
     onMiss?(cache: string): void;
     onError?(cache: string): void;
-}
-
-export function resolveRedisCacheConfig(): RedisCacheConfig {
-    const host = process.env.REDIS_CACHE_HOST ?? '';
-    return {
-        enabled: host !== '',
-        host,
-        port: Number(process.env.REDIS_CACHE_PORT ?? '6379'),
-        password: process.env.REDIS_CACHE_PASSWORD || undefined,
-        tls: (process.env.REDIS_CACHE_TLS ?? 'false') === 'true',
-        defaultTtlSeconds: Number(process.env.REDIS_CACHE_DEFAULT_TTL_SECONDS ?? '3600'),
-    };
-}
-
-/** Subset of ioredis the cache depends on — lets tests inject a fake. */
-export interface RedisLike {
-    get(key: string): Promise<string | null>;
-    set(key: string, value: string, mode: 'EX', ttlSeconds: number): Promise<unknown>;
-    del(...keys: string[]): Promise<number>;
-    scan(cursor: string | number, matchToken: 'MATCH', pattern: string, countToken: 'COUNT', count: number): Promise<[string, string[]]>;
-}
-
-/**
- * Build an ioredis client tuned to fail fast / fail open: no offline queue,
- * a capped retry budget, and a bounded command timeout so a slow or down
- * Redis degrades to a miss instead of stalling the request.
- */
-export function createRedisClient(cfg: RedisCacheConfig): RedisLike {
-    const opts: RedisOptions = {
-        host: cfg.host,
-        port: cfg.port,
-        password: cfg.password,
-        enableOfflineQueue: false,
-        maxRetriesPerRequest: 1,
-        connectTimeout: 1000,
-        commandTimeout: 200,
-        lazyConnect: false,
-        ...(cfg.tls ? { tls: {} } : {}),
-    };
-    const client = new Redis(opts);
-    client.on('error', () => { /* fail-open; surfaced via onError at call sites */ });
-    return client as unknown as RedisLike;
 }
 
 export class RedisReadCache {
@@ -98,7 +51,7 @@ export class RedisReadCache {
                     // Corrupt cached value — evict and fall through to recompute.
                     console.warn('[redis-read-cache] corrupt cached value — evicting:', err);
                     this.metrics.onError?.(cacheName);
-                    await this.client.del(key).catch(() => { /* fail-open */ });
+                    await this.client.unlink(key).catch(() => { /* fail-open */ });
                 }
             }
             this.metrics.onMiss?.(cacheName);
@@ -124,17 +77,17 @@ export class RedisReadCache {
         } catch { /* fail-open */ }
     }
 
-    /** Delete one key. Returns count deleted (0 on error). */
+    /** Delete one key (non-blocking UNLINK). Returns count removed (0 on error). */
     async invalidate(key: string): Promise<number> {
         try {
-            return await this.client.del(key);
+            return await this.client.unlink(key);
         } catch (err) {
             console.warn('[redis-read-cache] invalidate failed:', err);
             return 0;
         }
     }
 
-    /** Delete keys matching a glob via non-blocking SCAN. Returns count (0 on error). */
+    /** Delete keys matching a glob via non-blocking SCAN + UNLINK. Returns count (0 on error). */
     async invalidatePattern(pattern: string): Promise<number> {
         let cursor = '0';
         let total = 0;
@@ -142,7 +95,7 @@ export class RedisReadCache {
             do {
                 const [next, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
                 cursor = next;
-                if (keys.length > 0) total += await this.client.del(...keys);
+                if (keys.length > 0) total += await this.client.unlink(...keys);
             } while (cursor !== '0');
             return total;
         } catch (err) {
