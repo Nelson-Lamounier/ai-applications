@@ -1,5 +1,8 @@
 /** @format */
-import { resolveRedisCacheConfig } from './redis-client.js';
+import Redis from 'ioredis';
+import { resolveRedisCacheConfig, createRedisCacheClient } from './redis-client.js';
+
+jest.mock('ioredis', () => jest.fn());
 
 describe('resolveRedisCacheConfig', () => {
     const OLD = process.env;
@@ -30,5 +33,24 @@ describe('resolveRedisCacheConfig', () => {
         process.env.REDIS_CACHE_HOST = 'h';
         process.env.REDIS_CACHE_TLS = 'true';
         expect(resolveRedisCacheConfig().tls).toBe(true);
+    });
+});
+
+describe('createRedisCacheClient', () => {
+    beforeEach(() => { (Redis as unknown as jest.Mock).mockClear(); });
+
+    it('passes password:undefined when password is undefined', () => {
+        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: false });
+        expect(Redis).toHaveBeenCalledWith(expect.objectContaining({ password: undefined }));
+    });
+
+    it('sets tls:{} only when tls is true', () => {
+        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: true });
+        expect(Redis).toHaveBeenCalledWith(expect.objectContaining({ tls: {} }));
+    });
+
+    it('sets tls:undefined when tls is false', () => {
+        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: false });
+        expect(Redis).toHaveBeenCalledWith(expect.objectContaining({ tls: undefined }));
     });
 });

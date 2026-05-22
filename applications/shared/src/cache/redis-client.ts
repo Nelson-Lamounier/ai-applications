@@ -24,7 +24,7 @@ export interface RedisCacheConfig {
     readonly enabled: boolean;
     readonly host: string;
     readonly port: number;
-    readonly password: string;
+    readonly password: string | undefined;
     readonly tls: boolean;
 }
 
@@ -34,7 +34,7 @@ export function resolveRedisCacheConfig(): RedisCacheConfig {
         enabled: host.length > 0,
         host,
         port: Number(process.env.REDIS_CACHE_PORT ?? '6379'),
-        password: process.env.REDIS_CACHE_PASSWORD ?? '',
+        password: process.env.REDIS_CACHE_PASSWORD || undefined,
         tls: (process.env.REDIS_CACHE_TLS ?? 'false') === 'true',
     };
 }
@@ -48,7 +48,7 @@ export function createRedisCacheClient(cfg: RedisCacheConfig): RedisLike {
     return new Redis({
         host: cfg.host,
         port: cfg.port,
-        password: cfg.password || undefined,
+        password: cfg.password,
         tls: cfg.tls ? {} : undefined,
         lazyConnect: true,
         enableOfflineQueue: false,
