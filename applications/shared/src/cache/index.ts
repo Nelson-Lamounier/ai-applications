@@ -11,3 +11,10 @@ export type {
     SemanticCacheGetResult,
     SemanticCachePutInput,
 } from './cache-types.js';
+export {
+    RedisReadCache,
+    resolveRedisCacheConfig,
+    createRedisClient,
+    projectCaseStudyKey,
+} from './redis-read-cache.js';
+export type { RedisCacheConfig, RedisLike, CacheMetrics } from './redis-read-cache.js';
