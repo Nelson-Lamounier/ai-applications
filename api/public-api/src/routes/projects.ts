@@ -32,8 +32,10 @@
 
 import { Hono } from 'hono';
 
+import { projectCaseStudyKey } from '@bedrock/shared';
 import { loadConfig } from '../lib/config.js';
 import { getPool } from '../lib/pg.js';
+import { getReadCache, READ_CACHE_DEFAULT_TTL } from '../lib/cache.js';
 
 const projects = new Hono();
 
@@ -127,91 +129,98 @@ projects.get('/public/projects/:username/:slug', async (c) => {
     const project = projectResult.rows[0];
     if (!project) return c.json({ error: 'Not found' }, 404);
 
-    const [
-        components, repositories, decisions, highlights, challenges,
-        stack, depth, architecture, resumeBullets, tags,
-    ] = await Promise.all([
-        pool.query<ComponentRow>(
-            `SELECT id, name, kind, order_index
-               FROM project_components WHERE project_id = $1 ORDER BY order_index`,
-            [project.id],
-        ),
-        pool.query<RepoRow>(
-            `SELECT pc.id AS component_id, r.full_name AS repository_full_name, pr.subpath
-               FROM project_repositories pr
-               JOIN project_components pc ON pc.id = pr.project_component_id
-               JOIN repositories r ON r.id = pr.repository_id
-              WHERE pc.project_id = $1 AND r.is_private = FALSE
-              ORDER BY pc.order_index, r.full_name`,
-            [project.id],
-        ),
-        pool.query<DecisionRow>(
-            `SELECT title, context, decision, consequences, confidence, source_signals, order_index
-               FROM project_decisions WHERE project_id = $1 ORDER BY order_index`,
-            [project.id],
-        ),
-        pool.query<HighlightRow>(
-            `SELECT title, description, order_index
-               FROM project_highlights WHERE project_id = $1 ORDER BY order_index`,
-            [project.id],
-        ),
-        pool.query<ChallengeRow>(
-            `SELECT problem, solution, source_signals, order_index
-               FROM project_challenges WHERE project_id = $1 ORDER BY order_index`,
-            [project.id],
-        ),
-        pool.query<StackRow>(
-            `SELECT category, name, justification, order_index
-               FROM project_stack_items WHERE project_id = $1 ORDER BY order_index`,
-            [project.id],
-        ),
-        pool.query<DepthRow>(
-            `SELECT has_tests, test_coverage_signal, has_ci, ci_maturity,
-                    documentation_density, has_deployment_evidence, deployment_url, refactor_count
-               FROM project_depth_markers WHERE project_id = $1`,
-            [project.id],
-        ),
-        pool.query<ArchitectureRow>(
-            `SELECT diagram_format, diagram_source, nodes, edges
-               FROM project_architecture WHERE project_id = $1`,
-            [project.id],
-        ),
-        pool.query<ResumeBulletRow>(
-            `SELECT angle, bullets
-               FROM project_resume_bullets WHERE project_id = $1`,
-            [project.id],
-        ),
-        pool.query<TagRow>(
-            `SELECT tag FROM project_tags WHERE project_id = $1 ORDER BY tag`,
-            [project.id],
-        ),
-    ]);
+    const payload = await getReadCache().getOrCompute(
+        projectCaseStudyKey(project.id),
+        READ_CACHE_DEFAULT_TTL,
+        async () => {
+            const [
+                components, repositories, decisions, highlights, challenges,
+                stack, depth, architecture, resumeBullets, tags,
+            ] = await Promise.all([
+                pool.query<ComponentRow>(
+                    `SELECT id, name, kind, order_index
+                       FROM project_components WHERE project_id = $1 ORDER BY order_index`,
+                    [project.id],
+                ),
+                pool.query<RepoRow>(
+                    `SELECT pc.id AS component_id, r.full_name AS repository_full_name, pr.subpath
+                       FROM project_repositories pr
+                       JOIN project_components pc ON pc.id = pr.project_component_id
+                       JOIN repositories r ON r.id = pr.repository_id
+                      WHERE pc.project_id = $1 AND r.is_private = FALSE
+                      ORDER BY pc.order_index, r.full_name`,
+                    [project.id],
+                ),
+                pool.query<DecisionRow>(
+                    `SELECT title, context, decision, consequences, confidence, source_signals, order_index
+                       FROM project_decisions WHERE project_id = $1 ORDER BY order_index`,
+                    [project.id],
+                ),
+                pool.query<HighlightRow>(
+                    `SELECT title, description, order_index
+                       FROM project_highlights WHERE project_id = $1 ORDER BY order_index`,
+                    [project.id],
+                ),
+                pool.query<ChallengeRow>(
+                    `SELECT problem, solution, source_signals, order_index
+                       FROM project_challenges WHERE project_id = $1 ORDER BY order_index`,
+                    [project.id],
+                ),
+                pool.query<StackRow>(
+                    `SELECT category, name, justification, order_index
+                       FROM project_stack_items WHERE project_id = $1 ORDER BY order_index`,
+                    [project.id],
+                ),
+                pool.query<DepthRow>(
+                    `SELECT has_tests, test_coverage_signal, has_ci, ci_maturity,
+                            documentation_density, has_deployment_evidence, deployment_url, refactor_count
+                       FROM project_depth_markers WHERE project_id = $1`,
+                    [project.id],
+                ),
+                pool.query<ArchitectureRow>(
+                    `SELECT diagram_format, diagram_source, nodes, edges
+                       FROM project_architecture WHERE project_id = $1`,
+                    [project.id],
+                ),
+                pool.query<ResumeBulletRow>(
+                    `SELECT angle, bullets
+                       FROM project_resume_bullets WHERE project_id = $1`,
+                    [project.id],
+                ),
+                pool.query<TagRow>(
+                    `SELECT tag FROM project_tags WHERE project_id = $1 ORDER BY tag`,
+                    [project.id],
+                ),
+            ]);
 
-    const payload = {
-        username,
-        slug:           project.slug,
-        name:           project.name,
-        tagline:        project.tagline,
-        pitch:          project.pitch,
-        type:           project.type,
-        shape:          project.shape,
-        status:         project.status,
-        roleExhibited:  project.role_exhibited,
-        startedAt:      project.started_at?.toISOString()       ?? null,
-        endedAt:        project.ended_at?.toISOString()         ?? null,
-        lastActivityAt: project.last_activity_at?.toISOString() ?? null,
-        updatedAt:      project.updated_at.toISOString(),
-        components:     components.rows,
-        repositories:   repositories.rows,
-        decisions:      decisions.rows,
-        highlights:     highlights.rows,
-        challenges:     challenges.rows,
-        stack:          stack.rows,
-        depthMarkers:   depth.rows[0] ?? null,
-        architecture:   architecture.rows[0] ?? null,
-        resumeBullets:  resumeBullets.rows,
-        tags:           tags.rows.map((r) => r.tag),
-    };
+            return {
+                username,
+                slug:           project.slug,
+                name:           project.name,
+                tagline:        project.tagline,
+                pitch:          project.pitch,
+                type:           project.type,
+                shape:          project.shape,
+                status:         project.status,
+                roleExhibited:  project.role_exhibited,
+                startedAt:      project.started_at?.toISOString()       ?? null,
+                endedAt:        project.ended_at?.toISOString()         ?? null,
+                lastActivityAt: project.last_activity_at?.toISOString() ?? null,
+                updatedAt:      project.updated_at.toISOString(),
+                components:     components.rows,
+                repositories:   repositories.rows,
+                decisions:      decisions.rows,
+                highlights:     highlights.rows,
+                challenges:     challenges.rows,
+                stack:          stack.rows,
+                depthMarkers:   depth.rows[0] ?? null,
+                architecture:   architecture.rows[0] ?? null,
+                resumeBullets:  resumeBullets.rows,
+                tags:           tags.rows.map((r) => r.tag),
+            };
+        },
+        'project_case_study',
+    );
 
     c.header('Cache-Control', CACHE_CONTROL);
     return c.json(payload);
