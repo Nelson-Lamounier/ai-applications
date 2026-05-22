@@ -46,13 +46,15 @@ export function computeClusteringInputHash(
     const h = createHash('sha256');
     const sorted = [...digests].sort((a, b) => a.repositoryId.localeCompare(b.repositoryId));
     for (const d of sorted) {
-        h.update(`${d.repositoryId} ${d.fullName} ${d.primaryLanguage ?? ''} `);
+        // NUL separators — cannot appear in repo/language/topic/classification
+        // values, so distinct field splits can never produce the same stream.
+        h.update(`${d.repositoryId}\0${d.fullName}\0${d.primaryLanguage ?? ''}\0`);
         h.update([...d.topics].sort().join(','));
-        h.update(' ');
+        h.update('\0');
         h.update([...d.techStack].sort().join(','));
-        h.update(' ');
+        h.update('\0');
         h.update(d.classification ?? '');
-        h.update(' ');
+        h.update('\0');
     }
     const pairs = [...signals.embeddingPairs]
         .map((p) => `${p.repoA}|${p.repoB}|${p.score.toFixed(4)}`)
