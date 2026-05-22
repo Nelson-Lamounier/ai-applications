@@ -351,7 +351,7 @@ export type {
     IGroundingVerifier,
 } from './grounding/index.js';
 
-// ─── Cache (Semantic Response Cache) ─────────────────────────────────────────
+// ─── Cache (Semantic Response Cache + Redis Read Cache) ──────────────────────
 export { PgSemanticCache } from './cache/index.js';
 export { RedisExactCache } from './cache/index.js';
 export type {
@@ -363,6 +363,14 @@ export type {
     SemanticCacheInvalidateInput,
     RedisExactCacheOptions,
 } from './cache/index.js';
+
+export {
+    RedisReadCache,
+    resolveRedisCacheConfig,
+    createRedisCacheClient,
+    projectCaseStudyKey,
+} from './cache/index.js';
+export type { RedisCacheConfig, RedisLike, CacheMetrics } from './cache/index.js';
 
 // ─── Feature Flags (app_config-backed) ───────────────────────────────────────
 export {

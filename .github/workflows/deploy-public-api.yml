@@ -1,0 +1,73 @@
+# @format
+# Deploy Public-API (Development)
+# Builds @repo/public-api (BFF read API), pushes to ECR. public-api is an
+# ArgoCD Image Updater app (newest-build strategy) — no image-ssm-path; the
+# updater writes the new tag to kubernetes-bootstrap
+# charts/public-api/chart/.argocd-source-public-api.yaml, which ArgoCD
+# auto-applies to the `public-api` Application.
+# Prerequisite: ECR repo + /shared/ecr-public-api/development/repository-uri
+# SSM param provisioned via the shared-infra CDK stack.
+
+name: "Deploy Public-API (Dev)"
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "api/public-api/**"
+      - "applications/shared/**"
+      - ".github/workflows/deploy-public-api.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-public-api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_build-push-image.yml
+    with:
+      app-name: public-api
+      dockerfile: api/public-api/Dockerfile
+      ecr-ssm-path: /shared/ecr-public-api/development/repository-uri
+      # No image-ssm-path: public-api deploys via ArgoCD Image Updater
+      # (newest-build), not the file-mount/SSM path used by Job images.
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+
+  deploy-marker:
+    name: Loki deploy marker
+    needs: [deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute aggregate status
+        id: agg
+        env:
+          STATUSES: ${{ toJSON(needs) }}
+        run: |
+          if echo "$STATUSES" | jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' > /dev/null; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=succeeded" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/loki-deploy-marker
+        env:
+          LOKI_PUSH_URL:        ${{ secrets.LOKI_PUSH_URL }}
+          LOKI_PUSH_BASIC_AUTH: ${{ secrets.LOKI_PUSH_BASIC_AUTH }}
+          PUSHGATEWAY_URL: ${{ secrets.PUSHGATEWAY_URL }}
+          PUSHGATEWAY_BASIC_AUTH: ${{ secrets.PUSHGATEWAY_BASIC_AUTH }}
+        with:
+          service:     public-api
+          environment: development
+          status:      ${{ steps.agg.outputs.status }}
+          git-sha:     ${{ github.sha }}
+          notes:       "public-api image push"

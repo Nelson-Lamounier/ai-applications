@@ -40,17 +40,17 @@ describe('createRedisCacheClient', () => {
     beforeEach(() => { (Redis as unknown as jest.Mock).mockClear(); });
 
     it('passes password:undefined when password is undefined', () => {
-        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: false });
+        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: false, defaultTtlSeconds: 3600 });
         expect(Redis).toHaveBeenCalledWith(expect.objectContaining({ password: undefined }));
     });
 
     it('sets tls:{} only when tls is true', () => {
-        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: true });
+        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: true, defaultTtlSeconds: 3600 });
         expect(Redis).toHaveBeenCalledWith(expect.objectContaining({ tls: {} }));
     });
 
     it('sets tls:undefined when tls is false', () => {
-        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: false });
+        createRedisCacheClient({ enabled: true, host: 'h', port: 6379, password: undefined, tls: false, defaultTtlSeconds: 3600 });
         expect(Redis).toHaveBeenCalledWith(expect.objectContaining({ tls: undefined }));
     });
 });

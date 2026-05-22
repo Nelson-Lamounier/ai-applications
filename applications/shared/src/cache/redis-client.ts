@@ -26,6 +26,9 @@ export interface RedisCacheConfig {
     readonly port: number;
     readonly password: string | undefined;
     readonly tls: boolean;
+    /** Default TTL for the read cache (RedisReadCache). The AI-gen exact
+     *  cache ignores this and uses REDIS_AIGEN_TTL_SECONDS. */
+    readonly defaultTtlSeconds: number;
 }
 
 export function resolveRedisCacheConfig(): RedisCacheConfig {
@@ -37,6 +40,7 @@ export function resolveRedisCacheConfig(): RedisCacheConfig {
         port: Number.isFinite(parsedPort) ? parsedPort : 6379,
         password: process.env.REDIS_CACHE_PASSWORD || undefined,
         tls: (process.env.REDIS_CACHE_TLS ?? 'false') === 'true',
+        defaultTtlSeconds: Number(process.env.REDIS_CACHE_DEFAULT_TTL_SECONDS ?? '3600'),
     };
 }
 
