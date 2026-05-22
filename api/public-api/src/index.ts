@@ -34,6 +34,7 @@ import tags from './routes/tags.js';
 import resumes from './routes/resumes.js';
 import githubWebhook from './routes/github-webhook.js';
 import projects from './routes/projects.js';
+import metrics from './routes/metrics.js';
 
 const cfg = loadConfig();
 
@@ -64,6 +65,7 @@ app.use(
 // ---------------------------------------------------------------------------
 
 app.route('/', health);
+app.route('/', metrics);
 app.route('/', articles);
 app.route('/', chatbot);
 app.route('/', tags);
