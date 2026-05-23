@@ -331,6 +331,36 @@ jobs:
         continue-on-error: true
 
   # ============================================================================
+  # Application Unit Tests (Jest — runs applications/ workspaces, incl. the
+  # resume-import-processor metric-contract test that guards the dashboard).
+  # ============================================================================
+  apps-unit-tests:
+    name: Test Applications
+    needs: [setup, detect-changes]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nelson-lamounier/ai-applications/ci:latest
+    timeout-minutes: 15
+    if: needs.detect-changes.outputs.apps == 'true' || needs.detect-changes.outputs.run-all == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Environment and Dependencies
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          node-version: ${{ needs.setup.outputs.node-version }}
+
+      # @bedrock/shared is imported by the processor at runtime (jobLogger),
+      # so its dist must exist before the processor's jest run resolves it.
+      - name: Build @bedrock/shared
+        run: yarn workspace @bedrock/shared build
+
+      - name: Run resume-import-processor tests
+        run: yarn workspace @bedrock/resume-import-processor test
+
+  # ============================================================================
   # CI Summary (Gate)
   # ============================================================================
   ci-success:
@@ -343,6 +373,7 @@ jobs:
       - typecheck
       - build
       - test-stacks
+      - apps-unit-tests
       - validate-cdk
       - iac-security-scan
     runs-on: ubuntu-latest
@@ -378,6 +409,7 @@ jobs:
             "typecheck:${{ needs.typecheck.result }}" \
             "build:${{ needs.build.result }}" \
             "test-stacks:${{ needs.test-stacks.result }}" \
+            "apps-unit-tests:${{ needs.apps-unit-tests.result }}" \
             "validate-cdk:${{ needs.validate-cdk.result }}" \
             "iac-security-scan:${{ needs.iac-security-scan.result }}"; do
             JOB_NAME="${job_result%%:*}"
