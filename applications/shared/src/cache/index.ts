@@ -18,6 +18,7 @@ export type {
     SemanticCacheGetResult,
     SemanticCachePutInput,
     SemanticCacheInvalidateInput,
+    CacheMetrics,
 } from './cache-types.js';
 
 // Shared redis client/config (used by both redis-backed caches).
@@ -30,4 +31,3 @@ export type { RedisExactCacheOptions } from './redis-exact-cache.js';
 
 // BFF hot-key read cache.
 export { RedisReadCache, projectCaseStudyKey } from './redis-read-cache.js';
-export type { CacheMetrics } from './redis-read-cache.js';

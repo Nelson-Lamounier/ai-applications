@@ -19,7 +19,7 @@
  *   PG_HOST/DATABASE/USER/PASSWORD. Optional: CASE_STUDY_MODEL,
  *   KB_VERSION, ENVIRONMENT.
  */
-import { Counter, Histogram } from 'prom-client';
+import { Counter, Gauge, Histogram } from 'prom-client';
 
 import {
     BedrockGroundingVerifier,
@@ -62,6 +62,23 @@ const caseStudyDuration = new Histogram({
     buckets:    [15, 30, 60, 120, 300, 600, 1200],
     registers:  [obs.registry],
 });
+
+// Cache effectiveness — unified counter shared with the read cache + other Jobs.
+// See docs/adr/0001-cache-observability-prometheus-over-emf.md.
+const CACHE_NAME = 'aigen:case_study';
+const cacheRequests = new Counter({
+    name:       'redis_cache_requests_total',
+    help:       'Cache outcomes by cache name and result.',
+    labelNames: ['cache', 'result'] as const,
+    registers:  [obs.registry],
+});
+const cacheEnabled = new Gauge({
+    name:       'redis_cache_enabled',
+    help:       '1 if the cache is wired to a live Redis, 0 if fail-open disabled.',
+    labelNames: ['cache'] as const,
+    registers:  [obs.registry],
+});
+for (const result of ['hit', 'miss', 'error'] as const) cacheRequests.inc({ cache: CACHE_NAME, result }, 0);
 
 function buildAdapter(token: string): GitHubAdapter {
     return new GitHubAdapter(token);
@@ -127,7 +144,14 @@ async function main(): Promise<void> {
         // Exact-key Redis cache. Reads REDIS_CACHE_* from env; disabled (and
         // therefore a no-op) when REDIS_CACHE_HOST is unset, so the job is
         // safe to deploy ahead of the cluster-side Redis wiring.
-        const cache = RedisExactCache.fromEnvironment();
+        const cache = RedisExactCache.fromEnvironment({
+            metrics: {
+                onHit:   () => cacheRequests.inc({ cache: CACHE_NAME, result: 'hit' }),
+                onMiss:  () => cacheRequests.inc({ cache: CACHE_NAME, result: 'miss' }),
+                onError: () => cacheRequests.inc({ cache: CACHE_NAME, result: 'error' }),
+            },
+        });
+        cacheEnabled.set({ cache: CACHE_NAME }, cache.enabled ? 1 : 0);
         const adapter            = buildAdapter(env.githubToken);
         const commitLoader       = buildCommitLoader(adapter);
         const pullRequestLoader  = buildPullRequestLoader(adapter);

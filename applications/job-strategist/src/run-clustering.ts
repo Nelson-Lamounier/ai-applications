@@ -20,7 +20,7 @@
  *   CLUSTERING_PIPELINE_RUN_ID, USER_ID, PG_HOST, PG_DATABASE,
  *   PG_USER, PG_PASSWORD, optional PG_PORT, ENVIRONMENT.
  */
-import { Counter, Histogram } from 'prom-client';
+import { Counter, Gauge, Histogram } from 'prom-client';
 
 import {
     RedisExactCache,
@@ -58,6 +58,24 @@ const clusteringDuration = new Histogram({
     registers:  [obs.registry],
 });
 
+// Cache effectiveness — unified counter shared with the read cache + other Jobs.
+// See docs/adr/0001-cache-observability-prometheus-over-emf.md.
+const CACHE_NAME = 'aigen:clustering';
+const cacheRequests = new Counter({
+    name:       'redis_cache_requests_total',
+    help:       'Cache outcomes by cache name and result.',
+    labelNames: ['cache', 'result'] as const,
+    registers:  [obs.registry],
+});
+const cacheEnabled = new Gauge({
+    name:       'redis_cache_enabled',
+    help:       '1 if the cache is wired to a live Redis, 0 if fail-open disabled.',
+    labelNames: ['cache'] as const,
+    registers:  [obs.registry],
+});
+// Seed result series so panels render 0 instead of "No data".
+for (const result of ['hit', 'miss', 'error'] as const) cacheRequests.inc({ cache: CACHE_NAME, result }, 0);
+
 async function main(): Promise<void> {
     const env  = parseClusteringEnv();
     const pool = getPool(env.pg);
@@ -88,7 +106,14 @@ async function main(): Promise<void> {
         // Exact-key Redis cache. Reads REDIS_CACHE_* from env; disabled (and
         // therefore a no-op) when REDIS_CACHE_HOST is unset, so the job is
         // safe to deploy ahead of the cluster-side Redis wiring.
-        const cache = RedisExactCache.fromEnvironment();
+        const cache = RedisExactCache.fromEnvironment({
+            metrics: {
+                onHit:   () => cacheRequests.inc({ cache: CACHE_NAME, result: 'hit' }),
+                onMiss:  () => cacheRequests.inc({ cache: CACHE_NAME, result: 'miss' }),
+                onError: () => cacheRequests.inc({ cache: CACHE_NAME, result: 'error' }),
+            },
+        });
+        cacheEnabled.set({ cache: CACHE_NAME }, cache.enabled ? 1 : 0);
 
         const out = await runClusteringOrchestration(pool, {
             userId:        env.userId,

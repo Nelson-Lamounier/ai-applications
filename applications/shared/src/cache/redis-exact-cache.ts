@@ -9,13 +9,13 @@
  */
 import { createHash } from 'node:crypto';
 
-import { emitEmfMetric } from '../emf.js';
 import type {
     ISemanticCache,
     SemanticCacheGetInput,
     SemanticCacheGetResult,
     SemanticCachePutInput,
     SemanticCacheInvalidateInput,
+    CacheMetrics,
 } from './cache-types.js';
 import {
     createRedisCacheClient,
@@ -23,7 +23,6 @@ import {
     type RedisLike,
 } from './redis-client.js';
 
-const NS = 'BedrockSharedSafety';
 const SCAN_COUNT = 256;
 
 export interface RedisExactCacheOptions {
@@ -36,9 +35,18 @@ export class RedisExactCache implements ISemanticCache {
     constructor(
         private readonly client: RedisLike,
         private readonly opts: RedisExactCacheOptions,
+        // Telemetry sink — caller bumps its own Prometheus counters. `cache` is
+        // the metric label; we pass the entry's scope so the caller can keep or
+        // override it with a stable cache name.
+        private readonly metrics: CacheMetrics = {},
     ) {}
 
-    static fromEnvironment(extra?: Partial<RedisExactCacheOptions>): RedisExactCache {
+    /** Whether the cache is wired to a live Redis (false = fail-open no-op). */
+    get enabled(): boolean { return this.opts.enabled; }
+
+    static fromEnvironment(
+        extra?: Partial<RedisExactCacheOptions> & { metrics?: CacheMetrics },
+    ): RedisExactCache {
         const cfg = resolveRedisCacheConfig();
         const ttlSeconds = extra?.ttlSeconds
             ?? Number(process.env.REDIS_AIGEN_TTL_SECONDS ?? '2592000');
@@ -52,7 +60,7 @@ export class RedisExactCache implements ISemanticCache {
         if (!enabled) {
             console.warn('[redis-exact-cache] REDIS_CACHE_HOST unset — cache disabled (jobs run uncached)');
         }
-        return new RedisExactCache(client, { ttlSeconds, prefix, enabled });
+        return new RedisExactCache(client, { ttlSeconds, prefix, enabled }, extra?.metrics ?? {});
     }
 
     private key(scope: string, kbTag: string, queryText: string): string {
@@ -65,13 +73,13 @@ export class RedisExactCache implements ISemanticCache {
         try {
             const raw = await this.client.get(this.key(input.scope, input.kbTag, input.queryText));
             if (raw === null) {
-                emitEmfMetric(NS, { Module: 'cache' }, [{ name: 'CacheMiss', value: 1, unit: 'Count' }]);
+                this.metrics.onMiss?.(input.scope);
                 return { hit: false };
             }
-            emitEmfMetric(NS, { Module: 'cache' }, [{ name: 'CacheHit', value: 1, unit: 'Count' }]);
-            return { hit: true, response: JSON.parse(raw), similarity: 1.0 };
+            this.metrics.onHit?.(input.scope);
+            return { hit: true, response: JSON.parse(raw), similarity: 1 };
         } catch (e) {
-            emitEmfMetric(NS, { Module: 'cache' }, [{ name: 'CacheError', value: 1, unit: 'Count' }]);
+            this.metrics.onError?.(input.scope);
             console.warn('[redis-exact-cache] get failed — treating as miss:', (e as Error).message);
             return { hit: false };
         }
@@ -87,7 +95,7 @@ export class RedisExactCache implements ISemanticCache {
                 this.opts.ttlSeconds,
             );
         } catch (e) {
-            emitEmfMetric(NS, { Module: 'cache' }, [{ name: 'CacheError', value: 1, unit: 'Count' }]);
+            this.metrics.onError?.(input.scope);
             console.warn('[redis-exact-cache] put failed — skipping store:', (e as Error).message);
         }
     }
@@ -105,7 +113,7 @@ export class RedisExactCache implements ISemanticCache {
             } while (cursor !== '0');
             return deleted;
         } catch (e) {
-            emitEmfMetric(NS, { Module: 'cache' }, [{ name: 'CacheError', value: 1, unit: 'Count' }]);
+            this.metrics.onError?.(input.scope ?? '*');
             console.warn('[redis-exact-cache] invalidate failed — no-op:', (e as Error).message);
             return 0;
         }
