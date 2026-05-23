@@ -16,6 +16,9 @@ import {
   GetDocumentTextDetectionCommand,
   type Block,
 } from '@aws-sdk/client-textract';
+import { jobLogger } from '@bedrock/shared';
+
+const log = jobLogger();
 
 const POLL_INTERVAL_MS  = 2_000;
 const POLL_MAX_ATTEMPTS = 60; // 2 min ceiling
@@ -134,7 +137,8 @@ export async function extractTextFromPdf(
     // pdf-parse throws on encrypted PDFs, malformed structures, and certain
     // CIDFont/XFA documents. Fall through to Textract rather than crashing.
     fallbackReason = 'threw';
-    console.warn('[run-import] pdf-parse threw, falling back to Textract OCR', { s3Key, err });
+    log.warn({ event: 'pdf_parse.fallback', reason: 'threw', s3Key, err: (err as Error).message },
+      'pdf-parse threw, falling back to Textract OCR');
   }
 
   if (pdfText.length >= MIN_USEFUL_TEXT_CHARS) {
@@ -143,13 +147,12 @@ export async function extractTextFromPdf(
 
   if (pdfText.length > 0) {
     fallbackReason ??= 'short_text';
-    console.info(
-      '[run-import] pdf-parse returned too little text, falling back to Textract OCR',
-      { s3Key, chars: pdfText.length },
-    );
+    log.info({ event: 'pdf_parse.fallback', reason: 'short_text', s3Key, chars: pdfText.length },
+      'pdf-parse returned too little text, falling back to Textract OCR');
   } else {
     fallbackReason ??= 'empty';
-    console.info('[run-import] pdf-parse found no text, falling back to Textract OCR', { s3Key });
+    log.info({ event: 'pdf_parse.fallback', reason: 'empty', s3Key },
+      'pdf-parse found no text, falling back to Textract OCR');
   }
 
   const { textractFallbackTotal } = await import('../metrics.js');

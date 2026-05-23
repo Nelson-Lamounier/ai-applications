@@ -22,9 +22,10 @@ import {
 import type { Pool } from 'pg';
 import type { ResumeExperience } from './bedrock/extract-career.js';
 import type { EnrichedRoleData } from './bedrock/enrich-role.js';
-import { recordBedrockCost, PiiScrubber } from '@bedrock/shared';
+import { recordBedrockCost, PiiScrubber, jobLogger } from '@bedrock/shared';
 
 const piiScrubber = new PiiScrubber();
+const log = jobLogger();
 
 const TITAN_MODEL_ID = 'amazon.titan-embed-text-v2:0';
 const EMBEDDING_DIM  = parseInt(process.env['EMBEDDING_DIMENSION'] ?? '1024', 10);
@@ -149,7 +150,8 @@ export async function embedAndPersistEntry(
       inputTokens,
       outputTokens: 0,
       importId,
-    }).catch((err) => console.warn('[embed] cost record failed (non-fatal)', err));
+    }).catch((err) => log.warn({ event: 'embed.cost_record_failed', err: (err as Error).message },
+      'cost record failed (non-fatal)'));
 
     const stopInsert = persistDurationSeconds().startTimer({ op: 'insert_embedding' });
     await pool.query(
