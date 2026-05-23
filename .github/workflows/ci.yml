@@ -358,7 +358,14 @@ jobs:
         run: yarn workspace @bedrock/shared build
 
       - name: Run resume-import-processor tests
-        run: yarn workspace @bedrock/resume-import-processor test
+        # Exclude the two parser suites that read large personal-resume
+        # fixtures (PII — intentionally not committed). Everything else,
+        # including the dashboard metric-contract + synthetic-monitor tests,
+        # runs. The patterns reproduce the config defaults plus the two files.
+        run: >-
+          yarn workspace @bedrock/resume-import-processor test
+          --testPathIgnorePatterns "/node_modules/" "/dist/"
+          "\.integration\.test\.ts$" "parsers/__tests__/(pdf|docx)\.test\.ts$"
 
   # ============================================================================
   # CI Summary (Gate)
