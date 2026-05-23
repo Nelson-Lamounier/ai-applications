@@ -258,6 +258,7 @@ async function main(): Promise<void> {
       let rawText = '';
       let extractionMethod = '';
       await tracer.startActiveSpan('resume_import.parse', async (span) => {
+        const stopStep = stepDurationSeconds.startTimer({ step: 'parse' });
         try {
           if (env.contentType === 'application/pdf') {
             const result     = await extractTextFromPdf(fileBuffer, env.s3Key, env.assetsBucketName, env.awsRegion);
@@ -272,12 +273,13 @@ async function main(): Promise<void> {
           span.recordException(err instanceof Error ? err : new Error(String(err)));
           span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
           throw err;
-        } finally { span.end(); }
+        } finally { stopStep(); span.end(); }
       });
 
       // ── Step 3: Bedrock structured extraction ─────────────────────────────
       let extracted!: ExtractedCareerData;
       await tracer.startActiveSpan('resume_import.extract_roles', async (span) => {
+        const stopStep = stepDurationSeconds.startTimer({ step: 'extract' });
         try {
           await updateImportStatus(pool, env.importId, 'extracting_career', 'Extracting career data', {
             rawExtractedText: rawText,
@@ -303,12 +305,13 @@ async function main(): Promise<void> {
           span.recordException(err instanceof Error ? err : new Error(String(err)));
           span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
           throw err;
-        } finally { span.end(); }
+        } finally { stopStep(); span.end(); }
       });
 
       // ── Step 4: persist career entries ───────────────────────────────────
       let experienceIds!: string[];
       await tracer.startActiveSpan('resume_import.save_entries', async (span) => {
+        const stopStep = stepDurationSeconds.startTimer({ step: 'persist' });
         try {
           experienceIds = await persistCareerEntries(pool, env.userId, env.importId, extracted);
           await updateImportStatus(pool, env.importId, 'analyzing', 'Analyzing your experience', {
@@ -319,7 +322,7 @@ async function main(): Promise<void> {
           span.recordException(err instanceof Error ? err : new Error(String(err)));
           span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
           throw err;
-        } finally { span.end(); }
+        } finally { stopStep(); span.end(); }
       });
 
       // ── Step 5: gap analysis (fan-out → Bedrock → persist report) ────────

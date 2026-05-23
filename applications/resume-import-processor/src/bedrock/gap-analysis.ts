@@ -17,7 +17,7 @@ import {
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import { z } from 'zod';
-import { BedrockGroundingVerifier } from '@bedrock/shared';
+import { BedrockGroundingVerifier, jobLogger } from '@bedrock/shared';
 import type { GroundingResult } from '@bedrock/shared';
 import type { ResumeExperience } from './extract-career.js';
 import type { SearchResult } from '../tools/tavily.js';
@@ -86,16 +86,10 @@ const MODEL_ID = process.env['GAP_ANALYSIS_MODEL_ID']
 // (chatbot / job-strategist).
 const groundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
 
-// Resolved once at module load: prefer the observability handle injected by
-// bootstrapK8sObservability, fall back to a concrete console shim so that
-// unit tests without OTel bootstrap still emit visible warnings.
-type MinLogger = { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
-const gLog: MinLogger =
-  (globalThis as { __obsHandle?: { logger: MinLogger } }).__obsHandle?.logger
-  ?? {
-    info: (obj: object, msg: string) => console.info(`[gap-analysis] ${msg}`, obj),
-    warn: (obj: object, msg: string) => console.warn(`[gap-analysis] ${msg}`, obj),
-  };
+// Structured logger resolved at module load: the bootstrap pino logger if
+// observability is up, else a single-line-JSON console fallback. Both emit one
+// JSON object per line so Loki's `| json` pipeline never hits JSONParserErr.
+const gLog = jobLogger();
 
 // Above this many roles per call the prompt risks context bloat / truncated
 // output. Split into batches and merge perRole.

@@ -22,7 +22,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { z } from 'zod';
 import type { Logger } from 'pino';
-import { PiiScrubber } from '@bedrock/shared';
+import { PiiScrubber, jobLogger } from '@bedrock/shared';
 import type { WebSearchTool } from '../tools/tavily.js';
 import type { ResumeExperience } from './extract-career.js';
 
@@ -98,15 +98,10 @@ export async function enrichRole(
   region: string,
   logger?: Logger,
 ): Promise<RoleEnrichmentResult> {
-  // Resolve a structured logger: prefer the explicit arg, fall back to the
-  // observability handle on globalThis (set by bootstrapK8sObservability), and
-  // finally a tiny console shim so unit tests without OTel bootstrap still work.
-  const log: Pick<Logger, 'info' | 'warn'> = logger
-    ?? (globalThis as { __obsHandle?: { logger: Logger } }).__obsHandle?.logger
-    ?? {
-      info: (obj: object, msg: string) => console.info(`[enrich-role] ${msg}`, obj),
-      warn: (obj: object, msg: string) => console.warn(`[enrich-role] ${msg}`, obj),
-    } as Pick<Logger, 'info' | 'warn'>;
+  // Resolve a structured logger: prefer the explicit arg, else jobLogger() —
+  // the bootstrap pino logger or a single-line-JSON console fallback. Both emit
+  // one JSON object per line so Loki's `| json` pipeline never drops these.
+  const log = logger ?? jobLogger();
 
   const { tavilyDurationSeconds, bedrockDurationSeconds } = await import('../metrics.js');
   const t = piiScrubber.scrub(experience.title).redacted;
