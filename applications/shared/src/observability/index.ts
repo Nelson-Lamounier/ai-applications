@@ -5,6 +5,7 @@
 
 export { bootstrapK8sObservability, type ObservabilityHandle, type BootstrapOptions } from './k8s';
 export { pushFinalMetrics } from './pushgateway';
+export { jobLogger, type JobLogger } from './logger';
 export { activeTraceContext, withSpan } from './lambda';
 export {
     recordBedrockUsage,

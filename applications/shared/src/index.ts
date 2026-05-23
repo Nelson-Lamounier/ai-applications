@@ -35,6 +35,7 @@ export type { BasePipelineContext } from './base-agent.js';
 export {
     bootstrapK8sObservability,
     pushFinalMetrics,
+    jobLogger,
     activeTraceContext,
     withSpan,
     recordBedrockUsage,
@@ -44,6 +45,7 @@ export {
 export type {
     ObservabilityHandle,
     BootstrapOptions,
+    JobLogger,
     BedrockUsage,
     RecordBedrockUsageArgs,
 } from './observability/index.js';
