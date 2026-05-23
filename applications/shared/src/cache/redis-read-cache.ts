@@ -13,13 +13,7 @@
  * app's entry.
  */
 import { type RedisLike } from './redis-client.js';
-
-/** Telemetry sink — apps inject adapters that bump their own counters. */
-export interface CacheMetrics {
-    onHit?(cache: string): void;
-    onMiss?(cache: string): void;
-    onError?(cache: string): void;
-}
+import type { CacheMetrics } from './cache-types.js';
 
 export class RedisReadCache {
     constructor(

@@ -110,3 +110,66 @@ describe('RedisExactCache', () => {
         expect((await c.get({ scope: 's', kbTag: 'k', queryText: 'q' })).hit).toBe(false);
     });
 });
+
+// Contract for the cache-effectiveness telemetry the dashboard depends on
+// (redis_cache_requests_total). The caller injects CacheMetrics; this proves
+// the Bedrock cache fires the right callback with the entry scope so hit/miss
+// land on the unified Prometheus counter.
+describe('RedisExactCache — CacheMetrics callbacks', () => {
+    function spyMetrics() {
+        const calls: { kind: string; cache: string }[] = [];
+        return {
+            calls,
+            onHit:   (cache: string) => calls.push({ kind: 'hit', cache }),
+            onMiss:  (cache: string) => calls.push({ kind: 'miss', cache }),
+            onError: (cache: string) => calls.push({ kind: 'error', cache }),
+        };
+    }
+
+    it('fires onMiss(scope) on a cache miss', async () => {
+        const m = spyMetrics();
+        const c = new RedisExactCache(new FakeRedis(), { ttlSeconds: 100, prefix: 'aigen:v1', enabled: true }, m);
+        await c.get({ scope: 'aigen:clustering', kbTag: 'k', queryText: 'q' });
+        expect(m.calls).toEqual([{ kind: 'miss', cache: 'aigen:clustering' }]);
+    });
+
+    it('fires onHit(scope) on a cache hit', async () => {
+        const m = spyMetrics();
+        const c = new RedisExactCache(new FakeRedis(), { ttlSeconds: 100, prefix: 'aigen:v1', enabled: true }, m);
+        await c.put({ scope: 'aigen:case_study', kbTag: 'k', queryText: 'q', response: 1 });
+        await c.get({ scope: 'aigen:case_study', kbTag: 'k', queryText: 'q' });
+        expect(m.calls).toEqual([{ kind: 'hit', cache: 'aigen:case_study' }]);
+    });
+
+    it('fires onError(scope) when the client throws', async () => {
+        const f = new FakeRedis();
+        f.throwOnGet = true;
+        const m = spyMetrics();
+        const c = new RedisExactCache(f, { ttlSeconds: 100, prefix: 'aigen:v1', enabled: true }, m);
+        await c.get({ scope: 'aigen:clustering', kbTag: 'k', queryText: 'q' });
+        expect(m.calls).toEqual([{ kind: 'error', cache: 'aigen:clustering' }]);
+    });
+
+    it('exposes enabled state for the redis_cache_enabled gauge', () => {
+        const on  = new RedisExactCache(new FakeRedis(), { ttlSeconds: 1, prefix: 'p', enabled: true });
+        const off = new RedisExactCache(new FakeRedis(), { ttlSeconds: 1, prefix: 'p', enabled: false });
+        expect(on.enabled).toBe(true);
+        expect(off.enabled).toBe(false);
+    });
+
+    it('never emits CloudWatch EMF for hit/miss (moved to Prometheus)', async () => {
+        // Guards ADR 0001: cache hit/miss must not write EMF to stdout.
+        const writes: string[] = [];
+        const orig = process.stdout.write.bind(process.stdout);
+        (process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
+            writes.push(String(s)); return true;
+        };
+        try {
+            const c = new RedisExactCache(new FakeRedis(), { ttlSeconds: 100, prefix: 'aigen:v1', enabled: true }, spyMetrics());
+            await c.get({ scope: 's', kbTag: 'k', queryText: 'q' });
+        } finally {
+            (process.stdout as unknown as { write: typeof orig }).write = orig;
+        }
+        expect(writes.join('')).not.toContain('BedrockSharedSafety');
+    });
+});
