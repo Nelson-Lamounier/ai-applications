@@ -102,7 +102,7 @@ export async function enrichAndEmbedRole(
         const enrichResult = await enrichRole(exp, searchTool, region, log as Logger);
         enriched = enrichResult.data;
         if (enrichResult.inputTokens > 0) {
-          recordBedrockCost(pool, {
+          await recordBedrockCost(pool, {
             userId,
             modelId:      process.env['ENRICHMENT_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
             pipeline:     'resume-import',
