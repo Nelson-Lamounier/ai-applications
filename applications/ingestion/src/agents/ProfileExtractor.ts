@@ -10,9 +10,12 @@ import type { Pool } from 'pg';
 import type { ProfileInputBundle } from './ProfileInputCollector.js';
 
 export const ExtractedRepoDataSchema = z.object({
-    project_name:  z.string().min(1).max(120),
-    one_liner:     z.string().min(20).max(140),
-    description:   z.string().min(40).max(800),
+    // Clamp the upper bound instead of hard-failing: an LLM tagline a few chars
+    // over the limit must not fail the whole repo ingestion. Min still validates
+    // (quality floor). Mirrors the highlights/tech_stack transforms below.
+    project_name:  z.string().min(1).transform(s => s.slice(0, 120)),
+    one_liner:     z.string().min(20).transform(s => s.slice(0, 140)),
+    description:   z.string().min(40).transform(s => s.slice(0, 800)),
     domain:        z.enum(['web','ml','devops','infra','mobile','data','cli','lib','other']),
     tech_stack:    z.array(z.string()).transform(arr => arr.slice(0, 40)),
     role_inferred: z.enum(['creator','maintainer','contributor']),
@@ -50,9 +53,9 @@ const EXTRACT_TOOL = {
     input_schema: {
         type: 'object',
         properties: {
-            project_name:  { type: 'string', description: 'Prefer README title over repo slug.' },
-            one_liner:     { type: 'string', description: 'One sentence (20-140 chars). Resume-bullet quality.' },
-            description:   { type: 'string', description: '2-4 sentences on purpose, approach, key technical decisions.' },
+            project_name:  { type: 'string', maxLength: 120, description: 'Prefer README title over repo slug. Max 120 chars.' },
+            one_liner:     { type: 'string', maxLength: 140, description: 'One sentence, 20-140 chars (hard max 140). Resume-bullet quality.' },
+            description:   { type: 'string', maxLength: 800, description: '2-4 sentences on purpose, approach, key technical decisions. Max 800 chars.' },
             domain:        { type: 'string', enum: ['web','ml','devops','infra','mobile','data','cli','lib','other'] },
             tech_stack: {
                 type: 'array', items: { type: 'string' }, maxItems: 40,
