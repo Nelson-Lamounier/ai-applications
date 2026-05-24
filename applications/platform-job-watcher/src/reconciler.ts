@@ -7,14 +7,17 @@ export async function runReconciliation(
 ): Promise<void> {
   for (const entry of watchers) {
     try {
+      // Column names come from validated config identifiers (loadConfig →
+      // validateIdentifier), never from request input — safe to interpolate.
+      // Values + the stale window are parameterised.
       const result = await pool.query(
         `UPDATE ${entry.dbTable}
-            SET status       = 'failed',
-                error_code   = 'WATCHER_TIMEOUT',
-                completed_at = NOW()
-          WHERE status NOT IN ('completed', 'failed', 'awaiting_upload')
-            AND started_at < NOW() - ($1 || ' minutes')::INTERVAL`,
-        [entry.staleAfterMinutes],
+            SET ${entry.statusColumn}    = $1,
+                ${entry.errorColumn}     = $2,
+                ${entry.completedColumn} = NOW()
+          WHERE NOT (${entry.statusColumn} = ANY($3::text[]))
+            AND ${entry.staleColumn} < NOW() - ($4 || ' minutes')::INTERVAL`,
+        [entry.failedValue, entry.errorValue, entry.terminalStatuses, entry.staleAfterMinutes],
       );
       const affected = (result as unknown as { rowCount: number | null }).rowCount ?? 0;
       if (affected > 0) {
