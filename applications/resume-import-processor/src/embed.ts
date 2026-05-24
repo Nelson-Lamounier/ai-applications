@@ -143,7 +143,7 @@ export async function embedAndPersistEntry(
     const { embedding, inputTokens } = await embedText(client, chunk.content);
     stopEmbed();
 
-    recordBedrockCost(pool, {
+    await recordBedrockCost(pool, {
       userId,
       modelId:      TITAN_MODEL_ID,
       pipeline:     'resume-import',

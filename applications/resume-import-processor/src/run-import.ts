@@ -287,7 +287,7 @@ async function main(): Promise<void> {
           });
           const extractionResult = await extractCareerData(rawText, env.awsRegion);
           extracted = extractionResult.data;
-          recordBedrockCost(pool, {
+          await recordBedrockCost(pool, {
             userId:      env.userId,
             modelId:     process.env['EXTRACTION_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
             pipeline:    'resume-import',
@@ -356,7 +356,7 @@ async function main(): Promise<void> {
           }));
 
           const gap = await generateGapAnalysis(gapRoles, rolesSkipped, env.awsRegion);
-          recordBedrockCost(pool, {
+          await recordBedrockCost(pool, {
             userId:       env.userId,
             modelId:      process.env['GAP_ANALYSIS_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
             pipeline:     'resume-import',
