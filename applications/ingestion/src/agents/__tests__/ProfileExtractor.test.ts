@@ -129,6 +129,24 @@ describe('ProfileExtractor', () => {
             .rejects.toMatchObject({ code: 'schema_validation_failed' });
     });
 
+    it('clamps an over-long one_liner to 140 chars instead of failing (regression: a long LLM tagline must not kill the whole repo ingestion)', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, one_liner: 'A'.repeat(200) });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.one_liner).toHaveLength(140);
+    });
+
+    it('clamps an over-long description to 800 chars instead of failing', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, description: 'B'.repeat(1000) });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.description).toHaveLength(800);
+    });
+
+    it('still rejects a too-short one_liner (min quality floor preserved)', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, one_liner: 'short' });
+        await expect(extractor.extract('user-123', makeBundle()))
+            .rejects.toMatchObject({ code: 'schema_validation_failed' });
+    });
+
     it('calls recordBedrockCost once with pipeline profile-extraction', async () => {
         mockBedrockResponse(VALID_TOOL_INPUT);
         await extractor.extract('user-123', makeBundle());
