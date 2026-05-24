@@ -44,7 +44,7 @@ import { Pool } from 'pg';
 
 import { parseEnv } from './env.js';
 import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
-import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
+import { ProfileExtractor, ProfileExtractionError, sha256 } from './agents/ProfileExtractor.js';
 import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
 import { DirectionSynthesizer } from './agents/DirectionSynthesizer.js';
@@ -150,6 +150,42 @@ async function syncRepositoryIndexStatus(
          WHERE user_id = $1::uuid AND full_name = $2`,
         [userId, repoFullName, status, errorMessage ?? null],
     );
+}
+
+/**
+ * Short, non-technical sentence written to repo_sync_state.error_message — the
+ * customer-facing field the dashboard/onboarding UI renders. Never leaks stack
+ * traces, Zod dumps, or internal error codes; the raw detail stays in the logs
+ * and in repositories.error_message for debugging.
+ */
+function friendlyIngestionError(err: unknown): string {
+    if (err instanceof ProfileExtractionError) {
+        if (err.code === 'bedrock_error') {
+            return "We couldn't analyze this repository right now. Please try again in a few minutes.";
+        }
+        return "We couldn't build a profile for this repository. Please try again.";
+    }
+    return "Indexing didn't finish for this repository. Please try again.";
+}
+
+/**
+ * Run a teardown promise but never block longer than `ms`. Cleanup (pool drain,
+ * telemetry flush) must not hold a one-shot Job past its K8s deadline — the
+ * work + status are already persisted by the time we get here.
+ */
+async function withTimeout(p: Promise<unknown>, ms: number, label: string): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+            log.warn({ label, ms }, 'teardown step timed out — continuing to exit');
+            resolve();
+        }, ms);
+    });
+    try {
+        await Promise.race([p.then(() => undefined).catch(() => undefined), timeout]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
 }
 
 async function main(): Promise<void> {
@@ -332,25 +368,49 @@ async function main(): Promise<void> {
             repo_full_name:  env.repoFullName,
         }, 'failed');
         const errMsg = err instanceof Error ? err.message : String(err);
+        const friendly = friendlyIngestionError(err);
+        // repo_sync_state.sync_status is the field the dashboard + onboarding UI
+        // actually read (admin-api returns sync_status ?? index_status, and the
+        // dispatch seeds sync_status='pending'). Profile-phase failures happen
+        // before the chunk pipeline ever sets sync_status, so WITHOUT this write
+        // a failed repo stays 'pending' forever. Persist a user-friendly message
+        // here; keep the raw detail in repositories.error_message below.
+        await syncState.markError(env.userId, env.repoFullName, friendly).catch(() => {});
         await syncRepositoryIndexStatus(
             pgPool, env.userId, env.repoFullName, 'error', errMsg.slice(0, 500),
-        ).catch(() => {}); // best-effort — must not mask the original error
+        ).catch(() => {}); // raw detail for debugging — must not mask the original error
         throw err;
     } finally {
         rootSpan.end();
-        await Promise.allSettled([vectorStore.end(), syncState.end(), pgPool.end()]);
         const duration = Number(process.hrtime.bigint() - start) / 1e9;
         ingestionRuns.inc({ outcome });
         ingestionDuration.observe({ outcome }, duration);
+        // Teardown is best-effort and time-boxed. The work + sync_status are
+        // already persisted; nothing here may keep a one-shot Job alive until
+        // K8s activeDeadlineSeconds kills it (which marks an otherwise-SUCCESSFUL
+        // Job as Failed — see the DeadlineExceeded incident on repos that had
+        // already written 'complete'). Each step gets its own bound so one
+        // hung pool drain can't consume the whole budget.
+        await withTimeout(
+            Promise.allSettled([vectorStore.end(), syncState.end(), pgPool.end()]),
+            10_000, 'db-pools',
+        );
         // Group by repoFullName so dashboards show "last run per repo".
-        await pushFinalMetrics(obs.registry, 'ingestion', `${env.userId}_${env.repoFullName.replace('/', '_')}`);
-        // sdk.shutdown() flushes OTel spans to Alloy; cap at 10s to prevent
-        // a hung HTTP connection from blocking pod exit until the job deadline.
-        await Promise.race([obs.shutdown(), new Promise(r => setTimeout(r, 10_000))]);
+        await withTimeout(
+            pushFinalMetrics(obs.registry, 'ingestion', `${env.userId}_${env.repoFullName.replace('/', '_')}`),
+            8_000, 'pushgateway',
+        );
+        // sdk.shutdown() flushes OTel spans to Alloy.
+        await withTimeout(obs.shutdown(), 10_000, 'otel-shutdown');
     }
 }
 
-main().catch((err) => {
-    log.error({ err }, 'failed');
-    process.exit(1);
-});
+// Force a prompt exit once main settles. A one-shot Job must not linger on
+// stray keep-alive sockets (Bedrock/HTTP) or timers until its K8s deadline —
+// that turns a finished run into a DeadlineExceeded "Failed" Job.
+main()
+    .then(() => process.exit(0))
+    .catch((err) => {
+        log.error({ err }, 'failed');
+        process.exit(1);
+    });
