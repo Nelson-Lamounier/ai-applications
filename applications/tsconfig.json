@@ -32,6 +32,7 @@
     { "path": "chatbot-authenticated" },
     { "path": "job-strategist" },
     { "path": "ingestion" },
+    { "path": "tech-extractor" },
     { "path": "resume-import-processor" }
   ]
 }

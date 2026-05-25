@@ -12,6 +12,7 @@
     "applications/chatbot-authenticated",
     "applications/self-healing",
     "applications/ingestion",
+    "applications/tech-extractor",
     "applications/resume-import-processor",
     "applications/platform-job-watcher",
     "api/public-api",
