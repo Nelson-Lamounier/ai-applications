@@ -1,0 +1,22 @@
+[
+  { "pattern": "^@types/", "ecosystem": "npm", "action": "skip" },
+  { "pattern": "^@aws-sdk/", "ecosystem": "npm", "category": "cloud_compute" },
+  { "pattern": "^@google-cloud/", "ecosystem": "npm", "category": "cloud_compute" },
+  { "pattern": "^@azure/", "ecosystem": "npm", "category": "cloud_compute" },
+  { "pattern": "^@nestjs/", "ecosystem": "npm", "category": "framework_web" },
+  { "pattern": "^@apollo/", "ecosystem": "npm", "category": "api_protocol" },
+  { "pattern": "^@tensorflow/", "ecosystem": "npm", "category": "framework_ml" },
+  { "pattern": "^@stripe/", "ecosystem": "npm", "category": "payment" },
+  { "pattern": "^@anthropic-ai/", "ecosystem": "npm", "category": "ai_platform" },
+  { "pattern": "(-cli$|^cli-)", "ecosystem": "npm", "category": "developer_tool" },
+  { "pattern": "^eslint-(config|plugin)-", "ecosystem": "npm", "action": "skip" },
+  { "pattern": "^babel-(plugin|preset)-", "ecosystem": "npm", "action": "skip" },
+  { "pattern": "^boto", "ecosystem": "pypi", "category": "cloud_compute" },
+  { "pattern": "^google-cloud-", "ecosystem": "pypi", "category": "cloud_compute" },
+  { "pattern": "^azure-", "ecosystem": "pypi", "category": "cloud_compute" },
+  { "pattern": "^django(-|$)", "ecosystem": "pypi", "category": "framework_web" },
+  { "pattern": "^opentelemetry-", "ecosystem": "pypi", "category": "observability" },
+  { "pattern": "^org\\.springframework\\.", "ecosystem": "maven", "category": "framework_web" },
+  { "pattern": "^io\\.netty\\.", "ecosystem": "maven", "category": "framework_web" },
+  { "pattern": "^org\\.apache\\.kafka", "ecosystem": "maven", "category": "message_broker" }
+]

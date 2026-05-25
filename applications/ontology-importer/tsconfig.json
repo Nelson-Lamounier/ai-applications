@@ -9,5 +9,6 @@
     { "path": "../shared" }
   ],
   "include": ["src/**/*.ts"],
+  "files": ["src/categorization/patterns.json", "src/categorization/overrides.json"],
   "exclude": ["node_modules", "dist"]
 }
