@@ -1,0 +1,3 @@
+{ "info": { "name": "Django", "summary": "A high-level Python Web framework.",
+  "classifiers": ["Framework :: Django", "Programming Language :: Python :: 3"],
+  "project_urls": { "Source": "https://github.com/django/django" }, "keywords": "web framework" } }
