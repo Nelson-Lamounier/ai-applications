@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "resolveJsonModule": true
+  },
+  "references": [
+    { "path": "../shared" }
+  ],
+  "include": ["src/**/*.ts"],
+  "files": ["src/config/sdkCallPatterns.json"],
+  "exclude": ["node_modules", "dist"]
+}

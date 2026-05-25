@@ -1,0 +1,8 @@
+{
+  "artifacts": [
+    { "name": "react", "version": "18.2.0", "type": "npm",
+      "locations": [{ "path": "package.json" }] },
+    { "name": "boto3", "version": "1.34.0", "type": "python",
+      "locations": [{ "path": "requirements.txt" }] }
+  ]
+}
