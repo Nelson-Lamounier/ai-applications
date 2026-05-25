@@ -7,6 +7,21 @@ type Lang = 'python' | 'javascript' | 'typescript' | 'go' | 'rust' | 'java';
 interface SdkPattern { language: string; callPattern: string; ecosystem: string; raw_name: string }
 
 /**
+ * Maps an AWS dependency/import module string to AWS service token(s).
+ *
+ * - `aws-cdk-lib/aws-<svc>`   → `['<svc>']`
+ * - `@aws-sdk/client-<svc>`   → `['<svc>']` (hyphenated slug kept as-is)
+ * - anything else             → `[]`
+ */
+export function awsModuleTokens(module: string): string[] {
+    const cdkMatch = /^aws-cdk-lib\/aws-(.+)$/.exec(module);
+    if (cdkMatch) return [cdkMatch[1]];
+    const sdkMatch = /^@aws-sdk\/client-(.+)$/.exec(module);
+    if (sdkMatch) return [sdkMatch[1]];
+    return [];
+}
+
+/**
  * Regex import extraction (deterministic, unit-testable). The Tree-sitter AST
  * pass replaces this in Phase 2 behind the same interface.
  */
@@ -25,8 +40,15 @@ export function extractImportsByRegex(src: string, lang: Lang, filePath: string)
         } else if (lang === 'javascript' || lang === 'typescript') {
             const m = /(?:import|require)\b[^'"]*['"]([^'"]+)['"]/.exec(l);
             if (m) {
-                const mod = m[1].startsWith('@') ? m[1].split('/').slice(0, 2).join('/') : m[1].split('/')[0];
-                if (!mod.startsWith('.')) push(mod, i + 1);
+                const rawModule = m[1];
+                const mod = rawModule.startsWith('@') ? rawModule.split('/').slice(0, 2).join('/') : rawModule.split('/')[0];
+                if (!mod.startsWith('.')) {
+                    push(mod, i + 1);
+                    // Also emit AWS service tokens for aws-cdk-lib/aws-* and @aws-sdk/client-* imports
+                    for (const svcToken of awsModuleTokens(rawModule)) {
+                        out.push({ raw_name: svcToken, ecosystem: lang, source_layer: 'treesitter', file_path: filePath, line_start: i + 1, line_end: i + 1 });
+                    }
+                }
             }
         }
     }
