@@ -29,7 +29,7 @@ export function parseBotocoreService(doc: BotocoreDoc, dirName: string): RawImpo
         source_identifier: prefix,
         proposed_canonical_name: `aws_${prefix.replace(/[^a-z0-9]/g, '_')}`,
         proposed_display_name: display,
-        keywords: [prefix, display.toLowerCase(), `aws ${prefix}`, `amazon ${prefix}`],
+        keywords: [...new Set([prefix, display.toLowerCase(), `aws ${prefix}`, `amazon ${prefix}`])],
         source_metadata: { endpointPrefix: prefix, serviceId: m.serviceId },
     };
 }
