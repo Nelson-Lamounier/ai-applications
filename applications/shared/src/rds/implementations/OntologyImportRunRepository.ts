@@ -35,4 +35,12 @@ export class OntologyImportRunRepository {
             ],
         );
     }
+
+    /** Runs awaiting LLM batch completion. */
+    async findPendingBatches(): Promise<Array<{ id: string; source: string; llmBatchId: string }>> {
+        const { rows } = await this.pool.query<{ id: string; source: string; llm_batch_id: string }>(
+            `SELECT id, source, llm_batch_id FROM ontology_import_runs WHERE status = 'partial' AND llm_batch_id IS NOT NULL`,
+        );
+        return rows.map((r) => ({ id: r.id, source: r.source, llmBatchId: r.llm_batch_id }));
+    }
 }

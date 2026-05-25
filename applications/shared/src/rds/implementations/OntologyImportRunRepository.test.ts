@@ -34,4 +34,14 @@ describe('OntologyImportRunRepository', () => {
         expect(u.sql).toContain('UPDATE ontology_import_runs');
         expect(u.params).toEqual(expect.arrayContaining(['run-1', 'success', 10, 4, 6]));
     });
+
+    it('findPendingBatches() selects partial runs with a batch id and camelCases the mapping', async () => {
+        const pool = fakePool([{ id: 'run-1', source: 'npm_top_5k', llm_batch_id: 'batch-abc' }]);
+        const repo = new OntologyImportRunRepository(pool as never);
+        const pending = await repo.findPendingBatches();
+        expect(pending).toEqual([{ id: 'run-1', source: 'npm_top_5k', llmBatchId: 'batch-abc' }]);
+        const u = pool.calls[0];
+        expect(u.sql).toContain("status = 'partial'");
+        expect(u.sql).toContain('llm_batch_id IS NOT NULL');
+    });
 });
