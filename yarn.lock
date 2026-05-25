@@ -5,6 +5,15 @@ __metadata:
   version: 8
   cacheKey: 10c0
 
+"@anthropic-ai/sdk@npm:^0.55.0":
+  version: 0.55.1
+  resolution: "@anthropic-ai/sdk@npm:0.55.1"
+  bin:
+    anthropic-ai-sdk: bin/cli
+  checksum: 10c0/b6c5d0d47c2314ad49d147e300438f3a6ad8291db421091ee069e5e976f86a11ad107a203aa887456761fd4e16be7071926aadc429c8f8e4452f81fe85ca194a
+  languageName: node
+  linkType: hard
+
 "@aws-cdk/asset-awscli-v1@npm:2.2.273":
   version: 2.2.273
   resolution: "@aws-cdk/asset-awscli-v1@npm:2.2.273"
@@ -3656,6 +3665,23 @@ __metadata:
     "@types/pg": "npm:^8.20.0"
     pg: "npm:^8.20.0"
     zod: "npm:^3.25.0"
+  languageName: unknown
+  linkType: soft
+
+"@bedrock/ontology-importer@workspace:applications/ontology-importer":
+  version: 0.0.0-use.local
+  resolution: "@bedrock/ontology-importer@workspace:applications/ontology-importer"
+  dependencies:
+    "@anthropic-ai/sdk": "npm:^0.55.0"
+    "@bedrock/shared": "workspace:*"
+    "@jest/globals": "npm:^29.7.0"
+    "@types/node": "npm:^22.0.0"
+    jest: "npm:^29.7.0"
+    pg: "npm:^8.20.0"
+    prom-client: "npm:^15.1.3"
+    ts-jest: "npm:^29.2.6"
+    typescript: "npm:^5.8.3"
+    undici: "npm:^7.24.4"
   languageName: unknown
   linkType: soft
 

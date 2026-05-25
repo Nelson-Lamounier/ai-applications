@@ -326,6 +326,14 @@ export type {
     OntologyRow, ParityRunRow, CandidateUpsertInput,
 } from './rds/index.js';
 
+// Ontology import (Tier 2 importer)
+export type {
+    RawImportEntry, OntologyCategory, CategorizationResult, ImportRunCounts,
+} from './rds/index.js';
+export { ONTOLOGY_CATEGORIES } from './rds/index.js';
+export { OntologyImportRunRepository }    from './rds/index.js';
+export { OntologyImportSourceRepository } from './rds/index.js';
+
 // ─── Crypto (KMS Envelope Encryption) ────────────────────────────────────────
 export { createKmsEnvelope, KmsEnvelopeError } from './crypto/index.js';
 export type { KmsEnvelope, EncryptedPayload } from './crypto/index.js';

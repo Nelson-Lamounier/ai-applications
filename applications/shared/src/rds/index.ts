@@ -115,3 +115,11 @@ export type {
 } from './types/techgraph.js';
 export { CONFIDENCE_BY_LAYER } from './types/techgraph.js';
 export type { CandidateUpsertInput } from './implementations/TechnologyCandidateRepository.js';
+
+// Ontology import (Tier 2 importer)
+export type {
+    RawImportEntry, OntologyCategory, CategorizationResult, ImportRunCounts,
+} from './types/ontology-import.js';
+export { ONTOLOGY_CATEGORIES } from './types/ontology-import.js';
+export { OntologyImportRunRepository }    from './implementations/OntologyImportRunRepository.js';
+export { OntologyImportSourceRepository } from './implementations/OntologyImportSourceRepository.js';

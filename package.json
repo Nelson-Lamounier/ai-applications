@@ -13,6 +13,7 @@
     "applications/self-healing",
     "applications/ingestion",
     "applications/tech-extractor",
+    "applications/ontology-importer",
     "applications/resume-import-processor",
     "applications/synthetic-monitor",
     "applications/platform-job-watcher",

@@ -1,0 +1,10 @@
+{
+  "next": "framework_web", "nuxt": "framework_web", "remix": "framework_web",
+  "astro": "framework_web", "qwik": "framework_web", "solid-js": "framework_web",
+  "svelte": "framework_web", "sveltekit": "framework_web", "fastapi": "framework_web",
+  "django": "framework_web", "flask": "framework_web", "fastify": "framework_web",
+  "prisma": "database_relational", "drizzle-orm": "database_relational",
+  "mongoose": "database_nosql", "redis": "database_kv", "bullmq": "message_broker",
+  "celery": "message_broker", "jest": "testing", "vitest": "testing",
+  "playwright": "testing", "winston": "observability", "pino": "observability"
+}
