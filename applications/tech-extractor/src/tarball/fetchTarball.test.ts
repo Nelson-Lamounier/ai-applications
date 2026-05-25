@@ -54,4 +54,14 @@ describe('fetchTarball', () => {
         ).rejects.toThrow(/404/);
         await fs.rm(dir, { recursive: true, force: true });
     });
+
+    it('aborts a body that exceeds the cap when Content-Length is absent', async () => {
+        const big = Buffer.alloc(2_000); // 2000 bytes, cap will be 1000
+        globalThis.fetch = jest.fn(async () => new Response(big, { status: 200 })) as never;
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tball-'));
+        await expect(
+            fetchTarball('owner/repo', 'main', 'tok', path.join(dir, 'r.tar.gz'), 1_000),
+        ).rejects.toThrow(/repo_too_large/i);
+        await fs.rm(dir, { recursive: true, force: true });
+    });
 });

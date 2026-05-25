@@ -1,14 +1,16 @@
 /** @format */
 import {
-    OntologyResolver, CONFIDENCE_BY_LAYER, type TechnologyEvidenceRow,
+    OntologyResolver, CONFIDENCE_BY_LAYER,
+    type TechnologyEvidenceRow, type CandidateUpsertInput,
+    type TechnologyEvidenceRepository, type TechnologyCandidateRepository,
 } from '@bedrock/shared';
-import type { TechnologyEvidenceRepository, TechnologyCandidateRepository } from '@bedrock/shared';
 import type { Extractor } from '../extractors/Extractor.js';
 
 export interface OrchestratorRunInput {
     userId:          string;
     repoFullName:    string;
     commitSha:       string;
+    rootDir:         string;
     ontologyVersion: number;
     extractors:      Extractor[];
 }
@@ -35,12 +37,13 @@ export class TechExtractOrchestrator {
     async run(input: OrchestratorRunInput): Promise<OrchestratorResult> {
         const failedExtractors: string[] = [];
         const settled = await Promise.allSettled(
-            input.extractors.map(async (e) => ({ name: e.name, rows: await e.extract('') })),
+            input.extractors.map(async (e) => ({ name: e.name, rows: await e.extract(input.rootDir) })),
         );
 
         const evidence: TechnologyEvidenceRow[] = [];
         const canonicalIds = new Set<string>();
         const candidatesSeen = new Set<string>();
+        const pendingCandidates: CandidateUpsertInput[] = [];
         let matched = 0, unmatched = 0;
 
         for (let i = 0; i < settled.length; i++) {
@@ -62,7 +65,7 @@ export class TechExtractOrchestrator {
                     const key = `${norm}|${r.ecosystem ?? 'unknown'}`;
                     if (!candidatesSeen.has(key)) {
                         candidatesSeen.add(key);
-                        await this.candidateRepo.upsert({
+                        pendingCandidates.push({
                             rawName: r.raw_name, normalizedName: norm, ecosystem: r.ecosystem,
                             userId: input.userId, repoFullName: input.repoFullName, filePath: r.file_path,
                         });
@@ -71,6 +74,7 @@ export class TechExtractOrchestrator {
             }
         }
 
+        await Promise.all(pendingCandidates.map((c) => this.candidateRepo.upsert(c)));
         await this.evidenceRepo.insertMany(input.userId, evidence);
         return { matched, unmatched, failedExtractors, canonicalIds };
     }

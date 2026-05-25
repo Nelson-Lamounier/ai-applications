@@ -31,7 +31,19 @@ export async function fetchTarball(
     if (len > maxBytes) throw new Error(`repo_too_large: ${len} > ${maxBytes}`);
     if (!res.body) throw new Error('tarball fetch returned no body');
 
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > maxBytes) throw new Error(`repo_too_large: ${buf.length} > ${maxBytes}`);
-    await fs.writeFile(outPath, buf);
+    // Stream with an inline byte counter so a missing/zero Content-Length
+    // can't OOM us on a huge (untrusted) body — abort as soon as we exceed cap.
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+            total += value.length;
+            if (total > maxBytes) throw new Error(`repo_too_large: streamed > ${maxBytes}`);
+            chunks.push(value);
+        }
+    }
+    await fs.writeFile(outPath, Buffer.concat(chunks));
 }

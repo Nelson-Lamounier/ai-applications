@@ -107,7 +107,8 @@ async function main(): Promise<void> {
 
         const orch = new TechExtractOrchestrator(resolver, evidenceRepo, candidateRepo);
         const result = await orch.run({
-            userId: env.userId, repoFullName: env.repoFullName, commitSha: sha, ontologyVersion, extractors,
+            userId: env.userId, repoFullName: env.repoFullName, commitSha: sha,
+            rootDir: extractDir, ontologyVersion, extractors,
         });
         for (const name of result.failedExtractors) extractorFailed.inc({ extractor: name });
 

@@ -24,7 +24,7 @@ export async function walkTextFiles(rootDir: string): Promise<string[]> {
             if (e.name === '.git' || e.name === 'node_modules') continue;
             const full = path.join(dir, e.name);
             if (e.isDirectory()) { await rec(full); continue; }
-            if (e.isFile() && isTextCandidate(e.name)) out.push(path.relative(rootDir, full));
+            if (e.isFile() && !e.isSymbolicLink() && isTextCandidate(e.name)) out.push(path.relative(rootDir, full));
         }
     }
     await rec(rootDir);

@@ -25,7 +25,7 @@ describe('TechExtractOrchestrator.run', () => {
 
         const orch = new TechExtractOrchestrator(resolver, evidenceRepo as never, candidateRepo as never);
         const result = await orch.run({
-            userId: 'u1', repoFullName: 'o/r', commitSha: 'abc', ontologyVersion: 3, extractors: [good, bad],
+            userId: 'u1', repoFullName: 'o/r', commitSha: 'abc', rootDir: '/tmp/extract', ontologyVersion: 3, extractors: [good, bad],
         });
 
         const persisted = (evidenceRepo.insertMany as jest.Mock).mock.calls[0][1] as { technologyId: string | null; rawName: string }[];
@@ -36,5 +36,6 @@ describe('TechExtractOrchestrator.run', () => {
         expect(result.matched).toBe(1);
         expect(result.unmatched).toBe(1);
         expect(result.canonicalIds.has('id-react')).toBe(true);
+        expect(good.extract).toHaveBeenCalledWith('/tmp/extract');
     });
 });
