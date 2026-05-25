@@ -223,13 +223,13 @@ git commit -m "feat(tech-extractor): add namespace chart + ArgoCD apps (mirrors 
 
 ## Task 4: admin-api dispatcher — create the tech-extract Job
 
-> **GROUNDED in the real admin-api** at `/Users/nelsonlamounier/Desktop/portfolio/tucaken-app/admin-api` (the ingestion route `POST /api/admin/ingestion/trigger` builds + POSTs the ingestion `V1Job`). Mirror that exactly. Reference files:
-> - `admin-api/src/routes/ingestion.ts` — `buildJobSpec()` + `getBatchApi().createNamespacedJob(...)` (the canonical pattern to copy)
-> - `admin-api/src/lib/k8s-job-builder.ts` — shared `buildPipelineJob()` + `observabilityEnv()` + `sanitizeLabel()` (image-agnostic builder used by article/strategist routes)
-> - `admin-api/src/lib/config.ts` — `getJobImage(name)`, `JobImageName` union, `ingestionNamespace`/`ingestionServiceAccount`
-> - `admin-api/src/lib/k8s.ts` — `getBatchApi()`
+> **GROUNDED in the real admin-api** at `/Users/nelsonlamounier/Desktop/portfolio/tucaken-app/admin-api`. There are TWO dispatch sites; the **primary** one is in `routes/github.ts`, not `routes/ingestion.ts`:
+> - `admin-api/src/routes/github.ts` — `dispatchIngestionJob(config, userId, repoFullName, githubToken, forceReindex)` — **the canonical pattern to copy.** Called by `POST /github/connected-repos`, the auto-dispatch loop on install, re-install, and reconcile. It injects a **per-user GitHub App installation token** (`generateInstallationToken` from `lib/github-app.ts`) as the explicit `GITHUB_TOKEN` env (overrides the static secret), and sets reconciliation **annotations** `ingestion.tucaken.io/{user-id,repo-full-name}` so `platform-job-watcher` can map failures to `repo_sync_state`.
+> - `admin-api/src/routes/ingestion.ts` — `POST /trigger` `buildJobSpec()` — the secondary manual trigger; mirror too if you want manual tech-extract runs.
+> - `admin-api/src/lib/config.ts` — `getJobImage(name)`, `JobImageName` union, `ingestionNamespace`/`ingestionServiceAccount`.
+> - `admin-api/src/lib/k8s.ts` — `getBatchApi()`. `admin-api/src/lib/github-app.ts` — `generateInstallationToken`, installation helpers (no sha resolver — see Step 5).
 >
-> **Two of my earlier assumptions were wrong and are corrected here:** (1) there is no `import-id` label — the ingestion Job uses `app`/`userId`/`repoSlug` labels + `ttlSecondsAfterFinished: 3600` for cleanup; mirror that, drop import-id. (2) the image is NOT a literal ECR URI passed in — it's resolved at request time via `getJobImage('tech-extractor')` reading `/etc/admin-api/images/tech-extractor` (kubelet-synced from the `admin-api-job-images` ESO Secret, seeded from SSM `/k8s/{env}/job-images/tech-extractor`).
+> **Three earlier assumptions corrected:** (1) no `import-id` label — Jobs use `app`/`userId`/`repoSlug` labels + `ttlSecondsAfterFinished: 3600` + the `ingestion.tucaken.io/*` annotations. (2) the image is resolved at request time via `getJobImage('tech-extractor')` (file `/etc/admin-api/images/tech-extractor`, ESO-synced from SSM `/k8s/{env}/job-images/tech-extractor`), not passed as a literal URI. (3) `GITHUB_TOKEN` is a per-user installation token generated at dispatch — the tech-extract Job must get the same injected token, so the static `tech-extractor-secrets` PAT is only a fallback.
 
 - [ ] **Step 1: Register the image name** — `admin-api/src/lib/config.ts`
 Add `'tech-extractor'` to the `JobImageName` union and to the `ENV_FALLBACK` map (env var e.g. `TECH_EXTRACTOR_IMAGE` for local dev). Add `techExtractorNamespace` (`TECH_EXTRACTOR_NAMESPACE` ?? `'tech-extractor'`) and `techExtractorServiceAccount` (`TECH_EXTRACTOR_SERVICE_ACCOUNT` ?? `'tech-extractor-sa'`) to the config object, mirroring the `ingestion*` fields.
@@ -237,23 +237,38 @@ Add `'tech-extractor'` to the `JobImageName` union and to the `ENV_FALLBACK` map
 - [ ] **Step 2: Seed the image URI source** (cdk-monitoring + ESO)
 Add SSM param `/k8s/{env}/job-images/tech-extractor` (written by the CI image-push step / cdk-monitoring seed, alongside the existing `ingestion` entry) and include it in the `admin-api-job-images` ExternalSecret so `getJobImage('tech-extractor')` resolves. Without this, `isImageConfigured()` returns false and the route correctly 502s.
 
-- [ ] **Step 3: Build + dispatch the tech-extract Job** — `admin-api/src/routes/ingestion.ts` (or a small sibling module)
-After the ingestion Job is created in the `/trigger` handler, ALSO build + POST a tech-extract Job (shadow-mode, additive). Mirror `buildJobSpec`, changing only:
+- [ ] **Step 3: Add `dispatchTechExtractJob()`** — `admin-api/src/routes/github.ts` (sibling to `dispatchIngestionJob`)
+Copy `dispatchIngestionJob` to a `dispatchTechExtractJob(config, userId, repoFullName, githubToken, commitSha?)`, changing only:
+- `image = getJobImage('tech-extractor')` guarded by `isImageConfigured(...)`; if unconfigured, log + return without throwing (additive — never block ingestion)
 - namespace `config.techExtractorNamespace`, SA `config.techExtractorServiceAccount`
-- `image = getJobImage('tech-extractor')` guarded by `isImageConfigured(...)` (if unconfigured, log + skip — do NOT fail the ingestion response, since tech-extract is additive)
-- container command `['node', 'dist/run-tech-extract.js']`
-- name stem `tech-extract-{userSlug}-{repoSlug}-{sha1(userId:repo:ts)[:8]}` (deterministic per run; duplicate creates 409 → treat as success)
-- labels `{ app: 'tech-extractor', userId: safeUserId, repoSlug }`, `ttlSecondsAfterFinished: 3600`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`, `restartPolicy: 'Never'`
-- env: `observabilityEnv('tech-extractor', ...)` + `USER_ID`, `REPO_FULL_NAME`, `COMMIT_SHA` (resolved default-branch HEAD sha at dispatch — see note), `WORK_DIR=/work`, + traceparent
-- `envFrom: [{ secretRef: { name: 'platform-rds-credentials' }}, { secretRef: { name: 'tech-extractor-secrets' }}]`
-- add the `emptyDir` work volume (`sizeLimit: 2Gi`) + `volumeMounts` `/work` — the ingestion Job has no volume, so this is the one addition beyond the ingestion template
-- wrap `createNamespacedJob` in try/catch: log on failure but return the ingestion 202 regardless (shadow-mode must never degrade ingestion); treat HTTP 409 as success.
+- name `tech-extract-{slugPart}-{sha1(userId:repo:ts)[:8]}` (deterministic per run; duplicate create 409 → treat as success)
+- labels `{ app: 'tech-extractor', userId: safeUser, repoSlug }`, `ttlSecondsAfterFinished: 3600`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`, `restartPolicy: 'Never'`
+- **annotations:** use a distinct `tech-extractor.tucaken.io/{user-id,repo-full-name}` namespace — do NOT reuse the `ingestion.tucaken.io/*` annotations, so `platform-job-watcher` does **not** fold tech-extract failures into `repo_sync_state` (tech-extract is shadow/additive; a failed run just yields no parity row, which is fine). TTL handles cleanup.
+- command `['node', 'dist/run-tech-extract.js']`
+- env: `observabilityEnv('tech-extractor', ...)` + `USER_ID`, `REPO_FULL_NAME`, `WORK_DIR=/work`, `{ name: 'GITHUB_TOKEN', value: githubToken }` (the **per-user installation token**, same as ingestion), `COMMIT_SHA` (Step 5), + traceparent
+- `envFrom: [{ secretRef: { name: 'platform-rds-credentials' }}, { secretRef: { name: 'tech-extractor-secrets' }}]` (PG creds; the static secret GitHub PAT is a fallback behind the injected token)
+- add an `emptyDir` work volume (`sizeLimit: 2Gi`) + `volumeMounts` `/work` — the one addition beyond the ingestion Job spec
 
-> **COMMIT_SHA note:** the entrypoint accepts `COMMIT_SHA` optional and falls back to `HEAD`. For the commit-SHA short-circuit + parity-by-commit to work, dispatch should resolve the repo's default-branch HEAD sha (admin-api already has the GitHub token / a GitHub client in `routes/github.ts`). If resolving the sha at dispatch is non-trivial, Phase-1-acceptable fallback: omit `COMMIT_SHA`, the Job uses `HEAD`, and the short-circuit is simply skipped that run. Note the choice.
+- [ ] **Step 4: Call it alongside every ingestion dispatch**
+At each site that calls `dispatchIngestionJob(...)` (`POST /github/connected-repos`, the install auto-dispatch loop, re-install, reconcile, and optionally `routes/ingestion.ts` `/trigger`), call `dispatchTechExtractJob(...)` right after, wrapped in try/catch that only logs (never affects the ingestion result or HTTP response). Treat HTTP 409 as success.
 
-- [ ] **Step 4: Unit test** — mirror admin-api's existing route/builder tests. Assert: the tech-extract job name is deterministic for the same `(userId, repo, ts)`; the image-unconfigured path skips without throwing; a 409 from a fake batch API is swallowed. Run admin-api's test command (e.g. `yarn workspace admin-api test` or the repo's runner); expect pass.
+- [ ] **Step 5: Resolve `COMMIT_SHA` at dispatch** — `admin-api/src/lib/github-app.ts`
+You **cannot** pass the branch name as `COMMIT_SHA` — the entrypoint records it verbatim as `commit_sha`, so a branch name would make the short-circuit fire forever and never re-extract on new commits. There is no existing sha resolver, but the installation token is already in hand at dispatch. Add a small helper:
+```ts
+// Resolve the HEAD commit sha of a ref (default branch) via the installation token.
+export async function resolveHeadSha(token: string, repoFullName: string, ref: string): Promise<string> {
+    const res = await fetch(`https://api.github.com/repos/${repoFullName}/commits/${ref}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'tucaken-admin-api' },
+    });
+    if (!res.ok) throw new Error(`resolveHeadSha ${repoFullName}@${ref}: HTTP ${res.status}`);
+    return ((await res.json()) as { sha: string }).sha;
+}
+```
+In `dispatchTechExtractJob`, resolve `commitSha = await resolveHeadSha(githubToken, repoFullName, repo.default_branch ?? 'HEAD')` (the dispatch sites already have `default_branch` from the `repositories` row, or pass `'HEAD'`). On resolver failure, log and omit `COMMIT_SHA` (entrypoint falls back to `HEAD`; the short-circuit simply no-ops that run) — never block dispatch.
 
-- [ ] **Step 5: Commit** in tucaken-app (`git-commit` skill).
+- [ ] **Step 6: Unit test** — mirror admin-api's existing route/builder tests. Assert: deterministic job name for the same `(userId, repo, ts)`; image-unconfigured path returns without throwing; a 409 from a fake batch API is swallowed; `resolveHeadSha` failure falls back to no `COMMIT_SHA` without throwing. Run admin-api's test command; expect pass.
+
+- [ ] **Step 7: Commit** in tucaken-app (`git-commit` skill).
 
 ---
 
