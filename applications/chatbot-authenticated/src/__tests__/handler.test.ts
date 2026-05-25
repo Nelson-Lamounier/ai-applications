@@ -141,6 +141,9 @@ describe('chatbot-authenticated handler', () => {
             expect.any(String),
             history,
             'next question',
+            // Cost context added by the Bedrock spend-tracking change (invokeClaude
+            // now books spend into prompt_invocations via { pool, userId }).
+            expect.objectContaining({ userId: 'owner-uuid' }),
         );
     });
 
