@@ -124,3 +124,7 @@ export { ONTOLOGY_CATEGORIES } from './types/ontology-import.js';
 export { OntologyImportRunRepository }    from './implementations/OntologyImportRunRepository.js';
 export { OntologyImportSourceRepository } from './implementations/OntologyImportSourceRepository.js';
 export { OntologyWriteRepository }        from './implementations/OntologyWriteRepository.js';
+export { OntologyReviewQueueRepository }    from './implementations/OntologyReviewQueueRepository.js';
+export type { OntologyReviewQueueInput }    from './implementations/OntologyReviewQueueRepository.js';
+export { OntologySkippedImportRepository }  from './implementations/OntologySkippedImportRepository.js';
+export type { OntologySkippedImportInput }  from './implementations/OntologySkippedImportRepository.js';
