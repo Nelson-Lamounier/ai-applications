@@ -33,6 +33,7 @@
     { "path": "job-strategist" },
     { "path": "ingestion" },
     { "path": "tech-extractor" },
-    { "path": "resume-import-processor" }
+    { "path": "resume-import-processor" },
+    { "path": "ontology-importer" }
   ]
 }
