@@ -33,4 +33,14 @@ export class OntologyImportSourceRepository {
         );
         return rowCount ?? 0;
     }
+
+    /** Deactivate ontology rows whose import-source has >= threshold consecutive misses. Returns rows deactivated. */
+    async deactivateStale(source: string, threshold: number): Promise<number> {
+        const { rowCount } = await this.pool.query(
+            `UPDATE technology_ontology SET is_active = false
+             WHERE id IN (SELECT technology_id FROM ontology_import_sources WHERE source = $1 AND consecutive_misses >= $2)`,
+            [source, threshold],
+        );
+        return rowCount ?? 0;
+    }
 }
