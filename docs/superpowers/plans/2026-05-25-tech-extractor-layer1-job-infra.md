@@ -16,11 +16,19 @@
 
 ## File Structure
 
+**This repo (ai-applications):**
 - Create `applications/tech-extractor/Dockerfile` (multi-stage; Syft binary + wasm grammars)
 - Create `applications/tech-extractor/.dockerignore`
-- Cluster repo (via `k8s-new-service`): Helm chart for the Job, ArgoCD Application, image-pull + DB/GitHub secret wiring
-- Modify the ingestion-Job dispatcher to also create a `tech-extract` Job (location TBD at implementation — same component that creates the ingestion Job; one cross-repo dependency)
-- Modify CI to build + push the `tech-extractor` image
+- Modify CI to build + push the `tech-extractor` image to ECR
+
+**kubernetes-bootstrap (branch `main`)** — mirror `charts/ingestion/` (NOT `tucaken-app`):
+- `charts/tech-extractor/chart/` — `Chart.yaml`, `values.yaml`, `templates/tech-extractor-sa.yaml`, `templates/admin-api-job-creator-rbac.yaml` (NO Job/Deployment template — admin-api creates the Job in code)
+- `charts/tech-extractor/external-secrets/` — GitHub PAT + RDS creds/config (ESO)
+- `argocd-apps/tech-extractor.yaml` + `argocd-apps/tech-extractor-secrets.yaml`
+
+**cdk-monitoring (branch `develop`):**
+- ECR repo `tech-extractor` in `infra/lib/shared/vpc-stack.ts`
+- admin-api dispatcher: build + POST the tech-extract `V1Job` (mirrors the ingestion Job creator; admin-api already holds the job-creator RBAC)
 
 ---
 
@@ -165,89 +173,102 @@ git commit -m "ci(tech-extractor): build and push tech-extractor image"
 
 ---
 
-## Task 3: Helm chart + ArgoCD (cluster repo — via k8s-new-service)
+## Task 3: kubernetes-bootstrap chart — namespace infra ONLY (mirror `charts/ingestion/`)
 
-> **Invoke the `k8s-new-service` skill now.** It is authoritative for: which repo owns the chart, namespace, secret wiring (DB creds, `GITHUB_TOKEN`), ArgoCD Application placement, and IRSA/service-account for Bedrock-free DB access. Do not guess these — the skill encodes the cluster's ownership rules.
+> **GROUNDED in the real cluster repo** `/Users/nelsonlamounier/Desktop/portfolio/kubernetes-bootstrap` (branch `main`). The earlier draft of this task was wrong — it assumed a Helm **Job template** like `tucaken-app`. Reality: tech-extractor is a one-shot Job (no ingress, no Rollout, no IngressRoute, no CloudFront), exactly like **ingestion**. The ingestion "chart" contains **no Job/Deployment template at all** — the Job spec is built **programmatically by admin-api** and POSTed to the K8s API. The chart only provides namespace infra: a ServiceAccount, cross-namespace RBAC granting admin-api permission to create Jobs, and ExternalSecrets. Reference template: `charts/ingestion/` (NOT `charts/tucaken-app/`). Invoke the `k8s-new-service` skill for ownership rules, but the concrete model is the ingestion chart.
 
-The chart must express a **Job template** (not a Deployment), parameterised per run:
-
-- [ ] **Step 1: Run the `k8s-new-service` skill** to scaffold the chart for a Job-type workload named `tech-extractor`.
-
-- [ ] **Step 2: Job spec essentials** (encode these in the chart the skill scaffolds)
-
-```yaml
-# values / template highlights — adapt to the skill's chart structure
-spec:
-  backoffLimit: 2
-  activeDeadlineSeconds: 1800
-  template:
-    spec:
-      restartPolicy: Never
-      serviceAccountName: tech-extractor          # IRSA if it needs AWS; DB via secret
-      securityContext: { runAsNonRoot: true, runAsUser: 1001 }
-      containers:
-        - name: tech-extractor
-          image: <registry>/tech-extractor:<tag>
-          envFrom:
-            - secretRef: { name: tech-extractor-db }     # PG_* creds
-          env:
-            - { name: USER_ID,        value: "{{ .Values.userId }}" }
-            - { name: REPO_FULL_NAME, value: "{{ .Values.repoFullName }}" }
-            - { name: COMMIT_SHA,     value: "{{ .Values.commitSha }}" }
-            - { name: WORK_DIR,       value: "/work" }
-            - name: GITHUB_TOKEN
-              valueFrom: { secretKeyRef: { name: tech-extractor-github, key: token } }
-          resources:
-            requests: { cpu: "500m", memory: "1Gi" }
-            limits:   { cpu: "1500m", memory: "2Gi" }
-          volumeMounts:
-            - { name: work, mountPath: /work }
-      volumes:
-        - name: work
-          emptyDir: { sizeLimit: 2Gi }              # disk-backed; bounds runaway repos
+- [ ] **Step 1: Copy the ingestion chart**
+`cp -r charts/ingestion charts/tech-extractor` in `kubernetes-bootstrap`, then rename every `ingestion` → `tech-extractor` and `ingestion-sa` → `tech-extractor-sa` across `Chart.yaml`, `values.yaml`, and templates. Resulting tree should be:
+```
+charts/tech-extractor/chart/Chart.yaml
+charts/tech-extractor/chart/values.yaml
+charts/tech-extractor/chart/templates/tech-extractor-sa.yaml          # SA the Job pods run as
+charts/tech-extractor/chart/templates/admin-api-job-creator-rbac.yaml # Role+RoleBinding: admin-api may create Jobs here
+charts/tech-extractor/external-secrets/tech-extractor-secrets.yaml    # GITHUB_TOKEN (ESO -> bedrock-development/github-token)
+charts/tech-extractor/external-secrets/rds-credentials.yaml
+charts/tech-extractor/external-secrets/platform-rds-credentials.yaml
+charts/tech-extractor/external-secrets/rds-config.yaml
 ```
 
-- [ ] **Step 3: ArgoCD Application** (via the skill) pointing at the chart, synced to the cluster.
+- [ ] **Step 2: ServiceAccount — no Bedrock needed**
+Unlike ingestion, tech-extractor calls **no Bedrock** (it reads/writes Postgres and fetches GitHub via the PAT). So the `tech-extractor-sa` needs **no AWS Pod Identity association** for Bedrock. Remove the Bedrock IAM prerequisite comment from the copied SA template. If it needs zero AWS perms, no PodIdentityAssociation is required at all (note this explicitly so cdk-monitoring doesn't add one). Keep the SA itself (pods must run as a named SA).
 
-- [ ] **Step 4: Commit** (in the cluster repo, per the skill's commit conventions — follow `git-commit` skill there too).
+- [ ] **Step 3: RBAC — reuse the admin-api-job-creator pattern verbatim**
+The copied `admin-api-job-creator-rbac.yaml` already grants admin-api's SA `create/get/list/watch/delete` on `batch/jobs` + `get/list` on `pods/log` in this namespace. Keep it as-is (only the namespace via `.Values.namespace` changes). This is what lets admin-api dispatch tech-extract Jobs.
+
+- [ ] **Step 4: ExternalSecrets — GitHub PAT + RDS**
+`tech-extractor-secrets.yaml`: reuse the SAME Secrets Manager source as ingestion — `bedrock-development/github-token` via ESO `aws-secretsmanager` ClusterSecretStore → `GITHUB_TOKEN`. Copy `rds-credentials.yaml` / `platform-rds-credentials.yaml` / `rds-config.yaml` unchanged except namespace. (tech-extractor reads `document_embeddings` + writes the technology_* tables, so it needs the platform-RDS creds the same way ingestion does.)
+
+- [ ] **Step 5: ArgoCD Applications** — `argocd-apps/tech-extractor.yaml` + `argocd-apps/tech-extractor-secrets.yaml`, mirroring `argocd-apps/ingestion.yaml` + `argocd-apps/ingestion-secrets.yaml`. **No `ignoreDifferences`/IngressRoute/Image-Updater-IngressRoute blocks** — there is no ingress. (Image Updater for the ECR image is optional; mirror whatever ingestion does — check `argocd-apps/ingestion.yaml`.)
+
+- [ ] **Step 6: Lint + commit** (in `kubernetes-bootstrap`, branch `main`, follow `git-commit` skill there)
+```bash
+helm lint charts/tech-extractor/chart
+git add charts/tech-extractor argocd-apps/tech-extractor.yaml argocd-apps/tech-extractor-secrets.yaml
+git commit -m "feat(tech-extractor): add namespace chart + ArgoCD apps (mirrors ingestion)"
+```
+
+> **Anti-patterns to avoid** (from k8s-new-service): no chart in `kubernetes-platform`; no `deploy.py`/SM-B references; do NOT add a Job/Deployment/Rollout/IngressRoute template (this is a Job-creator-RBAC chart, like ingestion).
 
 ---
 
-## Task 4: Dispatcher — trigger the Job (concurrent-run guard)
+## Task 3b: ECR repository (cdk-monitoring)
 
-**Files:**
-- Modify: the component that creates the ingestion K8s Job (locate at implementation; it uses `@kubernetes/client-node`, mirrors the `import-id` label the `platform-job-watcher` sweeps)
+> The image built in Task 1/CI needs a registry. Per k8s-new-service, ECR repos are provisioned in **cdk-monitoring** (`infra/lib/shared/vpc-stack.ts`), branch `develop`.
 
-> This is the **one cross-repo dependency** flagged in the spec. The dispatcher may live in `api/`, `tucaken-app`, or an infra component — locate it before editing.
+- [ ] Add a `tech-extractor` ECR repository alongside the `ingestion` repo in cdk-monitoring's shared-vpc stack (copy the ingestion repo definition + lifecycle policy). Confirm the Task 2 CI build pushes to this repo's URI.
+- [ ] Commit in cdk-monitoring (branch `develop`, `git-commit` skill).
 
-- [ ] **Step 1: Locate the ingestion Job creator**
+---
 
-Run: `grep -rn "createNamespacedJob\|batch/v1\|import-id\|REPO_FULL_NAME" --include="*.ts" . | grep -v node_modules | grep -v dist`
-Expected: find where the ingestion `V1Job` is constructed and submitted.
+## Task 4: admin-api dispatcher — create the tech-extract Job
 
-- [ ] **Step 2: Add a tech-extract Job creation alongside it**
+> **GROUNDED in the real admin-api** at `/Users/nelsonlamounier/Desktop/portfolio/tucaken-app/admin-api`. There are TWO dispatch sites; the **primary** one is in `routes/github.ts`, not `routes/ingestion.ts`:
+> - `admin-api/src/routes/github.ts` — `dispatchIngestionJob(config, userId, repoFullName, githubToken, forceReindex)` — **the canonical pattern to copy.** Called by `POST /github/connected-repos`, the auto-dispatch loop on install, re-install, and reconcile. It injects a **per-user GitHub App installation token** (`generateInstallationToken` from `lib/github-app.ts`) as the explicit `GITHUB_TOKEN` env (overrides the static secret), and sets reconciliation **annotations** `ingestion.tucaken.io/{user-id,repo-full-name}` so `platform-job-watcher` can map failures to `repo_sync_state`.
+> - `admin-api/src/routes/ingestion.ts` — `POST /trigger` `buildJobSpec()` — the secondary manual trigger; mirror too if you want manual tech-extract runs.
+> - `admin-api/src/lib/config.ts` — `getJobImage(name)`, `JobImageName` union, `ingestionNamespace`/`ingestionServiceAccount`.
+> - `admin-api/src/lib/k8s.ts` — `getBatchApi()`. `admin-api/src/lib/github-app.ts` — `generateInstallationToken`, installation helpers (no sha resolver — see Step 5).
+>
+> **Three earlier assumptions corrected:** (1) no `import-id` label — Jobs use `app`/`userId`/`repoSlug` labels + `ttlSecondsAfterFinished: 3600` + the `ingestion.tucaken.io/*` annotations. (2) the image is resolved at request time via `getJobImage('tech-extractor')` (file `/etc/admin-api/images/tech-extractor`, ESO-synced from SSM `/k8s/{env}/job-images/tech-extractor`), not passed as a literal URI. (3) `GITHUB_TOKEN` is a per-user installation token generated at dispatch — the tech-extract Job must get the same injected token, so the static `tech-extractor-secrets` PAT is only a fallback.
 
-Construct a `V1Job` for `tech-extractor` with:
-- **Deterministic name** `tech-extract-{repoIdHash}-{shaShort}` (issue #9 — second create attempt 409s/no-ops, closing the concurrent-run race; the evidence `ON CONFLICT DO NOTHING` from Plan 1 covers residual duplicates).
-- The same `import-id` label the ingestion Job carries (so `platform-job-watcher`'s stale sweep marks failures generically — no new watcher code).
-- Env: `USER_ID`, `REPO_FULL_NAME`, `COMMIT_SHA` (the resolved HEAD sha at dispatch), `GITHUB_TOKEN` secret ref, `PG_*` secret ref.
-- Wrap the create in a `try/catch` that treats a 409 (AlreadyExists) as success (idempotent dispatch).
+- [ ] **Step 1: Register the image name** — `admin-api/src/lib/config.ts`
+Add `'tech-extractor'` to the `JobImageName` union and to the `ENV_FALLBACK` map (env var e.g. `TECH_EXTRACTOR_IMAGE` for local dev). Add `techExtractorNamespace` (`TECH_EXTRACTOR_NAMESPACE` ?? `'tech-extractor'`) and `techExtractorServiceAccount` (`TECH_EXTRACTOR_SERVICE_ACCOUNT` ?? `'tech-extractor-sa'`) to the config object, mirroring the `ingestion*` fields.
 
-- [ ] **Step 3: Add a unit test for the Job-name derivation**
+- [ ] **Step 2: Seed the image URI source** (cdk-monitoring + ESO)
+Add SSM param `/k8s/{env}/job-images/tech-extractor` (written by the CI image-push step / cdk-monitoring seed, alongside the existing `ingestion` entry) and include it in the `admin-api-job-images` ExternalSecret so `getJobImage('tech-extractor')` resolves. Without this, `isImageConfigured()` returns false and the route correctly 502s.
 
-Mirror the repo's existing dispatcher test style. Assert `jobName(userId, repo, sha)` is deterministic and stable for the same inputs, and that a 409 from the fake k8s client is swallowed.
+- [ ] **Step 3: Add `dispatchTechExtractJob()`** — `admin-api/src/routes/github.ts` (sibling to `dispatchIngestionJob`)
+Copy `dispatchIngestionJob` to a `dispatchTechExtractJob(config, userId, repoFullName, githubToken, commitSha?)`, changing only:
+- `image = getJobImage('tech-extractor')` guarded by `isImageConfigured(...)`; if unconfigured, log + return without throwing (additive — never block ingestion)
+- namespace `config.techExtractorNamespace`, SA `config.techExtractorServiceAccount`
+- name `tech-extract-{slugPart}-{sha1(userId:repo:ts)[:8]}` (deterministic per run; duplicate create 409 → treat as success)
+- labels `{ app: 'tech-extractor', userId: safeUser, repoSlug }`, `ttlSecondsAfterFinished: 3600`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`, `restartPolicy: 'Never'`
+- **annotations:** use a distinct `tech-extractor.tucaken.io/{user-id,repo-full-name}` namespace — do NOT reuse the `ingestion.tucaken.io/*` annotations, so `platform-job-watcher` does **not** fold tech-extract failures into `repo_sync_state` (tech-extract is shadow/additive; a failed run just yields no parity row, which is fine). TTL handles cleanup.
+- command `['node', 'dist/run-tech-extract.js']`
+- env: `observabilityEnv('tech-extractor', ...)` + `USER_ID`, `REPO_FULL_NAME`, `WORK_DIR=/work`, `{ name: 'GITHUB_TOKEN', value: githubToken }` (the **per-user installation token**, same as ingestion), `COMMIT_SHA` (Step 5), + traceparent
+- `envFrom: [{ secretRef: { name: 'platform-rds-credentials' }}, { secretRef: { name: 'tech-extractor-secrets' }}]` (PG creds; the static secret GitHub PAT is a fallback behind the injected token)
+- add an `emptyDir` work volume (`sizeLimit: 2Gi`) + `volumeMounts` `/work` — the one addition beyond the ingestion Job spec
 
-- [ ] **Step 4: Run the dispatcher tests**
+- [ ] **Step 4: Call it alongside every ingestion dispatch**
+At each site that calls `dispatchIngestionJob(...)` (`POST /github/connected-repos`, the install auto-dispatch loop, re-install, reconcile, and optionally `routes/ingestion.ts` `/trigger`), call `dispatchTechExtractJob(...)` right after, wrapped in try/catch that only logs (never affects the ingestion result or HTTP response). Treat HTTP 409 as success.
 
-Run: the workspace test command for the dispatcher's package (e.g. `yarn workspace <pkg> test`).
-Expected: pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add <dispatcher files>
-git commit -m "feat(dispatch): trigger tech-extract Job alongside ingestion"
+- [ ] **Step 5: Resolve `COMMIT_SHA` at dispatch** — `admin-api/src/lib/github-app.ts`
+You **cannot** pass the branch name as `COMMIT_SHA` — the entrypoint records it verbatim as `commit_sha`, so a branch name would make the short-circuit fire forever and never re-extract on new commits. There is no existing sha resolver, but the installation token is already in hand at dispatch. Add a small helper:
+```ts
+// Resolve the HEAD commit sha of a ref (default branch) via the installation token.
+export async function resolveHeadSha(token: string, repoFullName: string, ref: string): Promise<string> {
+    const res = await fetch(`https://api.github.com/repos/${repoFullName}/commits/${ref}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'tucaken-admin-api' },
+    });
+    if (!res.ok) throw new Error(`resolveHeadSha ${repoFullName}@${ref}: HTTP ${res.status}`);
+    return ((await res.json()) as { sha: string }).sha;
+}
 ```
+In `dispatchTechExtractJob`, resolve `commitSha = await resolveHeadSha(githubToken, repoFullName, repo.default_branch ?? 'HEAD')` (the dispatch sites already have `default_branch` from the `repositories` row, or pass `'HEAD'`). On resolver failure, log and omit `COMMIT_SHA` (entrypoint falls back to `HEAD`; the short-circuit simply no-ops that run) — never block dispatch.
+
+- [ ] **Step 6: Unit test** — mirror admin-api's existing route/builder tests. Assert: deterministic job name for the same `(userId, repo, ts)`; image-unconfigured path returns without throwing; a 409 from a fake batch API is swallowed; `resolveHeadSha` failure falls back to no `COMMIT_SHA` without throwing. Run admin-api's test command; expect pass.
+
+- [ ] **Step 7: Commit** in tucaken-app (`git-commit` skill).
 
 ---
 
@@ -282,13 +303,16 @@ Expected: a row exists; `recall` is populated; `llm_only_examples` shows which t
 **Spec coverage (Plan 3 portion):**
 - Multi-stage Dockerfile with Syft binary + wasm grammars → Task 1 ✓
 - CI image build → Task 2 ✓
-- Dedicated K8s Job (Job not Deployment, emptyDir sizeLimit, non-root, resource limits) → Task 3 ✓
-- ArgoCD + Helm via `k8s-new-service` → Task 3 ✓
-- Trigger alongside ingestion + `import-id` label reuse → Task 4 ✓
+- ECR repo (cdk-monitoring shared-vpc) → Task 3b ✓
+- Namespace chart (SA + admin-api-job-creator RBAC + ExternalSecrets), mirroring `charts/ingestion/` — **NO Helm Job template; the Job is built in admin-api code** → Task 3 ✓
+- ArgoCD apps (no IngressRoute/ignoreDifferences — not an HTTP service) → Task 3 ✓
+- admin-api builds + POSTs the tech-extract Job; trigger alongside ingestion + `import-id` label reuse → Task 4 ✓
 - Concurrent-run guard: deterministic Job name + 409-as-success + evidence ON CONFLICT (issue #9) → Task 4 ✓
 - Migration apply + shadow run + parity readout (the Phase-1 success test) → Task 5 ✓
 
-**Placeholder scan:** the dispatcher file paths and CI workflow paths are intentionally "locate at implementation" because they cross repo/package boundaries that must be discovered, not guessed — each has an exact `grep` to find the target. The chart specifics defer to `k8s-new-service` by design. No vague code placeholders.
+**Grounded in the real cluster repo** (`kubernetes-bootstrap`, branch `main`): reference template is `charts/ingestion/` (a Job-creator-RBAC chart), NOT `charts/tucaken-app/` (an HTTP-service chart with Rollout/IngressRoute/CloudFront). The k8s-new-service skill's `tucaken-app` template does not apply here — tech-extractor is a batch Job, so there is no ingress, no Rollout, no IngressRoute patcher, no CloudFront/WAF. GitHub PAT reuses ingestion's `bedrock-development/github-token` ESO source; no Bedrock IAM needed (tech-extractor calls no Bedrock).
+
+**Placeholder scan:** remaining "locate at implementation" greps are for admin-api's Job-creator code and the CI workflow — both in cdk-monitoring (cross-repo, must be discovered, not guessed). No vague code placeholders.
 
 **Type/name consistency:** env var names (`USER_ID`, `REPO_FULL_NAME`, `COMMIT_SHA`, `WORK_DIR`, `GITHUB_TOKEN`, `PG_*`, `SYFT_BIN`, `MAX_TARBALL_BYTES`) match `env.ts` and `run-tech-extract.ts` from Plan 2. The `import-id` label and `platform-job-watcher` sweep match the existing ingestion convention.
 ```
