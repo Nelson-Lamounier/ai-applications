@@ -14,6 +14,7 @@
     "applications/ingestion",
     "applications/tech-extractor",
     "applications/resume-import-processor",
+    "applications/synthetic-monitor",
     "applications/platform-job-watcher",
     "api/public-api",
     "infra"
