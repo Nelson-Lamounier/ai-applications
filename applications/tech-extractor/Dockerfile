@@ -22,6 +22,7 @@ COPY applications/chatbot-public/package.json    ./applications/chatbot-public/
 COPY applications/chatbot-authenticated/package.json ./applications/chatbot-authenticated/
 COPY applications/self-healing/package.json           ./applications/self-healing/
 COPY applications/resume-import-processor/package.json ./applications/resume-import-processor/
+COPY applications/synthetic-monitor/package.json      ./applications/synthetic-monitor/
 COPY applications/platform-job-watcher/package.json   ./applications/platform-job-watcher/
 COPY packages/script-utils/package.json          ./packages/script-utils/
 COPY infra/package.json                          ./infra/
