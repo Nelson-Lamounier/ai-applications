@@ -126,7 +126,11 @@ CREATE POLICY rls_technology_evidence ON technology_evidence
     USING      (user_id = current_setting('app.current_user_id', true)::uuid)
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
--- ── User-scoped: candidates ──────────────────────────────────────────────
+-- ── Global cross-user aggregate: candidates ──────────────────────────────
+-- Intentionally NOT user-scoped (no user_id, no RLS): one row per distinct
+-- (normalized_name, ecosystem) aggregated across ALL users. Per-user context
+-- lives inside example_repos jsonb. The candidate-review loop (deferred
+-- data-track) consumes these globally.
 CREATE TABLE IF NOT EXISTS technology_candidates (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     raw_name            TEXT NOT NULL,

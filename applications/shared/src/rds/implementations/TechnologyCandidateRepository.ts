@@ -16,6 +16,10 @@ export class TechnologyCandidateRepository {
     /**
      * Record an unmatched token. On repeat (same normalized_name + ecosystem)
      * increment occurrence_count and append the example repo.
+     *
+     * NOTE: user_count is initialised to 1 and not incremented here — a naive
+     * +1 would double-count the same user. Distinct-user counts are derived
+     * later from example_repos in the candidate-review loop (deferred).
      */
     async upsert(input: CandidateUpsertInput): Promise<void> {
         const ecosystem = input.ecosystem ?? 'unknown';

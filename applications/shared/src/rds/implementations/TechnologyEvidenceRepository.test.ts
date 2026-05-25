@@ -34,6 +34,11 @@ describe('TechnologyEvidenceRepository.insertMany', () => {
         const insert = client.calls.find(c => c.sql.includes('INSERT INTO technology_evidence'))!;
         expect(insert.sql).toContain('ON CONFLICT');
         expect(insert.sql).toContain('DO NOTHING');
+        expect(insert.params).toEqual([
+            'u1', 'o/r', 'abc', 'id-kube', 'k8s',
+            'iac', 'iac', 'deploy.yaml', 3, 3,
+            0.85, 5,
+        ]);
         expect(client.release).toHaveBeenCalled();
     });
 
@@ -50,6 +55,7 @@ describe('TechnologyEvidenceRepository.hasEvidenceForCommit', () => {
         const client = fakeClient([{ one: 1 }]);
         const repo = new TechnologyEvidenceRepository(fakePool(client) as never);
         expect(await repo.hasEvidenceForCommit('u1', 'o/r', 'abc')).toBe(true);
+        expect(client.calls.some(c => c.sql.includes("set_config('app.current_user_id'"))).toBe(true);
     });
     it('returns false when no row exists', async () => {
         const client = fakeClient([]);

@@ -19,6 +19,9 @@ export class TechnologyEvidenceRepository {
             );
             await client.query('COMMIT');
             return rows.length > 0;
+        } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
         } finally {
             client.release();
         }
@@ -42,11 +45,7 @@ export class TechnologyEvidenceRepository {
                         $6, $7, $8, $9, $10,
                         $11, $12
                     )
-                    ON CONFLICT (
-                        user_id, repo_full_name,
-                        COALESCE(technology_id::text, raw_name),
-                        file_path, COALESCE(line_start, -1)
-                    ) DO NOTHING`,
+                    ON CONFLICT DO NOTHING`,
                     [
                         userId, r.repoFullName, r.commitSha, r.technologyId, r.rawName,
                         r.ecosystem, r.sourceLayer, r.filePath, r.lineStart, r.lineEnd,
