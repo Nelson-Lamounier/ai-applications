@@ -311,7 +311,12 @@ function emitAgentMetrics(
  * @throws AgentExecutionError wrapping the original error with agent context
  */
 export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentResult<T>> {
-    const { config, userMessage, parseResponse, pipelineContext, onInvocationComplete, userId, resumeGenerationId } = options;
+    const { config, userMessage, parseResponse, pipelineContext, resumeGenerationId } = options;
+    // Per-call options win, but fall back to the pipeline context so a pipeline
+    // can opt every agent into cost recording by setting these once at start
+    // (avoids threading them through every execute*Agent wrapper).
+    const invocationSink = options.onInvocationComplete ?? pipelineContext.onInvocationComplete;
+    const userId         = options.userId ?? pipelineContext.userId;
     const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, pipeline, promptId, tool } = config;
 
     // Anthropic forbids forced tool_use with extended thinking. Catch the
@@ -461,7 +466,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
         );
 
         // Build and dispatch the invocation log (non-blocking — errors are swallowed)
-        if (onInvocationComplete) {
+        if (invocationSink) {
             const systemPromptHash = sha256(JSON.stringify(systemPrompt));
             const outputHash       = sha256(textContent);
             const cacheHit         = tokenUsage.cacheReadInputTokens > 0;
@@ -493,7 +498,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
                 resumeGenerationId,
             };
 
-            onInvocationComplete(log).catch((err) => {
+            invocationSink(log).catch((err) => {
                 console.warn(`[${agentName}] onInvocationComplete failed (non-fatal)`, err);
             });
         }

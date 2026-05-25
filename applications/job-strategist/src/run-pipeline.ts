@@ -15,7 +15,7 @@
  */
 import type { StrategistPipelineContext, StructuredResumeData } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, PgSemanticCache, PiiScrubber } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, PgSemanticCache, PiiScrubber, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
@@ -119,6 +119,7 @@ export async function main(): Promise<void> {
         cumulativeCostUsd: 0,
         startedAt:         new Date().toISOString(),
         userId:            env.userId,
+        onInvocationComplete: recordInvocationToRds(pool, 'job-strategist'),
     };
 
     try {
@@ -211,7 +212,7 @@ export async function main(): Promise<void> {
                     query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
                     contextChunks,
                     answer: analysis.data.analysisXml,
-                });
+                }, { pool, userId: env.userId });
                 groundingStatus = g.status;
                 finalAnalysis = g.answer;
             } catch (e) {

@@ -1,0 +1,6 @@
+[
+  { "language": "python", "callPattern": "boto3.client", "ecosystem": "aws", "raw_name": "aws" },
+  { "language": "python", "callPattern": "boto3.resource", "ecosystem": "aws", "raw_name": "aws" },
+  { "language": "javascript", "callPattern": "new BedrockRuntimeClient", "ecosystem": "aws", "raw_name": "aws_bedrock" },
+  { "language": "typescript", "callPattern": "new BedrockRuntimeClient", "ecosystem": "aws", "raw_name": "aws_bedrock" }
+]

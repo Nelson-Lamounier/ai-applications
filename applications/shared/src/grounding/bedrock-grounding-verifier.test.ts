@@ -5,12 +5,17 @@ jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
 }));
 const emitMock = jest.fn();
 jest.mock('../emf.js', () => ({ emitEmfMetric: (...a: unknown[]) => emitMock(...a) }));
+const recordCostMock = jest.fn(async () => {});
+jest.mock('../rds/bedrock-cost.js', () => ({ recordBedrockCost: recordCostMock }));
 
 import { BedrockGroundingVerifier } from './bedrock-grounding-verifier.js';
 import type { ConverseCommandOutput } from '@aws-sdk/client-bedrock-runtime';
 
-function modelReply(text: string) {
-    return { output: { message: { content: [{ text }] } } } as unknown as ConverseCommandOutput;
+function modelReply(text: string, usage?: { inputTokens: number; outputTokens: number }) {
+    return {
+        output: { message: { content: [{ text }] } },
+        ...(usage ? { usage } : {}),
+    } as unknown as ConverseCommandOutput;
 }
 
 describe('BedrockGroundingVerifier', () => {
@@ -23,6 +28,25 @@ describe('BedrockGroundingVerifier', () => {
         expect(r.status).toBe('GROUNDED');
         expect(r.answer).toBe('A is true');
         expect(r.ungroundedClaims).toEqual([]);
+    });
+
+    it('records Bedrock cost as grounding-verify when a costCtx is supplied', async () => {
+        recordCostMock.mockClear();
+        sendMock.mockResolvedValueOnce(modelReply('GROUNDED\nReason: ok', { inputTokens: 320, outputTokens: 12 }));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pool = {} as any;
+        await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input, { pool, userId: 'user-9' });
+        expect(recordCostMock).toHaveBeenCalledTimes(1);
+        expect(recordCostMock).toHaveBeenCalledWith(pool, expect.objectContaining({
+            userId: 'user-9', pipeline: 'grounding-verify', inputTokens: 320, outputTokens: 12,
+        }));
+    });
+
+    it('does not record cost when no costCtx is supplied', async () => {
+        recordCostMock.mockClear();
+        sendMock.mockResolvedValueOnce(modelReply('GROUNDED\nReason: ok', { inputTokens: 10, outputTokens: 1 }));
+        await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input);
+        expect(recordCostMock).not.toHaveBeenCalled();
     });
 
     it('parses NOT_GROUNDED with claims and keeps answer in flag mode', async () => {

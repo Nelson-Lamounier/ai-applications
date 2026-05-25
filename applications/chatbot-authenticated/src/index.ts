@@ -163,7 +163,10 @@ export const handler = withSpan('chatbot-authenticated.handler', async (
         const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
 
         // ── 7. Generate ────────────────────────────────────────────────────────
-        const rawResponse = await invokeClaude(env.chatbotModel, systemPrompt, history, inputCheck.sanitised);
+        const rawResponse = await invokeClaude(env.chatbotModel, systemPrompt, history, inputCheck.sanitised, {
+            pool:   db,
+            userId,
+        });
 
         // ── 8. Output sanitisation ─────────────────────────────────────────────
         const normalised                       = stripCodeFence(rawResponse);

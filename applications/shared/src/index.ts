@@ -296,6 +296,7 @@ export {
     buildRetrievalSuggestions,
     recordBedrockCost,
     computeCostCents,
+    recordInvocationToRds,
     computeUserProfileRollup,
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,
@@ -311,6 +312,18 @@ export type {
     IOAuthConnectionsRepository,
     OAuthConnection,
     NewOAuthConnection,
+} from './rds/index.js';
+
+// Technology graph (Layer 1)
+export { OntologyResolver, normalizeAlias } from './rds/index.js';
+export { TechnologyOntologyRepository }     from './rds/index.js';
+export { TechnologyEvidenceRepository }     from './rds/index.js';
+export { TechnologyCandidateRepository }    from './rds/index.js';
+export { TechnologyParityRunRepository }    from './rds/index.js';
+export { CONFIDENCE_BY_LAYER }             from './rds/index.js';
+export type {
+    SourceLayer, RawTechnologyEvidence, TechnologyEvidenceRow,
+    OntologyRow, ParityRunRow, CandidateUpsertInput,
 } from './rds/index.js';
 
 // ─── Crypto (KMS Envelope Encryption) ────────────────────────────────────────

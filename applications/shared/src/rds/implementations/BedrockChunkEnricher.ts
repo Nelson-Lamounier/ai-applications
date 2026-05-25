@@ -29,6 +29,8 @@ import {
 
 import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnricher.js';
 import type { RawChunk } from '../types.js';
+import type { Pool } from 'pg';
+import { recordBedrockCost } from '../bedrock-cost.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
@@ -87,6 +89,7 @@ interface AnthropicTextBlock { type: 'text'; text: string }
 
 interface AnthropicResponse {
     content: Array<AnthropicToolUseBlock | AnthropicTextBlock>;
+    usage?:  { input_tokens?: number; output_tokens?: number };
 }
 
 export interface BedrockChunkEnricherConfig {
@@ -96,21 +99,35 @@ export interface BedrockChunkEnricherConfig {
     readonly region?: string;
 }
 
+/**
+ * Per-job context for recording enrichment spend into `prompt_invocations`.
+ * Mirrors {@link TitanCostContext}: without it the enricher silently invokes
+ * Bedrock without booking the cost — the gap that let one repo-sync run bill
+ * $8 of Haiku invisibly.
+ */
+export interface ChunkEnricherCostContext {
+    pool:     Pool;
+    userId:   string;
+    repoName: string;
+}
+
 export class BedrockChunkEnricher implements IChunkEnricher {
     private readonly client:  BedrockRuntimeClient;
     private readonly modelId: string;
+    private readonly costCtx?: ChunkEnricherCostContext;
 
-    constructor(config: BedrockChunkEnricherConfig = {}) {
+    constructor(config: BedrockChunkEnricherConfig = {}, costCtx?: ChunkEnricherCostContext) {
         const region = config.region ?? process.env.AWS_REGION ?? 'us-east-1';
         this.client  = new BedrockRuntimeClient({ region });
         this.modelId = config.modelId ?? DEFAULT_MODEL_ID;
+        this.costCtx = costCtx;
     }
 
-    static fromEnvironment(): BedrockChunkEnricher {
+    static fromEnvironment(costCtx?: ChunkEnricherCostContext): BedrockChunkEnricher {
         return new BedrockChunkEnricher({
             modelId: process.env.ENRICHMENT_MODEL_ID,
             region:  process.env.AWS_REGION,
-        });
+        }, costCtx);
     }
 
     // =========================================================================
@@ -144,6 +161,20 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         const parsed = JSON.parse(
             Buffer.from(responseBody).toString('utf-8'),
         ) as AnthropicResponse;
+
+        // Book the spend BEFORE branching on tool_use — the call costs money
+        // whether or not the model returned a usable extraction. Non-fatal:
+        // a cost-record failure must never break ingestion.
+        if (this.costCtx) {
+            recordBedrockCost(this.costCtx.pool, {
+                userId:       this.costCtx.userId,
+                modelId:      this.modelId,
+                pipeline:     'repo-sync',
+                inputTokens:  parsed.usage?.input_tokens  ?? 0,
+                outputTokens: parsed.usage?.output_tokens ?? 0,
+                repoName:     this.costCtx.repoName,
+            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
+        }
 
         const toolUse = parsed.content.find(
             (b): b is AnthropicToolUseBlock => b.type === 'tool_use',

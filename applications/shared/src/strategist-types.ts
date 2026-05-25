@@ -14,7 +14,7 @@
  * Functions payload limit.
  */
 
-import type { AgentResult } from './types.js';
+import type { AgentResult, AgentInvocationLog } from './types.js';
 
 // =============================================================================
 // ENUMS & DOMAIN TYPES
@@ -239,6 +239,13 @@ export interface StrategistPipelineContext {
 
     /** Authenticated user ID — used for KB metadata filtering (userId-scoped vector search) */
     readonly userId: string;
+
+    /**
+     * Optional sink invoked by `runAgent` after each successful agent call to
+     * persist spend to `prompt_invocations` (see `recordInvocationToRds`).
+     * Set per process at pipeline start; not serialised across Step Functions.
+     */
+    onInvocationComplete?: (log: AgentInvocationLog) => Promise<void>;
 }
 
 // =============================================================================

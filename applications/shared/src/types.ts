@@ -114,6 +114,13 @@ export interface PipelineContext {
      * with existing Step Functions state payloads.
      */
     readonly userId?: string;
+
+    /**
+     * Optional sink invoked by `runAgent` after each successful agent call to
+     * persist spend to `prompt_invocations` (see `recordInvocationToRds`).
+     * Not serialised across Step Functions — set per process at pipeline start.
+     */
+    onInvocationComplete?: (log: AgentInvocationLog) => Promise<void>;
 }
 
 // =============================================================================

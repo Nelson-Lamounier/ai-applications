@@ -12,8 +12,10 @@ import {
     ConverseCommand,
     type ConverseCommandOutput,
 } from '@aws-sdk/client-bedrock-runtime';
+import type { Pool } from 'pg';
 
 import { emitEmfMetric } from '../emf.js';
+import { recordBedrockCost } from '../rds/bedrock-cost.js';
 import {
     DEFAULT_GROUNDING_FALLBACK,
     type GroundingInput,
@@ -23,6 +25,14 @@ import {
 } from './grounding-types.js';
 
 const METRIC_NAMESPACE = 'BedrockSharedSafety';
+
+/** Per-call context for booking the verifier's Haiku spend into
+ *  prompt_invocations. Optional — when omitted (or userId absent) the call is
+ *  still made but not recorded. */
+export interface GroundingCostContext {
+    pool:   Pool;
+    userId: string;
+}
 
 export interface BedrockGroundingVerifierConfig {
     readonly mode: GroundingMode;
@@ -74,13 +84,24 @@ export class BedrockGroundingVerifier implements IGroundingVerifier {
         this.client = config.client ?? new BedrockRuntimeClient({});
     }
 
-    async verify(input: GroundingInput): Promise<GroundingResult> {
+    async verify(input: GroundingInput, costCtx?: GroundingCostContext): Promise<GroundingResult> {
         const command = new ConverseCommand({
             modelId: this.modelId,
             messages: [{ role: 'user', content: [{ text: buildPrompt(input) }] }],
             inferenceConfig: { maxTokens: 512 },
         });
         const response: ConverseCommandOutput = await this.client.send(command);
+
+        if (costCtx?.userId) {
+            recordBedrockCost(costCtx.pool, {
+                userId:       costCtx.userId,
+                modelId:      this.modelId,
+                pipeline:     'grounding-verify',
+                inputTokens:  response.usage?.inputTokens  ?? 0,
+                outputTokens: response.usage?.outputTokens ?? 0,
+            }).catch((err) => console.warn('[grounding-verifier] cost record failed (non-fatal)', err));
+        }
+
         const text =
             response.output?.message?.content?.find(
                 (b): b is { text: string } => typeof (b as { text?: unknown }).text === 'string',
