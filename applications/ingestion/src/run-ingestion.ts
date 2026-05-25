@@ -233,7 +233,11 @@ async function main(): Promise<void> {
     // Cap per-run cost via MAX_ENRICHMENT_PER_INGESTION (default 2000).
     const enricher = process.env.ENRICHMENT_DISABLED === '1'
         ? undefined
-        : BedrockChunkEnricher.fromEnvironment();
+        : BedrockChunkEnricher.fromEnvironment({
+            pool:     pgPool,
+            userId:   env.userId,
+            repoName: env.repoFullName,
+        });
 
     const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);
 

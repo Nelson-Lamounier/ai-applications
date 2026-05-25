@@ -296,6 +296,7 @@ export {
     buildRetrievalSuggestions,
     recordBedrockCost,
     computeCostCents,
+    recordInvocationToRds,
     computeUserProfileRollup,
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,

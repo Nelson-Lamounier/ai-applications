@@ -100,5 +100,5 @@ export {
 } from './quality/retrievalProbe.js';
 
 // Bedrock cost tracking
-export { recordBedrockCost, computeCostCents } from './bedrock-cost.js';
+export { recordBedrockCost, computeCostCents, recordInvocationToRds } from './bedrock-cost.js';
 export type { CostRecord } from './bedrock-cost.js';

@@ -41,7 +41,7 @@
 
 import { runAgent } from './agent-runner.js';
 import { log } from './logger.js';
-import type { AgentConfig, AgentResult } from './types.js';
+import type { AgentConfig, AgentResult, AgentInvocationLog } from './types.js';
 
 // =============================================================================
 // PIPELINE CONTEXT CONSTRAINT
@@ -70,6 +70,20 @@ export interface BasePipelineContext {
 
     /** Cumulative estimated cost in USD */
     cumulativeCostUsd: number;
+
+    /**
+     * Optional platform user id to attribute Bedrock spend to
+     * (prompt_invocations.user_id). Read by `runAgent` when present.
+     */
+    userId?: string;
+
+    /**
+     * Optional sink invoked after each successful agent call with a flat
+     * invocation log. Set it (e.g. via `recordInvocationToRds(pool, pipeline)`)
+     * to persist every agent's spend to `prompt_invocations`. Errors are
+     * swallowed by `runAgent` — recording never aborts a pipeline.
+     */
+    onInvocationComplete?: (log: AgentInvocationLog) => Promise<void>;
 }
 
 // =============================================================================
