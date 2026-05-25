@@ -102,3 +102,16 @@ export {
 // Bedrock cost tracking
 export { recordBedrockCost, computeCostCents, recordInvocationToRds } from './bedrock-cost.js';
 export type { CostRecord } from './bedrock-cost.js';
+
+// Technology graph (Layer 1)
+export { OntologyResolver, normalizeAlias } from './ontology/OntologyResolver.js';
+export { TechnologyOntologyRepository }     from './implementations/TechnologyOntologyRepository.js';
+export { TechnologyEvidenceRepository }     from './implementations/TechnologyEvidenceRepository.js';
+export { TechnologyCandidateRepository }    from './implementations/TechnologyCandidateRepository.js';
+export { TechnologyParityRunRepository }    from './implementations/TechnologyParityRunRepository.js';
+export type {
+    SourceLayer, RawTechnologyEvidence, TechnologyEvidenceRow,
+    OntologyRow, ParityRunRow,
+} from './types/techgraph.js';
+export { CONFIDENCE_BY_LAYER } from './types/techgraph.js';
+export type { CandidateUpsertInput } from './implementations/TechnologyCandidateRepository.js';
