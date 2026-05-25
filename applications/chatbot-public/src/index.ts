@@ -138,7 +138,10 @@ export const handler = withSpan('chatbot-public.handler', async (
             }
             const context      = buildChatContext(passages);
             const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
-            rawResponse        = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised);
+            rawResponse        = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised, {
+                pool:   getPool(),
+                userId: env.portfolioOwnerUserId,
+            });
         } else {
             const agentCmd = new InvokeAgentCommand({
                 agentId:      env.agentId,

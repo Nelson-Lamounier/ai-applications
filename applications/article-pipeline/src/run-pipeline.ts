@@ -10,7 +10,7 @@
  * 'review'. The admin-api owns the eventual transition to 'published'.
  */
 import type { PipelineContext } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent } from './agents/research-agent.js';
@@ -76,6 +76,7 @@ async function main(): Promise<void> {
         cumulativeCostUsd: 0,
         retryAttempt:      0,
         startedAt:         new Date().toISOString(),
+        onInvocationComplete: recordInvocationToRds(pool, 'article-pipeline'),
     };
 
     try {
@@ -103,7 +104,7 @@ async function main(): Promise<void> {
                 query:        `${env.slug} ${research.data.authorDirection ?? ''}`.trim().slice(0, 500),
                 contextChunks: (research.data.kbPassages ?? []).map((p) => p.text),
                 answer:       scrubbedContent,
-            });
+            }, env.userId ? { pool, userId: env.userId } : undefined);
             emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
                 { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
                 { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },

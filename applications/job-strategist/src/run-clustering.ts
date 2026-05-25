@@ -28,6 +28,7 @@ import {
     bootstrapK8sObservability,
     isFeatureEnabled,
     pushFinalMetrics,
+    recordInvocationToRds,
     runClusteringOrchestration,
 } from '@bedrock/shared';
 import type { BasePipelineContext } from '@bedrock/shared';
@@ -99,6 +100,8 @@ async function main(): Promise<void> {
             environment:       env.environment,
             cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
             cumulativeCostUsd: 0,
+            userId:            env.userId,
+            onInvocationComplete: recordInvocationToRds(pool, 'project-clustering'),
         };
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');

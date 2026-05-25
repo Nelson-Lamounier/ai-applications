@@ -29,6 +29,7 @@ import {
     bootstrapK8sObservability,
     isFeatureEnabled,
     pushFinalMetrics,
+    recordInvocationToRds,
     runCaseStudyOrchestration,
 } from '@bedrock/shared';
 import type {
@@ -138,6 +139,8 @@ async function main(): Promise<void> {
             environment:       env.environment,
             cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
             cumulativeCostUsd: 0,
+            userId:            env.userId,
+            onInvocationComplete: recordInvocationToRds(pool, 'project-case-study'),
         };
 
         const verifier = new BedrockGroundingVerifier({ mode: 'flag' });
