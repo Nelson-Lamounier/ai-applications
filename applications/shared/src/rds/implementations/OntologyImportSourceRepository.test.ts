@@ -38,4 +38,16 @@ describe('OntologyImportSourceRepository', () => {
         expect(u.sql).toContain('consecutive_misses = consecutive_misses + 1');
         expect(u.params).toEqual(expect.arrayContaining(['npm_top_5k', runStart.toISOString()]));
     });
+
+    it('deactivateStale() deactivates ontology rows over the miss threshold and returns rowCount', async () => {
+        const pool = fakePool({ rows: [], rowCount: 4 });
+        const repo = new OntologyImportSourceRepository(pool as never);
+        const deactivated = await repo.deactivateStale('npm_top_5k', 3);
+        expect(deactivated).toBe(4);
+        const u = pool.calls[0];
+        expect(u.sql).toContain('UPDATE technology_ontology SET is_active = false');
+        expect(u.sql).toContain('SELECT technology_id FROM ontology_import_sources');
+        expect(u.sql).toContain('consecutive_misses >= $2');
+        expect(u.params).toEqual(['npm_top_5k', 3]);
+    });
 });

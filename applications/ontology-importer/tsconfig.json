@@ -9,6 +9,6 @@
     { "path": "../shared" }
   ],
   "include": ["src/**/*.ts"],
-  "files": ["src/categorization/patterns.json", "src/categorization/overrides.json"],
+  "files": ["src/categorization/patterns.json", "src/categorization/overrides.json", "src/sources/data/gcp-services.json", "src/sources/data/azure-services.json", "src/sources/data/npm-top-5k.json", "src/sources/data/pypi-top-5k.json"],
   "exclude": ["node_modules", "dist"]
 }

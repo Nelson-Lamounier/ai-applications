@@ -1,0 +1,68 @@
+# @format
+# Deploy Ontology Importer Worker (Development)
+# Builds the ontology-importer container, pushes to ECR, writes image URI to SSM.
+# Prerequisite: ECR repo provisioned via shared-infra CDK stack
+#   (/shared/ecr-ontology-importer/development/repository-uri).
+
+name: "Deploy Ontology Importer (Dev)"
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "applications/ontology-importer/**"
+      - "applications/shared/**"
+      - ".github/workflows/deploy-ontology-importer.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-ontology-importer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_build-push-image.yml
+    with:
+      app-name: ontology-importer
+      dockerfile: applications/ontology-importer/Dockerfile
+      ecr-ssm-path: /shared/ecr-ontology-importer/development/repository-uri
+      image-ssm-path: /k8s/development/job-images/ontology-importer
+    secrets:
+      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
+
+  deploy-marker:
+    name: Loki deploy marker
+    needs: [deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute aggregate status
+        id: agg
+        env:
+          STATUSES: ${{ toJSON(needs) }}
+        run: |
+          if echo "$STATUSES" | jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' > /dev/null; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=succeeded" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/loki-deploy-marker
+        env:
+          LOKI_PUSH_URL:        ${{ secrets.LOKI_PUSH_URL }}
+          LOKI_PUSH_BASIC_AUTH: ${{ secrets.LOKI_PUSH_BASIC_AUTH }}
+          PUSHGATEWAY_URL: ${{ secrets.PUSHGATEWAY_URL }}
+          PUSHGATEWAY_BASIC_AUTH: ${{ secrets.PUSHGATEWAY_BASIC_AUTH }}
+        with:
+          service:     ontology-importer
+          environment: development
+          status:      ${{ steps.agg.outputs.status }}
+          git-sha:     ${{ github.sha }}
+          notes:       "ontology-importer image push"

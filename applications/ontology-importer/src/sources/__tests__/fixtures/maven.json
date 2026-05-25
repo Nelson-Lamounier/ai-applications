@@ -1,0 +1,4 @@
+{ "response": { "docs": [
+  { "g": "org.springframework", "a": "spring-core" },
+  { "g": "com.fasterxml.jackson.core", "a": "jackson-databind" }
+] } }

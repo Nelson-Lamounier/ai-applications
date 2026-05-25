@@ -1,0 +1,10 @@
+{ "services": [
+  { "config": { "name": "compute.googleapis.com", "title": "Compute Engine API" } },
+  { "config": { "name": "storage.googleapis.com", "title": "Cloud Storage API" } },
+  { "config": { "name": "bigquery.googleapis.com", "title": "BigQuery API" } },
+  { "config": { "name": "pubsub.googleapis.com", "title": "Cloud Pub/Sub API" } },
+  { "config": { "name": "run.googleapis.com", "title": "Cloud Run Admin API" } },
+  { "config": { "name": "container.googleapis.com", "title": "Kubernetes Engine API" } },
+  { "config": { "name": "dns.googleapis.com", "title": "Cloud DNS API" } },
+  { "config": { "name": "aiplatform.googleapis.com", "title": "Vertex AI API" } }
+] }

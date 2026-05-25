@@ -1,0 +1,1 @@
+{ "services": ["compute","storage","cosmos-db","sql","cognitiveservices","containerservice","network","keyvault","monitor","eventhub","servicebus","web"] }
