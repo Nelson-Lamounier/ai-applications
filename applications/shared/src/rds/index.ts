@@ -121,3 +121,5 @@ export type {
     RawImportEntry, OntologyCategory, CategorizationResult, ImportRunCounts,
 } from './types/ontology-import.js';
 export { ONTOLOGY_CATEGORIES } from './types/ontology-import.js';
+export { OntologyImportRunRepository }    from './implementations/OntologyImportRunRepository.js';
+export { OntologyImportSourceRepository } from './implementations/OntologyImportSourceRepository.js';

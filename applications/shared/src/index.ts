@@ -331,6 +331,8 @@ export type {
     RawImportEntry, OntologyCategory, CategorizationResult, ImportRunCounts,
 } from './rds/index.js';
 export { ONTOLOGY_CATEGORIES } from './rds/index.js';
+export { OntologyImportRunRepository }    from './rds/index.js';
+export { OntologyImportSourceRepository } from './rds/index.js';
 
 // ─── Crypto (KMS Envelope Encryption) ────────────────────────────────────────
 export { createKmsEnvelope, KmsEnvelopeError } from './crypto/index.js';
