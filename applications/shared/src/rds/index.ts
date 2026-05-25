@@ -123,3 +123,4 @@ export type {
 export { ONTOLOGY_CATEGORIES } from './types/ontology-import.js';
 export { OntologyImportRunRepository }    from './implementations/OntologyImportRunRepository.js';
 export { OntologyImportSourceRepository } from './implementations/OntologyImportSourceRepository.js';
+export { OntologyWriteRepository }        from './implementations/OntologyWriteRepository.js';
