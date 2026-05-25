@@ -223,28 +223,37 @@ git commit -m "feat(tech-extractor): add namespace chart + ArgoCD apps (mirrors 
 
 ## Task 4: admin-api dispatcher — create the tech-extract Job
 
-> **GROUNDED:** the dispatcher is **admin-api**. It already constructs the ingestion `V1Job` with `@kubernetes/client-node` and already holds the `admin-api-job-creator` RBAC (Task 3 grants the same in the tech-extractor namespace). admin-api's source lives with the other cdk-monitoring-managed services — locate it before editing.
+> **GROUNDED in the real admin-api** at `/Users/nelsonlamounier/Desktop/portfolio/tucaken-app/admin-api` (the ingestion route `POST /api/admin/ingestion/trigger` builds + POSTs the ingestion `V1Job`). Mirror that exactly. Reference files:
+> - `admin-api/src/routes/ingestion.ts` — `buildJobSpec()` + `getBatchApi().createNamespacedJob(...)` (the canonical pattern to copy)
+> - `admin-api/src/lib/k8s-job-builder.ts` — shared `buildPipelineJob()` + `observabilityEnv()` + `sanitizeLabel()` (image-agnostic builder used by article/strategist routes)
+> - `admin-api/src/lib/config.ts` — `getJobImage(name)`, `JobImageName` union, `ingestionNamespace`/`ingestionServiceAccount`
+> - `admin-api/src/lib/k8s.ts` — `getBatchApi()`
+>
+> **Two of my earlier assumptions were wrong and are corrected here:** (1) there is no `import-id` label — the ingestion Job uses `app`/`userId`/`repoSlug` labels + `ttlSecondsAfterFinished: 3600` for cleanup; mirror that, drop import-id. (2) the image is NOT a literal ECR URI passed in — it's resolved at request time via `getJobImage('tech-extractor')` reading `/etc/admin-api/images/tech-extractor` (kubelet-synced from the `admin-api-job-images` ESO Secret, seeded from SSM `/k8s/{env}/job-images/tech-extractor`).
 
-**Files:** the admin-api component that builds + POSTs the ingestion Job (it carries the `import-id` label that `platform-job-watcher` sweeps).
+- [ ] **Step 1: Register the image name** — `admin-api/src/lib/config.ts`
+Add `'tech-extractor'` to the `JobImageName` union and to the `ENV_FALLBACK` map (env var e.g. `TECH_EXTRACTOR_IMAGE` for local dev). Add `techExtractorNamespace` (`TECH_EXTRACTOR_NAMESPACE` ?? `'tech-extractor'`) and `techExtractorServiceAccount` (`TECH_EXTRACTOR_SERVICE_ACCOUNT` ?? `'tech-extractor-sa'`) to the config object, mirroring the `ingestion*` fields.
 
-- [ ] **Step 1: Locate admin-api's ingestion Job creator**
-In the admin-api repo/package, run: `grep -rn "createNamespacedJob\|V1Job\|import-id\|ingestion-sa\|REPO_FULL_NAME" --include="*.ts" | grep -v node_modules | grep -v dist`
-Expected: the function that assembles the ingestion `V1Job` (namespace `ingestion`, SA `ingestion-sa`, env from the ESO secrets, `import-id` label) and submits it.
+- [ ] **Step 2: Seed the image URI source** (cdk-monitoring + ESO)
+Add SSM param `/k8s/{env}/job-images/tech-extractor` (written by the CI image-push step / cdk-monitoring seed, alongside the existing `ingestion` entry) and include it in the `admin-api-job-images` ExternalSecret so `getJobImage('tech-extractor')` resolves. Without this, `isImageConfigured()` returns false and the route correctly 502s.
 
-- [ ] **Step 2: Add a tech-extract Job builder alongside it**
-Mirror the ingestion Job, changing: namespace `tech-extractor`, SA `tech-extractor-sa`, image = the tech-extractor ECR URI, command `node dist/run-tech-extract.js`, and:
-- **Deterministic name** `tech-extract-{repoIdHash}-{shaShort}` — a duplicate create 409s (idempotent dispatch); evidence `ON CONFLICT DO NOTHING` (Plan 1) covers residual races.
-- Same `import-id` label convention as ingestion (so `platform-job-watcher` marks failures generically — no new watcher code).
-- Env: `USER_ID`, `REPO_FULL_NAME`, `COMMIT_SHA` (resolved HEAD sha at dispatch), `WORK_DIR=/work`; `GITHUB_TOKEN` from the `tech-extractor-secrets` Secret; `PG_*` from the RDS ESO secrets — exactly as the ingestion Job wires them.
-- `emptyDir` work volume with `sizeLimit` (the Job pod spec is built here in code, since there's no Helm Job template).
-- Resources: requests cpu 500m/mem 1Gi, limits cpu 1500m/mem 2Gi. `restartPolicy: Never`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`, non-root securityContext.
+- [ ] **Step 3: Build + dispatch the tech-extract Job** — `admin-api/src/routes/ingestion.ts` (or a small sibling module)
+After the ingestion Job is created in the `/trigger` handler, ALSO build + POST a tech-extract Job (shadow-mode, additive). Mirror `buildJobSpec`, changing only:
+- namespace `config.techExtractorNamespace`, SA `config.techExtractorServiceAccount`
+- `image = getJobImage('tech-extractor')` guarded by `isImageConfigured(...)` (if unconfigured, log + skip — do NOT fail the ingestion response, since tech-extract is additive)
+- container command `['node', 'dist/run-tech-extract.js']`
+- name stem `tech-extract-{userSlug}-{repoSlug}-{sha1(userId:repo:ts)[:8]}` (deterministic per run; duplicate creates 409 → treat as success)
+- labels `{ app: 'tech-extractor', userId: safeUserId, repoSlug }`, `ttlSecondsAfterFinished: 3600`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`, `restartPolicy: 'Never'`
+- env: `observabilityEnv('tech-extractor', ...)` + `USER_ID`, `REPO_FULL_NAME`, `COMMIT_SHA` (resolved default-branch HEAD sha at dispatch — see note), `WORK_DIR=/work`, + traceparent
+- `envFrom: [{ secretRef: { name: 'platform-rds-credentials' }}, { secretRef: { name: 'tech-extractor-secrets' }}]`
+- add the `emptyDir` work volume (`sizeLimit: 2Gi`) + `volumeMounts` `/work` — the ingestion Job has no volume, so this is the one addition beyond the ingestion template
+- wrap `createNamespacedJob` in try/catch: log on failure but return the ingestion 202 regardless (shadow-mode must never degrade ingestion); treat HTTP 409 as success.
 
-- [ ] **Step 3: Trigger alongside ingestion**
-Wherever admin-api dispatches the ingestion Job on a repo-sync trigger, also dispatch the tech-extract Job (shadow-mode — both run; tech-extract is additive). Wrap the create in try/catch treating HTTP 409 (AlreadyExists) as success.
+> **COMMIT_SHA note:** the entrypoint accepts `COMMIT_SHA` optional and falls back to `HEAD`. For the commit-SHA short-circuit + parity-by-commit to work, dispatch should resolve the repo's default-branch HEAD sha (admin-api already has the GitHub token / a GitHub client in `routes/github.ts`). If resolving the sha at dispatch is non-trivial, Phase-1-acceptable fallback: omit `COMMIT_SHA`, the Job uses `HEAD`, and the short-circuit is simply skipped that run. Note the choice.
 
-- [ ] **Step 4: Unit test** the deterministic job-name derivation + 409-swallow, mirroring admin-api's existing dispatcher tests. Run admin-api's test command; expect pass.
+- [ ] **Step 4: Unit test** — mirror admin-api's existing route/builder tests. Assert: the tech-extract job name is deterministic for the same `(userId, repo, ts)`; the image-unconfigured path skips without throwing; a 409 from a fake batch API is swallowed. Run admin-api's test command (e.g. `yarn workspace admin-api test` or the repo's runner); expect pass.
 
-- [ ] **Step 5: Commit** in the admin-api repo (`git-commit` skill).
+- [ ] **Step 5: Commit** in tucaken-app (`git-commit` skill).
 
 ---
 
