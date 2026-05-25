@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+# (dockerfile frontend >= 1.4 required for `COPY --from ... --chmod`)
 # ── Stage 1: Build ───────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
 WORKDIR /app
@@ -48,14 +50,18 @@ FROM node:22-alpine AS runtime
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup -u 1001
 WORKDIR /app
 
-COPY --from=builder --chown=appuser:appgroup /app/applications/tech-extractor/dist ./applications/tech-extractor/dist
-COPY --from=builder --chown=appuser:appgroup /app/applications/tech-extractor/package.json ./applications/tech-extractor/
-COPY --from=builder --chown=appuser:appgroup /app/applications/shared/dist ./applications/shared/dist
-COPY --from=builder --chown=appuser:appgroup /app/applications/shared/package.json ./applications/shared/
-COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
+# Copied artifacts are read-only (--chmod): the non-root runtime user must not
+# be able to modify its own code/deps at runtime (defense-in-depth). Directories
+# use 0555 (traversable + readable, no write); standalone files use 0444.
+# The only writable path at runtime is the /work emptyDir mounted by the Job.
+COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/tech-extractor/dist ./applications/tech-extractor/dist
+COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/tech-extractor/package.json ./applications/tech-extractor/
+COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/shared/dist ./applications/shared/dist
+COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/shared/package.json ./applications/shared/
+COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/node_modules ./node_modules
 
-# Syft binary on PATH; SYFT_BIN env points the extractor at it.
-COPY --from=syft /syft /usr/local/bin/syft
+# Syft binary on PATH (read + execute, no write); SYFT_BIN points the extractor at it.
+COPY --from=syft --chmod=0555 /syft /usr/local/bin/syft
 ENV SYFT_BIN=/usr/local/bin/syft
 
 # web-tree-sitter ships its wasm in node_modules; grammar .wasm files are
