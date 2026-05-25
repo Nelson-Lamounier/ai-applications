@@ -1,0 +1,4 @@
+{ "services": [
+  { "config": { "name": "compute.googleapis.com", "title": "Compute Engine API" } },
+  { "config": { "name": "storage.googleapis.com", "title": "Cloud Storage API" } }
+] }
