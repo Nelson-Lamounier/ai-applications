@@ -9,5 +9,6 @@
     { "path": "../shared" }
   ],
   "include": ["src/**/*.ts"],
+  "files": ["src/config/sdkCallPatterns.json"],
   "exclude": ["node_modules", "dist"]
 }
