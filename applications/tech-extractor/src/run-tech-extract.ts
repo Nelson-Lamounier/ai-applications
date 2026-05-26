@@ -16,7 +16,7 @@ import { walkTextFiles } from './util/fileWalk.js';
 import { SyftExtractor } from './extractors/SyftExtractor.js';
 import { TreeSitterExtractor } from './extractors/TreeSitterExtractor.js';
 import { parseDockerfile } from './extractors/iac/DockerfileParser.js';
-import { parseK8sManifest } from './extractors/iac/K8sManifestParser.js';
+import { parseK8sManifest, parseK8sManifestValues } from './extractors/iac/K8sManifestParser.js';
 import { parseTerraform } from './extractors/iac/TerraformParser.js';
 import { parseGithubActions } from './extractors/iac/GithubActionsParser.js';
 import { parseReadme, parseReadmeProse } from './extractors/iac/ReadmeParser.js';
@@ -64,7 +64,10 @@ function iacExtractor(rootDir: string, files: string[], proseSafeAliases: Readon
                 // umbrella charts (monitoring stacks etc.) that K8sManifestParser ignores
                 // because the doc has no `kind:`. Match values.yaml / values-*.yaml / values.<env>.yaml.
                 else if (/(^|\/)values(\.[\w-]+)?\.ya?ml$/i.test(rel)) out.push(...parseHelmValues(src, rel));
-                else if (rel.endsWith('.yaml') || rel.endsWith('.yml')) out.push(...parseK8sManifest(src, rel));
+                else if (rel.endsWith('.yaml') || rel.endsWith('.yml')) {
+                    out.push(...parseK8sManifest(src, rel));
+                    out.push(...parseK8sManifestValues(src, rel));
+                }
                 else if (base === 'readme.md') {
                     // Two parsers, two failure modes — keep them independent.
                     out.push(...parseReadme(src, rel));
