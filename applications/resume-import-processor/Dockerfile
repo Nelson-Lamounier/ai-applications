@@ -15,6 +15,8 @@ COPY applications/resume-import-processor/package.json ./applications/resume-imp
 # Sibling workspace manifests for lockfile resolution
 COPY applications/shared/package.json              ./applications/shared/
 COPY applications/ontology-importer/package.json   ./applications/ontology-importer/
+COPY applications/tech-extractor/package.json      ./applications/tech-extractor/
+COPY applications/synthetic-monitor/package.json   ./applications/synthetic-monitor/
 COPY applications/ingestion/package.json           ./applications/ingestion/
 COPY api/public-api/package.json                   ./api/public-api/
 COPY applications/article-pipeline/package.json    ./applications/article-pipeline/
