@@ -1,6 +1,8 @@
 /** @format */
 import type { Extractor, RawTechnologyEvidence } from './Extractor.js';
 import patterns from '../config/sdkCallPatterns.json';
+import { extractProseRanges } from './CommentExtractor.js';
+import { scanProseRanges } from './iac/ReadmeParser.js';
 
 type Lang = 'python' | 'javascript' | 'typescript' | 'go' | 'rust' | 'java';
 
@@ -85,6 +87,7 @@ export class TreeSitterExtractor implements Extractor {
     constructor(
         private readonly readFile: (rel: string) => Promise<string>,
         private readonly files: string[],
+        private readonly proseSafeAliases: ReadonlySet<string> = new Set(),
     ) {}
 
     async extract(_rootDir: string): Promise<RawTechnologyEvidence[]> {
@@ -96,6 +99,12 @@ export class TreeSitterExtractor implements Extractor {
             const src = await this.readFile(rel);
             out.push(...extractImportsByRegex(src, lang, rel));
             out.push(...matchSdkCalls(src, lang, rel));
+            if (this.proseSafeAliases.size > 0 &&
+                (lang === 'typescript' || lang === 'javascript' || lang === 'python' || lang === 'go')) {
+                const ranges = extractProseRanges(src, lang);
+                const prose = scanProseRanges(ranges, rel, this.proseSafeAliases);
+                for (const e of prose) out.push({ ...e, source_layer: 'code-prose', ecosystem: lang });
+            }
         }
         return out;
     }

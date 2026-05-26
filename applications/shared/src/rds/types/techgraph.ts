@@ -1,13 +1,14 @@
 /** @format */
 
-export type SourceLayer = 'syft' | 'treesitter' | 'iac' | 'dockerfile' | 'readme';
+export type SourceLayer = 'syft' | 'treesitter' | 'iac' | 'dockerfile' | 'readme' | 'code-prose';
 
 export const CONFIDENCE_BY_LAYER: Record<SourceLayer, number> = {
-    syft:       0.95,
-    treesitter: 0.85,
-    iac:        0.85,
-    dockerfile: 0.80,
-    readme:     0.50,
+    syft:         0.95,
+    treesitter:   0.85,
+    iac:          0.85,
+    dockerfile:   0.80,
+    readme:       0.50,
+    'code-prose': 0.50,
 };
 
 /** One extracted occurrence before ontology resolution. */
