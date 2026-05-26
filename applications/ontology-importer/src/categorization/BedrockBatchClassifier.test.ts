@@ -43,6 +43,25 @@ describe('parseModelOutput', () => {
     it('defaults to maybe/null when modelOutput missing (errored record)', () => {
         expect(parseModelOutput({ recordId: 'r3' }).decision).toBe('maybe');
     });
+    it('coerces out-of-set category to null (LLM ignored input_schema enum hint)', () => {
+        // Live failure case: Claude returned `category: "networking"` which is NOT in
+        // the 30-set (only `cloud_networking` is). DB CHECK constraint would reject the
+        // insert. parseModelOutput must defang this BEFORE the router sees it.
+        const out = parseModelOutput({
+            recordId: 'r4',
+            modelOutput: { content: [{ type: 'tool_use', name: 'classify_package', input: { decision: 'yes', category: 'networking', reasoning: 'router' } }] },
+        });
+        expect(out.decision).toBe('yes');
+        expect(out.category).toBeNull();   // ← invalid → null, downstream routes to review_queue
+        expect(out.reasoning).toBe('router');
+    });
+    it('keeps valid in-set category', () => {
+        const out = parseModelOutput({
+            recordId: 'r5',
+            modelOutput: { content: [{ type: 'tool_use', name: 'classify_package', input: { decision: 'yes', category: 'cloud_networking', reasoning: 'ok' } }] },
+        });
+        expect(out.category).toBe('cloud_networking');
+    });
 });
 
 describe('sanitizeJobName', () => {

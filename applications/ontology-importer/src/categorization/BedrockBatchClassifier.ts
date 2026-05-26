@@ -76,7 +76,14 @@ export function buildJsonlRecords(items: PooledItem[]): { records: BatchRecord[]
     return { records, recordMap };
 }
 
-/** Pure: extract the classify_package tool_use from a Bedrock output record. */
+const VALID_CATEGORIES = new Set<string>(ONTOLOGY_CATEGORIES);
+
+/** Pure: extract the classify_package tool_use from a Bedrock output record.
+ *  Tool input_schema enums are ADVISORY to the LLM — Claude can (and does)
+ *  emit `category` values outside the 30-set despite the enum hint. We coerce
+ *  any out-of-set category to null so the downstream router treats it as
+ *  `maybe`/`review_queue` rather than crashing the DB insert on the
+ *  technology_ontology_category_check constraint. */
 export function parseModelOutput(record: {
     recordId: string;
     modelOutput?: { content?: Array<{ type: string; name?: string; input?: unknown }> };
@@ -84,10 +91,12 @@ export function parseModelOutput(record: {
     const tu = (record.modelOutput?.content ?? []).find((b) => b.type === 'tool_use' && b.name === 'classify_package');
     if (!tu?.input) return { recordId: record.recordId, decision: 'maybe', category: null, reasoning: 'no tool_use' };
     const i = tu.input as { decision?: string; category?: string | null; reasoning?: string };
+    const rawCategory = i.category ?? null;
+    const category = rawCategory !== null && VALID_CATEGORIES.has(rawCategory) ? (rawCategory as OntologyCategory) : null;
     return {
         recordId: record.recordId,
         decision: (i.decision as 'yes' | 'no' | 'maybe') ?? 'maybe',
-        category: (i.category as OntologyCategory | null) ?? null,
+        category,
         reasoning: i.reasoning,
     };
 }

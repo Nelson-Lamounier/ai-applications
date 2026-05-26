@@ -55,23 +55,34 @@ async function main(): Promise<void> {
             }
 
             const counts = emptyCounts();
+            let recordErrors = 0;
             for await (const record of llm.readResults(run.runKey)) {
-                const { decision, category, reasoning } = parseModelOutput(record);
-                const mapped = run.recordMap[record.recordId];
-                if (!mapped) { log.warn({ recordId: record.recordId }, 'followup.unmapped_record'); continue; }
-                const { ecosystem, identifier } = mapped;
+                try {
+                    const { decision, category, reasoning } = parseModelOutput(record);
+                    const mapped = run.recordMap[record.recordId];
+                    if (!mapped) { log.warn({ recordId: record.recordId }, 'followup.unmapped_record'); continue; }
+                    const { ecosystem, identifier } = mapped;
 
-                if (decision === 'yes' && category) {
-                    const id = await ontology.insertAutoImported(identifier.toLowerCase(), identifier, category, 'pooled_llm_batch');
-                    await importSources.upsertSeen(id, 'pooled_llm_batch', identifier, null, {});
-                    counts.entriesInserted++;
-                } else if (decision === 'no') {
-                    await skipped.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', llmDecision: 'no', llmReasoning: reasoning ?? null, llmRunId: run.llmBatchId });
-                } else {
-                    await reviewQueue.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', reason: 'llm_maybe', suggestedCategory: category ?? null, llmReasoning: reasoning ?? null });
-                    counts.reviewQueueAdded++;
+                    if (decision === 'yes' && category) {
+                        const id = await ontology.insertAutoImported(identifier.toLowerCase(), identifier, category, 'pooled_llm_batch');
+                        await importSources.upsertSeen(id, 'pooled_llm_batch', identifier, null, {});
+                        counts.entriesInserted++;
+                    } else if (decision === 'no') {
+                        await skipped.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', llmDecision: 'no', llmReasoning: reasoning ?? null, llmRunId: run.llmBatchId });
+                    } else {
+                        await reviewQueue.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', reason: 'llm_maybe', suggestedCategory: category ?? null, llmReasoning: reasoning ?? null });
+                        counts.reviewQueueAdded++;
+                    }
+                } catch (err) {
+                    // One bad record (DB constraint violation, parse failure, transient pg error)
+                    // must NOT abort the whole batch routing. Log + count; continue. The pooled
+                    // run still finishes 'success'; the unrouted record stays unrouted and will
+                    // be re-pooled by the next monthly import.
+                    recordErrors++;
+                    log.warn({ recordId: record.recordId, err: String(err) }, 'followup.record_failed');
                 }
             }
+            if (recordErrors > 0) log.warn({ batch: run.llmBatchId, recordErrors }, 'followup.record_errors');
 
             await runs.finish(run.id, 'success', counts, {});
             log.info({ batch: run.llmBatchId, ...counts }, 'followup.batch.complete');
