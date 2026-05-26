@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock": "^3.1001.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1001.0",
     "@aws-sdk/client-s3": "^3.1001.0",
     "@bedrock/shared": "workspace:*",
     "@google-cloud/bigquery": "^7.9.0",
