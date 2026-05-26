@@ -92,6 +92,13 @@ export function parseModelOutput(record: {
     };
 }
 
+/** Pure: coerce a candidate jobName to Bedrock's CreateModelInvocationJob constraint.
+ *  Pattern: /[a-zA-Z0-9]{1,63}(-*[a-zA-Z0-9+\-.]){0,63}/ — no underscores, no spaces.
+ *  Illegal characters become '-'; final string is capped at 63 chars. */
+export function sanitizeJobName(candidate: string): string {
+    return candidate.replace(/[^a-zA-Z0-9+\-.]/g, '-').slice(0, 63);
+}
+
 export interface BedrockBatchConfig {
     region: string;
     bucket: string;
@@ -115,7 +122,7 @@ export class BedrockBatchClassifier {
         const body = records.map((r) => JSON.stringify(r)).join('\n') + '\n';
         await this.s3.send(new PutObjectCommand({ Bucket: this.cfg.bucket, Key: inputKey, Body: body, ContentType: 'application/jsonl' }));
         const res = await this.bedrock.send(new CreateModelInvocationJobCommand({
-            jobName: `ontology-importer-${runKey}`.slice(0, 63),
+            jobName: sanitizeJobName(`ontology-importer-${runKey}`),
             roleArn: this.cfg.roleArn,
             modelId: this.cfg.modelId,
             inputDataConfig: { s3InputDataConfig: { s3Uri: `s3://${this.cfg.bucket}/${inputKey}`, s3InputFormat: 'JSONL' } },

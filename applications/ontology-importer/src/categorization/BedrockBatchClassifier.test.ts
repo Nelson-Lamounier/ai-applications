@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { buildJsonlRecords, parseModelOutput, MODEL_ID_DEFAULT } from './BedrockBatchClassifier.js';
+import { buildJsonlRecords, parseModelOutput, sanitizeJobName, MODEL_ID_DEFAULT } from './BedrockBatchClassifier.js';
 import type { RawImportEntry } from '@bedrock/shared';
 
 const E = (o: Partial<RawImportEntry>): RawImportEntry =>
@@ -42,5 +42,27 @@ describe('parseModelOutput', () => {
     });
     it('defaults to maybe/null when modelOutput missing (errored record)', () => {
         expect(parseModelOutput({ recordId: 'r3' }).decision).toBe('maybe');
+    });
+});
+
+describe('sanitizeJobName', () => {
+    const PATTERN = /^[a-zA-Z0-9]{1,63}(-*[a-zA-Z0-9+\-.]){0,63}$/;
+
+    it('replaces underscores with dashes (the live failure case)', () => {
+        const out = sanitizeJobName('ontology-importer-import_1779776543');
+        expect(out).toBe('ontology-importer-import-1779776543');
+        expect(out).toMatch(PATTERN);
+    });
+    it('coerces any non [a-zA-Z0-9+\\-.] char to dash', () => {
+        expect(sanitizeJobName('a b/c:d_e@f')).toBe('a-b-c-d-e-f');
+    });
+    it('caps length at 63 chars', () => {
+        const long = 'ontology-importer-' + 'a'.repeat(100);
+        const out = sanitizeJobName(long);
+        expect(out.length).toBe(63);
+        expect(out).toMatch(PATTERN);
+    });
+    it('passes already-valid input unchanged', () => {
+        expect(sanitizeJobName('ontology-importer-import-1779776543')).toBe('ontology-importer-import-1779776543');
     });
 });
