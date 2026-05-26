@@ -80,4 +80,80 @@ describe('parseK8sManifestValues', () => {
         const out = parseK8sManifestValues(yaml, 'role.yaml');
         expect(out.filter(o => o.raw_name === 'aws_s3')).toHaveLength(1);
     });
+
+    it('emits aws_eks from annotation key eks.amazonaws.com/role-arn even with no ARN value', () => {
+        const yaml = [
+            'apiVersion: v1',
+            'kind: ServiceAccount',
+            'metadata:',
+            '  name: app-sa',
+            '  annotations:',
+            '    eks.amazonaws.com/role-arn: PLACEHOLDER',
+        ].join('\n');
+        const out = parseK8sManifestValues(yaml, 'sa.yaml');
+        expect(out.map(o => o.raw_name)).toContain('aws_eks');
+    });
+
+    it('emits aws_load_balancer_controller from spec.template.metadata.annotations', () => {
+        const yaml = [
+            'apiVersion: apps/v1',
+            'kind: Deployment',
+            'metadata: { name: d }',
+            'spec:',
+            '  template:',
+            '    metadata:',
+            '      annotations:',
+            '        service.beta.kubernetes.io/aws-load-balancer-name: my-alb',
+            '    spec: { containers: [{ name: c, image: foo:1 }] }',
+        ].join('\n');
+        const out = parseK8sManifestValues(yaml, 'd.yaml');
+        expect(out.map(o => o.raw_name)).toContain('aws_load_balancer_controller');
+    });
+
+    it('does NOT emit extras for annotation keys outside the allowlist', () => {
+        const yaml = [
+            'apiVersion: v1',
+            'kind: ServiceAccount',
+            'metadata:',
+            '  name: app-sa',
+            '  annotations:',
+            '    argocd.argoproj.io/sync-wave: "1"',
+            '    custom.example.com/foo: bar',
+        ].join('\n');
+        const out = parseK8sManifestValues(yaml, 'sa.yaml');
+        expect(out).toEqual([]);
+    });
+
+    it('emits no extra rows when no annotations are present', () => {
+        const yaml = [
+            'apiVersion: v1', 'kind: ConfigMap', 'metadata: { name: c }',
+            'data: { foo: bar }',
+        ].join('\n');
+        expect(parseK8sManifestValues(yaml, 'cm.yaml')).toEqual([]);
+    });
+
+    it('dedupes annotation-key emissions across multiple matching keys for same canonical', () => {
+        const yaml = [
+            'apiVersion: v1',
+            'kind: ServiceAccount',
+            'metadata:',
+            '  name: app-sa',
+            '  annotations:',
+            '    eks.amazonaws.com/role-arn: foo',
+            '    eks.amazonaws.com/audience: bar',
+        ].join('\n');
+        const out = parseK8sManifestValues(yaml, 'sa.yaml');
+        expect(out.filter(o => o.raw_name === 'aws_eks')).toHaveLength(1);
+    });
+
+    it('dedupes aws_iam between annotation-derived and ARN-derived emissions', () => {
+        const yaml = [
+            'apiVersion: v1', 'kind: ServiceAccount', 'metadata:',
+            '  name: app-sa',
+            '  annotations:',
+            '    iam.amazonaws.com/permitted: arn:aws:iam::771826808455:role/x',
+        ].join('\n');
+        const out = parseK8sManifestValues(yaml, 'sa.yaml');
+        expect(out.filter(o => o.raw_name === 'aws_iam')).toHaveLength(1);
+    });
 });
