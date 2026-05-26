@@ -19,7 +19,7 @@ import { parseDockerfile } from './extractors/iac/DockerfileParser.js';
 import { parseK8sManifest } from './extractors/iac/K8sManifestParser.js';
 import { parseTerraform } from './extractors/iac/TerraformParser.js';
 import { parseGithubActions } from './extractors/iac/GithubActionsParser.js';
-import { parseReadme } from './extractors/iac/ReadmeParser.js';
+import { parseReadme, parseReadmeProse } from './extractors/iac/ReadmeParser.js';
 import { parseArgoApplication, parseHelmChart, parseHelmValues } from './extractors/iac/ArgoHelmParser.js';
 import type { Extractor, RawTechnologyEvidence } from './extractors/Extractor.js';
 import { TechExtractOrchestrator } from './orchestrator/TechExtractOrchestrator.js';
@@ -47,7 +47,7 @@ async function withTimeout(p: Promise<unknown>, ms: number, label: string): Prom
 }
 
 /** All IaC parsers as one fault-isolation unit over walked files. */
-function iacExtractor(rootDir: string, files: string[]): Extractor {
+function iacExtractor(rootDir: string, files: string[], proseSafeAliases: ReadonlySet<string>): Extractor {
     return {
         name: 'iac',
         async extract(): Promise<RawTechnologyEvidence[]> {
@@ -65,7 +65,14 @@ function iacExtractor(rootDir: string, files: string[]): Extractor {
                 // because the doc has no `kind:`. Match values.yaml / values-*.yaml / values.<env>.yaml.
                 else if (/(^|\/)values(\.[\w-]+)?\.ya?ml$/i.test(rel)) out.push(...parseHelmValues(src, rel));
                 else if (rel.endsWith('.yaml') || rel.endsWith('.yml')) out.push(...parseK8sManifest(src, rel));
-                else if (base === 'readme.md') out.push(...parseReadme(src, rel));
+                else if (base === 'readme.md') {
+                    // Two parsers, two failure modes — keep them independent.
+                    out.push(...parseReadme(src, rel));
+                    // ReadmeParser v2: prose-mention scan. Caller pre-filtered to
+                    // prose_safe=true (mitigation 1 from 2026-05-26 design review);
+                    // parseReadmeProse adds mitigation 2 (length floor default 4).
+                    out.push(...parseReadmeProse(src, rel, proseSafeAliases));
+                }
             }
             return out;
         },
@@ -105,11 +112,13 @@ async function main(): Promise<void> {
 
         const ontologyVersion = await ontologyRepo.currentVersion();
         const resolver = new OntologyResolver(await ontologyRepo.loadAliasMap());
+        const proseSafeAliases = await ontologyRepo.loadProseSafeAliases();
+        log.info({ proseSafe: proseSafeAliases.size }, 'prose-safe-aliases.loaded');
 
         const extractors: Extractor[] = [
             new SyftExtractor(),
             new TreeSitterExtractor(readFile, files),
-            iacExtractor(extractDir, files),
+            iacExtractor(extractDir, files, proseSafeAliases),
         ];
 
         const orch = new TechExtractOrchestrator(resolver, evidenceRepo, candidateRepo);
