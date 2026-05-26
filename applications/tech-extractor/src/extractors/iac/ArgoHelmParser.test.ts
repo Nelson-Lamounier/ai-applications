@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { parseArgoApplication, parseHelmChart } from './ArgoHelmParser.js';
+import { parseArgoApplication, parseHelmChart, parseHelmValues } from './ArgoHelmParser.js';
 
 describe('parseArgoApplication', () => {
     it('emits argocd + tool name from charts/<name> path', () => {
@@ -170,5 +170,70 @@ describe('parseHelmChart', () => {
 
     it('returns [] for invalid YAML', () => {
         expect(parseHelmChart('{{{{invalid', 'Chart.yaml')).toEqual([]);
+    });
+});
+
+describe('parseHelmValues', () => {
+    const monitoringValues = [
+        '# Prometheus',
+        'prometheus:',
+        '  image: prom/prometheus:v3.3.0',
+        '# Grafana',
+        'grafana:',
+        '  image: grafana/grafana:11.6.0',
+        'loki:',
+        '  image: grafana/loki:3.5.0',
+        'tempo:',
+        '  image: grafana/tempo:2.7.2',
+    ].join('\n');
+
+    it('extracts tool name from each image: <vendor>/<tool>:<tag> declaration', () => {
+        const out = parseHelmValues(monitoringValues, 'charts/monitoring/chart/values.yaml');
+        const names = out.map((o) => o.raw_name).sort();
+        expect(names).toEqual(['grafana', 'loki', 'prometheus', 'tempo']);
+        for (const ev of out) {
+            expect(ev.ecosystem).toBe('docker');
+            expect(ev.source_layer).toBe('iac');
+            expect(ev.file_path).toBe('charts/monitoring/chart/values.yaml');
+        }
+    });
+
+    it('handles digest-only images (image: name@sha256:…)', () => {
+        const src = 'agent:\n  image: grafana/alloy@sha256:abc123\n';
+        const out = parseHelmValues(src, 'values.yaml');
+        expect(out.map((o) => o.raw_name)).toEqual(['alloy']);
+    });
+
+    it('handles bare image names without a registry prefix', () => {
+        const src = 'svc:\n  image: redis:7.2\n';
+        const out = parseHelmValues(src, 'values.yaml');
+        expect(out.map((o) => o.raw_name)).toEqual(['redis']);
+    });
+
+    it('descends into nested objects and arrays', () => {
+        const src = [
+            'a:',
+            '  b:',
+            '    image: docker.io/library/postgres:16',
+            'list:',
+            '  - image: bitnami/redis:7',
+            '  - image: bitnami/mongodb:7',
+        ].join('\n');
+        const out = parseHelmValues(src, 'values.yaml');
+        expect(out.map((o) => o.raw_name).sort()).toEqual(['mongodb', 'postgres', 'redis']);
+    });
+
+    it('returns [] for non-yaml / unparseable input', () => {
+        expect(parseHelmValues('{{{{invalid', 'values.yaml')).toEqual([]);
+    });
+
+    it('returns [] when no image: keys present', () => {
+        expect(parseHelmValues('namespace: monitoring\nreplicas: 3\n', 'values.yaml')).toEqual([]);
+    });
+
+    it('ignores image: values that are NOT strings (e.g. nested image: { repository, tag } objects)', () => {
+        // Common Helm pattern — repository/tag split. Not handled here; emits nothing for this shape.
+        const src = 'svc:\n  image:\n    repository: grafana/loki\n    tag: 3.5.0\n';
+        expect(parseHelmValues(src, 'values.yaml')).toEqual([]);
     });
 });

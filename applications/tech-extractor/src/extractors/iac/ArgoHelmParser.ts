@@ -55,6 +55,58 @@ export function parseArgoApplication(src: string, filePath: string): RawTechnolo
 }
 
 /**
+ * Walks a YAML-derived object tree collecting `image:` string values.
+ * Used by both the Helm-values parser and (separately) the K8s-manifest parser.
+ */
+function collectImages(node: unknown): string[] {
+    const images: string[] = [];
+    (function rec(n: unknown): void {
+        if (Array.isArray(n)) { n.forEach(rec); return; }
+        if (n && typeof n === 'object') {
+            for (const [k, v] of Object.entries(n)) {
+                if (k === 'image' && typeof v === 'string') images.push(v);
+                else rec(v);
+            }
+        }
+    })(node);
+    return images;
+}
+
+/**
+ * Parse a Helm chart `values.yaml`-style file and extract the deployed-tool
+ * canonical from each `image:` declaration.
+ *
+ * Helm "umbrella" charts (monitoring/observability stacks) declare the actual
+ * deployed technology only in values.yaml as `image: <vendor>/<tool>:<tag>` —
+ * Chart.yaml typically has no `dependencies[]` for these (the workloads are
+ * rendered from local `templates/*.yaml`). K8sManifestParser only emits images
+ * for documents whose `kind` is in K8S_KINDS, so it ignores raw values files.
+ * This closes that gap.
+ *
+ * The image string is parsed to its tool segment (after the last `/`, before
+ * any `:tag` or `@digest`) — e.g. `grafana/loki:3.5.0` → `loki`,
+ * `prom/prometheus:v3.3.0` → `prometheus`. The tool name resolves via the
+ * ontology + aliases on the downstream side (same path the K8s-manifest
+ * image extractor uses).
+ */
+export function parseHelmValues(src: string, filePath: string): RawTechnologyEvidence[] {
+    const out: RawTechnologyEvidence[] = [];
+    let docs;
+    try { docs = parseAllDocuments(src); } catch { return []; }
+    for (const d of docs) {
+        let obj: unknown;
+        try { obj = d.toJSON(); } catch { continue; }
+        if (!obj) continue;
+        for (const img of collectImages(obj)) {
+            // last path segment, before any :tag or @digest
+            const name = img.split('@')[0].split(':')[0].split('/').pop();
+            if (name) out.push({ raw_name: name, ecosystem: 'docker', source_layer: 'iac', file_path: filePath });
+        }
+    }
+    return out;
+}
+
+/**
  * Parse Helm Chart.yaml files.
  * Emits a 'helm' token plus the chart name and each dependency name.
  */

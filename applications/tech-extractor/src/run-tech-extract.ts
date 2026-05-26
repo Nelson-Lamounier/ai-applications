@@ -20,7 +20,7 @@ import { parseK8sManifest } from './extractors/iac/K8sManifestParser.js';
 import { parseTerraform } from './extractors/iac/TerraformParser.js';
 import { parseGithubActions } from './extractors/iac/GithubActionsParser.js';
 import { parseReadme } from './extractors/iac/ReadmeParser.js';
-import { parseArgoApplication, parseHelmChart } from './extractors/iac/ArgoHelmParser.js';
+import { parseArgoApplication, parseHelmChart, parseHelmValues } from './extractors/iac/ArgoHelmParser.js';
 import type { Extractor, RawTechnologyEvidence } from './extractors/Extractor.js';
 import { TechExtractOrchestrator } from './orchestrator/TechExtractOrchestrator.js';
 import { computeParity } from './parity/ParityReporter.js';
@@ -60,6 +60,10 @@ function iacExtractor(rootDir: string, files: string[]): Extractor {
                 else if (rel.endsWith('.tf') || rel.endsWith('.hcl')) out.push(...parseTerraform(src, rel));
                 else if (base === 'chart.yaml') out.push(...parseHelmChart(src, rel));
                 else if (rel.includes('argocd-apps/') && (rel.endsWith('.yaml') || rel.endsWith('.yml'))) out.push(...parseArgoApplication(src, rel));
+                // Helm values files: catches `image: <vendor>/<tool>:<tag>` declarations in
+                // umbrella charts (monitoring stacks etc.) that K8sManifestParser ignores
+                // because the doc has no `kind:`. Match values.yaml / values-*.yaml / values.<env>.yaml.
+                else if (/(^|\/)values(\.[\w-]+)?\.ya?ml$/i.test(rel)) out.push(...parseHelmValues(src, rel));
                 else if (rel.endsWith('.yaml') || rel.endsWith('.yml')) out.push(...parseK8sManifest(src, rel));
                 else if (base === 'readme.md') out.push(...parseReadme(src, rel));
             }
