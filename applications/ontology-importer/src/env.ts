@@ -7,11 +7,17 @@ export interface OntologyImportEnv {
         readonly host: string; readonly port: number; readonly database: string;
         readonly user: string; readonly password: string;
     };
-    readonly anthropicApiKey:     string;
-    readonly triggeredBy:         TriggeredBy;
+    readonly bedrock: {
+        readonly region:    string;
+        readonly modelId:   string;
+        readonly bucket:    string;
+        readonly prefix:    string;
+        readonly roleArn:   string;
+        readonly minRecords: number;
+    };
+    readonly triggeredBy:          TriggeredBy;
     readonly deactivationThreshold: number;
-    /** Optional CSV filter of source names; undefined = all sources. */
-    readonly sources?:            string[];
+    readonly sources?:             string[];
 }
 
 function required(name: string): string {
@@ -27,9 +33,7 @@ function parseTriggeredBy(raw: string): TriggeredBy {
 
 export function parseEnv(): OntologyImportEnv {
     const sourcesRaw = process.env['SOURCES'];
-    const sources = sourcesRaw
-        ? sourcesRaw.split(',').map((s) => s.trim()).filter(Boolean)
-        : undefined;
+    const sources = sourcesRaw ? sourcesRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
 
     return {
         pg: {
@@ -39,8 +43,15 @@ export function parseEnv(): OntologyImportEnv {
             user:     required('PG_USER'),
             password: required('PG_PASSWORD'),
         },
-        anthropicApiKey:      required('ANTHROPIC_API_KEY'),
-        triggeredBy:          parseTriggeredBy(process.env['TRIGGERED_BY'] ?? 'cronjob'),
+        bedrock: {
+            region:     process.env['AWS_REGION'] ?? 'eu-west-1',
+            modelId:    process.env['BEDROCK_MODEL_ID'] ?? 'anthropic.claude-haiku-4-5-20251001-v1:0',
+            bucket:     required('BATCH_S3_BUCKET'),
+            prefix:     process.env['BATCH_S3_PREFIX'] ?? 'batch',
+            roleArn:    required('BEDROCK_BATCH_ROLE_ARN'),
+            minRecords: Number.parseInt(process.env['MIN_BATCH_RECORDS'] ?? '100', 10),
+        },
+        triggeredBy:           parseTriggeredBy(process.env['TRIGGERED_BY'] ?? 'cronjob'),
         deactivationThreshold: Number.parseInt(process.env['DEACTIVATION_THRESHOLD'] ?? '3', 10),
         sources,
     };

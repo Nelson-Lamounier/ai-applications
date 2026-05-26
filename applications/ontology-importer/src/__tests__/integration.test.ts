@@ -4,7 +4,7 @@ import { OntologyImporter } from '../importer/OntologyImporter.js';
 import type { OntologyWritePort, ImportSourcePort } from '../importer/OntologyImporter.js';
 import { Categorizer } from '../categorization/Categorizer.js';
 import { FakeSource } from '../sources/FakeSource.js';
-import { parseBatchResult, buildBatchRequests } from '../categorization/LlmBatchClassifier.js';
+import { buildJsonlRecords, parseModelOutput } from '../categorization/BedrockBatchClassifier.js';
 
 /** In-memory OntologyWritePort backed by JS Maps so runs are idempotent. */
 class InMemoryOntologyWrite implements OntologyWritePort {
@@ -73,13 +73,8 @@ describe('ontology-importer in-process integration', () => {
     });
 });
 
-/** Build a batch message carrying a `classify_package` tool_use block. */
-function toolUseMessage(decision: 'yes' | 'no' | 'maybe', category: string | null, reasoning: string) {
-    return { content: [{ type: 'tool_use', name: 'classify_package', input: { decision, category, reasoning } }] };
-}
-
-describe('ontology-importer LLM batch-routing smoke', () => {
-    it('routes parsed batch results to insert/skip/review buckets end-to-end', async () => {
+describe('ontology-importer Bedrock batch-routing smoke', () => {
+    it('routes parsed Bedrock model output to insert/skip/review buckets end-to-end', async () => {
         // --- Stage 1: importer run produces the unresolved set the follow-up consumes. ---
         const ontology = new InMemoryOntologyWrite();
         const importSources = new InMemoryImportSources();
@@ -93,38 +88,37 @@ describe('ontology-importer LLM batch-routing smoke', () => {
         expect(unresolved.map((u) => u.source_identifier)).toContain('totally-unknown-xyz');
         expect(unresolved.length).toBeGreaterThanOrEqual(1);
 
-        // --- Stage 1b: buildBatchRequests emits one request per unresolved entry. ---
-        const requests = buildBatchRequests(unresolved, 'npm');
-        expect(requests).toHaveLength(unresolved.length);
-        for (const req of requests) {
-            expect(req.custom_id.startsWith('npm:')).toBe(true);
-        }
+        // --- Stage 1b: buildJsonlRecords pools unresolved into Bedrock records + recordMap. ---
+        const items = unresolved.map((entry) => ({ entry, ecosystem: 'npm' }));
+        const { records, recordMap } = buildJsonlRecords(items);
+        expect(records).toHaveLength(items.length);
 
-        // --- Stage 2: simulate the follow-up routing without the real SDK. ---
-        // Three stubbed message shapes → one of each decision outcome.
-        const fakeMessages = [
-            toolUseMessage('yes', 'database_relational', 'is a database'), // → inserted
-            toolUseMessage('no', null, 'not a technology'), // → skipped
-            { content: [{ type: 'text', text: 'no tool call here' }] }, // no tool_use → maybe/null → review
+        // --- Stage 2: simulate Bedrock output → one yes, one no, one maybe (no tool_use). ---
+        // Where the FakeSource yields fewer than 3 unresolved, synthetic recordIds exercise
+        // the remaining routes; recordMap lookup falls back to the recordId itself.
+        const outputs = [
+            { recordId: records[0].recordId, modelOutput: { content: [{ type: 'tool_use', name: 'classify_package', input: { decision: 'yes', category: 'framework_web', reasoning: 'fw' } }] } },
+            { recordId: records[1]?.recordId ?? 'rX', modelOutput: { content: [{ type: 'tool_use', name: 'classify_package', input: { decision: 'no', category: null, reasoning: 'types' } }] } },
+            { recordId: records[2]?.recordId ?? 'rY', modelOutput: { content: [{ type: 'text' }] } },
         ];
 
         const inserted: string[] = [];
         const skipped: string[] = [];
         const reviewQueue: string[] = [];
 
-        for (let i = 0; i < fakeMessages.length; i++) {
-            const customId = `npm:entry-${i}`;
-            const { decision, category } = parseBatchResult(customId, fakeMessages[i]);
+        for (const rec of outputs) {
+            const { decision, category } = parseModelOutput(rec);
+            const id = recordMap[rec.recordId]?.identifier ?? rec.recordId;
             if (decision === 'yes' && category) {
-                inserted.push(customId); // mirrors ontology.insertAutoImported
+                inserted.push(id); // mirrors ontology.insertAutoImported
             } else if (decision === 'no') {
-                skipped.push(customId); // mirrors skipped.add
+                skipped.push(id); // mirrors skipped.add
             } else {
-                reviewQueue.push(customId); // mirrors reviewQueue.add (maybe/null)
+                reviewQueue.push(id); // mirrors reviewQueue.add (maybe/null)
             }
         }
 
-        // Exactly one landed in each bucket — validates parse + routing together.
+        // Exactly one landed in each bucket — validates parse + recordMap routing together.
         expect(inserted).toHaveLength(1);
         expect(skipped).toHaveLength(1);
         expect(reviewQueue).toHaveLength(1);

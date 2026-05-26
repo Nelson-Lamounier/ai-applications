@@ -5,15 +5,6 @@ __metadata:
   version: 8
   cacheKey: 10c0
 
-"@anthropic-ai/sdk@npm:^0.55.0":
-  version: 0.55.1
-  resolution: "@anthropic-ai/sdk@npm:0.55.1"
-  bin:
-    anthropic-ai-sdk: bin/cli
-  checksum: 10c0/b6c5d0d47c2314ad49d147e300438f3a6ad8291db421091ee069e5e976f86a11ad107a203aa887456761fd4e16be7071926aadc429c8f8e4452f81fe85ca194a
-  languageName: node
-  linkType: hard
-
 "@aws-cdk/asset-awscli-v1@npm:2.2.273":
   version: 2.2.273
   resolution: "@aws-cdk/asset-awscli-v1@npm:2.2.273"
@@ -478,6 +469,25 @@ __metadata:
     "@smithy/util-utf8": "npm:^4.2.2"
     tslib: "npm:^2.6.2"
   checksum: 10c0/c6b0407a33d582606d6aa3b1f4ad77dc284e6a2231955dea8912085757ea557e110d315c963c7a633febce0d2cd2dd1195adcdbc99f9ecdf24cd80c06d2c0cd4
+  languageName: node
+  linkType: hard
+
+"@aws-sdk/client-bedrock@npm:^3.1001.0":
+  version: 3.1053.0
+  resolution: "@aws-sdk/client-bedrock@npm:3.1053.0"
+  dependencies:
+    "@aws-crypto/sha256-browser": "npm:5.2.0"
+    "@aws-crypto/sha256-js": "npm:5.2.0"
+    "@aws-sdk/core": "npm:^3.974.13"
+    "@aws-sdk/credential-provider-node": "npm:^3.972.44"
+    "@aws-sdk/token-providers": "npm:3.1053.0"
+    "@aws-sdk/types": "npm:^3.973.9"
+    "@smithy/core": "npm:^3.24.3"
+    "@smithy/fetch-http-handler": "npm:^5.4.3"
+    "@smithy/node-http-handler": "npm:^4.7.3"
+    "@smithy/types": "npm:^4.14.2"
+    tslib: "npm:^2.6.2"
+  checksum: 10c0/7a08ea9163a50f587a8ff0c6a84d2718dea501feb06b50140ef21f9d71b89e8fe0fc8c6e4abf616b3e869278f103e0c49b698bf833d9933332d664ef8d88d8e7
   languageName: node
   linkType: hard
 
@@ -2963,6 +2973,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@aws-sdk/token-providers@npm:3.1053.0":
+  version: 3.1053.0
+  resolution: "@aws-sdk/token-providers@npm:3.1053.0"
+  dependencies:
+    "@aws-sdk/core": "npm:^3.974.13"
+    "@aws-sdk/nested-clients": "npm:^3.997.11"
+    "@aws-sdk/types": "npm:^3.973.9"
+    "@smithy/core": "npm:^3.24.3"
+    "@smithy/types": "npm:^4.14.2"
+    tslib: "npm:^2.6.2"
+  checksum: 10c0/56bbc829393759264314c6c3e2da1e0faecb4051d2e57a89cc56991c228d03fcec8bf7268da970b2b9379310a67d573e14e325325fbeb987a348beb4488c1100
+  languageName: node
+  linkType: hard
+
 "@aws-sdk/types@npm:^3.222.0, @aws-sdk/types@npm:^3.973.8":
   version: 3.973.8
   resolution: "@aws-sdk/types@npm:3.973.8"
@@ -3672,7 +3696,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@bedrock/ontology-importer@workspace:applications/ontology-importer"
   dependencies:
-    "@anthropic-ai/sdk": "npm:^0.55.0"
+    "@aws-sdk/client-bedrock": "npm:^3.1001.0"
+    "@aws-sdk/client-s3": "npm:^3.1001.0"
     "@bedrock/shared": "workspace:*"
     "@google-cloud/bigquery": "npm:^7.9.0"
     "@jest/globals": "npm:^29.7.0"

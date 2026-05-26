@@ -36,11 +36,27 @@ export class OntologyImportRunRepository {
         );
     }
 
-    /** Runs awaiting LLM batch completion. */
-    async findPendingBatches(): Promise<Array<{ id: string; source: string; llmBatchId: string }>> {
-        const { rows } = await this.pool.query<{ id: string; source: string; llm_batch_id: string }>(
-            `SELECT id, source, llm_batch_id FROM ontology_import_runs WHERE status = 'partial' AND llm_batch_id IS NOT NULL`,
+    /** Insert a pooled LLM-batch run row (status=partial) carrying the job ARN + recordId→entry map + runKey. */
+    async recordBatchRun(
+        source: string,
+        triggeredBy: 'cronjob' | 'manual' | 'backfill',
+        jobArn: string,
+        recordMap: Record<string, { ecosystem: string; identifier: string }>,
+        runKey: string,
+    ): Promise<string> {
+        const { rows } = await this.pool.query<{ id: string }>(
+            `INSERT INTO ontology_import_runs (source, triggered_by, status, started_at, llm_batch_id, notes)
+             VALUES ($1, $2, 'partial', now(), $3, $4::jsonb) RETURNING id`,
+            [source, triggeredBy, jobArn, JSON.stringify({ recordMap, runKey })],
         );
-        return rows.map((r) => ({ id: r.id, source: r.source, llmBatchId: r.llm_batch_id }));
+        return rows[0].id;
+    }
+
+    /** Runs awaiting LLM batch completion, with their persisted recordId→entry map + runKey. */
+    async findPendingBatches(): Promise<Array<{ id: string; source: string; llmBatchId: string; recordMap: Record<string, { ecosystem: string; identifier: string }>; runKey: string }>> {
+        const { rows } = await this.pool.query<{ id: string; source: string; llm_batch_id: string; notes: { recordMap?: Record<string, { ecosystem: string; identifier: string }>; runKey?: string } | null }>(
+            `SELECT id, source, llm_batch_id, notes FROM ontology_import_runs WHERE status = 'partial' AND llm_batch_id IS NOT NULL`,
+        );
+        return rows.map((r) => ({ id: r.id, source: r.source, llmBatchId: r.llm_batch_id, recordMap: r.notes?.recordMap ?? {}, runKey: r.notes?.runKey ?? '' }));
     }
 }
