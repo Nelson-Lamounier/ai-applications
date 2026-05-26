@@ -17,6 +17,7 @@ COPY applications/tsconfig.json ./applications/
 # Sibling-workspace manifests required for resolution.
 COPY applications/shared/package.json   ./applications/shared/
 COPY applications/ingestion/package.json ./applications/ingestion/
+COPY applications/ontology-importer/package.json ./applications/ontology-importer/
 
 # Pull in every workspace manifest so `yarn install` resolves the lockfile
 # unambiguously. We need a full install (not workspaces-focus) because tsc,
