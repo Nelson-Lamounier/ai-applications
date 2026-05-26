@@ -19,6 +19,7 @@ COPY applications/tsconfig.json ./applications/
 # All workspace manifests — required for `yarn install --immutable` to resolve
 # the workspace graph (root package.json declares every workspace).
 COPY applications/shared/package.json                  ./applications/shared/
+COPY applications/ontology-importer/package.json       ./applications/ontology-importer/
 COPY applications/job-strategist/package.json          ./applications/job-strategist/
 COPY applications/article-pipeline/package.json        ./applications/article-pipeline/
 COPY applications/ingestion/package.json               ./applications/ingestion/
