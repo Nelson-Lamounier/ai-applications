@@ -3697,6 +3697,7 @@ __metadata:
   resolution: "@bedrock/ontology-importer@workspace:applications/ontology-importer"
   dependencies:
     "@aws-sdk/client-bedrock": "npm:^3.1001.0"
+    "@aws-sdk/client-bedrock-runtime": "npm:^3.1001.0"
     "@aws-sdk/client-s3": "npm:^3.1001.0"
     "@bedrock/shared": "workspace:*"
     "@google-cloud/bigquery": "npm:^7.9.0"
