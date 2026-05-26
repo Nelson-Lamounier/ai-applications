@@ -59,11 +59,82 @@ export interface ProseParserOpts {
 }
 
 /**
+ * One prose range to scan. `text` is a single line's content; `line_start` is
+ * the absolute line number to attribute matches to (so callers like the
+ * code-comment extractor can feed already-extracted comment ranges with their
+ * original source-file line numbers preserved).
+ */
+export interface ProseLineInput {
+    readonly text: string;
+    readonly line_start: number;
+}
+
+/**
+ * Pure: scan arbitrary prose ranges for case-insensitive word-boundary
+ * mentions of any alias in the supplied set. Emits one RawTechnologyEvidence
+ * per (alias x line_start) — same alias on the same range emits once; same
+ * alias on a different range emits again so the downstream code can use
+ * multi-line hits as a confidence signal.
+ *
+ * Used by both {@link parseReadmeProse} (whole-file line split) and the
+ * code-comment extractor (pre-extracted comment ranges that retain their
+ * original line numbers).
+ *
+ * @param ranges    Iterable of `{ text, line_start }` rows.
+ * @param filePath  Path of the file (for evidence provenance).
+ * @param aliasSet  Lower-cased prose-safe aliases. Caller MUST pre-filter to
+ *                  prose_safe=true rows (mitigation 1) and lowercase entries.
+ * @param opts      length floor + emission cap.
+ */
+export function scanProseRanges(
+    ranges: Iterable<ProseLineInput>,
+    filePath: string,
+    aliasSet: ReadonlySet<string>,
+    opts: ProseParserOpts = {},
+): RawTechnologyEvidence[] {
+    const minLen = opts.minAliasLength ?? 4;
+    const maxEmissions = opts.maxEmissions ?? 200;
+    if (aliasSet.size === 0) return [];
+
+    const out: RawTechnologyEvidence[] = [];
+    const seen = new Set<string>(); // dedupe key: `${alias}@${line_start}`
+
+    for (const r of ranges) {
+        if (!r.text) continue;
+
+        // Tokenize on non-alphanumeric boundaries, but keep `-`, `_`, `.`, `/`,
+        // `@` so multi-part aliases like `@aws-sdk/client-s3`, `next-auth`,
+        // `aws_lambda`, `node.js`, `pg/pg-pool` can match as single tokens.
+        // Lowercase for case-insensitive match against the alias set.
+        const tokens = r.text.toLowerCase().match(/[a-z0-9_@./-]+/g) ?? [];
+        for (const raw of tokens) {
+            // Trim trailing punctuation only (sentence-end `.`, list `,`-stripped
+            // upstream, path-style `/-_`). Keep LEADING `@` for npm scoped
+            // packages (`@aws-sdk/...`); keep inner separators verbatim.
+            const tok = raw.replace(/[._/-]+$/g, '');
+            if (tok.length < minLen) continue;
+            if (!aliasSet.has(tok)) continue;
+            const key = `${tok}@${r.line_start}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({
+                raw_name:    tok,
+                ecosystem:   'readme',
+                source_layer:'readme',
+                file_path:   filePath,
+                line_start:  r.line_start,
+                line_end:    r.line_start,
+            });
+            if (out.length >= maxEmissions) return out;
+        }
+    }
+    return out;
+}
+
+/**
  * Pure: scan README/doc prose for case-insensitive word-boundary mentions of
- * any alias in the supplied set. Emits one RawTechnologyEvidence per
- * (alias x line) — same alias on the same line emits once; same alias on a
- * different line emits again so the downstream code can use multi-line hits
- * as a confidence signal.
+ * any alias in the supplied set. Shim over {@link scanProseRanges}: splits
+ * `src` on `\n` and feeds each line as a range with `line_start = i + 1`.
  *
  * @param src       README content (markdown, plain text, anything).
  * @param filePath  Path of the file (for evidence provenance).
@@ -77,43 +148,6 @@ export function parseReadmeProse(
     aliasSet: ReadonlySet<string>,
     opts: ProseParserOpts = {},
 ): RawTechnologyEvidence[] {
-    const minLen = opts.minAliasLength ?? 4;
-    const maxEmissions = opts.maxEmissions ?? 200;
-    if (aliasSet.size === 0) return [];
-
-    const out: RawTechnologyEvidence[] = [];
-    const seen = new Set<string>(); // dedupe key: `${alias}@${line}`
-    const lines = src.split('\n');
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (!line) continue;
-
-        // Tokenize on non-alphanumeric boundaries, but keep `-`, `_`, `.`, `/`,
-        // `@` so multi-part aliases like `@aws-sdk/client-s3`, `next-auth`,
-        // `aws_lambda`, `node.js`, `pg/pg-pool` can match as single tokens.
-        // Lowercase for case-insensitive match against the alias set.
-        const tokens = line.toLowerCase().match(/[a-z0-9_@./-]+/g) ?? [];
-        for (const raw of tokens) {
-            // Trim trailing punctuation only (sentence-end `.`, list `,`-stripped
-            // upstream, path-style `/-_`). Keep LEADING `@` for npm scoped
-            // packages (`@aws-sdk/...`); keep inner separators verbatim.
-            const tok = raw.replace(/[._/-]+$/g, '');
-            if (tok.length < minLen) continue;
-            if (!aliasSet.has(tok)) continue;
-            const key = `${tok}@${i + 1}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push({
-                raw_name:    tok,
-                ecosystem:   'readme',
-                source_layer:'readme',
-                file_path:   filePath,
-                line_start:  i + 1,
-                line_end:    i + 1,
-            });
-            if (out.length >= maxEmissions) return out;
-        }
-    }
-    return out;
+    const ranges: ProseLineInput[] = src.split('\n').map((text, i) => ({ text, line_start: i + 1 }));
+    return scanProseRanges(ranges, filePath, aliasSet, opts);
 }

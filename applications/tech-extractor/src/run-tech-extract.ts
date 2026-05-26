@@ -120,7 +120,7 @@ async function main(): Promise<void> {
 
         const extractors: Extractor[] = [
             new SyftExtractor(),
-            new TreeSitterExtractor(readFile, files),
+            new TreeSitterExtractor(readFile, files, proseSafeAliases),
             iacExtractor(extractDir, files, proseSafeAliases),
         ];
 

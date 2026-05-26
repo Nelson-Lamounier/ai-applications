@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { extractImportsByRegex, matchSdkCalls, awsModuleTokens } from './TreeSitterExtractor.js';
+import { extractImportsByRegex, matchSdkCalls, awsModuleTokens, TreeSitterExtractor } from './TreeSitterExtractor.js';
 
 describe('extractImportsByRegex', () => {
     it('pulls module names from python and js/ts imports', () => {
@@ -79,5 +79,24 @@ describe('awsModuleTokens', () => {
         expect(awsModuleTokens('@aws-sdk/util-utf8')).toEqual([]);
         expect(awsModuleTokens('lodash')).toEqual([]);
         expect(awsModuleTokens('express')).toEqual([]);
+    });
+});
+
+describe('TreeSitterExtractor code-prose wiring', () => {
+    it('emits code-prose evidence for prose_safe aliases in comments + string literals', async () => {
+        const src = [
+            '// uses kubernetes for orchestration',
+            'import { x } from "@aws-sdk/client-s3";',
+            'const note = "Secured by Grafana dashboards";',
+        ].join('\n');
+        const ex = new TreeSitterExtractor(
+            async () => src,
+            ['src/x.ts'],
+            new Set(['kubernetes', 'grafana']),
+        );
+        const out = await ex.extract('/tmp');
+        const prose = out.filter(e => e.source_layer === 'code-prose');
+        expect(prose.map(e => e.raw_name).sort()).toEqual(['grafana', 'kubernetes']);
+        expect(prose.some(e => e.raw_name === '@aws-sdk/client-s3')).toBe(false);
     });
 });

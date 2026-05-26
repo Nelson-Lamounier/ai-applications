@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { parseReadme, parseReadmeProse } from './ReadmeParser.js';
+import { parseReadme, parseReadmeProse, scanProseRanges } from './ReadmeParser.js';
 
 describe('parseReadme', () => {
     it('extracts shields.io badge subjects as readme-layer tokens', () => {
@@ -102,5 +102,26 @@ describe('parseReadmeProse', () => {
         const md = 'We had to go through several iterations. React to changes quickly. Next we will ...';
         const out = parseReadmeProse(md, 'README.md', aliases); // aliases set has no go/react/next
         expect(out).toEqual([]);
+    });
+});
+
+describe('scanProseRanges', () => {
+    it('emits evidence at the input range line_start values', () => {
+        const ranges = [
+            { text: 'we deploy to kubernetes', line_start: 42 },
+            { text: 'using grafana for dashboards', line_start: 99 },
+        ];
+        const out = scanProseRanges(ranges, 'src/x.ts', new Set(['kubernetes', 'grafana']));
+        expect(out).toEqual([
+            { raw_name: 'kubernetes', ecosystem: 'readme', source_layer: 'readme', file_path: 'src/x.ts', line_start: 42, line_end: 42 },
+            { raw_name: 'grafana',    ecosystem: 'readme', source_layer: 'readme', file_path: 'src/x.ts', line_start: 99, line_end: 99 },
+        ]);
+    });
+
+    it('dedupes alias mentions within a single range', () => {
+        const ranges = [{ text: 'grafana grafana grafana', line_start: 5 }];
+        const out = scanProseRanges(ranges, 'x.ts', new Set(['grafana']));
+        expect(out).toHaveLength(1);
+        expect(out[0].line_start).toBe(5);
     });
 });
