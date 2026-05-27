@@ -24,6 +24,14 @@ describe('buildConverseRequest', () => {
         expect(sys).toContain('"react"');
         expect(sys).toContain('Calibration examples');
     });
+    it('embeds F4 cloud-prefix compound-form calibration (post-2026-05-27)', () => {
+        const body = buildConverseRequest({ alias: 'x', canonical: 'x', category: 'x' });
+        const sys = body.system[0].text;
+        expect(sys).toContain('"aws_bedrock"');
+        expect(sys).toContain('"amazon_cognito"');
+        expect(sys).toContain('"azure_sql"');
+        expect(sys).toMatch(/aws\|amazon\|azure\|google\|gcp\|apache/);
+    });
     it('sets temperature 0 for deterministic classification', () => {
         const body = buildConverseRequest({ alias: 'x', canonical: 'x', category: 'x' });
         expect(body.inferenceConfig.temperature).toBe(0);
