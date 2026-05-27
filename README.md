@@ -74,6 +74,11 @@ just smoke-e2e         # deployed-env smoke (requires .env.smoke)
 - [docs/projects-migration/](docs/projects-migration/) — projects migration notes
 - [docs/skills/](docs/skills/) — skill definitions
 
+## License
+
+Proprietary — all rights reserved. See [LICENSE](LICENSE). Repository is
+public-for-review; no usage rights are granted.
+
 ## Disclosure
 
 Built with Claude Code (Anthropic). Architecture, prompts, infra design, and
