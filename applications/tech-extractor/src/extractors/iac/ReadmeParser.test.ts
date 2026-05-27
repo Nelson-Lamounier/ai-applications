@@ -125,3 +125,76 @@ describe('scanProseRanges', () => {
         expect(out[0].line_start).toBe(5);
     });
 });
+
+describe('scanProseRanges — F4 bigram with prefix guard', () => {
+    const aliases = new Set(['aws_bedrock', 'amazon_cognito', 'azure_sql', 'aws_step_functions', 'aws_iam', 'grafana']);
+
+    it('matches "aws bedrock" -> aws_bedrock via aws-prefix bigram', () => {
+        const out = scanProseRanges([{ text: 'we use aws bedrock for inference', line_start: 1 }], 'x.md', aliases);
+        expect(out.map((o) => o.raw_name)).toContain('aws_bedrock');
+    });
+
+    it('matches "Amazon Cognito" -> amazon_cognito (case-insensitive)', () => {
+        const out = scanProseRanges([{ text: 'Auth via Amazon Cognito', line_start: 1 }], 'x.md', aliases);
+        expect(out.map((o) => o.raw_name)).toContain('amazon_cognito');
+    });
+
+    it('matches "Azure SQL" -> azure_sql', () => {
+        const out = scanProseRanges([{ text: 'Backed by Azure SQL', line_start: 1 }], 'x.md', aliases);
+        expect(out.map((o) => o.raw_name)).toContain('azure_sql');
+    });
+
+    it('does NOT bigram non-prefix tokens — "step functions" alone does not match aws_step_functions', () => {
+        const out = scanProseRanges([{ text: 'we use step functions for orchestration', line_start: 1 }], 'x.md', aliases);
+        expect(out.map((o) => o.raw_name)).not.toContain('aws_step_functions');
+    });
+
+    it('bigrams "aws step" but it has no alias — silently dropped', () => {
+        const out = scanProseRanges([{ text: 'aws step pipeline', line_start: 1 }], 'x.md', aliases);
+        expect(out).toEqual([]);
+    });
+
+    it('still emits single-token matches alongside bigrams', () => {
+        const out = scanProseRanges([{ text: 'grafana dashboards backed by aws bedrock', line_start: 1 }], 'x.md', aliases);
+        const names = out.map((o) => o.raw_name).sort();
+        expect(names).toEqual(['aws_bedrock', 'grafana']);
+    });
+});
+
+describe('scanProseRanges — F4 negation detection', () => {
+    const aliases = new Set(['grafana', 'cognito', 'redis', 'aws_bedrock']);
+
+    it('suppresses matches on lines containing "not using"', () => {
+        const out = scanProseRanges([{ text: 'We are not using grafana for this project', line_start: 1 }], 'x.md', aliases);
+        expect(out).toEqual([]);
+    });
+
+    it('suppresses matches on lines containing "instead of"', () => {
+        const out = scanProseRanges([{ text: 'We chose datadog instead of grafana', line_start: 1 }], 'x.md', aliases);
+        expect(out).toEqual([]);
+    });
+
+    it('suppresses matches on lines containing "considered but"', () => {
+        const out = scanProseRanges([{ text: 'We considered but rejected cognito', line_start: 1 }], 'x.md', aliases);
+        expect(out).toEqual([]);
+    });
+
+    it('suppresses matches on lines containing "migrated from"', () => {
+        const out = scanProseRanges([{ text: 'Migrated from redis to dynamodb last year', line_start: 1 }], 'x.md', aliases);
+        expect(out).toEqual([]);
+    });
+
+    it('does NOT suppress matches on lines with positive mentions even if other lines have negation', () => {
+        const ranges = [
+            { text: 'we are not using grafana for dashboards', line_start: 1 },
+            { text: 'we use grafana for alerting',             line_start: 2 },
+        ];
+        const out = scanProseRanges(ranges, 'x.md', aliases);
+        expect(out.map((o) => o.line_start)).toEqual([2]);
+    });
+
+    it('negation also suppresses bigram matches', () => {
+        const out = scanProseRanges([{ text: 'not using aws bedrock for inference', line_start: 1 }], 'x.md', aliases);
+        expect(out).toEqual([]);
+    });
+});
