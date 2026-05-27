@@ -36,13 +36,10 @@ const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
 const SYSTEM_PROMPT = [
     'You are a skill-evidence extractor for a resume-generation system.',
-    'Given a single document chunk from a software repository, identify:',
-    '  1. Domain capabilities the chunk EVIDENCES the user has practised.',
-    '     Use short noun phrases (≤ 4 words). Examples:',
-    '       "kubernetes networking", "iac with cdk", "step functions orchestration"',
-    '  2. Named technologies, tools, services, frameworks, or products in use.',
-    '     Use the canonical lowercased name. Examples:',
-    '       "calico", "traefik", "step functions", "amazon bedrock", "next.js"',
+    'Given a single document chunk from a software repository, identify',
+    'domain capabilities the chunk EVIDENCES the user has practised.',
+    'Use short noun phrases (≤ 4 words). Examples:',
+    '  "kubernetes networking", "iac with cdk", "step functions orchestration"',
     '',
     'Rules:',
     '  - Extract only signals that the chunk text actually demonstrates.',
@@ -55,11 +52,17 @@ const SYSTEM_PROMPT = [
     '    signal is present.',
     '  - You MUST respond by calling the record_extraction tool. Do not write',
     '    free-form text.',
+    '',
+    // NOTE: prior to 2026-05-27 this prompt also asked for `technologies`.
+    // That role moved to the deterministic tech-extractor Layer-1 pipeline
+    // after the 2026-05-26 → 2026-05-27 parity work (artefact in
+    // applications/tech-extractor/parity/2026-05-26-bucket-recount.md, v2.3
+    // trajectory section). The enricher now extracts SKILLS ONLY.
 ].join('\n');
 
 const TOOL_SCHEMA = {
     name:        'record_extraction',
-    description: 'Records the extracted skills and technologies for the chunk.',
+    description: 'Records the extracted skills for the chunk.',
     input_schema: {
         type: 'object',
         properties: {
@@ -68,13 +71,8 @@ const TOOL_SCHEMA = {
                 items:       { type: 'string' },
                 description: 'Domain capabilities the chunk evidences. Lowercased.',
             },
-            technologies: {
-                type:        'array',
-                items:       { type: 'string' },
-                description: 'Named tools/products in use. Lowercased.',
-            },
         },
-        required: ['skills', 'technologies'],
+        required: ['skills'],
         additionalProperties: false,
     },
 };
@@ -82,7 +80,7 @@ const TOOL_SCHEMA = {
 interface AnthropicToolUseBlock {
     type:  'tool_use';
     name:  string;
-    input: { skills?: unknown[]; technologies?: unknown[] };
+    input: { skills?: unknown[] };
 }
 
 interface AnthropicTextBlock { type: 'text'; text: string }
@@ -189,7 +187,11 @@ export class BedrockChunkEnricher implements IChunkEnricher {
 
         return {
             skills:       this.normalize(toolUse.input.skills),
-            technologies: this.normalize(toolUse.input.technologies),
+            // technologies extraction decommissioned 2026-05-27 — owned by
+            // the deterministic tech-extractor Layer-1 pipeline. Field
+            // retained as [] for schema back-compat with the existing
+            // document_embeddings.technologies column.
+            technologies: [],
         };
     }
 
