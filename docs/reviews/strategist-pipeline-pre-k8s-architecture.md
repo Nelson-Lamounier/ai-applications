@@ -1,6 +1,37 @@
-<!-- Migrated from cdk-monitoring on 2026-04-28. Run kb-doc in this repo to integrate properly. -->
+# Strategist pipeline — pre-K8s architecture (historical)
 
-# Strategist Pipeline — Backend Workflow Review
+> **Status:** Historical — describes the **Lambda + Step Functions +
+> DynamoDB** architecture of the strategist pipeline when it lived in
+> sibling `cdk-monitoring` repo (file references in the doc point at
+> `cdk-monitoring/bedrock-applications/job-strategist/src/…` paths).
+> **The current implementation is documented in
+> [docs/projects/job-strategist.md](../projects/job-strategist.md)**;
+> that README explicitly notes "Replaces the Trigger / Research /
+> Strategist / Resume-builder / Analysis-persist Lambda chain
+> orchestrated by Step Functions."
+>
+> The **agent boundaries themselves** (Trigger → Research →
+> Strategist → Coach) carried over to the K8s Job. What changed:
+>
+> - Step Functions Analysis Pipeline → single K8s Job
+>   (`run-pipeline.ts`) with the same agent chain inlined.
+> - Step Functions Coaching Pipeline → separate K8s Job
+>   (`run-coach.ts`).
+> - DynamoDB `APPLICATION#slug` state machine → Aurora Postgres
+>   `pipeline_runs` table.
+> - Lambda `trigger-handler.ts` → admin-api endpoint dispatching the
+>   K8s Job.
+>
+> The prompt design + zod schemas described here are still the basis
+> for the current
+> [profile synthesis + grounding patterns](../patterns/zod-tool-use.md).
+>
+> Originally migrated from sibling `cdk-monitoring` repo on 2026-04-28;
+> integrated here on 2026-05-27 per the kb-doc migrate-internal plan.
+
+---
+
+## Strategist Pipeline — Backend Workflow Review (original cdk-monitoring text below)
 
 ## Pipeline Architecture Overview
 

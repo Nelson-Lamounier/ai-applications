@@ -1,6 +1,34 @@
-<!-- Migrated from cdk-monitoring on 2026-04-28. Run kb-doc in this repo to integrate properly. -->
+# Cross-account observability plan (historical)
 
-# Bedrock Pipeline — Observability & Monitoring Plan
+> **Status:** Historical — describes the **CloudWatch + Grafana
+> dashboards** designed for the pre-K8s article-generation pipeline
+> (Lambda `bedrock-development-ai-publisher` → Bedrock → DynamoDB →
+> S3). The specific Lambda + DynamoDB topology no longer matches the
+> as-deployed system; the **observability primitives themselves
+> (CloudWatch metric namespaces, EMF, X-Ray, Grafana data sources)
+> remain in use** for the current K8s-Job-based services.
+>
+> **Current observability surface:**
+>
+> - Service-side OTel + EMF wiring lives in
+>   [applications/shared/src/observability/](../../applications/shared/src/observability/)
+>   (referenced by every K8s Job entry point —
+>   [composition-root pattern](../patterns/composition-root.md)).
+> - Per-user Bedrock cost ledger:
+>   [docs/concepts/bedrock-cost-tracking.md](../concepts/bedrock-cost-tracking.md)
+>   — `prompt_invocations` + `user_token_budgets`.
+> - Self-healing agent token-budget alarms:
+>   [docs/runbooks/self-healing-token-budget.md](../runbooks/self-healing-token-budget.md).
+> - Grafana dashboards live in sibling repo `cdk-monitoring`. This
+>   doc's dashboard JSON / query examples are out of scope for the
+>   `ai-applications` repo.
+>
+> Originally migrated from sibling `cdk-monitoring` repo on 2026-04-28;
+> integrated here on 2026-05-27 per the kb-doc migrate-internal plan.
+
+---
+
+## Bedrock Pipeline — Observability & Monitoring Plan (original cdk-monitoring text below)
 
 > Full-stack monitoring for the AI content pipeline: Lambda → Bedrock → DynamoDB → S3 → Frontend.  
 > All dashboards served via the existing Grafana instance at `ops.nelsonlamounier.com/grafana`.

@@ -1,6 +1,28 @@
-<!-- Migrated from cdk-monitoring on 2026-04-28. Run kb-doc in this repo to integrate properly. -->
+# Bedrock article pipeline — pre-K8s architecture (historical)
 
-# Bedrock Article Generation Pipeline
+> **Status:** Historical — describes the **Lambda + Step Functions +
+> DynamoDB** architecture that ran the article-generation workflow
+> before the move to K8s Jobs. **The current system is documented in
+> [docs/projects/article-pipeline.md](../projects/article-pipeline.md)**;
+> that README explicitly notes "Replaces the previous Trigger /
+> Research / Writer / QA Lambda chain orchestrated by Step Functions."
+>
+> Kept here because the **CDK stack composition** the article pipeline
+> once used (BedrockDataStack / BedrockAgentStack / BedrockApiStack /
+> BedrockKbStack — the BedrockProjectFactory 4-stack family) still
+> backs the **chatbot** path on develop —
+> [docs/concepts/bedrock-rag-surface.md](../concepts/bedrock-rag-surface.md)
+> documents that current shape. This file's CDK construct details are
+> partially current (the 4-stack factory) and partially superseded (the
+> Lambda-driven article workflow itself).
+>
+> Originally migrated from sibling `cdk-monitoring` repo on 2026-04-28
+> as part of the multi-repo split; integrated here on 2026-05-27 per
+> the kb-doc migrate-internal plan.
+
+---
+
+## Bedrock Article Generation Pipeline (original cdk-monitoring text below)
 
 > Agentic content supply chain: drop a `.md` into S3, receive a polished `.mdx` blog post with AI-enhanced metadata, versioned content, and a Director's Shot List — all fully automated.
 
