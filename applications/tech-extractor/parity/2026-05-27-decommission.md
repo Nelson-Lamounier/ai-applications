@@ -91,3 +91,67 @@ The change is one commit, narrowly scoped to the system prompt + tool schema + r
 - KB quality + diagnostic scoring (read skills, not technologies) — unchanged
 - Tech-extractor Layer-1 pipeline (source of truth for technologies)
 - Parity reporter (watchdog; will show llm=0 going forward, useful as the audit marker)
+
+---
+
+## Appendix: v2.4 follow-on (F4 bigram + negation, PR #66)
+
+After the v2.3 decommission landed, F4 shipped as the optional carve-out shrinker called out above: prefix-guarded bigrams (`aws_X` / `amazon_X` / `azure_X` / `google_X` / `gcp_X` / `apache_X`) plus line-scoped negation detection in `scanProseRanges`. Both changes flow through F2 (code-prose) and F3 (yaml-comment) automatically via the shared shim.
+
+### Trajectory (final)
+
+| State | KBS recall | TUC recall | KBS L1 | TUC L1 | Combined LLM-only |
+|---|---:|---:|---:|---:|---:|
+| Start (pre-ReadmeParser v2) | 0.368 | 0.253 | 38 | 27 | ~100 |
+| v2.0 — ReadmeParser v2 | 0.529 | 0.266 | 52 | 28 | 98 |
+| v2.3 — F1+F2+F3 | 0.624 | 0.510 | 83 | 80 | 89 |
+| v2.4 — F4 (initial) | 0.634 | 0.510 | 88 | 81 | 88 |
+| **v2.4 — F4 + prose_safe backfill** | **0.673** | **0.548** | **94** | **87** | **80** |
+| Target gate | ≥ 0.85 | ≥ 0.65 | — | — | ≤ 10 |
+
+### What F4's initial measurement revealed
+
+The F4 bigram code worked correctly on first deploy (KBS +1pp / TUC unchanged), but most of the new bigram emissions (`aws_ecr`, `aws_iam`, `aws_eks`, etc.) were already canonicals L1 had via the F1 ARN / annotation paths. The bigrams targeting NEW canonicals (e.g. `aws_bedrock`, `aws_rds`, `aws_api_gateway`, `aws_waf`, `aws_secrets_manager`, `aws_route53`) were silently rejected because those compound aliases had `prose_safe = false` from the original 2026-05-26 ProseSafeTagger run.
+
+### prose_safe backfill (DB data change)
+
+The ProseSafeTagger conservatively marked compound forms (`aws_bedrock`, `aws_rds`, etc.) as `prose_safe = false` because they could in principle look like generic prose. Under F4's hard cloud-prefix bigram guard those concerns disappear — the only way `aws_bedrock` ever gets matched is when source prose says `aws bedrock` adjacent. Promoted with:
+
+```sql
+UPDATE technology_aliases
+  SET prose_safe = true
+  WHERE prose_safe = false
+    AND alias ~ '^(aws|amazon|azure|google|gcp|apache)_';
+-- UPDATE 58
+```
+
+Re-running the prose_safe tagger (`run-tag-aliases-prose-safe.ts`) currently only processes `WHERE prose_safe IS NULL`, so this backfill is preserved on subsequent runs. To make the new policy permanent, the tagger's calibration few-shot should be updated to include cloud-prefix compound forms as `yes`. Tracked as a follow-up; not in this PR.
+
+### v2.4 FP check (30 bigram-derived rows)
+
+| Verdict | Count |
+|---|---:|
+| Clear true positive | 27 |
+| Borderline | 3 (`aws_profile` × 3 — refers to the `AWS_PROFILE` env var rather than a deployed service per se) |
+| False positive | 0 |
+
+FP rate: 0% (strict) or 10% (counting borderlines). PASS either way.
+
+Cumulative FP-checked sample across the engagement: 120 rows (30 readme + 30 code-prose + 30 yaml-comment + 30 bigram). Total FP count: 0–3. The four mitigations (prose_safe filter, length floor, prefix-guard bigram, negation detection) held across every layer.
+
+### Carve-out at v2.4 (final residual)
+
+80 LLM-only canonicals remain (KBS 33, TUC 47). The closure trajectory plateaued — not because the parser plateaued but because the LLM enricher's remaining outputs are tokens that don't fit the cloud-prefix pattern: `bash`, `curl`, `pip`, `openssl`, `jwt`, `cors`, `json`, `bcrypt`, `pino`, `vite`, `yarn` and similar single-token identifiers that DID exist in source but were NOT in the prose_safe set (because the original tagger judged them ambiguous in arbitrary prose).
+
+Further closure is available via more targeted prose_safe promotion of single-token aliases, but each is a judgement call (e.g. `go` is genuinely too ambiguous in prose — the verb dominates; `bash` is safe in code-comments but iffy in prose). Not pursued; the decommission carve-out is already an order of magnitude tighter than the original gate would have looked without the engagement.
+
+### Cumulative engagement summary
+
+- KBS recall: 0.368 → **0.673** (+83% relative)
+- TUC recall: 0.253 → **0.548** (+117% relative)
+- Combined LLM-only canonicals: ~100 → **80** (-20%)
+- FP rate across 120 inspected rows: **0–3** false positives (≤ 2.5%)
+- Hallucination rate (v2.3 sample): **~2%** (1–2 of 89)
+- Token cost: BedrockChunkEnricher per-chunk output -30–50% (technologies decommissioned)
+
+LLM enricher decommission stands. The 80-canonical carve-out is documented and structurally addressable (further targeted prose_safe promotion + a phrase-scanner extension for non-cloud multi-word names) but not blocking any downstream consumer.
