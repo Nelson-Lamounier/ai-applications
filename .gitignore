@@ -55,9 +55,7 @@ Thumbs.db
 scripts/local/diagnostics/.troubleshoot-logs/*
 !scripts/local/diagnostics/.troubleshoot-logs/.gitkeep
 
-# ── Generated Docs & Reports ────────────────────────────────────────────────
-docs/
-!applications/**/docs/
+# ── Generated Reports ───────────────────────────────────────────────────────
 security-reports/
 
 # ── AI Tooling ───────────────────────────────────────────────────────────────
