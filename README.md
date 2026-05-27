@@ -2,85 +2,332 @@
 
 # ai-applications
 
-Production multi-service AI/ML platform on AWS Bedrock. Powers the article
-pipeline, job strategist, chatbot, self-healing agent, ingestion, and tech
-extractor that back [nelsonlamounier.com](https://nelsonlamounier.com).
+Production AI/ML platform on AWS Bedrock — TypeScript, AWS CDK, Aurora
+Postgres + pgvector, Pinecone, Redis cluster, Kubernetes (self-managed),
+and a multi-agent synthesis pipeline. Powers the chatbot, job
+strategist, article pipeline, ingestion, self-healing agent, and
+deterministic tech extractor that back
+[nelsonlamounier.com](https://nelsonlamounier.com).
 
-> Domain glossary lives in [CONTEXT.md](CONTEXT.md). Architecture deep-dives
-> and design reviews live in [docs/](docs/).
+## What it does
 
----
+The repository is a Yarn 4 workspace monorepo of **14 services** built
+on a shared TypeScript foundation. The services share one Bedrock
+account, one Aurora cluster, one Redis cluster, and one Kubernetes
+cluster (self-managed; the cluster definition lives in sibling repos
+`kubernetes-platform` / `kubernetes-bootstrap`).
 
-## Architecture at a glance
+The platform answers two questions: *"what's in this engineer's
+portfolio?"* (chatbot + RAG + per-user embeddings) and *"how does the
+portfolio compare against the engineer's stated résumé?"* (multi-agent
+synthesis pipeline producing identity, role-archetype fit, résumé
+reconciliation, and a resume-readiness diagnostic).
+
+## Why this exists
+
+Most AI projects pile new LLM calls on top of every problem. This
+codebase is a worked example of the opposite discipline: **LLMs where
+the input is unstructured and the action space is open; deterministic
+parsers where the input is structured and the output must be
+reproducible**. Two ADRs record the pair: [ADR
+0001](docs/decisions/0001-deterministic-over-llm-extraction.md)
+formalises the decommission of LLM-based technology extraction in
+favour of a deterministic pipeline; the self-healing agent is the
+counter-case where an LLM is the right tool. The platform pays the
+LLM cost only where the alternative is brittle hand-coded runbooks.
+
+Every Bedrock invocation goes through one shared cost ledger
+(`prompt_invocations`,
+[migration 011](applications/platform-rds-bootstrap/migrations/011_prompt_observability.sql)
+and [013](applications/platform-rds-bootstrap/migrations/013_bedrock_cost_tracking.sql)),
+through one PII scrubber, and — for cacheable paths — through one of
+three caches sharing a single domain vocabulary
+([CONTEXT.md](CONTEXT.md) lines 6-26). The cross-cutting concerns
+live in `applications/shared/`; the services compose them rather
+than re-implementing them.
+
+## Highlights
+
++ **39 versioned SQL migrations** across the platform's ontology,
+  user, billing, and observability schemas — Aurora Postgres + pgvector
+  + Postgres RLS for user-scoped data
+  ([applications/platform-rds-bootstrap/migrations/](applications/platform-rds-bootstrap/migrations/)).
++ **Self-healing Bedrock agent** with a native MCP tool-use loop,
+  Cognito M2M-authenticated Gateway, **DRY_RUN=true** default,
+  cross-container DynamoDB dedup, per-alarm S3 session memory, and a
+  20,000-token-per-invocation hard cap
+  ([applications/self-healing/src/index.ts](applications/self-healing/src/index.ts);
+  [concept doc](docs/concepts/self-healing-agent.md)).
++ **Multi-agent profile synthesis chain**: 5 Bedrock-backed agents
+  (Extractor → Mirror+Reveal → Direction → Reconciliation →
+  Diagnostic narrator) over a deterministic aggregate, each with
+  forced tool-use, zod schema validation, per-item grounding check,
+  and must-not-throw semantics
+  ([concept doc](docs/concepts/profile-synthesis-chain.md)).
++ **Deterministic tech-extractor** that decommissioned an LLM
+  enricher with a measured 6-iteration parity engagement; recall
+  rose **0.368 → 0.673** on KBS and **0.253 → 0.548** on TUC across
+  the engagement
+  ([parity decommission artefact](applications/tech-extractor/parity/2026-05-27-decommission.md)).
++ **Three-tier caching architecture** with shared `scope` + `kbTag`
+  invalidation vocabulary: `RedisExactCache` (hash-keyed AI-gen),
+  `RedisReadCache` (BFF read-through, shared cluster, different
+  prefix), `PgSemanticCache` (pgvector cosine on embedded queries)
+  ([concept doc](docs/concepts/caching-tiers.md)).
++ **Six-layer defence-in-depth** on the chatbot path: API Gateway →
+  `InputSanitiser` → Bedrock Guardrail (5 content filters + topic
+  denial) → agent instruction → `OutputSanitiser` → audit log; with
+  a separate Haiku-backed grounding verifier that fail-safes to
+  `NOT_GROUNDED` on any parse ambiguity
+  ([concept doc](docs/concepts/bedrock-rag-surface.md)).
++ **11 GitHub Actions deploy workflows** (per service) sharing two
+  reusable workflows (`_build-push-image.yml`, `_deploy-stack.yml`);
+  per-environment ECR + SSM-stored image URI for ArgoCD-driven sync.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph "Public surface"
+        Web["nelsonlamounier.com<br/>Next.js"]
+    end
+
+    subgraph "API + chatbots (Lambda)"
+        API[api/public-api<br/>Fastify]
+        ChatbotMgd[chatbot<br/>Bedrock Agent]
+        ChatbotPub[chatbot-public<br/>custom RAG]
+        ChatbotAuth[chatbot-authenticated<br/>RLS sessions]
+    end
+
+    subgraph "K8s Jobs"
+        Ingest[ingestion<br/>profile extractor + 4 synthesizers]
+        TechE[tech-extractor<br/>deterministic 3-layer]
+        Ont[ontology-importer<br/>Bedrock Batch]
+        Art[article-pipeline<br/>research → writer → QA]
+        Strat[job-strategist<br/>research → strategist → coach]
+        SelfHeal[self-healing<br/>MCP tool-use agent]
+    end
+
+    subgraph "Bedrock"
+        KB[(Knowledge Base<br/>Pinecone)]
+        Sonnet[Claude Sonnet 4.6]
+        Haiku[Claude Haiku 4.5]
+        Titan[Titan Embeddings v2<br/>1024-dim]
+        Guardrail[Guardrail<br/>5 filters + topic denial]
+    end
+
+    subgraph "Data"
+        Aurora[(Aurora Postgres<br/>+ pgvector)]
+        Redis[(Redis cluster<br/>exact + read cache)]
+        S3KB[(S3 KB bucket<br/>versioned)]
+        S3Mem[(S3 session memory)]
+        DDBDedup[(DynamoDB<br/>self-healing dedup)]
+    end
+
+    Web --> API
+    Web --> ChatbotPub
+    Web --> ChatbotAuth
+    API --> ChatbotMgd
+    ChatbotMgd --> Guardrail
+    ChatbotMgd --> KB
+    KB --> Titan
+    ChatbotPub --> Aurora
+    ChatbotPub --> Sonnet
+    ChatbotAuth --> Aurora
+    ChatbotAuth --> Sonnet
+    ChatbotPub & ChatbotAuth --> Haiku
+    Ingest --> Sonnet
+    Ingest --> Aurora
+    TechE --> Aurora
+    Ont --> Sonnet
+    Art & Strat --> Sonnet
+    SelfHeal --> Sonnet
+    SelfHeal --> DDBDedup
+    SelfHeal --> S3Mem
+    Aurora -.cost ledger.- Sonnet
+    Aurora -.cost ledger.- Haiku
+    Aurora -.cost ledger.- Titan
+    S3KB --> KB
+    ChatbotPub & ChatbotAuth & Ingest --> Redis
+```
+
+The cross-cutting code in `applications/shared/` provides the
+`OntologyResolver`, `PiiScrubber`, `TitanEmbeddingProvider`, the
+three cache classes, `BedrockGroundingVerifier`, the hexagonal RDS
+repository pattern, the observability primitives (OTel + EMF +
+Pushgateway), and the per-user `recordBedrockCost` ledger.
+
+## Tech stack
+
++ **Language**: TypeScript end-to-end (services, infra, scripts)
++ **Runtime**: Node 22 (Lambda + K8s Jobs)
++ **AI**: AWS Bedrock — Claude Sonnet 4.6 (generation), Claude Haiku
+  4.5 (verifier + low-cost classification), Amazon Titan Embeddings
+  v2 (1024-dim, pgvector + Pinecone-compatible)
++ **Database**: Aurora Postgres + pgvector (HNSW indexes); Postgres
+  RLS for user-scoped data; 39 numbered migrations with
+  [ROLLBACK](applications/platform-rds-bootstrap/ROLLBACK.md)
+  documentation
++ **Vector stores**: Pinecone (Bedrock KB integration; managed) +
+  pgvector (semantic cache + per-user embeddings); see
+  [ADR 0002](docs/decisions/0002-pgvector-over-pinecone-for-cache.md)
++ **Cache**: Redis cluster shared between `RedisExactCache` and
+  `RedisReadCache` (key-prefix isolated); pgvector semantic cache
++ **Compute**: AWS Lambda (Bedrock + chatbot + outcome tracker) +
+  Kubernetes Jobs (long-running extraction + synthesis pipelines)
++ **Infrastructure**: AWS CDK with `@cdklabs/generative-ai-cdk-constructs`
+  for Bedrock + Pinecone; cdk-nag aspects; hexagonal project factory
+  pattern
++ **Orchestration**: EventBridge → SQS FIFO → Lambda (self-healing);
+  Step Functions (bootstrap remediation); ArgoCD (workload sync from
+  sibling cluster repo)
++ **Observability**: OpenTelemetry (`withSpan`, ADOT layer) + EMF
+  metrics + Pushgateway for K8s Jobs; per-user spend ledger;
+  CloudWatch token-budget alarms
++ **Security**: Cognito (user auth + M2M client credentials),
+  CloudFront WAF, AWS Comprehend (planned), regex `PiiScrubber`,
+  input/output sanitisers, Bedrock Guardrail
++ **CI/CD**: 11 GitHub Actions deploy workflows + 2 reusable
+  workflows; per-environment ECR + SSM-stored image URIs;
+  ArgoCD-driven sync from a sibling cluster repo
++ **Tooling**: Yarn 4 workspaces, Jest (+ contract + smoke), `just`
+  task runner, esbuild bundling (NodejsFunction)
+
+## Key design decisions
+
+1. **Deterministic over LLM where structural** — [ADR 0001](docs/decisions/0001-deterministic-over-llm-extraction.md)
+   records the 6-iteration parity engagement that decommissioned the
+   `BedrockChunkEnricher.technologies` role.
+2. **pgvector for cache, Pinecone for the KB** — [ADR 0002](docs/decisions/0002-pgvector-over-pinecone-for-cache.md)
+   formalises the asymmetric split: managed vector store where
+   required (Bedrock KB integration), self-hosted where cheaper
+   (cache colocated with relational data).
+3. **MCP tool-use for self-healing, not Bedrock action groups** —
+   [self-healing concept](docs/concepts/self-healing-agent.md)
+   documents the trade. Action groups bake the catalogue into the
+   agent; MCP `tools/list` discovery lets the Gateway evolve
+   independently.
+4. **`scope` + `kbTag` as platform-wide invalidation vocabulary** —
+   [CONTEXT.md](CONTEXT.md) is the glossary; the three cache classes
+   and the per-user spend ledger all consume the same terms.
+5. **Six-layer defence-in-depth on the chatbot** — [bedrock-rag-surface](docs/concepts/bedrock-rag-surface.md)
+   pairs lambda-side sanitisers with the Bedrock Guardrail (input
+   `HIGH`, output `NONE` for `PROMPT_ATTACK` to avoid blocking KB
+   content discussing security) and a separate Haiku grounding
+   verifier defaulting to `NOT_GROUNDED` on any ambiguity.
+
+## Repository structure
 
 ```text
-api/public-api          ← Fastify HTTP layer (Lambda + Docker)
-applications/
-  article-pipeline      ← Research → Writer → QA agents (Bedrock)
-  job-strategist        ← Resume-aware job-fit + case-study generation
-  chatbot               ← Public + authenticated RAG chat
-  ingestion             ← KB source ingestion (chunk, embed, persist)
-  tech-extractor        ← Deterministic tech-stack extraction (3-layer)
-  ontology-importer     ← Tier-2 tech ontology auto-import
-  self-healing          ← Drift detection + auto-remediation agent
-  synthetic-monitor     ← E2E probe runner
-  platform-job-watcher  ← Cross-platform job-source poller
-  shared                ← RDS interfaces, observability, security primitives
-infra/                  ← AWS CDK (aspects, constructs, factories, stacks)
-packages/script-utils   ← Shared CLI tooling
-scripts/smoke           ← E2E smoke tests against deployed dev env
-content/articles        ← Long-form engineering write-ups
+.
+├── api/                       — Fastify HTTP layer (public-api)
+├── applications/              — 14 services + shared module
+│   ├── shared/                — hexagonal RDS, observability, security, cache
+│   ├── chatbot{,-public,-authenticated}/
+│   ├── ingestion/             — profile extractor + 4 synthesizer agents
+│   ├── tech-extractor/        — deterministic 3-layer extraction
+│   ├── ontology-importer/     — Bedrock Batch tier-2 ontology import
+│   ├── self-healing/          — Bedrock MCP tool-use agent
+│   ├── article-pipeline/      — research → writer → QA agents
+│   ├── job-strategist/        — research → strategist → coach agents
+│   ├── synthetic-monitor/     — E2E probe runner
+│   ├── platform-job-watcher/  — cross-platform job-source poller
+│   ├── resume-import-processor/
+│   └── platform-rds-bootstrap/migrations/  — 39 numbered SQL migrations
+├── infra/                     — AWS CDK (aspects, constructs, factories, stacks)
+├── packages/script-utils/     — shared CLI tooling
+├── scripts/smoke/             — E2E smoke tests against deployed env
+├── content/articles/          — long-form engineering write-ups
+├── docs/                      — concepts, decisions, projects, runbooks, troubleshooting
+├── rag-checklist/             — per-service RAG deploy checklists
+├── CONTEXT.md                 — domain glossary
+└── justfile                   — task runner index
 ```
 
-## Stack
+A full snapshot of the tree is at
+[docs/repo-structure.md](docs/repo-structure.md).
 
-- **AWS Bedrock** (Claude Sonnet / Haiku) for generation, embeddings, guardrails
-- **Aurora Postgres + pgvector** for KB store and semantic cache
-- **Redis** (cluster) for exact AI-gen cache + read cache
-- **TypeScript** end-to-end, Yarn 4 workspaces, Jest
-- **AWS CDK** for infra (hexagonal: `shared/rds/interfaces/` ↔ `implementations/`)
-- **Lambda + Fargate** for service runtime, Step Functions for orchestration
-- **EKS** for long-running jobs (tech-extractor Layer 1, ontology importer)
-
-## Production patterns
-
-- Hexagonal architecture (`applications/shared/rds/{interfaces,implementations}`)
-- Per-service Dockerfiles, jest configs, env contracts (`env.ts`)
-- Numbered SQL migrations (`infra/.../migrations/`) with `ROLLBACK.md`
-- Observability factored into `shared/observability/` (metrics, tracing, logs)
-- Security primitives in `shared/security/` (input/output sanitisers, PII scrubber)
-- Contract tests (`*.contract.test.ts`) for cross-service boundaries
-- Smoke tests gated by `just smoke-e2e`
-
-## Local dev
+## Running locally
 
 ```bash
+# Install all workspaces
 yarn install
-yarn typecheck         # all workspaces
-yarn test              # all workspaces
+
+# Type-check / lint / test every workspace
+yarn typecheck
 yarn lint
-just                   # task index (justfile)
-just smoke-e2e         # deployed-env smoke (requires .env.smoke)
+yarn test
+
+# Build a specific service
+yarn workspace @bedrock/self-healing build
+
+# Discover all task-runner entries
+just
+
+# End-to-end smoke against a deployed dev env (requires .env.smoke)
+just smoke-e2e
 ```
+
+A live local "stack up" is not provided — every service is designed
+to run as a Lambda or K8s Job against the deployed AWS environment.
+Local development is unit-test-driven; integration testing uses the
+smoke harness ([scripts/smoke/README.md](scripts/smoke/README.md))
+against a development environment.
+
+## Deploying
+
+Each service has its own GitHub Actions deploy workflow under
+[.github/workflows/](.github/workflows/). The 11 deploy workflows
+share two reusable building blocks:
+
++ [`_build-push-image.yml`](.github/workflows/_build-push-image.yml)
+  — builds the service Docker image, pushes to ECR, writes the URI
+  to SSM
++ [`_deploy-stack.yml`](.github/workflows/_deploy-stack.yml) —
+  invokes `cdk deploy` for stack-based services
+
+K8s Jobs (ingestion, tech-extractor, ontology-importer, etc.) read
+their image URI from SSM at deploy time, so a code push to `develop`
+re-tags the image and the next ArgoCD sync rolls the change forward
+in the cluster (cluster definition is in sibling
+`kubernetes-platform` / `kubernetes-bootstrap` repos).
+
+Lambda services (chatbot, public-api, self-healing) deploy directly
+via CDK. The self-healing agent uses a four-stack composition
+documented in [docs/projects/self-healing.md](docs/projects/self-healing.md).
+
+## Related projects
+
+| Repository | Role |
+| :- | :- |
+| `kubernetes-platform` / `kubernetes-bootstrap` (private) | Self-managed K8s cluster the long-running Jobs run in. Defines node groups, Traefik, ArgoCD, cert-manager, monitoring stack. |
+| `tucaken-app` (private) | The Next.js front-end at [nelsonlamounier.com](https://nelsonlamounier.com); consumes the chatbots and the API. |
+| `tucaken-quota-app` (private) | Stripe-backed billing + quota enforcement for the public chatbot path. |
+| `cdk-monitoring` (private) | Cross-account CloudWatch + Grafana stack; observability data plane for everything above. |
+
+Cross-repo migration artefacts that have landed in this repo's
+[docs/incoming/](docs/incoming/) but originate from `cdk-monitoring`
+are marked with `<!-- Migrated from cdk-monitoring -->` headers.
 
 ## Documentation
 
-- [docs/repo-structure.md](docs/repo-structure.md) — full directory tree
-- [docs/reviews/](docs/reviews/) — design + implementation reviews per subsystem
-- [docs/plans/](docs/plans/) — RAG sub-project plans, tier-2 ontology import
-- [docs/guides/](docs/guides/) — knowledge-base source-repository guide
-- [docs/checklists/](docs/checklists/) — deployment + structured-output checklists
-- [docs/superpowers/](docs/superpowers/) — agent skills, specs, plans
-- [docs/projects-migration/](docs/projects-migration/) — projects migration notes
-- [docs/skills/](docs/skills/) — skill definitions
++ [CONTEXT.md](CONTEXT.md) — domain glossary
++ [docs/](docs/) — full documentation tree (concepts / decisions /
+  projects / runbooks / troubleshooting + the engineering plans
+  archive under `docs/superpowers/`)
++ [docs/repo-structure.md](docs/repo-structure.md) — generated tree
+  snapshot
 
 ## License
 
-Proprietary — all rights reserved. See [LICENSE](LICENSE). Repository is
-public-for-review; no usage rights are granted.
+Proprietary — all rights reserved. See [LICENSE](LICENSE).
+Repository is public-for-review; no usage rights are granted.
 
 ## Disclosure
 
-Built with Claude Code (Anthropic). Architecture, prompts, infra design, and
-review decisions are authored; code is co-produced with the assistant under
-human review.
+Built with Claude Code (Anthropic). Architecture, prompts, infra
+design, ADRs, and the prose decisions captured in
+[docs/](docs/) are authored. Code is co-produced with the assistant
+under human review. The `kb-doc` skill that produced the
+documentation tree is itself documented at
+[docs/skills/](docs/skills/).
