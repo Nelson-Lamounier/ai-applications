@@ -1,0 +1,308 @@
+---
+title: Tech-extractor deterministic pipeline
+type: concept
+tags: [static-analysis, ontology, bedrock, tree-sitter, syft, kubernetes, terraform, iac, prose, finops]
+sources:
+  - applications/tech-extractor/src/run-tech-extract.ts
+  - applications/tech-extractor/src/extractors/
+  - applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts
+  - applications/shared/src/rds/types/techgraph.ts
+  - applications/platform-rds-bootstrap/migrations/038_evidence_source_layer_code_prose.sql
+  - applications/tech-extractor/parity/2026-05-27-decommission.md
+created: 2026-05-27
+updated: 2026-05-27
+---
+
+## Overview
+
+`tech-extractor` is the deterministic pipeline that produces the
+`technology_evidence` rows the rest of the platform takes as ground
+truth for "what stacks does this repository use." It fetches a commit
+tarball, walks it, runs three independent extractor families in
+parallel, resolves every raw token through the
+[OntologyResolver](../../applications/shared/src/) and persists one
+row per occurrence with a confidence score derived from the extractor
+that produced it
+([applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts:37-79](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts#L37-L79)).
+
+As of [ADR 0001](../decisions/0001-deterministic-over-llm-extraction.md)
+(2026-05-27) it is the **sole** source of truth for technologies; the
+LLM `BedrockChunkEnricher` no longer extracts them.
+
+## How it works
+
+```mermaid
+flowchart TD
+    Trigger[run-tech-extract<br/>K8s Job] --> Fetch[fetchTarball<br/>GitHub archive]
+    Fetch --> SafeExtract[safeExtract<br/>path-traversal-safe]
+    SafeExtract --> Walk[walkTextFiles]
+    Walk --> Orch[TechExtractOrchestrator<br/>Promise.allSettled]
+    Orch --> SY[SyftExtractor<br/>conf 0.95]
+    Orch --> TS[TreeSitterExtractor<br/>conf 0.85 / code-prose 0.50]
+    Orch --> IAC[iacExtractor family<br/>conf 0.85 / readme 0.50]
+    SY --> Resolve[OntologyResolver.resolve]
+    TS --> Resolve
+    IAC --> Resolve
+    Resolve -->|matched| EvRepo[(technology_evidence)]
+    Resolve -->|unmatched| CandRepo[(technology_candidates)]
+    CandRepo -.-> Ontology[ontology-importer<br/>review queue]
+    EvRepo --> Parity[ParityReporter<br/>vs LLM watchdog]
+```
+
+### Extractor families and source-layer confidence
+
+Six values of `source_layer` exist, each with a fixed confidence
+([applications/shared/src/rds/types/techgraph.ts:3-12](../../applications/shared/src/rds/types/techgraph.ts#L3-L12)):
+
+| `source_layer` | Confidence | Produced by | Signal |
+| :- | -: | :- | :- |
+| `syft` | 0.95 | SyftExtractor (SBOM) | Dependency manifest — strongest |
+| `treesitter` | 0.85 | TreeSitterExtractor | Import statements / SDK call patterns |
+| `iac` | 0.85 | iacExtractor (composite) | Structured IaC declarations |
+| `dockerfile` | 0.80 | DockerfileParser | `FROM` / `RUN` directives |
+| `readme` | 0.50 | ReadmeParser badges + prose | Shields.io badges, prose mentions |
+| `code-prose` | 0.50 | CommentExtractor + scanProseRanges | Code comments, doc strings |
+
+The CHECK constraint on the column enforces the value set
+([applications/platform-rds-bootstrap/migrations/038_evidence_source_layer_code_prose.sql](../../applications/platform-rds-bootstrap/migrations/038_evidence_source_layer_code_prose.sql))
+— `code-prose` was added by migration 038 to support the F2 detector
+strengthening pass.
+
+### TreeSitterExtractor — code and code-prose
+
+Two passes over each source file:
+
+1. **Imports / SDK calls.** Currently regex-driven
+   (`extractImportsByRegex`,
+   [applications/tech-extractor/src/extractors/TreeSitterExtractor.ts:31-65](../../applications/tech-extractor/src/extractors/TreeSitterExtractor.ts#L31-L65))
+   covering Python `import`, TS/JS `import`/`require`, with AWS SDK
+   sub-token emission so `aws-cdk-lib/aws-ec2` and
+   `@aws-sdk/client-ec2` both emit the token `ec2`
+   ([TreeSitterExtractor.ts:13-25](../../applications/tech-extractor/src/extractors/TreeSitterExtractor.ts#L13-L25)).
+   The file is named "TreeSitter" because Phase 2 replaces the regex
+   pass with `web-tree-sitter` AST traversal behind the same
+   `Extractor` interface — the package.json already pulls
+   `web-tree-sitter@^0.25.0`.
+2. **Code-prose (F2).** `extractProseRanges` lifts comments and
+   triple-quoted doc strings out of TypeScript/JavaScript/Python/Go
+   source ([CommentExtractor.ts:1-25](../../applications/tech-extractor/src/extractors/CommentExtractor.ts#L1-L25)),
+   then `scanProseRanges` substring-matches against a caller-supplied
+   set of prose-safe aliases.
+
+### iacExtractor — one fault boundary, many parsers
+
+A single `Extractor` instance dispatches by file shape inside its
+`extract()` method
+([applications/tech-extractor/src/run-tech-extract.ts:48-100](../../applications/tech-extractor/src/run-tech-extract.ts#L48-L100)).
+The dispatch order is meaningful:
+
+```text
+Dockerfile               → parseDockerfile
+.github/workflows/*.yml  → parseGithubActions
+*.tf / *.hcl             → parseTerraform
+Chart.yaml               → parseHelmChart
+argocd-apps/*.yaml       → parseArgoApplication
+values*.yaml             → parseHelmValues   (image: lines, monitoring umbrellas)
+*.yaml / *.yml (other)   → parseK8sManifest  (structural)
+README.md                → parseReadme + parseReadmeProse
+```
+
+Then, **regardless of which structural parser ran**, every YAML file is
+re-scanned by:
+
+- `parseK8sManifestValues` — ARN strings + ECR image URIs +
+  AWS-bound annotation keys
+- `scanProseRanges` on YAML comments (F3) — re-tagged as
+  `source_layer: 'iac'`, `ecosystem: 'yaml-comment'` so the CHECK
+  constraint stays satisfied without a migration.
+
+This belt-and-braces ordering is *deliberate*: structural shape and
+content carry different evidence; both are kept. The dispatch fix
+that ensured `parseK8sManifestValues` always runs landed as commit
+`ca34a64 fix(tech-extractor): always run parseK8sManifestValues on every YAML file`
+([applications/tech-extractor/src/run-tech-extract.ts:79-87](../../applications/tech-extractor/src/run-tech-extract.ts#L79-L87)).
+
+### ReadmeParser v2 — prose with four mitigations
+
+README/YAML-comment/code-prose scanning is the highest-risk path: free
+English text contains tokens like "go", "rust", "react" that the
+ontology must match exactly to identify a real technology — but those
+same tokens are common English verbs. Four mitigations are layered
+([applications/tech-extractor/src/extractors/iac/ReadmeParser.ts:25-50](../../applications/tech-extractor/src/extractors/iac/ReadmeParser.ts#L25-L50)):
+
+1. **prose_safe filter (boundary).** `run-tech-extract.ts` loads only
+   aliases tagged `prose_safe = true` from the ontology and passes
+   the Set to every prose scanner. The parser does not know about
+   `prose_safe`; it consumes a `ReadonlySet<string>`.
+2. **Length floor.** `opts.minAliasLength` (default 4) rejects 2–3-char
+   aliases even if mis-tagged.
+3. **Context-window scoring (v2.1).** Boost confidence when a
+   category-related word (`dashboard`/`metrics`/`observability`/…)
+   appears within N tokens of the match.
+4. **Negation detection (v2.2 / F4).** Suppress matches whose
+   surrounding sentence contains `not using` / `rejected` /
+   `considered but` / `instead of`.
+
+Plus the **F4 prefix-guarded bigram scanner** (cloud-prefix compounds:
+`aws_*`, `amazon_*`, `azure_*`, `google_*`, `gcp_*`, `apache_*`) which
+emits bigram canonicals like `aws_bedrock` only when the source prose
+contains `aws bedrock` adjacent
+([decommission artefact appendix](../../applications/tech-extractor/parity/2026-05-27-decommission.md)).
+
+Across 120 manually-inspected rows (30 README + 30 code-prose + 30
+YAML-comment + 30 bigram), the cumulative false-positive count is
+0–3 (the 3 borderlines are all `aws_profile` matches referring to the
+env var rather than a service).
+
+### Orchestration — `Promise.allSettled` for fault isolation
+
+`TechExtractOrchestrator.run`
+([applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts:38-78](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts#L38-L78))
+fires every extractor as a settled promise. A single extractor crash
+(out-of-memory tarball, malformed YAML, regex blow-up) is recorded
+in `failedExtractors[]` and reported through the
+`tech_extractor_extractor_failed_total` Prom counter
+([applications/tech-extractor/src/run-tech-extract.ts:36-40](../../applications/tech-extractor/src/run-tech-extract.ts#L36-L40))
+— the other extractors complete normally and the run still produces
+evidence rows.
+
+For each raw row:
+
+- `OntologyResolver.resolve(raw_name)` returns a canonical
+  `technologyId` or `null`.
+- Matched rows accumulate in `evidence[]` for bulk
+  `evidenceRepo.insertMany`.
+- Unmatched rows are normalised
+  (`raw.toLowerCase().replace(/[^a-z0-9]/g, '')`,
+  [TechExtractOrchestrator.ts:27-29](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts#L27-L29))
+  and upserted into `technology_candidates` for the
+  ontology-importer to review. This is how new technologies enter the
+  ontology — not via a code change, but as a side-effect of every
+  ingestion.
+
+### Tarball safety
+
+The extractor accepts an untrusted GitHub archive. `safeExtract`
+guards against path-traversal (`../../etc/passwd`) and `MAX_TARBALL_BYTES`
+(default 200 MB) caps decompression
+([applications/tech-extractor/src/run-tech-extract.ts:33](../../applications/tech-extractor/src/run-tech-extract.ts#L33)).
+A teardown timer (`withTimeout`,
+[applications/tech-extractor/src/run-tech-extract.ts:42-46](../../applications/tech-extractor/src/run-tech-extract.ts#L42-L46))
+prevents a stuck unlink from hanging the K8s Job past its termination
+grace period.
+
+### Parity watchdog
+
+`ParityReporter.computeParity`
+([applications/tech-extractor/src/parity/ParityReporter.ts](../../applications/tech-extractor/src/parity/ParityReporter.ts))
+still runs on every extraction. Since the 2026-05-27 decommission it
+serves only as an audit marker — `llm_canonical_count = 0` and
+`recall` is undefined — so the row's *presence* in
+`technology_parity_runs` records when the decommission landed for that
+user/repo. The reporter resolves the LLM's free-form strings through
+the same `OntologyResolver` as L1 so the comparison isn't polluted by
+un-canonicalised noise.
+
+## Implementation in this codebase
+
+| Concern | Location |
+| :- | :- |
+| Entry point (K8s Job) | [applications/tech-extractor/src/run-tech-extract.ts](../../applications/tech-extractor/src/run-tech-extract.ts) |
+| Orchestrator | [applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts) |
+| Extractor interface | [applications/tech-extractor/src/extractors/Extractor.ts](../../applications/tech-extractor/src/extractors/Extractor.ts) |
+| SBOM / dependency extractor | [applications/tech-extractor/src/extractors/SyftExtractor.ts](../../applications/tech-extractor/src/extractors/SyftExtractor.ts) |
+| Code (imports + code-prose) | [applications/tech-extractor/src/extractors/TreeSitterExtractor.ts](../../applications/tech-extractor/src/extractors/TreeSitterExtractor.ts), [CommentExtractor.ts](../../applications/tech-extractor/src/extractors/CommentExtractor.ts) |
+| IaC family (10 parsers + 2 scanners) | [applications/tech-extractor/src/extractors/iac/](../../applications/tech-extractor/src/extractors/iac/) |
+| Source-layer confidences | [applications/shared/src/rds/types/techgraph.ts](../../applications/shared/src/rds/types/techgraph.ts) |
+| Source-layer CHECK constraint | [applications/platform-rds-bootstrap/migrations/038_evidence_source_layer_code_prose.sql](../../applications/platform-rds-bootstrap/migrations/038_evidence_source_layer_code_prose.sql) |
+| Parity reporter (watchdog) | [applications/tech-extractor/src/parity/ParityReporter.ts](../../applications/tech-extractor/src/parity/ParityReporter.ts) |
+| Tarball safety | [applications/tech-extractor/src/tarball/](../../applications/tech-extractor/src/tarball/) |
+| Metrics surface | `tech_extractor_layer1_recall` (Gauge), `tech_extractor_extractor_failed_total` (Counter) — [run-tech-extract.ts:25-40](../../applications/tech-extractor/src/run-tech-extract.ts#L25-L40) |
+
+## Tradeoffs
+
+**Why one composite `iacExtractor` instead of one per shape.** The IaC
+family contains 10 parsers + 2 universal scanners that all read text
+files. Wiring each as a separate `Extractor` would multiply the file
+walk by N. Folding them into a single extractor walks the file list
+once and dispatches per-file; on extractor failure the whole IaC
+family fails together (recorded as a single `failedExtractors[]`
+entry) and the other two families (Syft, Tree-sitter) continue
+normally. The cost is coarser failure granularity in metrics; the
+benefit is one file walk and one read per file regardless of how many
+parsers want to look at it.
+
+**Why deterministic at all.** Captured in
+[ADR 0001](../decisions/0001-deterministic-over-llm-extraction.md).
+Reproducibility, cost, and parseable-residual were the three pressures.
+
+**The carve-out is documented, not closed.** 80 LLM-only canonicals
+remained at v2.4 — dominated by single-token identifiers (`bash`,
+`curl`, `jwt`, `cors`, `pino`, `vite`, `yarn`) whose `prose_safe`
+classification is a judgement call per token rather than a code
+change. Closing them is bounded incremental work on the ontology
+side, not the parser side. The decommission shipped before they were
+closed because the operational pain of an LLM stream was higher than
+the operational pain of a documented 80-token gap.
+
+**Why YAML files get scanned twice.** Once structurally (K8s manifest /
+Helm chart / Argo Application / Helm values), then unconditionally
+again for ARNs, ECR URIs, AWS annotation keys, and YAML-comment
+prose. The structural path catches *declarations* (image, kind,
+metadata.annotations); the value scanner catches *strings* (ARNs,
+ECR URIs) that appear in any YAML regardless of shape. Together they
+cover the bucket-a residual (~50 of 89 at v2.3) that single-pass
+parsing missed.
+
+**Tree-sitter is currently regex.** The package is wired in
+(`web-tree-sitter@^0.25.0`) and the file is named for the eventual
+AST pass, but the current implementation is regex. Phase 2 replaces
+the body of `extractImportsByRegex` with AST traversal behind the
+same `Extractor` interface — no caller change required. The regex
+pass is good enough for the present language coverage but blocks
+detection of unusual import forms (dynamic `require`, `await import`,
+re-exports).
+
+## Deeper detail
+
+- [docs/decisions/0001-deterministic-over-llm-extraction.md](../decisions/0001-deterministic-over-llm-extraction.md)
+  — the ADR. Pair-read for the why.
+- [docs/concepts/prose-safe-alias-gating.md](prose-safe-alias-gating.md)
+  — the `ProseSafeTagger` Bedrock-Converse-based bootstrap that
+  populates `technology_aliases.prose_safe`, plus the F4 cloud-prefix
+  calibration few-shot.
+- [docs/concepts/ontology-resolver.md](ontology-resolver.md) — how a
+  `raw_name` becomes a `canonical technologyId`, alias collision
+  rules, per-ecosystem disambiguation.
+- [docs/runbooks/tech-extractor-rerun.md](../runbooks/tech-extractor-rerun.md)
+  — re-extracting a user/repo after an ontology version bump.
+- [docs/projects/tech-extractor.md](../projects/tech-extractor.md) —
+  service-level README: env-var contract, deploy, K8s Job topology.
+- [docs/troubleshooting/tech-extractor-stuck-extraction.md](../troubleshooting/tech-extractor-stuck-extraction.md)
+  — diagnosing a hung tarball, OOM extractor, extractor crash.
+- [applications/tech-extractor/parity/2026-05-27-decommission.md](../../applications/tech-extractor/parity/2026-05-27-decommission.md)
+  — measurement artefact: six-iteration trajectory, FP audit, bucket
+  recount, residual classification.
+
+## Related concepts
+
+- [self-healing-agent](self-healing-agent.md) — the LLM-adopting
+  counterpart. The pair demonstrates the heuristic in [ADR 0001](../decisions/0001-deterministic-over-llm-extraction.md).
+- Domain glossary: [CONTEXT.md](../../CONTEXT.md).
+
+<!--
+Evidence trail (auto-generated):
+- Source: applications/tech-extractor/src/run-tech-extract.ts (read on 2026-05-27)
+- Source: applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts (read on 2026-05-27)
+- Source: applications/tech-extractor/src/extractors/Extractor.ts (read on 2026-05-27)
+- Source: applications/tech-extractor/src/extractors/TreeSitterExtractor.ts (lines 1-65 on 2026-05-27)
+- Source: applications/tech-extractor/src/extractors/CommentExtractor.ts (lines 1-50 on 2026-05-27)
+- Source: applications/tech-extractor/src/extractors/iac/ReadmeParser.ts (lines 1-50 on 2026-05-27)
+- Source: applications/tech-extractor/src/extractors/iac/ (directory listing on 2026-05-27)
+- Source: applications/shared/src/rds/types/techgraph.ts (lines 1-30 on 2026-05-27)
+- Source: applications/platform-rds-bootstrap/migrations/038_evidence_source_layer_code_prose.sql (read on 2026-05-27)
+- Source: applications/tech-extractor/parity/2026-05-27-decommission.md (read on 2026-05-27)
+- Source: applications/tech-extractor/src/parity/ParityReporter.ts (lines 1-30 on 2026-05-27)
+- Source: applications/tech-extractor/package.json (read on 2026-05-27)
+- Commits: ca34a64, 69eae87, d1e6f34
+-->
