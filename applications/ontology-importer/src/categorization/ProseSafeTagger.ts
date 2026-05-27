@@ -55,6 +55,20 @@ Calibration examples:
 - "argocd"           → yes  (distinctive)
 - "cloudflare"       → yes  (proper noun)
 
+Cloud-vendor compound forms (post-2026-05-27 F4 bigram path):
+The tech-extractor's scanProseRanges scans for adjacent token pairs ONLY when
+the first token is in {aws, amazon, azure, google, gcp, apache}. So aliases
+like aws_bedrock, amazon_cognito, azure_sql are only ever matched when source
+prose says the literal phrase ("aws bedrock", "Amazon Cognito") — they CANNOT
+match arbitrary English. Always tag yes when the alias has the shape
+<cloud-prefix>_<service-name> (regex ^(aws|amazon|azure|google|gcp|apache)_).
+- "aws_bedrock"      → yes  (compound; bigram-only path is unambiguous)
+- "aws_rds"          → yes  (compound; same reason)
+- "aws_api_gateway"  → yes  (compound; same reason)
+- "amazon_cognito"   → yes  (compound; same reason)
+- "azure_sql"        → yes  (compound; "azure sql" prose is unambiguous; raw "sql" stays no)
+- "google_pubsub"    → yes  (compound; bigram-only path)
+
 - "go"               → no   (common verb, preposition — every sentence with "go" matches)
 - "js"               → no   (2-char abbreviation, ambiguous)
 - "ts"               → no   (2-char abbreviation; matches TypeScript, timestamp, transport stream)
