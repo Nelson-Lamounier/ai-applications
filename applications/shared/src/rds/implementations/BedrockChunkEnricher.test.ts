@@ -61,8 +61,22 @@ describe('BedrockChunkEnricher', () => {
         const result = await new BedrockChunkEnricher().enrich(chunk());
 
         expect(result.skills).toEqual(['kubernetes networking']);
-        expect(result.technologies).toEqual(['calico']);
+        // technologies extraction decommissioned 2026-05-27 — field is
+        // always [] regardless of what the model returns.
+        expect(result.technologies).toEqual([]);
         expect(result).not.toHaveProperty('injected');
+    });
+
+    it('tool schema only requests skills (technologies decommissioned 2026-05-27)', async () => {
+        mockSend.mockResolvedValueOnce(bedrockReply({ skills: [] }));
+        await new BedrockChunkEnricher().enrich(chunk());
+
+        const sentBody = JSON.parse(
+            Buffer.from(invokeModelCommand.mock.calls[0]?.[0].body).toString('utf-8'),
+        );
+        const schema = sentBody.tools[0].input_schema;
+        expect(Object.keys(schema.properties)).toEqual(['skills']);
+        expect(schema.required).toEqual(['skills']);
     });
 
     it('records bedrock cost from response usage when costCtx is provided', async () => {
