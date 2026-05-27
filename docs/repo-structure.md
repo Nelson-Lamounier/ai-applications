@@ -2,7 +2,7 @@
 
 > Generated snapshot. Regenerate from repo root:
 > `tree -I 'node_modules|.git|__pycache__|.venv|venv|dist|build|.next|.turbo|cdk.out' --dirsfirst > docs/repo-structure.md`
-> (then wrap in `# Repository Structure` heading + fenced code block).
+> (then wrap in heading + fenced code block).
 
 ```text
 .
@@ -312,12 +312,9 @@
 │   │   │   ├── 021_rls_pipeline_tables.sql
 │   │   │   ├── 022_semantic_cache.sql
 │   │   │   ├── 023_retrieval_quality.sql
-│   │   │   ├── 024_billing_pending_subscriptions.sql
 │   │   │   ├── 024_user_profile_rollup.sql
-│   │   │   ├── 025_billing_cancel_at_period_end.sql
 │   │   │   ├── 025_user_profile_mirror_reveal.sql
 │   │   │   ├── 026_user_profile_direction.sql
-│   │   │   ├── 026_users_soft_delete.sql
 │   │   │   ├── 027_user_profile_reconciliation.sql
 │   │   │   ├── 028_user_profile_diagnostic.sql
 │   │   │   ├── 029_oauth_token_envelope.sql
@@ -329,7 +326,10 @@
 │   │   │   ├── 035_technology_ontology_expand.sql
 │   │   │   ├── 036_ontology_import_tracking.sql
 │   │   │   ├── 037_alias_prose_safe.sql
-│   │   │   └── 038_evidence_source_layer_code_prose.sql
+│   │   │   ├── 038_evidence_source_layer_code_prose.sql
+│   │   │   ├── 039_billing_pending_subscriptions.sql
+│   │   │   ├── 040_billing_cancel_at_period_end.sql
+│   │   │   └── 041_users_soft_delete.sql
 │   │   ├── sql
 │   │   │   └── manual
 │   │   │       └── 030_oauth_token_drop_plain.sql
@@ -769,6 +769,7 @@
 │   │       ├── 2026-05-22-redis-ai-generation-cache-design.md
 │   │       ├── 2026-05-25-ontology-importer-bedrock-batch-design.md
 │   │       └── 2026-05-25-tech-extractor-layer1-design.md
+│   ├── README.md
 │   └── repo-structure.md
 ├── infra
 │   ├── bin
@@ -930,10 +931,11 @@
 ├── eslint.config.mjs
 ├── jest.config.base.cjs
 ├── justfile
+├── LICENSE
 ├── package.json
 ├── README.md
 ├── tsconfig.base.json
 └── yarn.lock
 
-184 directories, 745 files
+184 directories, 747 files
 ```
