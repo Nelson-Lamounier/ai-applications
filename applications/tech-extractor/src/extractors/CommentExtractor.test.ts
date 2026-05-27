@@ -78,6 +78,35 @@ describe('extractProseRanges — Go', () => {
     });
 });
 
+describe('extractProseRanges — YAML', () => {
+    it('extracts # comment lines at start of line', () => {
+        const src = [
+            'key: value',
+            '# Uses kubernetes for orchestration',
+            'list:',
+            '  - { name: a }',
+            '  # Wraps grafana for dashboards',
+            '  - { name: b }',
+        ].join('\n');
+        const ranges = extractProseRanges(src, 'yaml');
+        const trimmed = ranges.map((r) => r.text.trim());
+        expect(trimmed).toContain('Uses kubernetes for orchestration');
+        expect(trimmed).toContain('Wraps grafana for dashboards');
+        expect(ranges.find((r) => r.text.includes('kubernetes'))?.line_start).toBe(2);
+        expect(ranges.find((r) => r.text.includes('grafana'))?.line_start).toBe(5);
+    });
+
+    it('returns [] when no comment lines', () => {
+        const src = 'apiVersion: v1\nkind: ConfigMap\ndata: { x: y }';
+        expect(extractProseRanges(src, 'yaml')).toEqual([]);
+    });
+
+    it('skips lines where # appears mid-line (does not over-match values containing #)', () => {
+        const src = 'key: "value with # in it"\nother: foo';
+        expect(extractProseRanges(src, 'yaml')).toEqual([]);
+    });
+});
+
 describe('extractProseRanges — unsupported lang', () => {
     it('returns [] for unsupported languages', () => {
         expect(extractProseRanges('// hi', 'rust' as never)).toEqual([]);

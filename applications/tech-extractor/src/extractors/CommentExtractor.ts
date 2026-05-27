@@ -6,7 +6,7 @@ export interface ProseRange {
     readonly line_end: number;
 }
 
-export type ProseLang = 'typescript' | 'javascript' | 'python' | 'go';
+export type ProseLang = 'typescript' | 'javascript' | 'python' | 'go' | 'yaml';
 
 export function extractProseRanges(src: string, lang: ProseLang | string): ProseRange[] {
     switch (lang) {
@@ -17,9 +17,21 @@ export function extractProseRanges(src: string, lang: ProseLang | string): Prose
             return extractPy(src);
         case 'go':
             return extractGo(src);
+        case 'yaml':
+            return extractYaml(src);
         default:
             return [];
     }
+}
+
+function extractYaml(src: string): ProseRange[] {
+    const out: ProseRange[] = [];
+    const lines = src.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const m = /^\s*#(.*)$/.exec(lines[i]);
+        if (m) out.push({ text: m[1], line_start: i + 1, line_end: i + 1 });
+    }
+    return out;
 }
 
 function rangeAt(

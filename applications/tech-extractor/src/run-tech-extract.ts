@@ -21,6 +21,8 @@ import { parseTerraform } from './extractors/iac/TerraformParser.js';
 import { parseGithubActions } from './extractors/iac/GithubActionsParser.js';
 import { parseReadme, parseReadmeProse } from './extractors/iac/ReadmeParser.js';
 import { parseArgoApplication, parseHelmChart, parseHelmValues } from './extractors/iac/ArgoHelmParser.js';
+import { extractProseRanges } from './extractors/CommentExtractor.js';
+import { scanProseRanges } from './extractors/iac/ReadmeParser.js';
 import type { Extractor, RawTechnologyEvidence } from './extractors/Extractor.js';
 import { TechExtractOrchestrator } from './orchestrator/TechExtractOrchestrator.js';
 import { computeParity } from './parity/ParityReporter.js';
@@ -81,6 +83,16 @@ function iacExtractor(rootDir: string, files: string[], proseSafeAliases: Readon
                 // if/else above routes by file shape, this runs by content.
                 if (rel.endsWith('.yaml') || rel.endsWith('.yml')) {
                     out.push(...parseK8sManifestValues(src, rel));
+                    // F3: prose mentions in YAML comments (Helm template rationale,
+                    // CDK-prerequisite notes, `# Uses kubernetes for ...` style).
+                    // Closes the (a2) sub-bucket from the 2026-05-26 recount.
+                    // Re-tag source_layer='iac' + ecosystem='yaml-comment' so the
+                    // existing CHECK constraint is honoured (no migration needed).
+                    if (proseSafeAliases.size > 0) {
+                        const ranges = extractProseRanges(src, 'yaml');
+                        const prose = scanProseRanges(ranges, rel, proseSafeAliases);
+                        for (const e of prose) out.push({ ...e, source_layer: 'iac', ecosystem: 'yaml-comment' });
+                    }
                 }
             }
             return out;
