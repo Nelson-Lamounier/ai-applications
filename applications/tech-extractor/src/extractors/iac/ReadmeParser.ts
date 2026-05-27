@@ -86,6 +86,29 @@ export interface ProseLineInput {
  *                  prose_safe=true rows (mitigation 1) and lowercase entries.
  * @param opts      length floor + emission cap.
  */
+/**
+ * Cloud/vendor prefixes that gate F4 bigram matching. When a token in this set
+ * appears, the parser also tries `${tok[i]}_${tok[i+1]}` against the alias set
+ * so source prose like "AWS Bedrock" / "Amazon Cognito" / "Azure SQL" matches
+ * canonical aliases like `aws_bedrock` / `amazon_cognito` / `azure_sql`.
+ *
+ * Hard-limiting bigrams to these prefixes keeps the FP surface tiny: arbitrary
+ * two-word phrases ("step functions", "next steps") are NOT bigrammed.
+ */
+const BIGRAM_PREFIXES: ReadonlySet<string> = new Set([
+    'aws', 'amazon', 'azure', 'google', 'gcp', 'apache',
+]);
+
+/**
+ * Negation patterns that, if present anywhere in the prose line before the
+ * matched token, suppress the emission. Closes the "we considered grafana but
+ * chose datadog" / "instead of using redis" / "not using cognito" class of FP.
+ *
+ * Tested against the line's prefix (everything from line start up to the match
+ * index). Word-boundary anchored to avoid matching substrings.
+ */
+const NEGATION_RE = /\b(not\s+using|no\s+longer\s+using|instead\s+of|rejected|considered\s+but|never\s+adopted|moved\s+away\s+from|migrated\s+from|deprecated)\b/i;
+
 export function scanProseRanges(
     ranges: Iterable<ProseLineInput>,
     filePath: string,
@@ -102,16 +125,32 @@ export function scanProseRanges(
     for (const r of ranges) {
         if (!r.text) continue;
 
+        const lower = r.text.toLowerCase();
+        // Negation check applies to the WHOLE line — coarse but cheap. If the
+        // line contains a negation phrase, suppress all matches from that
+        // line. A finer per-match windowed check could be added later if this
+        // proves too aggressive in practice; the FP gate is more important
+        // than recall at the margins.
+        if (NEGATION_RE.test(lower)) continue;
+
         // Tokenize on non-alphanumeric boundaries, but keep `-`, `_`, `.`, `/`,
         // `@` so multi-part aliases like `@aws-sdk/client-s3`, `next-auth`,
         // `aws_lambda`, `node.js`, `pg/pg-pool` can match as single tokens.
-        // Lowercase for case-insensitive match against the alias set.
-        const tokens = r.text.toLowerCase().match(/[a-z0-9_@./-]+/g) ?? [];
-        for (const raw of tokens) {
-            // Trim trailing punctuation only (sentence-end `.`, list `,`-stripped
-            // upstream, path-style `/-_`). Keep LEADING `@` for npm scoped
-            // packages (`@aws-sdk/...`); keep inner separators verbatim.
-            const tok = raw.replace(/[._/-]+$/g, '');
+        const tokens = lower.match(/[a-z0-9_@./-]+/g) ?? [];
+
+        // Build the candidate set: every single token PLUS prefix-guarded
+        // bigrams (`aws_bedrock`-style). Trim trailing punctuation on each.
+        const candidates: string[] = [];
+        for (let i = 0; i < tokens.length; i++) {
+            const tok = tokens[i].replace(/[._/-]+$/g, '');
+            if (tok.length > 0) candidates.push(tok);
+            if (i + 1 < tokens.length && BIGRAM_PREFIXES.has(tok)) {
+                const next = tokens[i + 1].replace(/[._/-]+$/g, '');
+                if (next.length > 0) candidates.push(`${tok}_${next}`);
+            }
+        }
+
+        for (const tok of candidates) {
             if (tok.length < minLen) continue;
             if (!aliasSet.has(tok)) continue;
             const key = `${tok}@${r.line_start}`;
