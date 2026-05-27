@@ -10,6 +10,13 @@ Documentation index for the ai-applications monorepo. See the root
 
 | Folder | Contents |
 | --- | --- |
+| [concepts/](concepts/) | Architectural ideas and system designs (e.g. [self-healing-agent](concepts/self-healing-agent.md)) |
+| [decisions/](decisions/) | ADRs — numbered records of architectural choices and tradeoffs |
+| [projects/](projects/) | Service-level READMEs for each application |
+| [tools/](tools/) | Specific technology/library/service integration notes |
+| [patterns/](patterns/) | Reusable design patterns applied across the codebase |
+| [runbooks/](runbooks/) | Operational procedures (deploy, recover, rotate) |
+| [troubleshooting/](troubleshooting/) | Solved problems with root cause + fix |
 | [reviews/](reviews/) | Design and implementation reviews per subsystem (ingestion, RAG sub-projects, dataset/model) |
 | [plans/](plans/) | RAG sub-project implementation plans, tier-2 ontology auto-import |
 | [guides/](guides/) | Operator guides — KB source-repository setup, etc. |
