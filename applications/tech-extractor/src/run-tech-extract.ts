@@ -64,10 +64,7 @@ function iacExtractor(rootDir: string, files: string[], proseSafeAliases: Readon
                 // umbrella charts (monitoring stacks etc.) that K8sManifestParser ignores
                 // because the doc has no `kind:`. Match values.yaml / values-*.yaml / values.<env>.yaml.
                 else if (/(^|\/)values(\.[\w-]+)?\.ya?ml$/i.test(rel)) out.push(...parseHelmValues(src, rel));
-                else if (rel.endsWith('.yaml') || rel.endsWith('.yml')) {
-                    out.push(...parseK8sManifest(src, rel));
-                    out.push(...parseK8sManifestValues(src, rel));
-                }
+                else if (rel.endsWith('.yaml') || rel.endsWith('.yml')) out.push(...parseK8sManifest(src, rel));
                 else if (base === 'readme.md') {
                     // Two parsers, two failure modes — keep them independent.
                     out.push(...parseReadme(src, rel));
@@ -75,6 +72,15 @@ function iacExtractor(rootDir: string, files: string[], proseSafeAliases: Readon
                     // prose_safe=true (mitigation 1 from 2026-05-26 design review);
                     // parseReadmeProse adds mitigation 2 (length floor default 4).
                     out.push(...parseReadmeProse(src, rel, proseSafeAliases));
+                }
+
+                // ALWAYS run the value-scanner on any YAML file regardless of which
+                // structural parser also handled it above. ARN strings + ECR image
+                // URIs + AWS-bound annotation keys can appear in argocd-apps/,
+                // values.yaml, chart.yaml, and unstructured manifests alike — the
+                // if/else above routes by file shape, this runs by content.
+                if (rel.endsWith('.yaml') || rel.endsWith('.yml')) {
+                    out.push(...parseK8sManifestValues(src, rel));
                 }
             }
             return out;
