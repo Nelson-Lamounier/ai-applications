@@ -10,6 +10,7 @@
  */
 import { trace, SpanStatusCode } from '@opentelemetry/api';
 import { computeUserProfileRollup, computeUserDiagnostic } from '@bedrock/shared';
+import { synthesisOutcomeTotal } from '../metrics.js';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
 import type { MirrorRevealSynthesizer } from '../agents/MirrorRevealSynthesizer.js';
 import type { DirectionSynthesizer } from '../agents/DirectionSynthesizer.js';
@@ -34,22 +35,36 @@ export async function refreshUserProfileRollup(
         try {
             const rows   = await repo.listProfilesForRollup(userId);
             const result = computeUserProfileRollup(rows);
+            const synthMetric = synthesisOutcomeTotal();
+
             let synth: Awaited<ReturnType<MirrorRevealSynthesizer['synthesize']>> | undefined;
             if (synthesizer) {
-                try { synth = await synthesizer.synthesize(result.rollup); }
-                catch { synth = undefined; }
+                try { synth = await synthesizer.synthesize(result.rollup); synthMetric.inc({ stage: 'mirror', outcome: 'ok' }); }
+                catch { synth = undefined; synthMetric.inc({ stage: 'mirror', outcome: 'failed' }); }
+            } else {
+                synthMetric.inc({ stage: 'mirror', outcome: 'skipped' });
             }
             let dir: Awaited<ReturnType<DirectionSynthesizer['synthesize']>> | undefined;
             if (directionSynthesizer) {
-                try { dir = await directionSynthesizer.synthesize(result.rollup); }
-                catch { dir = undefined; }
+                try { dir = await directionSynthesizer.synthesize(result.rollup); synthMetric.inc({ stage: 'direction', outcome: 'ok' }); }
+                catch { dir = undefined; synthMetric.inc({ stage: 'direction', outcome: 'failed' }); }
+            } else {
+                synthMetric.inc({ stage: 'direction', outcome: 'skipped' });
             }
             let recon: Awaited<ReturnType<ReconciliationSynthesizer['synthesize']>> | undefined;
             if (reconciliationSynthesizer && careerRepo) {
                 try {
                     const resume = await careerRepo.getResumeForReconciliation(userId);
-                    if (resume) recon = await reconciliationSynthesizer.synthesize({ rollup: result.rollup, resume });
-                } catch { recon = undefined; }
+                    if (resume) {
+                        recon = await reconciliationSynthesizer.synthesize({ rollup: result.rollup, resume });
+                        synthMetric.inc({ stage: 'reconciliation', outcome: 'ok' });
+                    } else {
+                        // No résumé imported — reconciliation has nothing to compare against.
+                        synthMetric.inc({ stage: 'reconciliation', outcome: 'skipped' });
+                    }
+                } catch { recon = undefined; synthMetric.inc({ stage: 'reconciliation', outcome: 'failed' }); }
+            } else {
+                synthMetric.inc({ stage: 'reconciliation', outcome: 'skipped' });
             }
             let diagnostic: DiagnosticJson | undefined;
             if (diagnosticInputsRepo) {
@@ -69,7 +84,10 @@ export async function refreshUserProfileRollup(
                         catch { explanation = null; }
                     }
                     diagnostic = { ...computed, explanation };
-                } catch { diagnostic = undefined; }
+                    synthMetric.inc({ stage: 'diagnostic', outcome: 'ok' });
+                } catch { diagnostic = undefined; synthMetric.inc({ stage: 'diagnostic', outcome: 'failed' }); }
+            } else {
+                synthMetric.inc({ stage: 'diagnostic', outcome: 'skipped' });
             }
             await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation, diagnostic);
             span.setAttributes({

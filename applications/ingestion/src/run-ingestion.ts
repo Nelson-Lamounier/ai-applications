@@ -307,6 +307,22 @@ async function main(): Promise<void> {
             const reconciliationSynth = ReconciliationSynthesizer.fromEnvironment(pgPool, env.userId);
             const diagnosticInputsRepo = new RdsDiagnosticInputsReadRepository(pgPool);
             const diagnosticNarrator   = DiagnosticNarrator.fromEnvironment(pgPool, env.userId);
+            // Loud signal for the silent-skip footgun: a synthesizer is undefined
+            // only when its model id is unset. Without the model env injected by
+            // admin-api, rollup synthesis columns stay NULL with no other trace.
+            const disabledSynths = [
+                !mirrorSynth        && 'mirror',
+                !directionSynth     && 'direction',
+                !reconciliationSynth && 'reconciliation',
+            ].filter(Boolean);
+            if (disabledSynths.length > 0) {
+                log.warn({
+                    event:    'synthesizer_disabled',
+                    stages:   disabledSynths,
+                    reason:   'model id env var unset (PROFILE_EXTRACTOR_MODEL_ID / per-stage *_MODEL_ID)',
+                    userId:   env.userId,
+                }, 'profile synthesizers disabled — rollup synthesis will be skipped');
+            }
             await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo, diagnosticNarrator, diagnosticInputsRepo);
 
             log.info({
