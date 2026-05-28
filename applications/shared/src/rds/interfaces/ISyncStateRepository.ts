@@ -20,6 +20,19 @@ export interface ISyncStateRepository {
     markStarted(userId: string, repoFullName: string): Promise<void>;
 
     /**
+     * Update intra-repo embedding progress (embedded-so-far / total) while a
+     * repo is mid-sync, so the UI can show real movement instead of 0%→100%.
+     * Best-effort and lightweight (a single UPDATE) — callers invoke it
+     * periodically, not per chunk. Status stays 'syncing'.
+     */
+    markEmbedProgress(
+        userId: string,
+        repoFullName: string,
+        embeddedCount: number,
+        embedTotal: number,
+    ): Promise<void>;
+
+    /**
      * Shorthand: set status to 'complete', record final file/chunk counts
      * and (optionally) the computed KB quality score and per-factor
      * breakdown. Both quality fields are nullable for back-compat with
