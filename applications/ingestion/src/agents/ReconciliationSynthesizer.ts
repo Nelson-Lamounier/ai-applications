@@ -37,22 +37,38 @@ export const ReconciliationSchema = z.object({
   }).strict()).max(8),
 }).strict();
 
-/** Truncate over-long strings to schema max (fail-soft). Mutates + returns raw. */
-function clampReconciliation(raw: unknown): unknown {
+/** Repair structural quirks (JSON-string arrays, >8 items, over-long strings)
+ *  and drop items whose required strings fall under the schema min, so a
+ *  recoverable response passes instead of being discarded (fail-soft).
+ *  Mutates + returns raw. */
+function repairReconciliation(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
+  const decode = (v: unknown): unknown => {
+    if (typeof v !== 'string') return v;
+    try { return JSON.parse(v); } catch { return v; }
+  };
   const clamp = (o: unknown, field: string, max: number) => {
     if (o && typeof o === 'object') {
       const rec = o as Record<string, unknown>;
       if (typeof rec[field] === 'string') rec[field] = (rec[field] as string).slice(0, max);
     }
   };
+  const strOk = (o: unknown, field: string, min: number) => {
+    const rec = o as Record<string, unknown>;
+    return typeof rec[field] === 'string' && (rec[field] as string).length >= min;
+  };
   const r = raw as { unsupportedClaims?: unknown; undersold?: unknown };
+  r.unsupportedClaims = decode(r.unsupportedClaims);
+  r.undersold         = decode(r.undersold);
   if (Array.isArray(r.unsupportedClaims)) {
     for (const c of r.unsupportedClaims) {
       clamp(c, 'claim', RECON_LIMITS.claim);
       clamp(c, 'resumeRef', RECON_LIMITS.resumeRef);
       clamp(c, 'whyUnsupported', RECON_LIMITS.whyUnsupported);
     }
+    r.unsupportedClaims = r.unsupportedClaims
+      .filter((c) => strOk(c, 'claim', 8) && strOk(c, 'resumeRef', 2) && strOk(c, 'whyUnsupported', 8))
+      .slice(0, 8);
   }
   if (Array.isArray(r.undersold)) {
     for (const u of r.undersold) {
@@ -60,6 +76,9 @@ function clampReconciliation(raw: unknown): unknown {
       clamp(u, 'rollupDimension', RECON_LIMITS.rollupDimension);
       clamp(u, 'suggestion', RECON_LIMITS.suggestion);
     }
+    r.undersold = r.undersold
+      .filter((u) => strOk(u, 'evidence', 8) && strOk(u, 'rollupDimension', 2) && strOk(u, 'suggestion', 8))
+      .slice(0, 8);
   }
   return r;
 }
@@ -177,7 +196,7 @@ export class ReconciliationSynthesizer {
           span.setAttribute('reconciliation.status', 'no_resume');
           return undefined;
         }
-        const raw = clampReconciliation(await this.invoker.invoke(input));
+        const raw = repairReconciliation(await this.invoker.invoke(input));
         const parsed = ReconciliationSchema.safeParse(raw);
         if (!parsed.success) {
           console.warn('[ReconciliationSynthesizer] schema invalid:', JSON.stringify(parsed.error.issues).slice(0, 400));

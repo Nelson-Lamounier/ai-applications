@@ -29,25 +29,31 @@ export const SynthSchema = z.object({
 }).strict();
 
 /**
- * Truncate over-long strings to their schema max so a verbose model response
- * passes validation instead of being silently discarded. Mutates + returns the
- * raw tool input. Fail-soft: clamping a few chars beats dropping a whole
- * synthesis (the original silent-NULL bug).
+ * Repair common structural quirks in the model's tool output so a recoverable
+ * response passes validation instead of being silently discarded (the original
+ * silent-NULL bug). Handles: `reveals` returned as a JSON-encoded string,
+ * over-long strings, >5 reveals, and stray extra fields. Fail-soft — mutates +
+ * returns the raw tool input; anything unrecoverable still fails the schema.
  */
-function clampMirror(raw: unknown): unknown {
+function repairMirror(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
   const r = raw as { mirror?: { paragraph?: unknown }; reveals?: unknown };
   if (r.mirror && typeof r.mirror.paragraph === 'string') {
     r.mirror.paragraph = r.mirror.paragraph.slice(0, MIRROR_LIMITS.paragraph);
   }
+  // The model sometimes serialises `reveals` as a JSON string — decode it.
+  if (typeof r.reveals === 'string') {
+    try { r.reveals = JSON.parse(r.reveals); } catch { /* leave → schema fails */ }
+  }
   if (Array.isArray(r.reveals)) {
-    for (const item of r.reveals) {
-      if (item && typeof item === 'object') {
-        const it = item as { insight?: unknown; evidence?: unknown };
-        if (typeof it.insight === 'string')  it.insight  = it.insight.slice(0, MIRROR_LIMITS.insight);
-        if (typeof it.evidence === 'string') it.evidence = it.evidence.slice(0, MIRROR_LIMITS.evidence);
-      }
-    }
+    r.reveals = r.reveals
+      .filter((x): x is { insight?: unknown; evidence?: unknown } => !!x && typeof x === 'object')
+      // Rebuild with only the allowed fields (schema is .strict()), clamped.
+      .map((x) => ({
+        insight:  typeof x.insight === 'string'  ? x.insight.slice(0, MIRROR_LIMITS.insight)   : x.insight,
+        evidence: typeof x.evidence === 'string' ? x.evidence.slice(0, MIRROR_LIMITS.evidence) : x.evidence,
+      }))
+      .slice(0, 5);
   }
   return r;
 }
@@ -152,7 +158,7 @@ export class MirrorRevealSynthesizer {
   async synthesize(rollup: UserProfileRollup): Promise<MirrorRevealOutput | undefined> {
     return tracer.startActiveSpan('ingestion.profile_synthesis', async (span) => {
       try {
-        const raw = clampMirror(await this.invoker.invoke(rollup));
+        const raw = repairMirror(await this.invoker.invoke(rollup));
         const parsed = SynthSchema.safeParse(raw);
         if (!parsed.success) {
           // Surface the reason to stdout (not just the span) — silent schema
