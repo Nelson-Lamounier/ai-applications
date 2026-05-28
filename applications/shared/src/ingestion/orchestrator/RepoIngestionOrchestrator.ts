@@ -72,8 +72,14 @@ export class RepoIngestionOrchestrator {
      *
      * @param userId       - Owner of the ingested content
      * @param repoFullName - "owner/repo" format
+     * @param onFileProgress - optional callback fired during file fetch with
+     *                         (fetched, total) so callers can surface progress.
      */
-    async ingestRepo(userId: string, repoFullName: string): Promise<IngestionReport> {
+    async ingestRepo(
+        userId: string,
+        repoFullName: string,
+        onFileProgress?: (fetched: number, total: number) => void,
+    ): Promise<IngestionReport> {
         // -----------------------------------------------------------------
         // Step 1: List all files in the repo (single API call via tree API)
         // -----------------------------------------------------------------
@@ -102,6 +108,10 @@ export class RepoIngestionOrchestrator {
         // -----------------------------------------------------------------
         const rawChunks = [];
 
+        const fileTotal = includedPaths.length;
+        let fileDone = 0;
+        onFileProgress?.(0, fileTotal);
+
         for (const filePath of includedPaths) {
             try {
                 const content = await this.repoAdapter.fetchFile(repoFullName, filePath);
@@ -115,6 +125,11 @@ export class RepoIngestionOrchestrator {
                     err,
                 );
             }
+            fileDone++;
+            // Report every 25 files (and on the last) — keeps the UI moving
+            // through the otherwise-silent sequential fetch without hammering
+            // the progress sink.
+            if (fileDone % 25 === 0 || fileDone === fileTotal) onFileProgress?.(fileDone, fileTotal);
         }
 
         console.info(

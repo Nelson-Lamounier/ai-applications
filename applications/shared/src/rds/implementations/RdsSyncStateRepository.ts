@@ -7,7 +7,7 @@
  */
 
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
-import type { RepoSyncState, SyncStatus } from '../types.js';
+import type { RepoSyncState, SyncStatus, IngestionPhase } from '../types.js';
 import type { RdsClientConfig } from './RdsVectorStore.js';
 import { Pool } from 'pg';
 
@@ -27,6 +27,9 @@ interface SyncStateRow {
     retrieval_breakdown:   Record<string, unknown> | null;
     embedded_count:        number | null;
     embed_total:           number | null;
+    phase:                 string | null;
+    phase_done:            number | null;
+    phase_total:           number | null;
 }
 
 // =============================================================================
@@ -82,7 +85,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             `SELECT sync_status, last_synced_at, file_count, chunk_count, error_message,
                     kb_quality_score, kb_quality_breakdown,
                     retrieval_score, retrieval_breakdown,
-                    embedded_count, embed_total
+                    embedded_count, embed_total,
+                    phase, phase_done, phase_total
              FROM repo_sync_state
              WHERE user_id = $1 AND repo_full_name = $2`,
             [userId, repoFullName],
@@ -117,6 +121,9 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             retrievalBreakdown:  row.retrieval_breakdown ?? undefined,
             embeddedCount:       row.embedded_count ?? undefined,
             embedTotal:          row.embed_total ?? undefined,
+            phase:               (row.phase as IngestionPhase | null) ?? undefined,
+            phaseDone:           row.phase_done ?? undefined,
+            phaseTotal:          row.phase_total ?? undefined,
         };
     }
 
@@ -175,30 +182,39 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             fileCount:  0,
             chunkCount: 0,
         });
-        // Clear any progress left over from a previous run so the UI doesn't
-        // briefly show stale "embedded N/N" before the embed phase starts.
+    }
+
+    /**
+     * Begin a run: set status='syncing' and reset stale phase/progress so a
+     * re-ingest doesn't briefly show last run's "embedded N/N". Call once at
+     * the very start (run-ingestion), before any markPhase. Idempotent.
+     */
+    async beginRun(userId: string, repoFullName: string): Promise<void> {
+        await this.markStarted(userId, repoFullName);
         await this.pool.query(
             `UPDATE repo_sync_state
-                SET embedded_count = NULL, embed_total = NULL
+                SET embedded_count = NULL, embed_total = NULL,
+                    phase = NULL, phase_done = NULL, phase_total = NULL
               WHERE user_id = $1 AND repo_full_name = $2`,
             [userId, repoFullName],
         );
     }
 
-    async markEmbedProgress(
+    async markPhase(
         userId: string,
         repoFullName: string,
-        embeddedCount: number,
-        embedTotal: number,
+        phase: IngestionPhase,
+        done?: number,
+        total?: number,
     ): Promise<void> {
-        // Targeted UPDATE — touches only the progress columns so it can't race
+        // Targeted UPDATE — touches only the phase columns so it can't race
         // with the quality/retrieval fields written by markComplete. No-op if
-        // the row doesn't exist yet (markStarted always runs first).
+        // the row doesn't exist yet (markStarted/markPhase('analyzing') first).
         await this.pool.query(
             `UPDATE repo_sync_state
-                SET embedded_count = $3, embed_total = $4
+                SET phase = $3, phase_done = $4, phase_total = $5
               WHERE user_id = $1 AND repo_full_name = $2`,
-            [userId, repoFullName, embeddedCount, embedTotal],
+            [userId, repoFullName, phase, done ?? null, total ?? null],
         );
     }
 

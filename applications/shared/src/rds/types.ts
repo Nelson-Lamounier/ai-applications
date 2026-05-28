@@ -160,7 +160,21 @@ export interface RepoSyncState {
     readonly embeddedCount?: number;
     /** Total chunks to embed in the current run. */
     readonly embedTotal?: number;
+    /** Current ingestion phase (analyzing/fetching/enriching/embedding/finalizing). */
+    readonly phase?: IngestionPhase;
+    /** Items completed in the current phase (undefined when indeterminate). */
+    readonly phaseDone?: number;
+    /** Total items in the current phase (undefined when indeterminate). */
+    readonly phaseTotal?: number;
 }
+
+/** Coarse pipeline phase surfaced to the onboarding UI for progress display. */
+export type IngestionPhase =
+    | 'analyzing'
+    | 'fetching'
+    | 'enriching'
+    | 'embedding'
+    | 'finalizing';
 
 // =============================================================================
 // INGESTION REPORT — pipeline output
