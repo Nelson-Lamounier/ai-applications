@@ -20,18 +20,49 @@ import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedroc
 
 const tracer = trace.getTracer('ingestion-worker');
 
+// Shared length limits (tool maxLength + Zod max + clamp). Generous bounds so
+// verbose model output isn't silently discarded (fail-soft).
+export const RECON_LIMITS = { claim: 360, resumeRef: 120, whyUnsupported: 360, evidence: 360, rollupDimension: 60, suggestion: 360 } as const;
+
 export const ReconciliationSchema = z.object({
   unsupportedClaims: z.array(z.object({
-    claim:          z.string().min(8).max(240),
-    resumeRef:      z.string().min(2).max(80),
-    whyUnsupported: z.string().min(8).max(240),
+    claim:          z.string().min(8).max(RECON_LIMITS.claim),
+    resumeRef:      z.string().min(2).max(RECON_LIMITS.resumeRef),
+    whyUnsupported: z.string().min(8).max(RECON_LIMITS.whyUnsupported),
   }).strict()).max(8),
   undersold: z.array(z.object({
-    evidence:        z.string().min(8).max(240),
-    rollupDimension: z.string().min(2).max(40),
-    suggestion:      z.string().min(8).max(240),
+    evidence:        z.string().min(8).max(RECON_LIMITS.evidence),
+    rollupDimension: z.string().min(2).max(RECON_LIMITS.rollupDimension),
+    suggestion:      z.string().min(8).max(RECON_LIMITS.suggestion),
   }).strict()).max(8),
 }).strict();
+
+/** Truncate over-long strings to schema max (fail-soft). Mutates + returns raw. */
+function clampReconciliation(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const clamp = (o: unknown, field: string, max: number) => {
+    if (o && typeof o === 'object') {
+      const rec = o as Record<string, unknown>;
+      if (typeof rec[field] === 'string') rec[field] = (rec[field] as string).slice(0, max);
+    }
+  };
+  const r = raw as { unsupportedClaims?: unknown; undersold?: unknown };
+  if (Array.isArray(r.unsupportedClaims)) {
+    for (const c of r.unsupportedClaims) {
+      clamp(c, 'claim', RECON_LIMITS.claim);
+      clamp(c, 'resumeRef', RECON_LIMITS.resumeRef);
+      clamp(c, 'whyUnsupported', RECON_LIMITS.whyUnsupported);
+    }
+  }
+  if (Array.isArray(r.undersold)) {
+    for (const u of r.undersold) {
+      clamp(u, 'evidence', RECON_LIMITS.evidence);
+      clamp(u, 'rollupDimension', RECON_LIMITS.rollupDimension);
+      clamp(u, 'suggestion', RECON_LIMITS.suggestion);
+    }
+  }
+  return r;
+}
 export interface ReconciliationOutput {
   readonly reconciliation: {
     readonly unsupportedClaims: ReadonlyArray<{ claim: string; resumeRef: string; whyUnsupported: string }>;
@@ -57,10 +88,10 @@ const TOOL = {
     type: 'object',
     properties: {
       unsupportedClaims: { type: 'array', items: { type: 'object', properties: {
-        claim: { type: 'string' }, resumeRef: { type: 'string' }, whyUnsupported: { type: 'string' } },
+        claim: { type: 'string', maxLength: RECON_LIMITS.claim }, resumeRef: { type: 'string', maxLength: RECON_LIMITS.resumeRef }, whyUnsupported: { type: 'string', maxLength: RECON_LIMITS.whyUnsupported } },
         required: ['claim','resumeRef','whyUnsupported'], additionalProperties: false } },
       undersold: { type: 'array', items: { type: 'object', properties: {
-        evidence: { type: 'string' }, rollupDimension: { type: 'string' }, suggestion: { type: 'string' } },
+        evidence: { type: 'string', maxLength: RECON_LIMITS.evidence }, rollupDimension: { type: 'string', maxLength: RECON_LIMITS.rollupDimension }, suggestion: { type: 'string', maxLength: RECON_LIMITS.suggestion } },
         required: ['evidence','rollupDimension','suggestion'], additionalProperties: false } },
     },
     required: ['unsupportedClaims','undersold'], additionalProperties: false,
@@ -146,9 +177,10 @@ export class ReconciliationSynthesizer {
           span.setAttribute('reconciliation.status', 'no_resume');
           return undefined;
         }
-        const raw = await this.invoker.invoke(input);
+        const raw = clampReconciliation(await this.invoker.invoke(input));
         const parsed = ReconciliationSchema.safeParse(raw);
         if (!parsed.success) {
+          console.warn('[ReconciliationSynthesizer] schema invalid:', JSON.stringify(parsed.error.issues).slice(0, 400));
           span.setAttribute('reconciliation.status', 'schema_invalid');
           span.setStatus({ code: SpanStatusCode.ERROR, message: 'reconciliation schema validation failed' });
           return undefined;
