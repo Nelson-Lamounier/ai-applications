@@ -1,17 +1,32 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- jest.fn<> generic requires any to match the Bedrock SDK response union
-const mockSend = jest.fn<() => Promise<any>>();
-
-jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
-    BedrockRuntimeClient: jest.fn().mockImplementation(() => ({ send: mockSend })),
-    InvokeModelCommand:   jest.fn(),
-}));
-
+// ProfileExtractor now goes through the shared runAgent() wrapper. The mock
+// emulates it: run the agent's parseResponse over the configured tool input
+// (so schema validation/clamping is still exercised) and fire the cost sink.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let currentToolInput: any = {};
+let runAgentThrows: Error | null = null;
 const mockRecordBedrockCost = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockRunAgent = jest.fn(async (opts: any) => {
+    if (runAgentThrows) throw runAgentThrows;
+    const data = await opts.parseResponse(JSON.stringify(currentToolInput));
+    if (opts.pipelineContext.onInvocationComplete) {
+        await opts.pipelineContext.onInvocationComplete({
+            userId:             opts.pipelineContext.userId,
+            modelId:            opts.config.modelId,
+            systemPromptTokens: 500,
+            userMessageTokens:  0,
+            outputTokens:       200,
+        });
+    }
+    return { data, tokenUsage: { inputTokens: 500, outputTokens: 200, thinkingTokens: 0 }, durationMs: 1, agentName: opts.config.agentName, modelId: opts.config.modelId, costUsd: 0 };
+});
 
 jest.mock('@bedrock/shared', () => ({
     recordBedrockCost: mockRecordBedrockCost,
+    runAgent: (opts: unknown) => mockRunAgent(opts),
 }));
 
 import { ProfileExtractor } from '../ProfileExtractor.js';
@@ -63,12 +78,8 @@ function makeBundle(overrides: Partial<ProfileInputBundle> = {}): ProfileInputBu
 }
 
 function mockBedrockResponse(toolInput: object): void {
-    mockSend.mockResolvedValueOnce({
-        body: Buffer.from(JSON.stringify({
-            usage: { input_tokens: 500, output_tokens: 200 },
-            content: [{ type: 'tool_use', name: 'extract_repo_profile', input: toolInput }],
-        })),
-    });
+    currentToolInput = toolInput;
+    runAgentThrows = null;
 }
 
 describe('ProfileExtractor', () => {
@@ -76,8 +87,10 @@ describe('ProfileExtractor', () => {
     let extractor: ProfileExtractor;
 
     beforeEach(() => {
-        mockSend.mockReset();
+        mockRunAgent.mockClear();
         mockRecordBedrockCost.mockClear();
+        currentToolInput = {};
+        runAgentThrows = null;
         extractor = new ProfileExtractor(
             'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
             pool,
@@ -106,15 +119,10 @@ describe('ProfileExtractor', () => {
         expect(result.signals.has_readme).toBe(false);
     });
 
-    it('throws ProfileExtractionError(no_tool_use_block) when response has no tool block', async () => {
-        mockSend.mockResolvedValueOnce({
-            body: Buffer.from(JSON.stringify({
-                usage:   { input_tokens: 100, output_tokens: 50 },
-                content: [{ type: 'text', text: 'I cannot do that.' }],
-            })),
-        });
+    it('maps a runAgent failure (no tool_use / refusal / Bedrock error) to ProfileExtractionError(bedrock_error)', async () => {
+        runAgentThrows = new Error('forced tool produced no tool_use block');
         await expect(extractor.extract('user-123', makeBundle()))
-            .rejects.toMatchObject({ code: 'no_tool_use_block' });
+            .rejects.toMatchObject({ code: 'bedrock_error' });
     });
 
     it('throws ProfileExtractionError(schema_validation_failed) when tool input violates schema', async () => {

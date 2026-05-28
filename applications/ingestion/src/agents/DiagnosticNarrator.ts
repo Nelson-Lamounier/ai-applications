@@ -8,10 +8,9 @@
  */
 import { z } from 'zod';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
-import { recordBedrockCost } from '@bedrock/shared';
-import type { DiagnosticComputed } from '@bedrock/shared';
+import { runAgent, recordInvocationToRds } from '@bedrock/shared';
+import type { DiagnosticComputed, AgentConfig, BasePipelineContext } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 
 const tracer = trace.getTracer('ingestion-worker');
 
@@ -43,53 +42,38 @@ RULES:
 6. Plain English, no markdown, no bullet points.`;
 
 export class BedrockSynthInvoker implements ISynthInvoker {
-  private readonly client: BedrockRuntimeClient;
   constructor(
     private readonly modelId: string,
     private readonly pool: Pool,
     private readonly userId: string,
-  ) {
-    this.client = new BedrockRuntimeClient({ region: process.env['AWS_REGION'] ?? 'eu-west-1' });
-  }
+  ) {}
 
   async invoke(computed: DiagnosticComputed): Promise<unknown> {
-    const body = JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens:        600,
-      temperature:       0.3,
-      system:            SYSTEM_PROMPT,
-      tools:             [TOOL],
-      tool_choice:       { type: 'tool', name: 'narrate_diagnostic' },
-      messages:          [{ role: 'user', content: JSON.stringify(computed) }],
-    });
-
-    const { body: responseBody } = await this.client.send(new InvokeModelCommand({
-      modelId:     this.modelId,
-      contentType: 'application/json',
-      accept:      'application/json',
-      body:        Buffer.from(body),
-    }));
-    if (!responseBody) throw new Error('DiagnosticNarrator: empty Bedrock response');
-
-    const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as {
-      usage?: { input_tokens?: number; output_tokens?: number };
-      content: Array<{ type: string; input?: unknown }>;
+    // Consolidated onto runAgent() — see MirrorRevealSynthesizer for rationale.
+    const config: AgentConfig = {
+      agentName:      'profile-diagnostic',
+      modelId:        this.modelId,
+      maxTokens:      600,
+      thinkingBudget: 0,
+      systemPrompt:   [{ text: SYSTEM_PROMPT }],
+      pipeline:       'profile-synthesis',
+      tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
     };
-    const toolUse = parsed.content.find(b => b.type === 'tool_use');
-    if (!toolUse?.input) throw new Error('DiagnosticNarrator: no tool_use block');
-
-    const inputTokens  = parsed.usage?.input_tokens  ?? 0;
-    const outputTokens = parsed.usage?.output_tokens ?? 0;
-
-    await recordBedrockCost(this.pool, {
-      userId:       this.userId,
-      modelId:      this.modelId,
-      pipeline:     'profile-diagnostic',
-      inputTokens,
-      outputTokens,
+    const ctx: BasePipelineContext = {
+      pipelineId:           `profile-diagnostic:${this.userId}`,
+      environment:          process.env['DEPLOY_ENV'] ?? 'dev',
+      cumulativeTokens:     { input: 0, output: 0, thinking: 0 },
+      cumulativeCostUsd:    0,
+      userId:               this.userId,
+      onInvocationComplete: recordInvocationToRds(this.pool, 'profile-diagnostic'),
+    };
+    const result = await runAgent<unknown>({
+      config,
+      userMessage:     JSON.stringify(computed),
+      parseResponse:   (s) => JSON.parse(s) as unknown,
+      pipelineContext: ctx,
     });
-
-    return toolUse.input;
+    return result.data;
   }
 }
 

@@ -138,7 +138,12 @@ export type AgentName =
     | 'strategist-research' | 'strategist-writer' | 'strategist-coach'
     | 'resume-builder'
     | 'project-clustering'
-    | 'project-case-study';
+    | 'project-case-study'
+    // Ingestion profile pipeline (migrated off raw InvokeModel onto runAgent).
+    | 'profile-mirror' | 'profile-direction' | 'profile-reconciliation'
+    | 'profile-diagnostic' | 'profile-extract' | 'retrieval-probe'
+    // resume-import-processor agents.
+    | 'resume-extract' | 'resume-enrich' | 'resume-gap';
 
 /**
  * Model-agnostic configuration for a single agent.

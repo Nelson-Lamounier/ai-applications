@@ -16,13 +16,10 @@
  * Empty search results (NoOpSearchTool or Tavily failure) cause the function
  * to return null — the caller saves the entry with enrichment_status='skipped'.
  */
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
 import { z } from 'zod';
 import type { Logger } from 'pino';
-import { PiiScrubber, jobLogger } from '@bedrock/shared';
+import { PiiScrubber, jobLogger, runAgent } from '@bedrock/shared';
+import type { AgentConfig, BasePipelineContext } from '@bedrock/shared';
 import type { WebSearchTool } from '../tools/tavily.js';
 import type { ResumeExperience } from './extract-career.js';
 
@@ -95,7 +92,7 @@ const SYSTEM_PROMPT = [
 export async function enrichRole(
   experience: ResumeExperience,
   searchTool: WebSearchTool,
-  region: string,
+  _region: string,
   logger?: Logger,
 ): Promise<RoleEnrichmentResult> {
   // Resolve a structured logger: prefer the explicit arg, else jobLogger() —
@@ -134,7 +131,6 @@ export async function enrichRole(
     'tavily results',
   );
 
-  const client = new BedrockRuntimeClient({ region });
   const stopBedrock = bedrockDurationSeconds().startTimer({ purpose: 'enrich' });
 
   const userMessage = [
@@ -150,54 +146,54 @@ export async function enrichRole(
     snippets.map((s, i) => `[Source ${i + 1}]\n${s}`).join('\n\n'),
   ].join('\n');
 
-  const requestBody = {
-    anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    tools: [ENRICH_TOOL_SCHEMA],
-    tool_choice: { type: 'tool', name: 'enrich_role_data' },
-    messages: [{ role: 'user', content: userMessage }],
+  // Consolidated onto runAgent() (Converse + forced tool_use). Best-effort:
+  // any failure (refusal / schema) → skip enrichment (data: null), never throw.
+  // Cost stays caller-tracked (run-import.ts) via the returned token counts.
+  const config: AgentConfig = {
+    agentName:      'resume-enrich',
+    modelId:        MODEL_ID,
+    maxTokens:      1024,
+    thinkingBudget: 0,
+    systemPrompt:   [{ text: SYSTEM_PROMPT }],
+    pipeline:       'resume-import',
+    tool: { name: ENRICH_TOOL_SCHEMA.name, description: ENRICH_TOOL_SCHEMA.description, inputSchema: ENRICH_TOOL_SCHEMA.input_schema as Record<string, unknown> },
+  };
+  const ctx: BasePipelineContext = {
+    pipelineId:        'resume-enrich',
+    environment:       process.env['DEPLOY_ENV'] ?? 'dev',
+    cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+    cumulativeCostUsd: 0,
   };
 
-  const command = new InvokeModelCommand({
-    modelId:     MODEL_ID,
-    contentType: 'application/json',
-    accept:      'application/json',
-    body:        Buffer.from(JSON.stringify(requestBody)),
-  });
-
-  const response = await client.send(command);
-  stopBedrock();
-  const parsed   = JSON.parse(Buffer.from(response.body).toString('utf-8'));
-
-  const toolUseBlock = parsed.content?.find(
-    (block: { type: string }) => block.type === 'tool_use',
-  );
-
-  if (!toolUseBlock?.input) {
-    log.warn(
-      { event: 'enrich_role.no_tool_use', title: piiScrubber.scrub(experience.title).redacted },
-      'bedrock returned no tool_use block',
-    );
-    return { data: null, inputTokens: 0, outputTokens: 0 };
-  }
-
-  const validated = EnrichedRoleDataSchema.safeParse(toolUseBlock.input);
-  if (!validated.success) {
-    log.warn(
-      {
-        event: 'enrich_role.schema_validation_failed',
-        title: piiScrubber.scrub(experience.title).redacted,
-        err:   validated.error.message,
+  try {
+    const result = await runAgent<EnrichedRoleData>({
+      config,
+      userMessage,
+      pipelineContext: ctx,
+      parseResponse: (s) => {
+        const v = EnrichedRoleDataSchema.safeParse(JSON.parse(s));
+        if (!v.success) {
+          log.warn(
+            { event: 'enrich_role.schema_validation_failed', title: piiScrubber.scrub(experience.title).redacted, err: v.error.message },
+            'enrichment output failed schema validation; skipping',
+          );
+          throw new Error('schema validation failed');
+        }
+        return v.data as EnrichedRoleData;
       },
-      'enrichment output failed schema validation; skipping',
+    });
+    return {
+      data:         result.data,
+      inputTokens:  result.tokenUsage.inputTokens,
+      outputTokens: result.tokenUsage.outputTokens,
+    };
+  } catch (err) {
+    log.warn(
+      { event: 'enrich_role.failed', title: piiScrubber.scrub(experience.title).redacted, err: (err as Error).message },
+      'enrichment failed (refusal / schema / bedrock); skipping',
     );
     return { data: null, inputTokens: 0, outputTokens: 0 };
+  } finally {
+    stopBedrock();
   }
-
-  return {
-    data:         validated.data as EnrichedRoleData,
-    inputTokens:  parsed.usage?.input_tokens  ?? 0,
-    outputTokens: parsed.usage?.output_tokens ?? 0,
-  };
 }

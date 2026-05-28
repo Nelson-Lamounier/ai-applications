@@ -9,12 +9,9 @@
  * Returns the structured data for immediate persistence.
  * Enrichment (Tavily research per role) runs separately in a second pass.
  */
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
 import { z } from 'zod';
-import { PiiScrubber } from '@bedrock/shared';
+import { PiiScrubber, runAgent } from '@bedrock/shared';
+import type { AgentConfig, BasePipelineContext } from '@bedrock/shared';
 
 const piiScrubber = new PiiScrubber();
 
@@ -297,62 +294,60 @@ const SYSTEM_PROMPT = [
 
 export async function extractCareerData(
   resumeText: string,
-  region: string,
+  _region: string,
 ): Promise<CareerExtractionResult> {
-  const client = new BedrockRuntimeClient({ region });
-
   const safeText = piiScrubber.scrub(resumeText).redacted.slice(0, MAX_RESUME_CHARS);
 
-  const requestBody = {
-    anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    tools: [EXTRACTION_TOOL_SCHEMA],
-    tool_choice: { type: 'tool', name: 'extract_career_data' },
-    messages: [
-      {
-        role: 'user',
-        content: `<resume>\n${safeText}\n</resume>`,
-      },
-    ],
+  // Consolidated onto the shared runAgent() wrapper (Converse + forced tool_use
+  // + structured extraction). Cost stays caller-tracked: run-import.ts records
+  // it from the returned token counts, so no onInvocationComplete sink here.
+  const config: AgentConfig = {
+    agentName:      'resume-extract',
+    modelId:        MODEL_ID,
+    maxTokens:      4096,
+    thinkingBudget: 0,
+    systemPrompt:   [{ text: SYSTEM_PROMPT }],
+    pipeline:       'resume-import',
+    tool: { name: EXTRACTION_TOOL_SCHEMA.name, description: EXTRACTION_TOOL_SCHEMA.description, inputSchema: EXTRACTION_TOOL_SCHEMA.input_schema as Record<string, unknown> },
   };
-
-  const command = new InvokeModelCommand({
-    modelId:     MODEL_ID,
-    contentType: 'application/json',
-    accept:      'application/json',
-    body:        Buffer.from(JSON.stringify(requestBody)),
-  });
+  const ctx: BasePipelineContext = {
+    pipelineId:        'resume-extract',
+    environment:       process.env['DEPLOY_ENV'] ?? 'dev',
+    cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+    cumulativeCostUsd: 0,
+  };
 
   const { bedrockDurationSeconds } = await import('../metrics.js');
   const stop = bedrockDurationSeconds().startTimer({ purpose: 'extract' });
-  const response = await client.send(command);
-  stop();
-  const parsed   = JSON.parse(Buffer.from(response.body).toString('utf-8'));
-
-  // The forced tool_use response always has content[0] as tool_use block
-  const toolUseBlock = parsed.content?.find(
-    (block: { type: string }) => block.type === 'tool_use',
-  );
-
-  if (!toolUseBlock?.input) {
-    throw new CareerExtractionError(
-      'no_tool_use_block',
-      'extractCareerData: Bedrock returned no tool_use block',
-    );
+  try {
+    const result = await runAgent<ExtractedCareerData>({
+      config,
+      userMessage:     `<resume>\n${safeText}\n</resume>`,
+      pipelineContext: ctx,
+      parseResponse: (s) => {
+        const v = ExtractedCareerDataSchema.safeParse(JSON.parse(s));
+        if (!v.success) {
+          throw new CareerExtractionError(
+            'schema_validation_failed',
+            `extractCareerData: schema validation failed: ${v.error.message}`,
+          );
+        }
+        return v.data as ExtractedCareerData;
+      },
+    });
+    return {
+      data:         result.data,
+      inputTokens:  result.tokenUsage.inputTokens,
+      outputTokens: result.tokenUsage.outputTokens,
+    };
+  } catch (err) {
+    if (err instanceof CareerExtractionError) throw err;
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause instanceof CareerExtractionError) throw cause;
+    // runAgent throws when the forced tool produced no tool_use (refusal) or
+    // on a Bedrock error — map onto the existing error code.
+    throw new CareerExtractionError('no_tool_use_block', err instanceof Error ? err.message : String(err));
+  } finally {
+    stop();
   }
-
-  const validated = ExtractedCareerDataSchema.safeParse(toolUseBlock.input);
-  if (!validated.success) {
-    throw new CareerExtractionError(
-      'schema_validation_failed',
-      `extractCareerData: schema validation failed: ${validated.error.message}`,
-    );
-  }
-
-  return {
-    data:         validated.data as ExtractedCareerData,
-    inputTokens:  parsed.usage?.input_tokens  ?? 0,
-    outputTokens: parsed.usage?.output_tokens ?? 0,
-  };
 }

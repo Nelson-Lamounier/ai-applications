@@ -1,11 +1,8 @@
 import { createHash } from 'node:crypto';
-import {
-    BedrockRuntimeClient,
-    InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
-import { recordBedrockCost } from '@bedrock/shared';
+import { runAgent, recordBedrockCost } from '@bedrock/shared';
+import type { AgentConfig, BasePipelineContext } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import type { ProfileInputBundle } from './ProfileInputCollector.js';
 
@@ -131,15 +128,11 @@ const tracer = trace.getTracer('ingestion-worker');
 
 export class ProfileExtractor {
     readonly version = '1';
-    private readonly client: BedrockRuntimeClient;
 
     constructor(
         private readonly modelId: string,
         private readonly pool: Pool,
-    ) {
-        const region = process.env['AWS_REGION'] ?? 'eu-west-1';
-        this.client = new BedrockRuntimeClient({ region });
-    }
+    ) {}
 
     async extract(userId: string, bundle: ProfileInputBundle): Promise<ExtractedRepoData> {
         return tracer.startActiveSpan('profile_extractor.extract', async span => {
@@ -150,63 +143,63 @@ export class ProfileExtractor {
 
             try {
                 const userMessage = this.buildPrompt(bundle);
-                const body = JSON.stringify({
-                    anthropic_version: 'bedrock-2023-05-31',
-                    max_tokens:        2048,
-                    temperature:       0.1,
-                    system:            SYSTEM_PROMPT,
-                    tools:             [EXTRACT_TOOL],
-                    tool_choice:       { type: 'tool', name: 'extract_repo_profile' },
-                    messages: [{ role: 'user', content: userMessage }],
-                });
 
-                const { body: responseBody } = await this.client.send(
-                    new InvokeModelCommand({
-                        modelId:     this.modelId,
-                        contentType: 'application/json',
-                        accept:      'application/json',
-                        body:        Buffer.from(body),
-                    }),
-                ).catch((err: unknown) => {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    throw new ProfileExtractionError('bedrock_error', msg);
-                });
-
-                if (!responseBody) {
-                    throw new ProfileExtractionError('bedrock_error', 'empty response body');
-                }
-
-                const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as {
-                    usage?: { input_tokens?: number; output_tokens?: number };
-                    content: Array<{ type: string; name?: string; input?: unknown }>;
+                // Consolidated onto runAgent() (Converse + forced tool_use).
+                // Custom onInvocationComplete preserves per-repo attribution
+                // (repoName) that the generic recordInvocationToRds drops.
+                const config: AgentConfig = {
+                    agentName:      'profile-extract',
+                    modelId:        this.modelId,
+                    maxTokens:      2048,
+                    thinkingBudget: 0,
+                    systemPrompt:   [{ text: SYSTEM_PROMPT }],
+                    pipeline:       'profile-extraction',
+                    tool: { name: EXTRACT_TOOL.name, description: EXTRACT_TOOL.description, inputSchema: EXTRACT_TOOL.input_schema as Record<string, unknown> },
+                };
+                const ctx: BasePipelineContext = {
+                    pipelineId:        `profile-extract:${bundle.repo_full_name}`,
+                    environment:       process.env['DEPLOY_ENV'] ?? 'dev',
+                    cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+                    cumulativeCostUsd: 0,
+                    userId,
+                    onInvocationComplete: async (log) => {
+                        if (!log.userId) return;
+                        await recordBedrockCost(this.pool, {
+                            userId:       log.userId,
+                            modelId:      log.modelId,
+                            pipeline:     'profile-extraction',
+                            inputTokens:  log.systemPromptTokens + log.userMessageTokens,
+                            outputTokens: log.outputTokens,
+                            repoName:     bundle.repo_full_name,
+                        });
+                    },
                 };
 
-                const toolUse = parsed.content.find(b => b.type === 'tool_use');
-                if (!toolUse?.input) {
-                    throw new ProfileExtractionError(
-                        'no_tool_use_block',
-                        `ProfileExtractor: Bedrock returned no tool_use block for ${bundle.repo_full_name}`,
-                    );
+                let extracted: ExtractedRepoData;
+                try {
+                    const result = await runAgent<ExtractedRepoData>({
+                        config,
+                        userMessage,
+                        pipelineContext: ctx,
+                        parseResponse: (s) => {
+                            const p = ExtractedRepoDataSchema.safeParse(JSON.parse(s));
+                            if (!p.success) {
+                                throw new ProfileExtractionError(
+                                    'schema_validation_failed',
+                                    `ProfileExtractor: schema validation failed: ${p.error.message}`,
+                                );
+                            }
+                            return p.data;
+                        },
+                    });
+                    extracted = result.data;
+                } catch (err) {
+                    if (err instanceof ProfileExtractionError) throw err;
+                    // runAgent wraps a thrown parseResponse error in AgentExecutionError.
+                    const cause = (err as { cause?: unknown }).cause;
+                    if (cause instanceof ProfileExtractionError) throw cause;
+                    throw new ProfileExtractionError('bedrock_error', err instanceof Error ? err.message : String(err));
                 }
-
-                const parsed2 = ExtractedRepoDataSchema.safeParse(toolUse.input);
-                if (!parsed2.success) {
-                    throw new ProfileExtractionError(
-                        'schema_validation_failed',
-                        `ProfileExtractor: schema validation failed: ${parsed2.error.message}`,
-                    );
-                }
-
-                await recordBedrockCost(this.pool, {
-                    userId,
-                    modelId:      this.modelId,
-                    pipeline:     'profile-extraction',
-                    inputTokens:  parsed.usage?.input_tokens  ?? 0,
-                    outputTokens: parsed.usage?.output_tokens ?? 0,
-                    repoName:     bundle.repo_full_name,
-                });
-
-                const extracted = parsed2.data;
 
                 extracted.signals = {
                     has_readme:       bundle.readme !== null,
