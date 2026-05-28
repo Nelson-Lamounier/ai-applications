@@ -162,9 +162,10 @@ export class IngestionPipeline {
             });
 
             // ── Phase: Enrich ────────────────────────────────────────────────────
+            await this.syncState.markPhase(userId, repoFullName, 'enriching', 0, chunksToEmbed.length).catch(() => {});
             const enrichedChunks = await tracer.startActiveSpan('ingestion.enrich', async (span) => {
                 try {
-                    const result = await this.enrichChunks(chunksToEmbed.map(c => c.chunk));
+                    const result = await this.enrichChunks(userId, repoFullName, chunksToEmbed.map(c => c.chunk));
                     span.setAttribute('chunk.enrich_count', result.length);
                     return result;
                 } catch (err) {
@@ -190,6 +191,10 @@ export class IngestionPipeline {
                     let embedNext = 0;
                     let embedDone = 0;
 
+                    // Set the embedding phase up-front so the UI label/total are
+                    // correct before the first checkpoint write.
+                    await this.syncState.markPhase(userId, repoFullName, 'embedding', 0, embedTotal).catch(() => {});
+
                     const embedOne = async (idx: number): Promise<void> => {
                         const { chunk, contentHash } = chunksToEmbed[idx]!;
                         const enriched  = enrichedByKey.get(`${chunk.filePath}::${chunk.chunkIndex}`) ?? chunk;
@@ -202,7 +207,7 @@ export class IngestionPipeline {
                             // Persist intra-repo progress so the UI shows movement.
                             // Best-effort: a progress write must never fail ingestion.
                             await this.syncState
-                                .markEmbedProgress(userId, repoFullName, embedDone, embedTotal)
+                                .markPhase(userId, repoFullName, 'embedding', embedDone, embedTotal)
                                 .catch(() => { /* swallow — progress is advisory */ });
                         }
                     };
@@ -281,6 +286,8 @@ export class IngestionPipeline {
                 });
             }
             const persistRetrieval = retrieval && retrieval.status === 'ok' ? retrieval : undefined;
+
+            await this.syncState.markPhase(userId, repoFullName, 'finalizing').catch(() => {});
 
             await this.syncState.markComplete(
                 userId,
@@ -370,11 +377,12 @@ export class IngestionPipeline {
      * Returns chunks in the same order as input, with `skills` /
      * `technologies` / `metadata.enrichment_status` populated.
      */
-    private async enrichChunks(chunks: RawChunk[]): Promise<RawChunk[]> {
+    private async enrichChunks(userId: string, repoFullName: string, chunks: RawChunk[]): Promise<RawChunk[]> {
         if (!this.enricher || chunks.length === 0) return chunks;
 
         const out: RawChunk[] = new Array(chunks.length);
         const cap = this.maxEnrichmentPerRun;
+        let enrichDone = 0;
 
         const enrichOne = async (idx: number): Promise<void> => {
             const chunk = chunks[idx];
@@ -416,6 +424,12 @@ export class IngestionPipeline {
                         const myIdx = next++;
                         if (myIdx >= total) return;
                         await enrichOne(myIdx);
+                        enrichDone++;
+                        if (enrichDone % EMBED_PROGRESS_LOG_EVERY === 0 || enrichDone === total) {
+                            await this.syncState
+                                .markPhase(userId, repoFullName, 'enriching', enrichDone, total)
+                                .catch(() => { /* advisory progress */ });
+                        }
                     }
                 }),
             ),

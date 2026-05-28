@@ -7,7 +7,7 @@
  * markComplete / markError at the end, regardless of implementation.
  */
 
-import type { RepoSyncState } from '../types.js';
+import type { RepoSyncState, IngestionPhase } from '../types.js';
 
 export interface ISyncStateRepository {
     /** Fetch current sync state. Returns undefined if the repo has never been synced. */
@@ -20,16 +20,19 @@ export interface ISyncStateRepository {
     markStarted(userId: string, repoFullName: string): Promise<void>;
 
     /**
-     * Update intra-repo embedding progress (embedded-so-far / total) while a
-     * repo is mid-sync, so the UI can show real movement instead of 0%→100%.
-     * Best-effort and lightweight (a single UPDATE) — callers invoke it
-     * periodically, not per chunk. Status stays 'syncing'.
+     * Update the current pipeline phase and (optionally) a done/total within
+     * that phase, so the UI can show a labelled, continuously-advancing
+     * indicator across ALL phases — not just embedding. Omit done/total for
+     * indeterminate phases (e.g. 'analyzing'). Best-effort, lightweight (one
+     * UPDATE); callers invoke it at phase boundaries + periodically within a
+     * phase. Status stays 'syncing'.
      */
-    markEmbedProgress(
+    markPhase(
         userId: string,
         repoFullName: string,
-        embeddedCount: number,
-        embedTotal: number,
+        phase: IngestionPhase,
+        done?: number,
+        total?: number,
     ): Promise<void>;
 
     /**

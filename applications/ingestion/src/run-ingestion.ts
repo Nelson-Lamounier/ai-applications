@@ -260,6 +260,12 @@ async function main(): Promise<void> {
     }, obs.parentContext);
 
     try {
+        // Flip pending → syncing and reset stale phase/progress immediately so
+        // the UI leaves 0%/"pending" the moment the pod starts, then mark the
+        // first (indeterminate) phase.
+        await syncState.beginRun(env.userId, env.repoFullName).catch(() => {});
+        await syncState.markPhase(env.userId, env.repoFullName, 'analyzing').catch(() => {});
+
         // ── Phase 0: profile extraction ──────────────────────────────────────────
         log.info({ repoFullName: env.repoFullName }, 'profile_extraction.start');
 
@@ -301,29 +307,6 @@ async function main(): Promise<void> {
             stopEmbed();
             await profileRepo.updateStatus(profileId, env.userId, 'completed');
             profileExtractCallsTotal().inc({ outcome: 'success' });
-            const mirrorSynth = MirrorRevealSynthesizer.fromEnvironment(pgPool, env.userId);
-            const directionSynth = DirectionSynthesizer.fromEnvironment(pgPool, env.userId);
-            const careerRepo = new RdsCareerHistoryReadRepository(pgPool);
-            const reconciliationSynth = ReconciliationSynthesizer.fromEnvironment(pgPool, env.userId);
-            const diagnosticInputsRepo = new RdsDiagnosticInputsReadRepository(pgPool);
-            const diagnosticNarrator   = DiagnosticNarrator.fromEnvironment(pgPool, env.userId);
-            // Loud signal for the silent-skip footgun: a synthesizer is undefined
-            // only when its model id is unset. Without the model env injected by
-            // admin-api, rollup synthesis columns stay NULL with no other trace.
-            const disabledSynths = [
-                !mirrorSynth        && 'mirror',
-                !directionSynth     && 'direction',
-                !reconciliationSynth && 'reconciliation',
-            ].filter(Boolean);
-            if (disabledSynths.length > 0) {
-                log.warn({
-                    event:    'synthesizer_disabled',
-                    stages:   disabledSynths,
-                    reason:   'model id env var unset (PROFILE_EXTRACTOR_MODEL_ID / per-stage *_MODEL_ID)',
-                    userId:   env.userId,
-                }, 'profile synthesizers disabled — rollup synthesis will be skipped');
-            }
-            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo, diagnosticNarrator, diagnosticInputsRepo);
 
             log.info({
                 repoFullName:  env.repoFullName,
@@ -338,11 +321,17 @@ async function main(): Promise<void> {
             throw profileErr;
         }
 
+        // Surface file-fetch progress to the UI (the 'fetching' phase). Fire-
+        // and-forget; a progress write must never affect ingestion.
+        const onFileProgress = (fetched: number, total: number) => {
+            void syncState.markPhase(env.userId, env.repoFullName, 'fetching', fetched, total).catch(() => {});
+        };
+
         const stopChunkIngest = chunkIngestDurationSeconds().startTimer();
         const report = await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
             return env.forceReindex
                 ? await orchestrator.forceReindex(env.userId, env.repoFullName)
-                : await orchestrator.ingestRepo(env.userId, env.repoFullName);
+                : await orchestrator.ingestRepo(env.userId, env.repoFullName, onFileProgress);
         });
         stopChunkIngest({ outcome: 'success' });
 
@@ -359,6 +348,37 @@ async function main(): Promise<void> {
 
         await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
         outcome = 'success';
+
+        // ── Profile rollup + synthesis (runs AFTER completion) ───────────────────
+        // Must run here, not during profile extraction: the diagnostic's ragDepth
+        // reads kb_quality_score + retrieval_score from repo_sync_state, which are
+        // only written by markComplete above. Running it earlier scored ragDepth=0
+        // against pre-ingestion state. Best-effort — never throws, never flips the
+        // already-'complete' repo.
+        {
+            const mirrorSynth          = MirrorRevealSynthesizer.fromEnvironment(pgPool, env.userId);
+            const directionSynth       = DirectionSynthesizer.fromEnvironment(pgPool, env.userId);
+            const careerRepo           = new RdsCareerHistoryReadRepository(pgPool);
+            const reconciliationSynth  = ReconciliationSynthesizer.fromEnvironment(pgPool, env.userId);
+            const diagnosticInputsRepo = new RdsDiagnosticInputsReadRepository(pgPool);
+            const diagnosticNarrator   = DiagnosticNarrator.fromEnvironment(pgPool, env.userId);
+            // Loud signal for the silent-skip footgun: a synthesizer is undefined
+            // only when its model id is unset (admin-api didn't inject it).
+            const disabledSynths = [
+                !mirrorSynth         && 'mirror',
+                !directionSynth      && 'direction',
+                !reconciliationSynth && 'reconciliation',
+            ].filter(Boolean);
+            if (disabledSynths.length > 0) {
+                log.warn({
+                    event:  'synthesizer_disabled',
+                    stages: disabledSynths,
+                    reason: 'model id env var unset (PROFILE_EXTRACTOR_MODEL_ID / per-stage *_MODEL_ID)',
+                    userId: env.userId,
+                }, 'profile synthesizers disabled — rollup synthesis will be skipped');
+            }
+            await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo, diagnosticNarrator, diagnosticInputsRepo);
+        }
 
         const { traceId } = rootSpan.spanContext();
         log.info({

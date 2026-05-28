@@ -14,13 +14,43 @@ import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedroc
 
 const tracer = trace.getTracer('ingestion-worker');
 
+// Field length limits, shared by (a) the Bedrock tool schema's maxLength so
+// the model self-limits at generation, (b) the Zod max() below, and (c) the
+// clampSynth() safety net. Loosened from the original tight bounds (evidence
+// was 160, which real content-rich repos overshot → silent NULL synthesis).
+export const MIRROR_LIMITS = { paragraph: 1000, insight: 320, evidence: 320 } as const;
+
 export const SynthSchema = z.object({
-  mirror:  z.object({ paragraph: z.string().min(120).max(900) }).strict(),
+  mirror:  z.object({ paragraph: z.string().min(120).max(MIRROR_LIMITS.paragraph) }).strict(),
   reveals: z.array(z.object({
-    insight:  z.string().min(20).max(280),
-    evidence: z.string().min(8).max(160),
+    insight:  z.string().min(20).max(MIRROR_LIMITS.insight),
+    evidence: z.string().min(8).max(MIRROR_LIMITS.evidence),
   }).strict()).min(1).max(5),
 }).strict();
+
+/**
+ * Truncate over-long strings to their schema max so a verbose model response
+ * passes validation instead of being silently discarded. Mutates + returns the
+ * raw tool input. Fail-soft: clamping a few chars beats dropping a whole
+ * synthesis (the original silent-NULL bug).
+ */
+function clampMirror(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const r = raw as { mirror?: { paragraph?: unknown }; reveals?: unknown };
+  if (r.mirror && typeof r.mirror.paragraph === 'string') {
+    r.mirror.paragraph = r.mirror.paragraph.slice(0, MIRROR_LIMITS.paragraph);
+  }
+  if (Array.isArray(r.reveals)) {
+    for (const item of r.reveals) {
+      if (item && typeof item === 'object') {
+        const it = item as { insight?: unknown; evidence?: unknown };
+        if (typeof it.insight === 'string')  it.insight  = it.insight.slice(0, MIRROR_LIMITS.insight);
+        if (typeof it.evidence === 'string') it.evidence = it.evidence.slice(0, MIRROR_LIMITS.evidence);
+      }
+    }
+  }
+  return r;
+}
 export interface MirrorRevealOutput {
   readonly mirror: { readonly paragraph: string };
   readonly reveal: { readonly reveals: ReadonlyArray<{ insight: string; evidence: string }> };
@@ -39,10 +69,10 @@ const TOOL = {
   input_schema: {
     type: 'object',
     properties: {
-      mirror: { type: 'object', properties: { paragraph: { type: 'string' } },
+      mirror: { type: 'object', properties: { paragraph: { type: 'string', maxLength: MIRROR_LIMITS.paragraph } },
         required: ['paragraph'], additionalProperties: false },
       reveals: { type: 'array', items: { type: 'object',
-        properties: { insight: { type: 'string' }, evidence: { type: 'string' } },
+        properties: { insight: { type: 'string', maxLength: MIRROR_LIMITS.insight }, evidence: { type: 'string', maxLength: MIRROR_LIMITS.evidence } },
         required: ['insight','evidence'], additionalProperties: false } },
     },
     required: ['mirror','reveals'], additionalProperties: false,
@@ -122,9 +152,12 @@ export class MirrorRevealSynthesizer {
   async synthesize(rollup: UserProfileRollup): Promise<MirrorRevealOutput | undefined> {
     return tracer.startActiveSpan('ingestion.profile_synthesis', async (span) => {
       try {
-        const raw = await this.invoker.invoke(rollup);
+        const raw = clampMirror(await this.invoker.invoke(rollup));
         const parsed = SynthSchema.safeParse(raw);
         if (!parsed.success) {
+          // Surface the reason to stdout (not just the span) — silent schema
+          // failures previously left synthesis NULL with no visible trace.
+          console.warn('[MirrorRevealSynthesizer] schema invalid:', JSON.stringify(parsed.error.issues).slice(0, 400));
           span.setAttribute('synthesis.status', 'schema_invalid');
           span.setStatus({ code: SpanStatusCode.ERROR, message: 'synthesis schema validation failed' });
           return undefined;

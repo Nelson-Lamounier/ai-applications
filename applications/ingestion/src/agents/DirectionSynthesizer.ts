@@ -18,19 +18,52 @@ const tracer = trace.getTracer('ingestion-worker');
 
 const ARCHETYPES = ['platform','devops','sre','infrastructure','cloud','backend','fullstack','data','ml'] as const;
 
+// Shared length limits (tool maxLength + Zod max + clamp). Loosened from the
+// original tight bounds (rationale 200 / evidence 160) which real repos
+// overshot, silently failing the whole synthesis.
+export const DIRECTION_LIMITS = { rationale: 320, area: 60, evidence: 320, whatToDeepen: 320 } as const;
+
 export const DirectionSchema = z.object({
   archetypes: z.array(z.object({
     archetype: z.enum(ARCHETYPES),
     fit:       z.enum(['strong','moderate','weak']),
-    rationale: z.string().min(8).max(200),
+    rationale: z.string().min(8).max(DIRECTION_LIMITS.rationale),
   }).strict()).min(3).max(9),
   seniority: z.array(z.object({
-    area:     z.string().min(2).max(40),
+    area:     z.string().min(2).max(DIRECTION_LIMITS.area),
     level:    z.enum(['junior','mid','mid-senior','senior','staff+']),
-    evidence: z.string().min(8).max(160),
+    evidence: z.string().min(8).max(DIRECTION_LIMITS.evidence),
   }).strict()).min(1).max(4),
-  whatToDeepen: z.array(z.string().min(12).max(200)).max(5),
+  whatToDeepen: z.array(z.string().min(12).max(DIRECTION_LIMITS.whatToDeepen)).max(5),
 }).strict();
+
+/** Truncate over-long strings to schema max so a verbose response passes
+ *  instead of being discarded (fail-soft). Mutates + returns raw. */
+function clampDirection(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const r = raw as { archetypes?: unknown; seniority?: unknown; whatToDeepen?: unknown };
+  if (Array.isArray(r.archetypes)) {
+    for (const a of r.archetypes) {
+      if (a && typeof a === 'object') {
+        const it = a as { rationale?: unknown };
+        if (typeof it.rationale === 'string') it.rationale = it.rationale.slice(0, DIRECTION_LIMITS.rationale);
+      }
+    }
+  }
+  if (Array.isArray(r.seniority)) {
+    for (const s of r.seniority) {
+      if (s && typeof s === 'object') {
+        const it = s as { area?: unknown; evidence?: unknown };
+        if (typeof it.area === 'string')     it.area     = it.area.slice(0, DIRECTION_LIMITS.area);
+        if (typeof it.evidence === 'string') it.evidence = it.evidence.slice(0, DIRECTION_LIMITS.evidence);
+      }
+    }
+  }
+  if (Array.isArray(r.whatToDeepen)) {
+    r.whatToDeepen = r.whatToDeepen.map((w) => typeof w === 'string' ? w.slice(0, DIRECTION_LIMITS.whatToDeepen) : w);
+  }
+  return r;
+}
 export interface DirectionOutput {
   readonly direction: {
     readonly archetypes: ReadonlyArray<{ archetype: string; fit: string; rationale: string }>;
@@ -55,14 +88,14 @@ const TOOL = {
       archetypes: { type: 'array', items: { type: 'object', properties: {
         archetype: { type: 'string', enum: [...ARCHETYPES] },
         fit: { type: 'string', enum: ['strong','moderate','weak'] },
-        rationale: { type: 'string' } },
+        rationale: { type: 'string', maxLength: DIRECTION_LIMITS.rationale } },
         required: ['archetype','fit','rationale'], additionalProperties: false } },
       seniority: { type: 'array', items: { type: 'object', properties: {
-        area: { type: 'string' },
+        area: { type: 'string', maxLength: DIRECTION_LIMITS.area },
         level: { type: 'string', enum: ['junior','mid','mid-senior','senior','staff+'] },
-        evidence: { type: 'string' } },
+        evidence: { type: 'string', maxLength: DIRECTION_LIMITS.evidence } },
         required: ['area','level','evidence'], additionalProperties: false } },
-      whatToDeepen: { type: 'array', items: { type: 'string' } },
+      whatToDeepen: { type: 'array', items: { type: 'string', maxLength: DIRECTION_LIMITS.whatToDeepen } },
     },
     required: ['archetypes','seniority','whatToDeepen'], additionalProperties: false,
   },
@@ -141,9 +174,10 @@ export class DirectionSynthesizer {
   async synthesize(rollup: UserProfileRollup): Promise<DirectionOutput | undefined> {
     return tracer.startActiveSpan('ingestion.profile_direction', async (span) => {
       try {
-        const raw = await this.invoker.invoke(rollup);
+        const raw = clampDirection(await this.invoker.invoke(rollup));
         const parsed = DirectionSchema.safeParse(raw);
         if (!parsed.success) {
+          console.warn('[DirectionSynthesizer] schema invalid:', JSON.stringify(parsed.error.issues).slice(0, 400));
           span.setAttribute('direction.status', 'schema_invalid');
           span.setStatus({ code: SpanStatusCode.ERROR, message: 'direction schema validation failed' });
           return undefined;
