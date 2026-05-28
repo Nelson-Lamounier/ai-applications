@@ -8,13 +8,10 @@
  * store. evaluate() is best-effort and MUST NOT throw.
  */
 
-import {
-    BedrockRuntimeClient,
-    InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import {
+    runAgent,
     recordBedrockCost,
     sampleChunks,
     matchRank,
@@ -27,6 +24,8 @@ import type {
     RetrievalBreakdown,
     RetrievalQuestionResult,
     RankCandidate,
+    AgentConfig,
+    BasePipelineContext,
 } from '@bedrock/shared';
 import type { Pool } from 'pg';
 
@@ -88,60 +87,54 @@ export interface RetrievalProbeOptions {
 }
 
 export class BedrockQuestionGenerator implements IProbeQuestionGenerator {
-    private readonly client: BedrockRuntimeClient;
     constructor(
         private readonly modelId: string,
         private readonly pool: Pool,
         private readonly userId: string,
         private readonly repoFullName: string,
-    ) {
-        this.client = new BedrockRuntimeClient({
-            region: process.env['AWS_REGION'] ?? 'eu-west-1',
-        });
-    }
+    ) {}
 
     async generate(chunkTexts: string[]): Promise<{ sourceIndex: number; question: string }[]> {
         const userMessage = chunkTexts
             .map((t, i) => `<chunk index="${i}">\n${t.slice(0, MAX_CHUNK_CHARS)}\n</chunk>`)
             .join('\n\n') + `\n\nCall generate_probe_questions with one question per chunk.`;
 
-        const body = JSON.stringify({
-            anthropic_version: 'bedrock-2023-05-31',
-            max_tokens:        1024,
-            temperature:       0.2,
-            system:            SYSTEM_PROMPT,
-            tools:             [GEN_TOOL],
-            tool_choice:       { type: 'tool', name: 'generate_probe_questions' },
-            messages:          [{ role: 'user', content: userMessage }],
-        });
-
-        const { body: responseBody } = await this.client.send(new InvokeModelCommand({
-            modelId:     this.modelId,
-            contentType: 'application/json',
-            accept:      'application/json',
-            body:        Buffer.from(body),
-        }));
-        if (!responseBody) throw new Error('RetrievalProbe: empty Bedrock response');
-
-        const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as {
-            usage?: { input_tokens?: number; output_tokens?: number };
-            content: Array<{ type: string; input?: unknown }>;
+        // Consolidated onto runAgent() (Converse + forced tool_use). Custom
+        // onInvocationComplete preserves per-repo attribution (repoName).
+        const config: AgentConfig = {
+            agentName:      'retrieval-probe',
+            modelId:        this.modelId,
+            maxTokens:      1024,
+            thinkingBudget: 0,
+            systemPrompt:   [{ text: SYSTEM_PROMPT }],
+            pipeline:       'retrieval-probe',
+            tool: { name: GEN_TOOL.name, description: GEN_TOOL.description, inputSchema: GEN_TOOL.input_schema as Record<string, unknown> },
         };
-        const toolUse = parsed.content.find(b => b.type === 'tool_use');
-        if (!toolUse?.input) throw new Error('RetrievalProbe: no tool_use block');
-
-        const validated = QuestionsSchema.parse(toolUse.input);
-
-        await recordBedrockCost(this.pool, {
-            userId:       this.userId,
-            modelId:      this.modelId,
-            pipeline:     'retrieval-probe',
-            inputTokens:  parsed.usage?.input_tokens  ?? 0,
-            outputTokens: parsed.usage?.output_tokens ?? 0,
-            repoName:     this.repoFullName,
+        const ctx: BasePipelineContext = {
+            pipelineId:        `retrieval-probe:${this.repoFullName}`,
+            environment:       process.env['DEPLOY_ENV'] ?? 'dev',
+            cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+            cumulativeCostUsd: 0,
+            userId:            this.userId,
+            onInvocationComplete: async (log) => {
+                if (!log.userId) return;
+                await recordBedrockCost(this.pool, {
+                    userId:       log.userId,
+                    modelId:      log.modelId,
+                    pipeline:     'retrieval-probe',
+                    inputTokens:  log.systemPromptTokens + log.userMessageTokens,
+                    outputTokens: log.outputTokens,
+                    repoName:     this.repoFullName,
+                });
+            },
+        };
+        const result = await runAgent<z.infer<typeof QuestionsSchema>>({
+            config,
+            userMessage,
+            parseResponse:   (s) => QuestionsSchema.parse(JSON.parse(s)),
+            pipelineContext: ctx,
         });
-
-        return validated.questions;
+        return result.data.questions;
     }
 }
 

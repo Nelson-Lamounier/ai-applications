@@ -12,13 +12,9 @@
  * batched calls and the perRole arrays merged (skillsGap / narrative /
  * overallScore taken from the first batch, which sees the most-recent roles).
  */
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
 import { z } from 'zod';
-import { BedrockGroundingVerifier, jobLogger } from '@bedrock/shared';
-import type { GroundingResult } from '@bedrock/shared';
+import { BedrockGroundingVerifier, jobLogger, runAgent } from '@bedrock/shared';
+import type { GroundingResult, AgentConfig, BasePipelineContext } from '@bedrock/shared';
 import type { ResumeExperience } from './extract-career.js';
 import type { SearchResult } from '../tools/tavily.js';
 
@@ -236,49 +232,58 @@ function buildUserMessage(roles: GapAnalysisRole[], rolesSkipped: number): strin
 }
 
 async function invokeOnce(
-  client: BedrockRuntimeClient,
   roles: GapAnalysisRole[],
   rolesSkipped: number,
 ): Promise<GapAnalysisResult> {
-  const requestBody = {
-    anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    tools: [GAP_TOOL_SCHEMA],
-    tool_choice: { type: 'tool', name: 'emit_gap_analysis' },
-    messages: [{ role: 'user', content: buildUserMessage(roles, rolesSkipped) }],
+  // Consolidated onto runAgent() (Converse + forced tool_use). Cost stays
+  // caller-tracked (run-import.ts) via the returned token counts.
+  const config: AgentConfig = {
+    agentName:      'resume-gap',
+    modelId:        MODEL_ID,
+    maxTokens:      4096,
+    thinkingBudget: 0,
+    systemPrompt:   [{ text: SYSTEM_PROMPT }],
+    pipeline:       'resume-import',
+    tool: { name: GAP_TOOL_SCHEMA.name, description: GAP_TOOL_SCHEMA.description, inputSchema: GAP_TOOL_SCHEMA.input_schema as Record<string, unknown> },
+  };
+  const ctx: BasePipelineContext = {
+    pipelineId:        'resume-gap',
+    environment:       process.env['DEPLOY_ENV'] ?? 'dev',
+    cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+    cumulativeCostUsd: 0,
   };
 
   const { bedrockDurationSeconds } = await import('../metrics.js');
   const stop = bedrockDurationSeconds().startTimer({ purpose: 'gap_analysis' });
-  const response = await client.send(new InvokeModelCommand({
-    modelId:     MODEL_ID,
-    contentType: 'application/json',
-    accept:      'application/json',
-    body:        Buffer.from(JSON.stringify(requestBody)),
-  }));
-  stop();
-
-  const parsed = JSON.parse(Buffer.from(response.body).toString('utf-8'));
-  const toolUse = parsed.content?.find((b: { type: string }) => b.type === 'tool_use');
-  if (!toolUse?.input) {
-    throw new GapAnalysisError(
-      'no_tool_use_block',
-      'generateGapAnalysis: Bedrock returned no tool_use block',
-    );
+  try {
+    const result = await runAgent<GapAnalysisReport>({
+      config,
+      userMessage:     buildUserMessage(roles, rolesSkipped),
+      pipelineContext: ctx,
+      parseResponse: (s) => {
+        const v = GapAnalysisReportSchema.safeParse(JSON.parse(s));
+        if (!v.success) {
+          throw new GapAnalysisError(
+            'schema_validation_failed',
+            `generateGapAnalysis: schema validation failed: ${v.error.message}`,
+          );
+        }
+        return v.data as GapAnalysisReport;
+      },
+    });
+    return {
+      data:         result.data,
+      inputTokens:  result.tokenUsage.inputTokens,
+      outputTokens: result.tokenUsage.outputTokens,
+    };
+  } catch (err) {
+    if (err instanceof GapAnalysisError) throw err;
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause instanceof GapAnalysisError) throw cause;
+    throw new GapAnalysisError('no_tool_use_block', err instanceof Error ? err.message : String(err));
+  } finally {
+    stop();
   }
-  const validated = GapAnalysisReportSchema.safeParse(toolUse.input);
-  if (!validated.success) {
-    throw new GapAnalysisError(
-      'schema_validation_failed',
-      `generateGapAnalysis: schema validation failed: ${validated.error.message}`,
-    );
-  }
-  return {
-    data:         validated.data as GapAnalysisReport,
-    inputTokens:  parsed.usage?.input_tokens  ?? 0,
-    outputTokens: parsed.usage?.output_tokens ?? 0,
-  };
 }
 
 /**
@@ -290,15 +295,13 @@ async function invokeOnce(
 export async function generateGapAnalysis(
   roles: GapAnalysisRole[],
   rolesSkipped: number,
-  region: string,
+  _region: string,
 ): Promise<GapAnalysisResult> {
-  const client = new BedrockRuntimeClient({ region });
-
   // ── Produce base result (single-call or batched-merged) ──────────────────
   let base: GapAnalysisResult;
 
   if (roles.length <= MAX_ROLES_PER_CALL) {
-    base = await invokeOnce(client, roles, rolesSkipped);
+    base = await invokeOnce(roles, rolesSkipped);
   } else {
     const batches: GapAnalysisRole[][] = [];
     for (let i = 0; i < roles.length; i += MAX_ROLES_PER_CALL) {
@@ -306,7 +309,7 @@ export async function generateGapAnalysis(
     }
 
     const results = await Promise.all(
-      batches.map((b, idx) => invokeOnce(client, b, idx === 0 ? rolesSkipped : 0)),
+      batches.map((b, idx) => invokeOnce(b, idx === 0 ? rolesSkipped : 0)),
     );
 
     const head = results[0];
