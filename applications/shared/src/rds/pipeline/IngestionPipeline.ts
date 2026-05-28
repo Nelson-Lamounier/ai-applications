@@ -10,16 +10,17 @@
  *   1. markStarted — record that ingestion is in progress
  *   2. Compute SHA-256 contentHash for every raw chunk
  *   3. checkContentHashes — one DB round-trip to classify missing/stale/unchanged
- *   4. Embed only missing and stale chunks (sequential — see note below)
+ *   4. Embed missing and stale chunks via a bounded worker pool
  *   5. upsertBatch — persist embedded chunks
  *   6. markComplete / markError — record outcome
  *   7. Return IngestionReport
  *
- * Sequential embedding:
- *   Chunks are embedded one at a time. Bedrock InvokeModel has a per-model
- *   TPS limit — sequential calls are safe for portfolio workloads (< 10K chunks
- *   per repo). Introduce parallelism (p-limit 3–5) only after measuring that
- *   both RDS pg Pool and Bedrock stay stable under concurrent load.
+ * Concurrent embedding:
+ *   Chunks are embedded through a bounded-concurrency worker pool
+ *   (EMBED_CONCURRENCY, default 8) that writes results into a pre-sized array
+ *   by index, preserving order. This replaced the previous one-at-a-time loop,
+ *   which made large repos (~2800 chunks) spend ~10 min embedding and risk the
+ *   Job deadline. Keep the concurrency within the per-model Bedrock Titan quota.
  */
 
 import { createHash } from 'crypto';
@@ -48,7 +49,23 @@ const tracer = trace.getTracer('ingestion-pipeline');
 const DEFAULT_MAX_ENRICHMENT_PER_INGESTION = 2000;
 
 /** Bounded concurrency for enrichment calls. Bedrock TPS is generous for Haiku. */
-const ENRICHMENT_CONCURRENCY = 5;
+const ENRICHMENT_CONCURRENCY = 10;
+
+/**
+ * Bounded concurrency for embedding calls. Embedding was previously sequential
+ * (one awaited Bedrock Titan call per chunk), making a ~2800-chunk repo spend
+ * ~10 min in this phase alone and risk the Job's activeDeadlineSeconds. A small
+ * worker pool cuts that to ~1-2 min. Override via EMBED_CONCURRENCY. Titan TPS
+ * is high; keep within the per-model quota.
+ */
+const EMBED_CONCURRENCY = (() => {
+    const raw = process.env.EMBED_CONCURRENCY;
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) && n >= 1 ? n : 8;
+})();
+
+/** Log embedding progress every N chunks so the pod is not silent for minutes. */
+const EMBED_PROGRESS_LOG_EVERY = 250;
 
 export interface IngestionPipelineOptions {
     /**
@@ -165,13 +182,43 @@ export class IngestionPipeline {
                     const enrichedByKey = new Map(
                         enrichedChunks.map(c => [`${c.filePath}::${c.chunkIndex}`, c] as const),
                     );
-                    const embeddedChunks: DocumentChunk[] = [];
-                    for (const { chunk, contentHash } of chunksToEmbed) {
+                    // Embed via a bounded-concurrency worker pool (same shape as
+                    // enrichChunks). Results are written into a pre-sized array by
+                    // index so chunk ordering is preserved despite concurrency.
+                    const embeddedChunks: DocumentChunk[] = new Array(chunksToEmbed.length);
+                    const embedTotal = chunksToEmbed.length;
+                    let embedNext = 0;
+                    let embedDone = 0;
+
+                    const embedOne = async (idx: number): Promise<void> => {
+                        const { chunk, contentHash } = chunksToEmbed[idx]!;
                         const enriched  = enrichedByKey.get(`${chunk.filePath}::${chunk.chunkIndex}`) ?? chunk;
                         const embedText = this.buildEmbedText(enriched.content, repoFullName, enriched.filePath, enriched.heading);
                         const embedding = await this.embedder.embed(embedText);
-                        embeddedChunks.push({ ...enriched, userId, repoFullName, contentHash, embedding });
-                    }
+                        embeddedChunks[idx] = { ...enriched, userId, repoFullName, contentHash, embedding };
+                        embedDone++;
+                        if (embedDone % EMBED_PROGRESS_LOG_EVERY === 0 || embedDone === embedTotal) {
+                            console.log(`[IngestionPipeline] ${repoFullName}: embedded ${embedDone}/${embedTotal} chunks`);
+                            // Persist intra-repo progress so the UI shows movement.
+                            // Best-effort: a progress write must never fail ingestion.
+                            await this.syncState
+                                .markEmbedProgress(userId, repoFullName, embedDone, embedTotal)
+                                .catch(() => { /* swallow — progress is advisory */ });
+                        }
+                    };
+
+                    const embedCtx = context.active();
+                    await Promise.all(
+                        Array.from({ length: Math.min(EMBED_CONCURRENCY, embedTotal) }, () =>
+                            context.with(embedCtx, async () => {
+                                while (true) {
+                                    const myIdx = embedNext++;
+                                    if (myIdx >= embedTotal) return;
+                                    await embedOne(myIdx);
+                                }
+                            }),
+                        ),
+                    );
                     const result = embeddedChunks.length > 0
                         ? await this.vectorStore.upsertBatch(embeddedChunks)
                         : { inserted: 0, updated: 0, skipped: 0, errors: 0 };

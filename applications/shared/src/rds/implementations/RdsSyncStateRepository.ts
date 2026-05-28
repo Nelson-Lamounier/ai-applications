@@ -25,6 +25,8 @@ interface SyncStateRow {
     kb_quality_breakdown:  Record<string, unknown> | null;
     retrieval_score:       string | number | null;        // pg returns NUMERIC as string
     retrieval_breakdown:   Record<string, unknown> | null;
+    embedded_count:        number | null;
+    embed_total:           number | null;
 }
 
 // =============================================================================
@@ -79,7 +81,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         const result = await this.pool.query<SyncStateRow>(
             `SELECT sync_status, last_synced_at, file_count, chunk_count, error_message,
                     kb_quality_score, kb_quality_breakdown,
-                    retrieval_score, retrieval_breakdown
+                    retrieval_score, retrieval_breakdown,
+                    embedded_count, embed_total
              FROM repo_sync_state
              WHERE user_id = $1 AND repo_full_name = $2`,
             [userId, repoFullName],
@@ -112,6 +115,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             kbQualityBreakdown:  row.kb_quality_breakdown ?? undefined,
             retrievalScore,
             retrievalBreakdown:  row.retrieval_breakdown ?? undefined,
+            embeddedCount:       row.embedded_count ?? undefined,
+            embedTotal:          row.embed_total ?? undefined,
         };
     }
 
@@ -163,13 +168,38 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
     // =========================================================================
 
     async markStarted(userId: string, repoFullName: string): Promise<void> {
-        return this.upsert({
+        await this.upsert({
             userId,
             repoFullName,
             syncStatus: 'syncing',
             fileCount:  0,
             chunkCount: 0,
         });
+        // Clear any progress left over from a previous run so the UI doesn't
+        // briefly show stale "embedded N/N" before the embed phase starts.
+        await this.pool.query(
+            `UPDATE repo_sync_state
+                SET embedded_count = NULL, embed_total = NULL
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName],
+        );
+    }
+
+    async markEmbedProgress(
+        userId: string,
+        repoFullName: string,
+        embeddedCount: number,
+        embedTotal: number,
+    ): Promise<void> {
+        // Targeted UPDATE — touches only the progress columns so it can't race
+        // with the quality/retrieval fields written by markComplete. No-op if
+        // the row doesn't exist yet (markStarted always runs first).
+        await this.pool.query(
+            `UPDATE repo_sync_state
+                SET embedded_count = $3, embed_total = $4
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName, embeddedCount, embedTotal],
+        );
     }
 
     async markComplete(

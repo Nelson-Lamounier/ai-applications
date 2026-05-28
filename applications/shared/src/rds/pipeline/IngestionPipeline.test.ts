@@ -55,6 +55,7 @@ class FakeVectorStore implements IVectorStore {
 class FakeSyncState implements ISyncStateRepository {
     public markCompleteCalls: unknown[][] = [];
     async markStarted(): Promise<void> {}
+    async markEmbedProgress(): Promise<void> {}
     async markComplete(...args: unknown[]): Promise<void> { this.markCompleteCalls.push(args); }
     async markError(): Promise<void> {}
     async get(): Promise<undefined> { return undefined; }

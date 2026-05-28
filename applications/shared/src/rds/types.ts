@@ -156,6 +156,10 @@ export interface RepoSyncState {
     readonly retrievalScore?: number;
     /** Per-question breakdown matching `RetrievalBreakdown`. */
     readonly retrievalBreakdown?: Record<string, unknown>;
+    /** Chunks embedded so far in the current run (intra-repo progress). */
+    readonly embeddedCount?: number;
+    /** Total chunks to embed in the current run. */
+    readonly embedTotal?: number;
 }
 
 // =============================================================================

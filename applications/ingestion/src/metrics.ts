@@ -40,6 +40,7 @@ let _chunkIngestDuration:    Histogram<'outcome'> | undefined;
 let _kbQualityScore:         Histogram<never> | undefined;
 let _retrievalScore:         Histogram<never> | undefined;
 let _profileExtractCalls:    Counter<'outcome'> | undefined;
+let _synthesisOutcome:       Counter<'stage' | 'outcome'> | undefined;
 
 export const profileCollectDurationSeconds = (): Histogram<never> =>
     _profileCollectDuration ??= makeHistogram({
@@ -91,6 +92,20 @@ export const profileExtractCallsTotal = (): Counter<'outcome'> =>
         labelNames: ['outcome'] as const,
     });
 
+/**
+ * Profile-synthesis outcomes per stage. `skipped` means the synthesizer was
+ * disabled (model id missing) or its precondition was absent (e.g. no résumé
+ * for reconciliation); `failed` means the LLM call threw. Lets Grafana alert
+ * on synthesis being silently off in prod — the failure mode that left
+ * user_profile_rollup columns NULL.
+ */
+export const synthesisOutcomeTotal = (): Counter<'stage' | 'outcome'> =>
+    _synthesisOutcome ??= makeCounter({
+        name:       'ingestion_synthesis_outcome_total',
+        help:       'Profile-synthesis outcomes by stage (mirror/direction/reconciliation/diagnostic) and outcome (ok/skipped/failed).',
+        labelNames: ['stage', 'outcome'] as const,
+    });
+
 export function seedZeroSeries(): void {
     profileCollectDurationSeconds().observe(0);
     profileExtractDurationSeconds().observe(0);
@@ -101,4 +116,9 @@ export function seedZeroSeries(): void {
     }
     kbQualityScoreHist().observe(0);
     retrievalScoreHist().observe(0);
+    for (const stage of ['mirror', 'direction', 'reconciliation', 'diagnostic'] as const) {
+        for (const outcome of ['ok', 'skipped', 'failed'] as const) {
+            synthesisOutcomeTotal().inc({ stage, outcome }, 0);
+        }
+    }
 }
