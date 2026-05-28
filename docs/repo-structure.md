@@ -700,17 +700,38 @@
 │   ├── checklists
 │   │   ├── rag-deployment-checklist.md
 │   │   └── structure-output-checklist.md
+│   ├── concepts
+│   │   ├── bedrock-cost-tracking.md
+│   │   ├── bedrock-rag-surface.md
+│   │   ├── caching-tiers.md
+│   │   ├── input-output-sanitiser.md
+│   │   ├── mcp-gateway-integration.md
+│   │   ├── multi-query-retrieval.md
+│   │   ├── ontology-resolver.md
+│   │   ├── pii-scrubber.md
+│   │   ├── profile-synthesis-chain.md
+│   │   ├── prose-safe-alias-gating.md
+│   │   ├── self-healing-agent.md
+│   │   ├── tech-extractor-architecture.md
+│   │   └── titan-embedding-provider.md
+│   ├── decisions
+│   │   ├── 0001-deterministic-over-llm-extraction.md
+│   │   └── 0002-pgvector-over-pinecone-for-cache.md
 │   ├── guides
 │   │   └── knowledge-base-source-repository-guide.md
 │   ├── incoming
 │   │   ├── bedrock-article-generation-pipeline.md
 │   │   ├── observability-plan.md
 │   │   └── strategist-pipeline-workflow-review.md
+│   ├── patterns
 │   ├── plans
 │   │   ├── rag-shared-safety-implementation-plan.md
 │   │   ├── rag-subproject2-app-wiring-implementation-plan.md
 │   │   ├── rag-subproject3-semantic-cache-implementation-plan.md
 │   │   └── tier2-ontology-auto-import.md
+│   ├── projects
+│   │   ├── self-healing.md
+│   │   └── tech-extractor.md
 │   ├── projects-migration
 │   │   └── 00-current-state.md
 │   ├── reviews
@@ -720,6 +741,11 @@
 │   │   ├── rag-shared-safety-design-review.md
 │   │   ├── rag-subproject2-app-wiring-design-review.md
 │   │   └── rag-subproject3-semantic-cache-design-review.md
+│   ├── runbooks
+│   │   ├── bedrock-kb-reindex.md
+│   │   ├── redis-cache-eviction.md
+│   │   ├── self-healing-token-budget.md
+│   │   └── tech-extractor-rerun.md
 │   ├── skills
 │   │   ├── self-healing-updater
 │   │   │   └── SKILL.md
@@ -769,6 +795,12 @@
 │   │       ├── 2026-05-22-redis-ai-generation-cache-design.md
 │   │       ├── 2026-05-25-ontology-importer-bedrock-batch-design.md
 │   │       └── 2026-05-25-tech-extractor-layer1-design.md
+│   ├── tools
+│   ├── troubleshooting
+│   │   ├── grounding-verifier-blocks-good-answer.md
+│   │   ├── self-healing-stuck-remediation.md
+│   │   ├── semantic-cache-stale-responses.md
+│   │   └── tech-extractor-stuck-extraction.md
 │   ├── README.md
 │   └── repo-structure.md
 ├── infra
@@ -927,6 +959,7 @@
 │   ├── test-projects-clustering.ts
 │   ├── test-projects-migration.ts
 │   └── test-strategist-integration.ts
+├── AI_USAGE.md
 ├── CONTEXT.md
 ├── eslint.config.mjs
 ├── jest.config.base.cjs
@@ -937,5 +970,5 @@
 ├── tsconfig.base.json
 └── yarn.lock
 
-184 directories, 747 files
+191 directories, 773 files
 ```

@@ -331,3 +331,9 @@ design, ADRs, and the prose decisions captured in
 under human review. The `kb-doc` skill that produced the
 documentation tree is itself documented at
 [docs/skills/](docs/skills/).
+
+See [AI_USAGE.md](AI_USAGE.md) for the long-form breakdown — which
+surfaces are AI-drafted, where AI suggestions were deliberately
+overridden, and the verification discipline applied to keep the
+documentation grounded in real code (every claim cited to a
+`file.ts#Lstart-Lend` range).

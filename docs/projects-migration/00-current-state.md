@@ -1,5 +1,14 @@
 # Phase 0 — Current State Discovery
 
+> **Snapshot from 2026-04-22.** This document is a point-in-time
+> Phase 0 audit, not a living inventory. Numbers below (migration
+> counts, file paths, latest-migration references) reflect the state
+> on the audit date. As of 2026-05-27 the migration count is **39**
+> (latest `041_users_soft_delete.sql`) — derive current state from
+> [applications/platform-rds-bootstrap/migrations/](../../applications/platform-rds-bootstrap/migrations/)
+> directly rather than treating this doc as authoritative for
+> headcounts.
+
 **Status:** Read-only inventory. Do not begin Phase 1 until the user has reviewed this document.
 
 **Repo scope:** This audit covers the `ai-applications` monorepo (backend, infra, RDS bootstrap, ingestion). The frontend lives in a **separate repository** `tucaken-app`, sampled here read-only for design-token references.
