@@ -132,7 +132,7 @@ export class BedrockSynthInvoker implements ISynthInvoker {
     const config: AgentConfig = {
       agentName:      'profile-direction',
       modelId:        this.modelId,
-      maxTokens:      1500,
+      maxTokens:      2048,
       thinkingBudget: 0,
       systemPrompt:   [{ text: SYSTEM_PROMPT }],
       pipeline:       'profile-synthesis',
