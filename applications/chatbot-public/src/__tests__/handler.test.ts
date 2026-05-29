@@ -7,6 +7,7 @@ jest.mock('@bedrock/shared', () => ({
     log:             jest.fn(),
     emitEmfMetric:   jest.fn(),
     withSpan:        jest.fn((_name: string, fn: (...args: unknown[]) => unknown) => fn),
+    captureAwsClient: jest.fn((c: unknown) => c),
     InputSanitiser:  jest.fn(() => ({
         sanitise: jest.fn((t: string) => ({ blocked: false, sanitised: t, matchedPattern: null })),
     })),
