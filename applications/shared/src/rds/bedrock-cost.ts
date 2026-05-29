@@ -46,6 +46,13 @@ export interface CostRecord {
   outputTokens: number;
   importId?:    string;
   repoName?:    string;
+  // Converse agents (via recordInvocationToRds) supply their real agent name,
+  // system-prompt hash, and measured latency. Raw InvokeModel callers
+  // (embeddings, chunk enrichment) omit them and fall back to the
+  // __direct_invoke__ sentinel / 0 below.
+  agent?:            string;
+  systemPromptHash?: string;
+  latencyMs?:        number;
 }
 
 export function computeCostCents(
@@ -103,26 +110,29 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
     record.modelId, record.inputTokens, record.outputTokens,
   );
 
-  // agent column is required NOT NULL — use pipeline name for InvokeModel calls
-  // (they have no agentName concept unlike the Converse API pipeline)
+  // agent / system_prompt_hash are NOT NULL. Converse agents pass their real
+  // values; raw InvokeModel callers (embeddings, enrichment) fall back to the
+  // __direct_invoke__ sentinel.
   await pool.query(
     `INSERT INTO prompt_invocations
        (pipeline, agent, model_id, system_prompt_hash, input_cost_cents, output_cost_cents,
         total_cost_cents, latency_ms, user_id, import_id, repo_name,
         system_prompt_tokens, user_message_tokens, output_tokens)
-     VALUES ($1, $2, $3, '__direct_invoke__', $4, $5, $6, 0, $7::uuid, $8, $9, 0, $10, $11)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, 0, $12, $13)`,
     [
-      record.pipeline,           // $1 pipeline
-      '__direct_invoke__',       // $2 agent
-      record.modelId,            // $3 model_id
-      inputCostCents,            // $4 input_cost_cents
-      outputCostCents,           // $5 output_cost_cents
-      totalCostCents,            // $6 total_cost_cents
-      record.userId,             // $7 user_id
-      record.importId ?? null,   // $8 import_id
-      record.repoName ?? null,   // $9 repo_name
-      record.inputTokens,        // $10 user_message_tokens
-      record.outputTokens,       // $11 output_tokens
+      record.pipeline,                            // $1  pipeline
+      record.agent ?? '__direct_invoke__',        // $2  agent
+      record.modelId,                             // $3  model_id
+      record.systemPromptHash ?? '__direct_invoke__', // $4  system_prompt_hash
+      inputCostCents,                             // $5  input_cost_cents
+      outputCostCents,                            // $6  output_cost_cents
+      totalCostCents,                             // $7  total_cost_cents
+      record.latencyMs ?? 0,                      // $8  latency_ms
+      record.userId,                              // $9  user_id
+      record.importId ?? null,                    // $10 import_id
+      record.repoName ?? null,                    // $11 repo_name
+      record.inputTokens,                         // $12 user_message_tokens
+      record.outputTokens,                        // $13 output_tokens
     ],
   );
 
@@ -175,6 +185,9 @@ export function recordInvocationToRds(
       userId:       log.userId,
       modelId:      log.modelId,
       pipeline,
+      agent:            log.agent,
+      systemPromptHash: log.systemPromptHash,
+      latencyMs:        log.latencyMs,
       // Converse reports a single input figure; the runner stores it under
       // systemPromptTokens with userMessageTokens = 0.
       inputTokens:  log.systemPromptTokens + log.userMessageTokens,

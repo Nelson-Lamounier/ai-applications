@@ -92,6 +92,7 @@ export class TitanEmbeddingProvider implements IEmbeddingProvider {
                 userId:       this.costCtx.userId,
                 modelId:      MODEL_ID,
                 pipeline:     'repo-sync',
+                agent:        'titan-embed',
                 inputTokens:  parsed.inputTextTokenCount ?? 0,
                 outputTokens: 0,
                 repoName:     this.costCtx.repoName,
