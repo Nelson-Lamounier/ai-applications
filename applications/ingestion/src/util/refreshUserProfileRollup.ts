@@ -22,6 +22,9 @@ import type { IDiagnosticInputsReadRepository, DiagnosticJson } from '@bedrock/s
 
 const tracer = trace.getTracer('ingestion-worker');
 
+const STAGE = { mirror: 'mirror', direction: 'direction', reconciliation: 'reconciliation', diagnostic: 'diagnostic' } as const;
+const OUTCOME = { ok: 'ok', failed: 'failed', skipped: 'skipped' } as const;
+
 type SynthMetric = ReturnType<typeof synthesisOutcomeTotal>;
 type MirrorReveal = Awaited<ReturnType<MirrorRevealSynthesizer['synthesize']>>;
 type Direction = Awaited<ReturnType<DirectionSynthesizer['synthesize']>>;
@@ -38,13 +41,13 @@ async function runSynthStage<T>(
     metric: SynthMetric,
     fn: (() => Promise<T | undefined>) | undefined,
 ): Promise<T | undefined> {
-    if (!fn) { metric.inc({ stage, outcome: 'skipped' }); return undefined; }
+    if (!fn) { metric.inc({ stage, outcome: OUTCOME.skipped }); return undefined; }
     try {
         const value = await fn();
-        metric.inc({ stage, outcome: value ? 'ok' : 'failed' });
+        metric.inc({ stage, outcome: value ? OUTCOME.ok : OUTCOME.failed });
         return value;
     } catch {
-        metric.inc({ stage, outcome: 'failed' });
+        metric.inc({ stage, outcome: OUTCOME.failed });
         return undefined;
     }
 }
@@ -57,21 +60,21 @@ async function runReconciliationStage(
     careerRepo?: ICareerHistoryReadRepository,
 ): Promise<{ value: Reconciliation; attempted: boolean }> {
     if (!reconciliationSynthesizer || !careerRepo) {
-        metric.inc({ stage: 'reconciliation', outcome: 'skipped' });
+        metric.inc({ stage: STAGE.reconciliation, outcome: OUTCOME.skipped });
         return { value: undefined, attempted: false };
     }
     try {
         const resume = await careerRepo.getResumeForReconciliation(userId);
         if (!resume) {
             // No résumé imported — reconciliation has nothing to compare against.
-            metric.inc({ stage: 'reconciliation', outcome: 'skipped' });
+            metric.inc({ stage: STAGE.reconciliation, outcome: OUTCOME.skipped });
             return { value: undefined, attempted: false };
         }
         const value = await reconciliationSynthesizer.synthesize({ rollup, resume });
-        metric.inc({ stage: 'reconciliation', outcome: value ? 'ok' : 'failed' });
+        metric.inc({ stage: STAGE.reconciliation, outcome: value ? OUTCOME.ok : OUTCOME.failed });
         return { value, attempted: true };
     } catch {
-        metric.inc({ stage: 'reconciliation', outcome: 'failed' });
+        metric.inc({ stage: STAGE.reconciliation, outcome: OUTCOME.failed });
         return { value: undefined, attempted: true };
     }
 }
@@ -83,7 +86,7 @@ async function runDiagnosticStage(
     diagnosticInputsRepo?: IDiagnosticInputsReadRepository,
     narrator?: DiagnosticNarrator,
 ): Promise<DiagnosticJson | undefined> {
-    if (!diagnosticInputsRepo) { metric.inc({ stage: 'diagnostic', outcome: 'skipped' }); return undefined; }
+    if (!diagnosticInputsRepo) { metric.inc({ stage: STAGE.diagnostic, outcome: OUTCOME.skipped }); return undefined; }
     try {
         const di = await diagnosticInputsRepo.getDiagnosticInputs(userId);
         const computed = computeUserDiagnostic({ ...inputs, diagnosticInputs: di });
@@ -92,10 +95,10 @@ async function runDiagnosticStage(
             try { explanation = (await narrator.narrate(computed)) ?? null; }
             catch { explanation = null; }
         }
-        metric.inc({ stage: 'diagnostic', outcome: 'ok' });
+        metric.inc({ stage: STAGE.diagnostic, outcome: OUTCOME.ok });
         return { ...computed, explanation };
     } catch {
-        metric.inc({ stage: 'diagnostic', outcome: 'failed' });
+        metric.inc({ stage: STAGE.diagnostic, outcome: OUTCOME.failed });
         return undefined;
     }
 }
@@ -132,9 +135,9 @@ export async function refreshUserProfileRollup(
             const result = computeUserProfileRollup(rows);
             const synthMetric = synthesisOutcomeTotal();
 
-            const synth: MirrorReveal = await runSynthStage('mirror', synthMetric,
+            const synth: MirrorReveal = await runSynthStage(STAGE.mirror, synthMetric,
                 synthesizer ? () => synthesizer.synthesize(result.rollup) : undefined);
-            const dir: Direction = await runSynthStage('direction', synthMetric,
+            const dir: Direction = await runSynthStage(STAGE.direction, synthMetric,
                 directionSynthesizer ? () => directionSynthesizer.synthesize(result.rollup) : undefined);
             const { value: recon, attempted: reconAttempted } = await runReconciliationStage(
                 synthMetric, userId, result.rollup, reconciliationSynthesizer, careerRepo);
@@ -156,9 +159,9 @@ export async function refreshUserProfileRollup(
             });
 
             reportPartialSynthesis(span, userId, [
-                { stage: 'mirror',         attempted: Boolean(synthesizer),          produced: Boolean(synth) },
-                { stage: 'direction',      attempted: Boolean(directionSynthesizer), produced: Boolean(dir) },
-                { stage: 'reconciliation', attempted: reconAttempted,                produced: Boolean(recon) },
+                { stage: STAGE.mirror,         attempted: Boolean(synthesizer),          produced: Boolean(synth) },
+                { stage: STAGE.direction,      attempted: Boolean(directionSynthesizer), produced: Boolean(dir) },
+                { stage: STAGE.reconciliation, attempted: reconAttempted,                produced: Boolean(recon) },
             ]);
         } catch (err) {
             // Best-effort: a rollup failure MUST NOT break ingestion.
