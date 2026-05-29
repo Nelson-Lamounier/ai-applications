@@ -29,13 +29,15 @@
  * ```
  */
 
+import { xrayTraceContextFromEnv } from './observability/xray-trace-id.js';
+
 // =============================================================================
 // TRACE CONTEXT MERGE
 // =============================================================================
-// Reads the active OpenTelemetry span (set by the ADOT layer in Lambda or
-// the K8s observability bootstrap) and returns its trace_id/span_id. If
-// @opentelemetry/api isn't installed, returns empty so logs work without
-// the dep — important for any consumer that imports just the logger.
+// Returns the active trace_id/span_id. K8s: from the OpenTelemetry span set
+// by the observability bootstrap. Lambda: from the X-Ray _X_AMZN_TRACE_ID env
+// (no @opentelemetry/api / X-Ray-SDK dep). Empty when neither is present, so
+// logs work for any consumer that imports just the logger.
 function activeTraceContextSafe(): { trace_id?: string; span_id?: string } {
     // K8s path: an OpenTelemetry span set by the observability bootstrap.
     try {
@@ -49,25 +51,9 @@ function activeTraceContextSafe(): { trace_id?: string; span_id?: string } {
     } catch {
         // @opentelemetry/api not installed / no provider — fall through.
     }
-    // Lambda path: X-Ray trace id from the per-invocation env var
-    // (Root=<trace>;Parent=<span>;Sampled=..). Pure parse — no X-Ray dep, so
-    // the logger stays import-light for every consumer.
-    try {
-        const header = process.env['_X_AMZN_TRACE_ID'];
-        if (!header) return {};
-        const out: { trace_id?: string; span_id?: string } = {};
-        for (const kv of header.split(';')) {
-            const eq = kv.indexOf('=');
-            if (eq < 0) continue;
-            const key = kv.slice(0, eq).trim();
-            const value = kv.slice(eq + 1).trim();
-            if (key === 'Root' && value) out.trace_id = value;
-            else if (key === 'Parent' && value) out.span_id = value;
-        }
-        return out;
-    } catch {
-        return {};
-    }
+    // Lambda path: X-Ray trace id from the per-invocation env var. Shared
+    // pure-parse helper (no X-Ray dep) keeps the logger import-light.
+    return xrayTraceContextFromEnv();
 }
 
 // =============================================================================

@@ -20,6 +20,8 @@
 
 import * as AWSXRay from 'aws-xray-sdk-core';
 
+import { xrayTraceContextFromEnv } from './xray-trace-id.js';
+
 // Off-Lambda (unit tests, K8s workloads) there is no X-Ray context. Log
 // instead of throwing so getSegment() never blows up a handler or a test.
 AWSXRay.setContextMissingStrategy('LOG_ERROR');
@@ -32,22 +34,7 @@ AWSXRay.setContextMissingStrategy('LOG_ERROR');
  * so Grafana can pivot Logs → Traces on `trace_id`.
  */
 export function activeTraceContext(): { trace_id?: string; span_id?: string } {
-    try {
-        const header = process.env['_X_AMZN_TRACE_ID'];
-        if (!header) return {};
-        const out: { trace_id?: string; span_id?: string } = {};
-        for (const kv of header.split(';')) {
-            const eq = kv.indexOf('=');
-            if (eq < 0) continue;
-            const key = kv.slice(0, eq).trim();
-            const value = kv.slice(eq + 1).trim();
-            if (key === 'Root' && value) out.trace_id = value;
-            else if (key === 'Parent' && value) out.span_id = value;
-        }
-        return out;
-    } catch {
-        return {};
-    }
+    return xrayTraceContextFromEnv();
 }
 
 /**
