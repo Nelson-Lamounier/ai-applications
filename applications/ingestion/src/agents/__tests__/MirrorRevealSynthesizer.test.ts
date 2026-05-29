@@ -28,6 +28,18 @@ describe('MirrorRevealSynthesizer.synthesize', () => {
     expect(r?.reveal.reveals[0].evidence).toMatch(/role/i);
   });
 
+  it('coerces a bare-string mirror into { paragraph } and synthesizes', async () => {
+    // Sonnet intermittently returns `mirror` as the paragraph string directly
+    // instead of { paragraph } — repairMirror must wrap it, not silently NULL.
+    const s = new MirrorRevealSynthesizer(gen({
+      mirror: 'You are an infrastructure-focused engineer with deep AWS and IaC experience, operating mostly as a creator across infra projects over roughly two years of activity.',
+      reveals: [{ insight: 'You operate as a builder-creator, not a generalist contributor.', evidence: 'role distribution (creator 4 of 5)' }],
+    }) as never);
+    const r = await s.synthesize(rollup);
+    expect(r?.mirror.paragraph).toMatch(/infrastructure/i);
+    expect(r?.reveal.reveals).toHaveLength(1);
+  });
+
   it('drops a reveal whose evidence does not reference a rollup dimension', async () => {
     const s = new MirrorRevealSynthesizer(gen({
       mirror: { paragraph: 'A'.repeat(130) },
