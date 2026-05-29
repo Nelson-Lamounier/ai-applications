@@ -64,9 +64,12 @@ describe('recordInvocationToRds', () => {
     });
     const insert = queries.find((q) => /INSERT INTO prompt_invocations/.test(q.sql));
     expect(insert).toBeTruthy();
-    expect(insert!.params[0]).toBe('job-strategist');      // $1 pipeline
-    expect(insert!.params[9]).toBe(100);                    // $10 user_message_tokens = 80 + 20
-    expect(insert!.params[10]).toBe(50);                    // $11 output_tokens
+    expect(insert!.params[0]).toBe('job-strategist');      // $1  pipeline
+    expect(insert!.params[1]).toBe('research');             // $2  agent (real name, not __direct_invoke__)
+    expect(insert!.params[3]).toBe('h');                    // $4  system_prompt_hash (real hash)
+    expect(insert!.params[7]).toBe(1);                      // $8  latency_ms (from log.latencyMs)
+    expect(insert!.params[11]).toBe(100);                   // $12 user_message_tokens = 80 + 20
+    expect(insert!.params[12]).toBe(50);                    // $13 output_tokens
   });
 
   it('skips recording (no query) when the log has no userId', async () => {

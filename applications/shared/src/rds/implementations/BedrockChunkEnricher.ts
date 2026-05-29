@@ -168,6 +168,7 @@ export class BedrockChunkEnricher implements IChunkEnricher {
                 userId:       this.costCtx.userId,
                 modelId:      this.modelId,
                 pipeline:     'repo-sync',
+                agent:        'chunk-enrich',
                 inputTokens:  parsed.usage?.input_tokens  ?? 0,
                 outputTokens: parsed.usage?.output_tokens ?? 0,
                 repoName:     this.costCtx.repoName,
