@@ -57,7 +57,7 @@ import {
     SSMClient,
     GetParameterCommand,
 } from '@aws-sdk/client-ssm';
-import { withSpan } from '@bedrock/shared';
+import { withSpan, captureAwsClient } from '@bedrock/shared';
 
 // =============================================================================
 // Configuration
@@ -146,12 +146,12 @@ const VERIFICATION_TOOLS: ReadonlySet<string> = new Set([
 /** Buffer before token expiry to trigger refresh (seconds) */
 const TOKEN_REFRESH_BUFFER_S = 60;
 
-const bedrock = new BedrockRuntimeClient({});
-const cognito = new CognitoIdentityProviderClient({});
-const snsClient = new SNSClient({});
-const s3Client = new S3Client({});
-const dynamoClient = new DynamoDBClient({});
-const ssmClient = new SSMClient({});
+const bedrock = captureAwsClient(new BedrockRuntimeClient({}));
+const cognito = captureAwsClient(new CognitoIdentityProviderClient({}));
+const snsClient = captureAwsClient(new SNSClient({}));
+const s3Client = captureAwsClient(new S3Client({}));
+const dynamoClient = captureAwsClient(new DynamoDBClient({}));
+const ssmClient = captureAwsClient(new SSMClient({}));
 
 /** Cached OAuth2 access token */
 let cachedToken = '';

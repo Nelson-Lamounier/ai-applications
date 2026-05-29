@@ -29,24 +29,31 @@
  * ```
  */
 
+import { xrayTraceContextFromEnv } from './observability/xray-trace-id.js';
+
 // =============================================================================
 // TRACE CONTEXT MERGE
 // =============================================================================
-// Reads the active OpenTelemetry span (set by the ADOT layer in Lambda or
-// the K8s observability bootstrap) and returns its trace_id/span_id. If
-// @opentelemetry/api isn't installed, returns empty so logs work without
-// the dep — important for any consumer that imports just the logger.
+// Returns the active trace_id/span_id. K8s: from the OpenTelemetry span set
+// by the observability bootstrap. Lambda: from the X-Ray _X_AMZN_TRACE_ID env
+// (no @opentelemetry/api / X-Ray-SDK dep). Empty when neither is present, so
+// logs work for any consumer that imports just the logger.
 function activeTraceContextSafe(): { trace_id?: string; span_id?: string } {
+    // K8s path: an OpenTelemetry span set by the observability bootstrap.
     try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/consistent-type-imports -- lazy require with module-shape cast
         const otel = require('@opentelemetry/api') as typeof import('@opentelemetry/api');
         const span = otel.trace.getSpan(otel.context.active());
-        if (!span) return {};
-        const { traceId, spanId } = span.spanContext();
-        return { trace_id: traceId, span_id: spanId };
+        if (span) {
+            const { traceId, spanId } = span.spanContext();
+            return { trace_id: traceId, span_id: spanId };
+        }
     } catch {
-        return {};
+        // @opentelemetry/api not installed / no provider — fall through.
     }
+    // Lambda path: X-Ray trace id from the per-invocation env var. Shared
+    // pure-parse helper (no X-Ray dep) keeps the logger import-light.
+    return xrayTraceContextFromEnv();
 }
 
 // =============================================================================

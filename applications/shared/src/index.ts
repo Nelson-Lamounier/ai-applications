@@ -38,6 +38,7 @@ export {
     jobLogger,
     activeTraceContext,
     withSpan,
+    captureAwsClient,
     recordBedrockUsage,
     setBedrockMetricsRegistry,
 } from './observability/index.js';

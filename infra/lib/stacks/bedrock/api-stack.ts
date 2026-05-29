@@ -124,6 +124,7 @@ export class BedrockApiStack extends cdk.Stack {
         this.invokeFunction = new lambdaNode.NodejsFunction(this, 'InvokeFunction', {
             functionName: `${namePrefix}-invoke-agent`,
             runtime: lambda.Runtime.NODEJS_22_X,
+            tracing: lambda.Tracing.ACTIVE,
             entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'chatbot', 'src', 'index.ts'),
             handler: 'handler',
             memorySize: props.lambdaMemoryMb,
@@ -211,6 +212,7 @@ export class BedrockApiStack extends cdk.Stack {
         this.chatbotPublicFunction = new lambdaNode.NodejsFunction(this, 'ChatbotPublicFunction', {
             functionName: `${namePrefix}-chatbot-public`,
             runtime: lambda.Runtime.NODEJS_22_X,
+            tracing: lambda.Tracing.ACTIVE,
             entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'chatbot-public', 'src', 'index.ts'),
             handler: 'handler',
             memorySize: props.lambdaMemoryMb,
@@ -265,6 +267,7 @@ export class BedrockApiStack extends cdk.Stack {
         this.chatbotAuthFunction = new lambdaNode.NodejsFunction(this, 'ChatbotAuthFunction', {
             functionName: `${namePrefix}-chatbot-authenticated`,
             runtime: lambda.Runtime.NODEJS_22_X,
+            tracing: lambda.Tracing.ACTIVE,
             entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'chatbot-authenticated', 'src', 'index.ts'),
             handler: 'handler',
             memorySize: props.lambdaMemoryMb,

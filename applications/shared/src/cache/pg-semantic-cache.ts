@@ -38,6 +38,26 @@ function normalise(q: string): string {
     return q.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Pool constructor, X-Ray-instrumented in Lambda so cache queries show up as
+ * subsegments. Lazy-requires aws-xray-sdk-core only when running in Lambda
+ * (AWS_LAMBDA_FUNCTION_NAME set) so the K8s bundle never loads it; falls back
+ * to the plain Pool on any error. capturePostgres wraps the pg module.
+ */
+function resolvePoolCtor(): typeof Pool {
+    if (!process.env['AWS_LAMBDA_FUNCTION_NAME']) return Pool;
+    try {
+        /* eslint-disable @typescript-eslint/no-require-imports */
+        const AWSXRay = require('aws-xray-sdk-core') as {
+            capturePostgres: (pg: unknown) => { Pool: typeof Pool };
+        };
+        return AWSXRay.capturePostgres(require('pg')).Pool;
+        /* eslint-enable @typescript-eslint/no-require-imports */
+    } catch {
+        return Pool;
+    }
+}
+
 export class PgSemanticCache implements ISemanticCache {
     private readonly pool: Pool;
     private readonly embedder = TitanEmbeddingProvider.fromEnvironment();
@@ -47,7 +67,8 @@ export class PgSemanticCache implements ISemanticCache {
     private readonly efSearch: number;
 
     constructor(cfg: SemanticCacheConfig) {
-        this.pool = new Pool({
+        const PoolCtor = resolvePoolCtor();
+        this.pool = new PoolCtor({
             host: cfg.host, port: cfg.port, database: cfg.database,
             user: cfg.user, password: cfg.password,
             max: 3, idleTimeoutMillis: 30_000, ssl: false,
