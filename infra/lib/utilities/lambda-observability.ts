@@ -53,12 +53,22 @@ export const OBSERVABILITY_EXTERNAL_MODULES = [
 
 /**
  * AWS-published ADOT Lambda layer ARN (Node.js, x86_64, eu-west-1).
- * Update when bumping ADOT versions; layer ARNs are region+arch specific.
+ *
+ * MUST be a layer version that actually exists and is publicly readable in
+ * this region — CloudFormation's cfn-exec-role calls lambda:GetLayerVersion
+ * on it at deploy time, and a non-existent / unshared version fails with
+ * AccessDenied (NOT NotFound), rolling the whole stack back. A previous bump
+ * to a never-published `ver-1-32-1` broke Bedrock-Api this way.
+ *
+ * BEFORE changing this, verify the exact ARN resolves:
+ *   aws lambda get-layer-version-by-arn --arn <ARN> --region eu-west-1
+ * (ver-1-30-2 confirmed accessible 2026-05-29; ver-1-32-x is NOT published
+ * in eu-west-1.) These managed ADOT layers are AWS "legacy" — see TODO below.
  *
  * @see https://aws-otel.github.io/docs/getting-started/lambda/lambda-js
  */
 const ADOT_LAYER_ARN_EU_WEST_1 =
-    'arn:aws:lambda:eu-west-1:901920570463:layer:aws-otel-nodejs-amd64-ver-1-32-1:1';
+    'arn:aws:lambda:eu-west-1:901920570463:layer:aws-otel-nodejs-amd64-ver-1-30-2:1';
 
 export interface AddLambdaObservabilityOptions {
     /** Logical service name surfaced in Tempo / X-Ray. */
