@@ -30,15 +30,24 @@ export const SynthSchema = z.object({
 /**
  * Repair common structural quirks in the model's tool output so a recoverable
  * response passes validation instead of being silently discarded (the original
- * silent-NULL bug). Handles: `reveals` returned as a JSON-encoded string,
- * over-long strings, >5 reveals, and stray extra fields. Fail-soft — mutates +
- * returns the raw tool input; anything unrecoverable still fails the schema.
+ * silent-NULL bug). Handles: `mirror` returned as a bare paragraph string,
+ * `reveals` returned as a JSON-encoded string, over-long strings, >5 reveals,
+ * and stray extra fields. Fail-soft — mutates + returns the raw tool input;
+ * anything unrecoverable still fails the schema.
  */
 function repairMirror(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
-  const r = raw as { mirror?: { paragraph?: unknown }; reveals?: unknown };
-  if (r.mirror && typeof r.mirror.paragraph === 'string') {
-    r.mirror.paragraph = r.mirror.paragraph.slice(0, MIRROR_LIMITS.paragraph);
+  const r = raw as { mirror?: unknown; reveals?: unknown };
+  // The model sometimes returns `mirror` as the paragraph string directly
+  // instead of { paragraph }. Wrap it so the schema can validate.
+  if (typeof r.mirror === 'string') {
+    r.mirror = { paragraph: r.mirror };
+  }
+  if (r.mirror && typeof r.mirror === 'object') {
+    const m = r.mirror as { paragraph?: unknown };
+    if (typeof m.paragraph === 'string') {
+      m.paragraph = m.paragraph.slice(0, MIRROR_LIMITS.paragraph);
+    }
   }
   // The model sometimes serialises `reveals` as a JSON string — decode it.
   if (typeof r.reveals === 'string') {
