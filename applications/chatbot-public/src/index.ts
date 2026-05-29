@@ -6,7 +6,7 @@ import {
     InvokeAgentCommand,
 } from '@aws-sdk/client-bedrock-agent-runtime';
 import {
-    log, emitEmfMetric, withSpan,
+    log, emitEmfMetric, withSpan, captureAwsClient,
     InputSanitiser, OutputSanitiser,
     CHATBOT_SYSTEM_PROMPT, buildChatContext, recordZeroResultRetrieval,
 } from '@bedrock/shared';
@@ -22,7 +22,7 @@ const CHATBOT_RETRIEVAL_SOURCE = (): string =>
 // ─── Module-scoped singletons ─────────────────────────────────────────────────
 const inputSanitiser  = new InputSanitiser();
 const outputSanitiser = new OutputSanitiser();
-const agentClient     = new BedrockAgentRuntimeClient({});
+const agentClient     = captureAwsClient(new BedrockAgentRuntimeClient({}));
 
 let pool: Pool | undefined;
 function getPool(): Pool {

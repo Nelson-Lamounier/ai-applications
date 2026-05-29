@@ -33,6 +33,7 @@ import {
     BedrockAgentRuntimeClient,
     InvokeAgentCommand,
 } from '@aws-sdk/client-bedrock-agent-runtime';
+import { captureAwsClient } from '@bedrock/shared';
 
 import type { ChatbotAgentConfig, ChatbotCallerContext, ChatbotInvocationResult } from '../types.js';
 
@@ -46,7 +47,7 @@ import type { ChatbotAgentConfig, ChatbotCallerContext, ChatbotInvocationResult 
  * Initialised at module scope so it is reused across warm Lambda
  * invocations, benefiting from connection pooling and credential caching.
  */
-const client = new BedrockAgentRuntimeClient({});
+const client = captureAwsClient(new BedrockAgentRuntimeClient({}));
 
 // =============================================================================
 // AGENT INVOCATION

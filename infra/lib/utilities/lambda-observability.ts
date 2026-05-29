@@ -2,23 +2,19 @@
  * @format
  * Reusable observability wiring for NodejsFunction Lambdas.
  *
- * Attaches the AWS-managed ADOT (AWS Distro for OpenTelemetry) layer and
- * sets the env vars that turn it on:
+ * Tracing is AWS-native X-Ray — NO external ADOT/OpenTelemetry layer (AWS
+ * deprecates managed layer versions, which repeatedly broke deploys with
+ * lambda:GetLayerVersion AccessDenied). Each Function enables it with
+ * `tracing: lambda.Tracing.ACTIVE` (a construction-time prop this helper
+ * cannot set); the Lambda service then creates an X-Ray segment per
+ * invocation. Handler code calls `withSpan(...)` from
+ * @bedrock/shared/observability/lambda for a top-level subsegment, and wraps
+ * AWS SDK v3 clients with `AWSXRay.captureAWSv3Client(...)` for downstream
+ * subsegments (Bedrock / DynamoDB / etc.).
  *
- *   AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler   — preloads the OTel SDK
- *                                                 before the user handler.
- *   OTEL_SERVICE_NAME=<fn-name>                 — service.name on every span.
- *   OTEL_PROPAGATORS=tracecontext,xray          — accept W3C traceparent
- *                                                 from upstream callers
- *                                                 (admin-api / step funcs)
- *                                                 AND continue X-Ray IDs.
- *
- * Default exporter: AWS X-Ray (the layer's built-in collector config). To
- * forward to Tempo instead, override OTEL_EXPORTER_OTLP_ENDPOINT.
- *
- * Adding the ADOT layer only — handler-side code calls `withSpan(...)`
- * from @bedrock/shared/observability/lambda for an explicit top-level
- * span (defensive — auto-instrumentation may miss non-standard signatures).
+ * This helper sets the shared observability env (OTEL_SERVICE_NAME for the
+ * agent-runner's service field, DEPLOY_ENV, LOG_LEVEL) and grants the X-Ray
+ * publish IAM. Metrics (EMF) and logs are layer-independent.
  */
 
 import * as cdk from 'aws-cdk-lib';
@@ -44,41 +40,26 @@ import type { Construct } from 'constructs';
  *   externalModules: ['@aws-sdk/*', ...OBSERVABILITY_EXTERNAL_MODULES]
  */
 export const OBSERVABILITY_EXTERNAL_MODULES = [
-    '@opentelemetry/*',
+    // NOTE: '@opentelemetry/*' is intentionally NOT here. Lambdas no longer
+    // use the ADOT layer (which provided @opentelemetry/* at /opt) — tracing
+    // is AWS-native X-Ray via aws-xray-sdk-core, which MUST bundle. These
+    // remaining modules are the K8s-only observability path (Pushgateway /
+    // Pino / Pyroscope / pg) and would bloat Lambda cold-start.
     '@pyroscope/*',
     'pino',
     'prom-client',
     'pg',
 ] as const;
 
-/**
- * AWS-published ADOT Lambda layer ARN (Node.js, x86_64, eu-west-1).
- *
- * MUST be a layer version that actually exists and is publicly readable in
- * this region — CloudFormation's cfn-exec-role calls lambda:GetLayerVersion
- * on it at deploy time, and a non-existent / unshared version fails with
- * AccessDenied (NOT NotFound), rolling the whole stack back. A previous bump
- * to a never-published `ver-1-32-1` broke Bedrock-Api this way.
- *
- * BEFORE changing this, verify the exact ARN resolves:
- *   aws lambda get-layer-version-by-arn --arn <ARN> --region eu-west-1
- * (ver-1-30-2 confirmed accessible 2026-05-29; ver-1-32-x is NOT published
- * in eu-west-1.) These managed ADOT layers are AWS "legacy" — see TODO below.
- *
- * @see https://aws-otel.github.io/docs/getting-started/lambda/lambda-js
- */
-const ADOT_LAYER_ARN_EU_WEST_1 =
-    'arn:aws:lambda:eu-west-1:901920570463:layer:aws-otel-nodejs-amd64-ver-1-30-2:1';
-
 export interface AddLambdaObservabilityOptions {
-    /** Logical service name surfaced in Tempo / X-Ray. */
+    /** Logical service name; surfaced as OTEL_SERVICE_NAME (read by the agent
+     *  runner's log/EMF `service` field) and used to name the X-Ray service. */
     serviceName: string;
     /**
      * Deployment environment — flows through to:
-     *   DEPLOY_ENV                       (read by `@bedrock/shared` logger)
-     *   OTEL_RESOURCE_ATTRIBUTES         (deployment.environment=...)
-     *   AWS Tag environment              (existing TaggingAspect handles this)
-     *   LOG_LEVEL default                (debug in dev, info elsewhere)
+     *   DEPLOY_ENV          (read by `@bedrock/shared` logger)
+     *   AWS Tag environment (existing TaggingAspect handles this)
+     *   LOG_LEVEL default   (debug in dev, info elsewhere)
      *
      * Use the Environment enum from `lib/config/environments` — full names
      * ('development' / 'staging' / 'production'), never abbreviations.
@@ -86,20 +67,18 @@ export interface AddLambdaObservabilityOptions {
     environment: string;
     /** Override default log level. Default: debug in development, info elsewhere. */
     logLevel?:    'trace' | 'debug' | 'info' | 'warn' | 'error';
-    /** Optional override of the ADOT layer ARN (e.g. for arm64 / non-eu-west-1). */
-    adotLayerArn?: string;
-    /**
-     * Override the OTLP exporter endpoint. When unset the ADOT collector
-     * uses its built-in X-Ray exporter — the simpler path because Lambda
-     * has no in-VPC Alloy connectivity by default.
-     */
-    otlpEndpoint?: string;
     /** Extra env vars to merge alongside the standard observability set. */
     extraEnv?: Record<string, string>;
 }
 
 /**
- * Attach the ADOT layer + standard observability env vars to a Lambda.
+ * Wire AWS-native X-Ray observability env + IAM onto a Lambda.
+ *
+ * IMPORTANT: this helper CANNOT enable tracing — `tracing: lambda.Tracing.ACTIVE`
+ * is a construction-time NodejsFunction prop and must be set on each Function
+ * definition. Without it the Lambda service never creates an X-Ray segment and
+ * `withSpan`/`captureAWSv3Client` subsegments silently no-op.
+ *
  * Idempotent — calling twice on the same Function is harmless.
  */
 export function addLambdaObservability(
@@ -107,43 +86,26 @@ export function addLambdaObservability(
     fn: lambda.Function,
     opts: AddLambdaObservabilityOptions,
 ): void {
-    const layerArn = opts.adotLayerArn ?? ADOT_LAYER_ARN_EU_WEST_1;
-    const layer = lambda.LayerVersion.fromLayerVersionArn(
-        scope,
-        `${fn.node.id}AdotLayer`,
-        layerArn,
-    );
-    fn.addLayers(layer);
+    void scope; // kept for signature stability across call sites
 
     const isDev    = opts.environment === 'development';
     const logLevel = opts.logLevel ?? (isDev ? 'debug' : 'info');
 
-    fn.addEnvironment('AWS_LAMBDA_EXEC_WRAPPER', '/opt/otel-handler');
-    fn.addEnvironment('OTEL_SERVICE_NAME',       opts.serviceName);
-    fn.addEnvironment('OTEL_PROPAGATORS',        'tracecontext,xray');
-    // Stamp environment on every span. `deployment.environment` is the
-    // OpenTelemetry semantic-convention key; Tempo + X-Ray both surface
-    // it as a searchable attribute. service.name (set above) carries
-    // identity; service.namespace is informational and brittle for
-    // hyphenated prefixes (self-healing) so we omit it.
-    fn.addEnvironment('OTEL_RESOURCE_ATTRIBUTES',
-        `deployment.environment=${opts.environment}`);
+    // Service identity for logs/EMF (agent-runner reads OTEL_SERVICE_NAME).
+    fn.addEnvironment('OTEL_SERVICE_NAME', opts.serviceName);
     // Flows into @bedrock/shared logger — every log line gains
     // env=<environment>, joinable with metrics + traces in Grafana.
     fn.addEnvironment('DEPLOY_ENV', opts.environment);
     fn.addEnvironment('LOG_LEVEL',  logLevel);
 
-    if (opts.otlpEndpoint) {
-        fn.addEnvironment('OTEL_EXPORTER_OTLP_ENDPOINT', opts.otlpEndpoint);
-    }
     if (opts.extraEnv) {
         for (const [k, v] of Object.entries(opts.extraEnv)) {
             fn.addEnvironment(k, v);
         }
     }
 
-    // ADOT writes to X-Ray. Grant the function the canonical send permission
-    // so it doesn't silently fail to publish segments.
+    // X-Ray active tracing publishes via the Lambda service role. Grant the
+    // canonical send permissions so segments/subsegments aren't dropped.
     fn.addToRolePolicy(new iam.PolicyStatement({
         sid:     'XRayWrite',
         effect:  iam.Effect.ALLOW,
@@ -154,7 +116,7 @@ export function addLambdaObservability(
         resources: ['*'],
     }));
 
-    cdk.Tags.of(fn).add('observability', 'adot');
+    cdk.Tags.of(fn).add('observability', 'xray');
 }
 
 /**

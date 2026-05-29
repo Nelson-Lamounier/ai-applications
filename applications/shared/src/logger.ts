@@ -37,13 +37,34 @@
 // @opentelemetry/api isn't installed, returns empty so logs work without
 // the dep — important for any consumer that imports just the logger.
 function activeTraceContextSafe(): { trace_id?: string; span_id?: string } {
+    // K8s path: an OpenTelemetry span set by the observability bootstrap.
     try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/consistent-type-imports -- lazy require with module-shape cast
         const otel = require('@opentelemetry/api') as typeof import('@opentelemetry/api');
         const span = otel.trace.getSpan(otel.context.active());
-        if (!span) return {};
-        const { traceId, spanId } = span.spanContext();
-        return { trace_id: traceId, span_id: spanId };
+        if (span) {
+            const { traceId, spanId } = span.spanContext();
+            return { trace_id: traceId, span_id: spanId };
+        }
+    } catch {
+        // @opentelemetry/api not installed / no provider — fall through.
+    }
+    // Lambda path: X-Ray trace id from the per-invocation env var
+    // (Root=<trace>;Parent=<span>;Sampled=..). Pure parse — no X-Ray dep, so
+    // the logger stays import-light for every consumer.
+    try {
+        const header = process.env['_X_AMZN_TRACE_ID'];
+        if (!header) return {};
+        const out: { trace_id?: string; span_id?: string } = {};
+        for (const kv of header.split(';')) {
+            const eq = kv.indexOf('=');
+            if (eq < 0) continue;
+            const key = kv.slice(0, eq).trim();
+            const value = kv.slice(eq + 1).trim();
+            if (key === 'Root' && value) out.trace_id = value;
+            else if (key === 'Parent' && value) out.span_id = value;
+        }
+        return out;
     } catch {
         return {};
     }

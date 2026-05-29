@@ -3,10 +3,10 @@ import {
     ConverseCommand,
     type Message,
 } from '@aws-sdk/client-bedrock-runtime';
-import { recordBedrockCost } from '@bedrock/shared';
+import { recordBedrockCost, captureAwsClient } from '@bedrock/shared';
 import type { Pool } from 'pg';
 
-const bedrockClient = new BedrockRuntimeClient({});
+const bedrockClient = captureAwsClient(new BedrockRuntimeClient({}));
 
 /** Per-call context for booking spend into prompt_invocations. Optional so the
  *  function stays usable in tests without a DB. The public chatbot attributes
