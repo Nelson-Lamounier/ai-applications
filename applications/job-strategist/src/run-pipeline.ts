@@ -22,6 +22,8 @@ import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-ag
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
+import { classifyCitedPaths }     from './lib/path-grounding.js';
+import { loadIngestedPaths }      from './lib/path-grounding-loader.js';
 import {
     updatePipelineRun,
     updatePipelineRunMetadata,
@@ -55,6 +57,14 @@ const strategistDuration = new Histogram({
     buckets:    [10, 30, 60, 120, 300, 600, 1200, 1800],
     registers:  [obs.registry],
 });
+/** Count of file-path citations in the analysis that are NOT in the user's
+ *  ingested document_embeddings — i.e. hallucinated/inferred source paths. */
+const ungroundedPaths = new Counter({
+    name:       'job_strategist_ungrounded_paths_total',
+    help:       'File-path citations in the analysis not found in ingested document_embeddings.',
+    labelNames: ['operation'] as const,
+    registers:  [obs.registry],
+});
 
 /**
  * Build the semantic-cache kb_tag for a user. Fail-open: on any DB error
@@ -68,6 +78,44 @@ async function cacheTagFor(pool: Pool, userId: string): Promise<string> {
             [userId]);
         return `${r.rows[0]?.t ?? ''}:${model}`;
     } catch { return `:${model}`; }
+}
+
+/**
+ * Verify that file-path citations in the final analysis exist in the user's
+ * ingested `document_embeddings`. The text-level grounding verifier confirms
+ * claim *content* but not *path existence*, so a real-tech / invented-path
+ * citation (e.g. `api/admin-api/src/**` inferred from prose) can slip through.
+ *
+ * Fail-open: any DB/parse error returns an empty classification so the run
+ * never hard-fails on this advisory check. Returns the classification for
+ * stashing on pipeline_runs.metadata so admin-api / the UI can surface a
+ * "these cited paths were not found in your ingested repos" warning.
+ */
+async function verifyAnalysisPaths(
+    pool: Pool,
+    userId: string,
+    analysisXml: string,
+    pipelineRunId: string,
+): Promise<{ grounded: string[]; ungrounded: string[] }> {
+    try {
+        const ingested = await loadIngestedPaths(pool, userId);
+        const { grounded, ungrounded } = classifyCitedPaths(analysisXml, ingested);
+        if (ungrounded.length > 0) {
+            ungroundedPaths.inc({ operation: 'analyse' }, ungrounded.length);
+            log.warn({
+                pipelineRunId,
+                ungroundedPaths: ungrounded,
+                groundedCount:   grounded.length,
+            }, 'analysis_cited_ungrounded_paths');
+        }
+        return { grounded, ungrounded };
+    } catch (e) {
+        log.warn({
+            pipelineRunId,
+            error: (e as Error).message,
+        }, 'Path-grounding check failed — skipping (fail-open)');
+        return { grounded: [], ungrounded: [] };
+    }
 }
 
 export async function main(): Promise<void> {
@@ -244,12 +292,21 @@ export async function main(): Promise<void> {
               })
             : null;
 
+        // ── Path-grounding check (advisory, fail-open) ────────────────────
+        // Flag file-path citations in the final analysis that don't exist in
+        // the user's ingested document_embeddings. Runs on finalAnalysis so it
+        // reflects whatever text will actually be persisted/served.
+        const pathGrounding = await verifyAnalysisPaths(
+            pool, env.userId, finalAnalysis, env.pipelineRunId,
+        );
+
         // Stash both outputs on pipeline_runs.metadata so the admin-api detail
         // endpoint can serve research fields (fitSummary, matches, gaps, etc.)
         // and a downstream coach K8s Job can re-hydrate without re-running.
         // analysisXml is replaced by finalAnalysis (grounded or original on fail-open).
+        // pathGrounding.ungrounded lets the UI warn on hallucinated source paths.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:  { ...analysis.data, analysisXml: finalAnalysis },
+            analysis:  { ...analysis.data, analysisXml: finalAnalysis, pathGrounding },
             research:  research.data,
         });
 
