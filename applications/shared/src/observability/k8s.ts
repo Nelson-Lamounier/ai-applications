@@ -24,21 +24,24 @@
  */
 
 import http from 'node:http';
+import type { Logger as PinoLogger } from 'pino';
+import type { Registry as PromRegistry } from 'prom-client';
+import type { Context as OtelContext } from '@opentelemetry/api';
 
 let bootstrapped = false;
 
 export interface ObservabilityHandle {
     /** Pino-compatible structured logger with active span context mixin. */
-    readonly logger: import('pino').Logger;
+    readonly logger: PinoLogger;
     /** prom-client default registry (or namespaced). */
-    readonly registry: import('prom-client').Registry;
+    readonly registry: PromRegistry;
     /**
      * The parent OTel Context extracted from the TRACEPARENT env var injected by
      * admin-api into every K8s Job spec. Use as the third argument to
      * `tracer.startSpan()` so the job's root span is a child of the admin-api
      * dispatch span. Falls back to ROOT_CONTEXT (no parent) when TRACEPARENT absent.
      */
-    readonly parentContext: import('@opentelemetry/api').Context;
+    readonly parentContext: OtelContext;
     /** Stop OTel + flush spans + close metrics server. Call on SIGTERM. */
     shutdown(): Promise<void>;
     /** Bind a /metrics HTTP server (long-running services only). */
@@ -103,7 +106,7 @@ export function bootstrapK8sObservability(opts: BootstrapOptions): Observability
         sdk.start();
     }
 
-    let parentCtx: import('@opentelemetry/api').Context = ROOT_CONTEXT;
+    let parentCtx: OtelContext = ROOT_CONTEXT;
     const traceparent = process.env['TRACEPARENT'];
     if (traceparent) {
         parentCtx = propagation.extract(ROOT_CONTEXT, { traceparent }, defaultTextMapGetter);

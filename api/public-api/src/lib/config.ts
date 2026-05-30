@@ -17,6 +17,12 @@
 export interface Config {
   /** AWS region — sourced from AWS_REGION / AWS_DEFAULT_REGION (ConfigMap). */
   readonly awsRegion: string;
+  /**
+   * KMS CMK ARN for oauth_connections token envelope encryption.
+   * Sourced from `OAUTH_TOKEN_KMS_KEY_ARN` (ConfigMap, populated from the
+   * SSM param `/oauth/token-encryption-key-arn`).
+   */
+  readonly oauthTokenKmsKeyArn: string;
   /** Postgres host — sourced from PG_HOST (ESO secret). */
   readonly pgHost: string;
   /** Postgres port — sourced from PG_PORT (ESO secret), default 5432. */
@@ -59,6 +65,12 @@ export interface Config {
    * Optional — if absent POST /api/chatbot/authenticated returns 503.
    */
   readonly bedrockAuthApiUrl: string | undefined;
+  /**
+   * Secrets Manager ARN for the GitHub App JSON secret containing
+   * `{ appId, privateKeyPem, webhookSecret }`. Sourced from the
+   * `GITHUB_APP_SECRET_ARN` env var (ConfigMap).
+   */
+  readonly githubAppSecretArn: string;
 }
 
 /**
@@ -76,6 +88,8 @@ export function loadConfig(): Config {
     'PG_DATABASE',
     'PG_USER',
     'PG_PASSWORD',
+    'OAUTH_TOKEN_KMS_KEY_ARN',
+    'GITHUB_APP_SECRET_ARN',
   ] as const;
 
   const missing = required.filter((key) => !process.env[key]);
@@ -89,6 +103,7 @@ export function loadConfig(): Config {
   return Object.freeze({
     // Lambda injects AWS_REGION automatically; AWS_DEFAULT_REGION kept for local dev
     awsRegion: (process.env['AWS_REGION'] ?? process.env['AWS_DEFAULT_REGION'] ?? 'eu-west-1'),
+    oauthTokenKmsKeyArn: process.env['OAUTH_TOKEN_KMS_KEY_ARN'] as string,
     pgHost: process.env['PG_HOST'] as string,
     pgPort: parseInt(process.env['PG_PORT'] ?? '5432', 10),
     pgDatabase: process.env['PG_DATABASE'] as string,
@@ -100,5 +115,6 @@ export function loadConfig(): Config {
     bedrockApiKeySecretArn: process.env['BEDROCK_API_KEY_SECRET_ARN'] ?? undefined,
     bedrockPublicApiUrl: process.env['BEDROCK_PUBLIC_API_URL'] ?? undefined,
     bedrockAuthApiUrl: process.env['BEDROCK_AUTH_API_URL'] ?? undefined,
+    githubAppSecretArn: process.env['GITHUB_APP_SECRET_ARN'] as string,
   });
 }

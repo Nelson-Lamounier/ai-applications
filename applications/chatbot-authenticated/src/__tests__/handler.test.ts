@@ -15,6 +15,7 @@ jest.mock('@bedrock/shared', () => ({
     })),
     CHATBOT_SYSTEM_PROMPT: 'SYSTEM',
     buildChatContext:      jest.fn(() => '<retrieved_context/>'),
+    recordZeroResultRetrieval: jest.fn(),
 }));
 
 jest.mock('../retrieval.js', () => ({
@@ -48,7 +49,8 @@ jest.mock('../env.js', () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 
 import { handler } from '../index.js';
-import { InputSanitiser } from '@bedrock/shared';
+import { InputSanitiser, recordZeroResultRetrieval } from '@bedrock/shared';
+import { multiQueryRetrieve } from '../retrieval.js';
 import { validateSession, createSession, loadHistory, appendMessages } from '../session.js';
 import { invokeClaude } from '../invoke-claude.js';
 
@@ -91,6 +93,20 @@ describe('chatbot-authenticated handler', () => {
         delete process.env['CHATBOT_RETRIEVAL_SOURCE'];
     });
 
+    it('records a zero-result retrieval when retrieval returns no passages', async () => {
+        (multiQueryRetrieve as jest.Mock<() => Promise<unknown[]>>).mockResolvedValueOnce([]);
+        await handler(makeEvent({ prompt: 'something not in the KB' }));
+        expect(recordZeroResultRetrieval as jest.Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT record a zero-result retrieval when passages are returned', async () => {
+        (multiQueryRetrieve as jest.Mock<() => Promise<unknown[]>>).mockResolvedValueOnce([
+            { text: 'hit', score: 0.9, source: 'chunk', sourceUri: 'f', metadata: { repo_full_name: 'o/r' } },
+        ]);
+        await handler(makeEvent({ prompt: 'known topic' }));
+        expect(recordZeroResultRetrieval as jest.Mock).not.toHaveBeenCalled();
+    });
+
     // ── Happy path ─────────────────────────────────────────────────────────────
 
     it('returns 200 with response and new sessionId when no sessionId provided', async () => {
@@ -118,13 +134,16 @@ describe('chatbot-authenticated handler', () => {
             { role: 'user',      content: [{ text: 'hello' }] },
             { role: 'assistant', content: [{ text: 'hi'    }] },
         ];
-        (loadHistory as jest.Mock).mockResolvedValueOnce(history);
+        (loadHistory as jest.Mock<() => Promise<unknown>>).mockResolvedValueOnce(history);
         await handler(makeEvent({ prompt: 'next question', sessionId: VALID_SESSION_ID }));
         expect(invokeClaude).toHaveBeenCalledWith(
             'model-id',
             expect.any(String),
             history,
             'next question',
+            // Cost context added by the Bedrock spend-tracking change (invokeClaude
+            // now books spend into prompt_invocations via { pool, userId }).
+            expect.objectContaining({ userId: 'owner-uuid' }),
         );
     });
 
@@ -159,7 +178,7 @@ describe('chatbot-authenticated handler', () => {
     });
 
     it('returns 400 when provided sessionId does not exist in DB', async () => {
-        (validateSession as jest.Mock).mockResolvedValueOnce(false);
+        (validateSession as jest.Mock<() => Promise<boolean>>).mockResolvedValueOnce(false);
         const result = await handler(
             makeEvent({ prompt: 'hi', sessionId: VALID_SESSION_ID }),
         );
@@ -183,7 +202,7 @@ describe('chatbot-authenticated handler', () => {
     // ── Error handling ─────────────────────────────────────────────────────────
 
     it('returns 500 when invokeClaude throws', async () => {
-        (invokeClaude as jest.Mock).mockRejectedValueOnce(new Error('Bedrock timeout'));
+        (invokeClaude as jest.Mock<() => Promise<string>>).mockRejectedValueOnce(new Error('Bedrock timeout'));
         const result = await handler(makeEvent({ prompt: 'hi' }));
         expect(result.statusCode).toBe(500);
     });

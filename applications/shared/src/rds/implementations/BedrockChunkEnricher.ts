@@ -29,18 +29,17 @@ import {
 
 import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnricher.js';
 import type { RawChunk } from '../types.js';
+import type { Pool } from 'pg';
+import { recordBedrockCost } from '../bedrock-cost.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
 const SYSTEM_PROMPT = [
     'You are a skill-evidence extractor for a resume-generation system.',
-    'Given a single document chunk from a software repository, identify:',
-    '  1. Domain capabilities the chunk EVIDENCES the user has practised.',
-    '     Use short noun phrases (≤ 4 words). Examples:',
-    '       "kubernetes networking", "iac with cdk", "step functions orchestration"',
-    '  2. Named technologies, tools, services, frameworks, or products in use.',
-    '     Use the canonical lowercased name. Examples:',
-    '       "calico", "traefik", "step functions", "amazon bedrock", "next.js"',
+    'Given a single document chunk from a software repository, identify',
+    'domain capabilities the chunk EVIDENCES the user has practised.',
+    'Use short noun phrases (≤ 4 words). Examples:',
+    '  "kubernetes networking", "iac with cdk", "step functions orchestration"',
     '',
     'Rules:',
     '  - Extract only signals that the chunk text actually demonstrates.',
@@ -53,11 +52,17 @@ const SYSTEM_PROMPT = [
     '    signal is present.',
     '  - You MUST respond by calling the record_extraction tool. Do not write',
     '    free-form text.',
+    '',
+    // NOTE: prior to 2026-05-27 this prompt also asked for `technologies`.
+    // That role moved to the deterministic tech-extractor Layer-1 pipeline
+    // after the 2026-05-26 → 2026-05-27 parity work (artefact in
+    // applications/tech-extractor/parity/2026-05-26-bucket-recount.md, v2.3
+    // trajectory section). The enricher now extracts SKILLS ONLY.
 ].join('\n');
 
 const TOOL_SCHEMA = {
     name:        'record_extraction',
-    description: 'Records the extracted skills and technologies for the chunk.',
+    description: 'Records the extracted skills for the chunk.',
     input_schema: {
         type: 'object',
         properties: {
@@ -66,26 +71,23 @@ const TOOL_SCHEMA = {
                 items:       { type: 'string' },
                 description: 'Domain capabilities the chunk evidences. Lowercased.',
             },
-            technologies: {
-                type:        'array',
-                items:       { type: 'string' },
-                description: 'Named tools/products in use. Lowercased.',
-            },
         },
-        required: ['skills', 'technologies'],
+        required: ['skills'],
+        additionalProperties: false,
     },
 };
 
 interface AnthropicToolUseBlock {
     type:  'tool_use';
     name:  string;
-    input: { skills?: unknown[]; technologies?: unknown[] };
+    input: { skills?: unknown[] };
 }
 
 interface AnthropicTextBlock { type: 'text'; text: string }
 
 interface AnthropicResponse {
     content: Array<AnthropicToolUseBlock | AnthropicTextBlock>;
+    usage?:  { input_tokens?: number; output_tokens?: number };
 }
 
 export interface BedrockChunkEnricherConfig {
@@ -95,21 +97,35 @@ export interface BedrockChunkEnricherConfig {
     readonly region?: string;
 }
 
+/**
+ * Per-job context for recording enrichment spend into `prompt_invocations`.
+ * Mirrors {@link TitanCostContext}: without it the enricher silently invokes
+ * Bedrock without booking the cost — the gap that let one repo-sync run bill
+ * $8 of Haiku invisibly.
+ */
+export interface ChunkEnricherCostContext {
+    pool:     Pool;
+    userId:   string;
+    repoName: string;
+}
+
 export class BedrockChunkEnricher implements IChunkEnricher {
     private readonly client:  BedrockRuntimeClient;
     private readonly modelId: string;
+    private readonly costCtx?: ChunkEnricherCostContext;
 
-    constructor(config: BedrockChunkEnricherConfig = {}) {
+    constructor(config: BedrockChunkEnricherConfig = {}, costCtx?: ChunkEnricherCostContext) {
         const region = config.region ?? process.env.AWS_REGION ?? 'us-east-1';
         this.client  = new BedrockRuntimeClient({ region });
         this.modelId = config.modelId ?? DEFAULT_MODEL_ID;
+        this.costCtx = costCtx;
     }
 
-    static fromEnvironment(): BedrockChunkEnricher {
+    static fromEnvironment(costCtx?: ChunkEnricherCostContext): BedrockChunkEnricher {
         return new BedrockChunkEnricher({
             modelId: process.env.ENRICHMENT_MODEL_ID,
             region:  process.env.AWS_REGION,
-        });
+        }, costCtx);
     }
 
     // =========================================================================
@@ -144,6 +160,20 @@ export class BedrockChunkEnricher implements IChunkEnricher {
             Buffer.from(responseBody).toString('utf-8'),
         ) as AnthropicResponse;
 
+        // Book the spend BEFORE branching on tool_use — the call costs money
+        // whether or not the model returned a usable extraction. Non-fatal:
+        // a cost-record failure must never break ingestion.
+        if (this.costCtx) {
+            recordBedrockCost(this.costCtx.pool, {
+                userId:       this.costCtx.userId,
+                modelId:      this.modelId,
+                pipeline:     'repo-sync',
+                inputTokens:  parsed.usage?.input_tokens  ?? 0,
+                outputTokens: parsed.usage?.output_tokens ?? 0,
+                repoName:     this.costCtx.repoName,
+            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
+        }
+
         const toolUse = parsed.content.find(
             (b): b is AnthropicToolUseBlock => b.type === 'tool_use',
         );
@@ -157,7 +187,11 @@ export class BedrockChunkEnricher implements IChunkEnricher {
 
         return {
             skills:       this.normalize(toolUse.input.skills),
-            technologies: this.normalize(toolUse.input.technologies),
+            // technologies extraction decommissioned 2026-05-27 — owned by
+            // the deterministic tech-extractor Layer-1 pipeline. Field
+            // retained as [] for schema back-compat with the existing
+            // document_embeddings.technologies column.
+            technologies: [],
         };
     }
 

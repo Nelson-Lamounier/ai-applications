@@ -13,6 +13,24 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import { z } from 'zod';
+import { PiiScrubber } from '@bedrock/shared';
+
+const piiScrubber = new PiiScrubber();
+
+/**
+ * Typed failure for the career-extraction call. Fail-fast: a malformed model
+ * response must never be cast and persisted (structure-output-checklist §7).
+ */
+export class CareerExtractionError extends Error {
+  constructor(
+    public readonly code: 'no_tool_use_block' | 'schema_validation_failed',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CareerExtractionError';
+  }
+}
 
 export interface ResumeProfile {
   name: string;
@@ -24,11 +42,25 @@ export interface ResumeProfile {
   website?: string;
 }
 
+/**
+ * Per-field confidence flags emitted by the extraction model.
+ * Empty array = model is confident in every field of this experience entry.
+ * Multiple flags allowed when several fields are uncertain.
+ */
+export type ExperienceConfidenceFlag =
+  | 'dateRangeAmbiguous'  // e.g. "2019-Present" with no end date or unclear start
+  | 'companyUnclear'      // OCR garbled, abbreviation, or missing company name
+  | 'titleInferred'       // title not explicit, inferred from highlights
+  | 'highlightsTruncated' // bullet list visibly cut off in source text
+  | 'periodOverlap';      // overlaps another role; possible parsing error
+
 export interface ResumeExperience {
   company: string;
   title: string;
   period: string;
   highlights: string[];
+  /** Low-confidence field flags. Empty array when the model is confident. */
+  confidenceFlags: ExperienceConfidenceFlag[];
 }
 
 export interface ResumeSkillCategory {
@@ -75,6 +107,59 @@ export interface CareerExtractionResult {
   outputTokens: number;
 }
 
+/**
+ * Runtime safety-net mirror of {@link ExtractedCareerData}. `.strict()` on
+ * every object is the Zod twin of JSON-Schema `additionalProperties:false` —
+ * it rejects any field the model invents outside the contract.
+ */
+const ExtractedCareerDataSchema = z.object({
+  profile: z.object({
+    name:     z.string(),
+    title:    z.string(),
+    email:    z.string(),
+    location: z.string(),
+    linkedin: z.string().optional(),
+    github:   z.string().optional(),
+    website:  z.string().optional(),
+  }).strict(),
+  summary: z.string(),
+  experience: z.array(z.object({
+    company:    z.string(),
+    title:      z.string(),
+    period:     z.string(),
+    highlights: z.array(z.string()),
+    confidenceFlags: z.array(z.enum([
+      'dateRangeAmbiguous',
+      'companyUnclear',
+      'titleInferred',
+      'highlightsTruncated',
+      'periodOverlap',
+    ])),
+  }).strict()),
+  skills: z.array(z.object({
+    category: z.string(),
+    skills:   z.array(z.string()),
+  }).strict()),
+  education: z.array(z.object({
+    degree:      z.string(),
+    institution: z.string(),
+    period:      z.string(),
+  }).strict()),
+  certifications: z.array(z.object({
+    name:   z.string(),
+    year:   z.string(),
+    issuer: z.string(),
+  }).strict()),
+  projects: z.array(z.object({
+    name:        z.string(),
+    description: z.string(),
+    github:      z.string().optional(),
+  }).strict()),
+  keyAchievements: z.array(z.object({
+    achievement: z.string(),
+  }).strict()),
+}).strict();
+
 const EXTRACTION_TOOL_SCHEMA = {
   name: 'extract_career_data',
   description: 'Extract structured career data from resume text',
@@ -93,6 +178,7 @@ const EXTRACTION_TOOL_SCHEMA = {
           website:  { type: 'string' },
         },
         required: ['name', 'title', 'email', 'location'],
+        additionalProperties: false,
       },
       summary: { type: 'string', description: 'Professional summary or objective' },
       experience: {
@@ -104,8 +190,23 @@ const EXTRACTION_TOOL_SCHEMA = {
             title:      { type: 'string' },
             period:     { type: 'string', description: 'e.g. "Jan 2021 – Mar 2023"' },
             highlights: { type: 'array', items: { type: 'string' } },
+            confidenceFlags: {
+              type:        'array',
+              description: 'Flags for low-confidence fields. Empty array when confident.',
+              items: {
+                type: 'string',
+                enum: [
+                  'dateRangeAmbiguous',
+                  'companyUnclear',
+                  'titleInferred',
+                  'highlightsTruncated',
+                  'periodOverlap',
+                ],
+              },
+            },
           },
-          required: ['company', 'title', 'period', 'highlights'],
+          required: ['company', 'title', 'period', 'highlights', 'confidenceFlags'],
+          additionalProperties: false,
         },
       },
       skills: {
@@ -117,6 +218,7 @@ const EXTRACTION_TOOL_SCHEMA = {
             skills:   { type: 'array', items: { type: 'string' } },
           },
           required: ['category', 'skills'],
+          additionalProperties: false,
         },
       },
       education: {
@@ -129,6 +231,7 @@ const EXTRACTION_TOOL_SCHEMA = {
             period:      { type: 'string' },
           },
           required: ['degree', 'institution', 'period'],
+          additionalProperties: false,
         },
       },
       certifications: {
@@ -141,6 +244,7 @@ const EXTRACTION_TOOL_SCHEMA = {
             issuer: { type: 'string' },
           },
           required: ['name', 'year', 'issuer'],
+          additionalProperties: false,
         },
       },
       projects: {
@@ -153,6 +257,7 @@ const EXTRACTION_TOOL_SCHEMA = {
             github:      { type: 'string' },
           },
           required: ['name', 'description'],
+          additionalProperties: false,
         },
       },
       keyAchievements: {
@@ -163,10 +268,12 @@ const EXTRACTION_TOOL_SCHEMA = {
             achievement: { type: 'string' },
           },
           required: ['achievement'],
+          additionalProperties: false,
         },
       },
     },
     required: ['profile', 'summary', 'experience', 'skills', 'education', 'certifications', 'projects', 'keyAchievements'],
+    additionalProperties: false,
   },
 };
 
@@ -184,6 +291,7 @@ const SYSTEM_PROMPT = [
   '- Dates: preserve the original format (e.g. "Jan 2021 – Mar 2023", "2019–Present").',
   '- Highlights: each bullet point from the experience section becomes one array item.',
   '- Skills: group by category if the resume groups them; otherwise use a single "Technical Skills" category.',
+  '- For every experience entry, set confidenceFlags: include flags only when you are genuinely unsure about that specific field. Use an empty array when all fields are clearly readable. Available flags: dateRangeAmbiguous, companyUnclear, titleInferred, highlightsTruncated, periodOverlap. Do not invent flags outside this list.',
   '- If the text is garbled, truncated, or appears to be an image-only PDF with no usable text, still call the tool with whatever data is recoverable.',
 ].join('\n');
 
@@ -193,7 +301,7 @@ export async function extractCareerData(
 ): Promise<CareerExtractionResult> {
   const client = new BedrockRuntimeClient({ region });
 
-  const safeText = resumeText.slice(0, MAX_RESUME_CHARS);
+  const safeText = piiScrubber.scrub(resumeText).redacted.slice(0, MAX_RESUME_CHARS);
 
   const requestBody = {
     anthropic_version: 'bedrock-2023-05-31',
@@ -216,7 +324,10 @@ export async function extractCareerData(
     body:        Buffer.from(JSON.stringify(requestBody)),
   });
 
+  const { bedrockDurationSeconds } = await import('../metrics.js');
+  const stop = bedrockDurationSeconds().startTimer({ purpose: 'extract' });
   const response = await client.send(command);
+  stop();
   const parsed   = JSON.parse(Buffer.from(response.body).toString('utf-8'));
 
   // The forced tool_use response always has content[0] as tool_use block
@@ -225,11 +336,22 @@ export async function extractCareerData(
   );
 
   if (!toolUseBlock?.input) {
-    throw new Error('extractCareerData: Bedrock returned no tool_use block');
+    throw new CareerExtractionError(
+      'no_tool_use_block',
+      'extractCareerData: Bedrock returned no tool_use block',
+    );
+  }
+
+  const validated = ExtractedCareerDataSchema.safeParse(toolUseBlock.input);
+  if (!validated.success) {
+    throw new CareerExtractionError(
+      'schema_validation_failed',
+      `extractCareerData: schema validation failed: ${validated.error.message}`,
+    );
   }
 
   return {
-    data:         toolUseBlock.input as ExtractedCareerData,
+    data:         validated.data as ExtractedCareerData,
     inputTokens:  parsed.usage?.input_tokens  ?? 0,
     outputTokens: parsed.usage?.output_tokens ?? 0,
   };

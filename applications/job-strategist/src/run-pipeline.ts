@@ -13,11 +13,12 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import type { StrategistPipelineContext, StructuredResumeData } from '@bedrock/shared';
+import type { Pool } from 'pg';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, PgSemanticCache, PiiScrubber, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
-import { executeResearchAgent }   from './agents/research-agent.js';
+import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
@@ -27,6 +28,14 @@ import {
     updateJobApplicationStatus,
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
+
+/** Module-scoped grounding verifier — block mode replaces ungrounded analysis with fallback. */
+const groundingVerifier = new BedrockGroundingVerifier({ mode: 'block' });
+
+/** Shared Postgres+pgvector semantic response cache (fail-open). */
+const semanticCache = PgSemanticCache.fromEnvironment();
+/** Scrubs raw PII out of the JD before it is ever used as a cache key. */
+const piiScrubber = new PiiScrubber();
 
 // Shared registry across both run-pipeline (analyse) and run-coach so
 // dashboard rollups can be done service-wide.
@@ -47,7 +56,21 @@ const strategistDuration = new Histogram({
     registers:  [obs.registry],
 });
 
-async function main(): Promise<void> {
+/**
+ * Build the semantic-cache kb_tag for a user. Fail-open: on any DB error
+ * fall back to a model-only tag so the cache still partitions by model.
+ */
+async function cacheTagFor(pool: Pool, userId: string): Promise<string> {
+    const model = process.env['STRATEGIST_MODEL'] ?? 'default';
+    try {
+        const r = await pool.query<{ t: string }>(
+            `SELECT COALESCE(MAX(last_synced_at)::text, '') || COALESCE((MAX(kb_quality_breakdown->>'version')), '') AS t FROM repo_sync_state WHERE user_id = $1`,
+            [userId]);
+        return `${r.rows[0]?.t ?? ''}:${model}`;
+    } catch { return `:${model}`; }
+}
+
+export async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
     const start = process.hrtime.bigint();
@@ -88,7 +111,7 @@ async function main(): Promise<void> {
         targetCompany:     env.targetCompany,
         targetRole:        env.targetRole,
         resumeId:          env.resumeId,
-        resumeData:        resumeData as import('@bedrock/shared').StructuredResumeData | null,
+        resumeData:        resumeData as StructuredResumeData | null,
         interviewStage:    'applied',
         bucket:            process.env['S3_BUCKET'] ?? '',
         environment:       env.environment,
@@ -96,17 +119,115 @@ async function main(): Promise<void> {
         cumulativeCostUsd: 0,
         startedAt:         new Date().toISOString(),
         userId:            env.userId,
+        onInvocationComplete: recordInvocationToRds(pool, 'job-strategist'),
     };
 
     try {
         await updatePipelineRun(pool, env.pipelineRunId, 'researching');
         await updateJobApplicationStatus(pool, env.applicationId, 'analysing');
+
+        // ── Semantic cache short-circuit (fail-open) ──────────────────────
+        // The JD is PII-scrubbed before it ever becomes the cache key so no
+        // raw PII reaches the embedding model or the cache table. Any cache
+        // failure degrades to a normal (uncached) run — never a hard-fail.
+        // A hit reproduces the exact terminal run-state of a successful run.
+        const cacheScope = `jobstrat:${env.userId}:${env.targetRole}:${env.targetCompany}`;
+        // Fail-open: any throw from cacheTagFor degrades to a model-only tag so
+        // the cache still partitions by model and the run never hard-fails.
+        let cacheTag = `:${process.env['STRATEGIST_MODEL'] ?? 'default'}`;
+        try { cacheTag = await cacheTagFor(pool, env.userId); } catch { /* fail-open: model-only tag */ }
+        const jdForCache = piiScrubber.scrub(env.jobDescription).redacted;
+        let cached: { hit: boolean; response?: unknown } = { hit: false };
+        try {
+            cached = (await semanticCache.get({ scope: cacheScope, kbTag: cacheTag, queryText: jdForCache })) ?? { hit: false };
+        } catch (e) {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                error: (e as Error).message,
+            }, 'Semantic cache get failed — proceeding without cache');
+            cached = { hit: false };
+        }
+        if (cached.hit && cached.response && typeof (cached.response as { analysis?: { analysisXml?: unknown } }).analysis?.analysisXml === 'string') {
+            const cr = cached.response as {
+                analysis: {
+                    analysisXml: string;
+                    tailoredResumeData?: unknown;
+                    archetypeSelection?: { selectedArchetype?: string | null };
+                    [k: string]: unknown;
+                };
+                research: unknown;
+            };
+            await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+                analysis: cr.analysis,
+                research: cr.research,
+            });
+            // Reproduce the exact terminal state of a normal run: persist the
+            // cached tailored resume so admin-api detail and the downstream
+            // coach Job see a resume row. Older cached entries predate this
+            // field — when absent, proceed without it (matches a run that
+            // produced no resume). Mirrors the normal success-path call.
+            if (cr.analysis?.tailoredResumeData) {
+                await persistTailoredResume(pool, {
+                    applicationId:  env.applicationId,
+                    userId:         env.userId,
+                    pipelineId:     env.pipelineId,
+                    targetRole:     env.targetRole,
+                    archetype:      cr.analysis?.archetypeSelection?.selectedArchetype ?? null,
+                    tailoredResume: cr.analysis.tailoredResumeData,
+                });
+            }
+            await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
+            await updatePipelineRun(pool, env.pipelineRunId, 'complete');
+            outcome = 'success';
+            log.info({
+                pipelineRunId: env.pipelineRunId,
+                applicationId: env.applicationId,
+            }, 'strategist_pipeline_complete');
+            return;
+        }
+
         const research = await executeResearchAgent(ctx);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
         const analysis = await executeStrategistAgent(ctx, research.data);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
+
+        // ── Grounding verification (block mode, fail-open) ─────────────────
+        // Run after analysis is produced and KB context is available, before
+        // any persistence so the verified (or fallback) text is what is stored.
+        // Skip entirely when the KB returned no passages — block mode would
+        // replace a perfectly good analysis with a one-line fallback.
+        const contextChunks = (research.data.kbContext ?? '')
+            .split(KB_CONTEXT_SEPARATOR)
+            .filter((s: string) => s.trim().length > 0);
+        let finalAnalysis = analysis.data.analysisXml;
+        // Default non-NOT_GROUNDED → skipped (no verify) and verifier-threw
+        // (fail-open) paths remain cacheable; only an explicit NOT_GROUNDED
+        // fallback substitution must NOT be cached.
+        let groundingStatus = 'GROUNDED';
+        if (contextChunks.length > 0) {
+            try {
+                const g = await groundingVerifier.verify({
+                    query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
+                    contextChunks,
+                    answer: analysis.data.analysisXml,
+                }, { pool, userId: env.userId });
+                groundingStatus = g.status;
+                finalAnalysis = g.answer;
+            } catch (e) {
+                log.warn({
+                    pipelineRunId: env.pipelineRunId,
+                    error: (e as Error).message,
+                }, 'Grounding verifier failed — keeping original analysis');
+                strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_error' });
+            }
+        } else {
+            log.info({
+                pipelineRunId: env.pipelineRunId,
+            }, 'Grounding verification skipped — no KB context passages');
+            strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_skipped_no_context' });
+        }
 
         // Resume-builder persist (Option A): the Strategist already produced
         // the full tailored StructuredResumeData. Validate and persist to PG.
@@ -126,10 +247,27 @@ async function main(): Promise<void> {
         // Stash both outputs on pipeline_runs.metadata so the admin-api detail
         // endpoint can serve research fields (fitSummary, matches, gaps, etc.)
         // and a downstream coach K8s Job can re-hydrate without re-running.
+        // analysisXml is replaced by finalAnalysis (grounded or original on fail-open).
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:  analysis.data,
+            analysis:  { ...analysis.data, analysisXml: finalAnalysis },
             research:  research.data,
         });
+
+        // Store in the semantic cache (fire-and-forget, fail-open). Skip only
+        // when grounding explicitly substituted the one-line fallback — a
+        // skipped/fail-open verify keeps groundingStatus non-NOT_GROUNDED and
+        // is therefore cacheable. The cache key is the PII-scrubbed JD.
+        if (groundingStatus !== 'NOT_GROUNDED') {
+            void semanticCache.put({
+                scope:     cacheScope,
+                kbTag:     cacheTag,
+                queryText: jdForCache,
+                response:  {
+                    analysis: { ...analysis.data, analysisXml: finalAnalysis },
+                    research: research.data,
+                },
+            }).catch(() => { /* fail-open — cache write must never break the run */ });
+        }
 
         await updateJobApplicationStatus(pool, env.applicationId, 'analysis-ready');
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
@@ -162,4 +300,7 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch(() => process.exit(1));
+// Only auto-execute when run as the K8s Job entrypoint, not when imported by tests.
+if (require.main === module) {
+    main().catch(() => process.exit(1));
+}

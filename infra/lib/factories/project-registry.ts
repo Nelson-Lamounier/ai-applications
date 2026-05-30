@@ -11,7 +11,7 @@ import { Project, isValidProject, getAvailableProjects } from '../config/project
 import { BedrockProjectFactory } from '../projects/bedrock';
 import { SelfHealingProjectFactory } from '../projects/self-healing';
 
-import { IProjectFactory, ProjectFactoryConstructor } from './project-interfaces';
+import type { IProjectFactory, ProjectFactoryConstructor } from './project-interfaces';
 
 const projectFactoryRegistry: Record<Project, ProjectFactoryConstructor> = {
     [Project.BEDROCK]: BedrockProjectFactory,

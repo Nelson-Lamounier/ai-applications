@@ -7,7 +7,7 @@
  */
 
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
-import type { RepoSyncState, SyncStatus } from '../types.js';
+import type { RepoSyncState, SyncStatus, IngestionPhase } from '../types.js';
 import type { RdsClientConfig } from './RdsVectorStore.js';
 import { Pool } from 'pg';
 
@@ -16,13 +16,20 @@ import { Pool } from 'pg';
 // =============================================================================
 
 interface SyncStateRow {
-    sync_status:          string;
-    last_synced_at:       Date | null;
-    file_count:           number;
-    chunk_count:          number;
-    error_message:        string | null;
-    kb_quality_score:     string | number | null;        // pg returns NUMERIC as string
-    kb_quality_breakdown: Record<string, unknown> | null;
+    sync_status:           string;
+    last_synced_at:        Date | null;
+    file_count:            number;
+    chunk_count:           number;
+    error_message:         string | null;
+    kb_quality_score:      string | number | null;        // pg returns NUMERIC as string
+    kb_quality_breakdown:  Record<string, unknown> | null;
+    retrieval_score:       string | number | null;        // pg returns NUMERIC as string
+    retrieval_breakdown:   Record<string, unknown> | null;
+    embedded_count:        number | null;
+    embed_total:           number | null;
+    phase:                 string | null;
+    phase_done:            number | null;
+    phase_total:           number | null;
 }
 
 // =============================================================================
@@ -76,7 +83,10 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
     async get(userId: string, repoFullName: string): Promise<RepoSyncState | undefined> {
         const result = await this.pool.query<SyncStateRow>(
             `SELECT sync_status, last_synced_at, file_count, chunk_count, error_message,
-                    kb_quality_score, kb_quality_breakdown
+                    kb_quality_score, kb_quality_breakdown,
+                    retrieval_score, retrieval_breakdown,
+                    embedded_count, embed_total,
+                    phase, phase_done, phase_total
              FROM repo_sync_state
              WHERE user_id = $1 AND repo_full_name = $2`,
             [userId, repoFullName],
@@ -91,16 +101,29 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 ? parseFloat(row.kb_quality_score)
                 : row.kb_quality_score;
 
+        const retrievalScore = row.retrieval_score == null
+            ? undefined
+            : typeof row.retrieval_score === 'string'
+                ? parseFloat(row.retrieval_score)
+                : row.retrieval_score;
+
         return {
             userId,
             repoFullName,
-            syncStatus:         row.sync_status as SyncStatus,
-            lastSyncedAt:       row.last_synced_at ?? undefined,
-            fileCount:          row.file_count,
-            chunkCount:         row.chunk_count,
-            errorMessage:       row.error_message ?? undefined,
-            kbQualityScore:     score,
-            kbQualityBreakdown: row.kb_quality_breakdown ?? undefined,
+            syncStatus:          row.sync_status as SyncStatus,
+            lastSyncedAt:        row.last_synced_at ?? undefined,
+            fileCount:           row.file_count,
+            chunkCount:          row.chunk_count,
+            errorMessage:        row.error_message ?? undefined,
+            kbQualityScore:      score,
+            kbQualityBreakdown:  row.kb_quality_breakdown ?? undefined,
+            retrievalScore,
+            retrievalBreakdown:  row.retrieval_breakdown ?? undefined,
+            embeddedCount:       row.embedded_count ?? undefined,
+            embedTotal:          row.embed_total ?? undefined,
+            phase:               (row.phase as IngestionPhase | null) ?? undefined,
+            phaseDone:           row.phase_done ?? undefined,
+            phaseTotal:          row.phase_total ?? undefined,
         };
     }
 
@@ -113,17 +136,20 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             `INSERT INTO repo_sync_state (
                 user_id, repo_full_name, sync_status,
                 last_synced_at, file_count, chunk_count, error_message,
-                kb_quality_score, kb_quality_breakdown
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+                kb_quality_score, kb_quality_breakdown,
+                retrieval_score, retrieval_breakdown
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
             ON CONFLICT (user_id, repo_full_name)
             DO UPDATE SET
-                sync_status          = EXCLUDED.sync_status,
-                last_synced_at       = EXCLUDED.last_synced_at,
-                file_count           = EXCLUDED.file_count,
-                chunk_count          = EXCLUDED.chunk_count,
-                error_message        = EXCLUDED.error_message,
-                kb_quality_score     = EXCLUDED.kb_quality_score,
-                kb_quality_breakdown = EXCLUDED.kb_quality_breakdown`,
+                sync_status           = EXCLUDED.sync_status,
+                last_synced_at        = EXCLUDED.last_synced_at,
+                file_count            = EXCLUDED.file_count,
+                chunk_count           = EXCLUDED.chunk_count,
+                error_message         = EXCLUDED.error_message,
+                kb_quality_score      = EXCLUDED.kb_quality_score,
+                kb_quality_breakdown  = EXCLUDED.kb_quality_breakdown,
+                retrieval_score       = EXCLUDED.retrieval_score,
+                retrieval_breakdown   = EXCLUDED.retrieval_breakdown`,
             [
                 state.userId,
                 state.repoFullName,
@@ -136,6 +162,10 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 state.kbQualityBreakdown == null
                     ? null
                     : JSON.stringify(state.kbQualityBreakdown),
+                state.retrievalScore ?? null,
+                state.retrievalBreakdown == null
+                    ? null
+                    : JSON.stringify(state.retrievalBreakdown),
             ],
         );
     }
@@ -145,13 +175,47 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
     // =========================================================================
 
     async markStarted(userId: string, repoFullName: string): Promise<void> {
-        return this.upsert({
+        await this.upsert({
             userId,
             repoFullName,
             syncStatus: 'syncing',
             fileCount:  0,
             chunkCount: 0,
         });
+    }
+
+    /**
+     * Begin a run: set status='syncing' and reset stale phase/progress so a
+     * re-ingest doesn't briefly show last run's "embedded N/N". Call once at
+     * the very start (run-ingestion), before any markPhase. Idempotent.
+     */
+    async beginRun(userId: string, repoFullName: string): Promise<void> {
+        await this.markStarted(userId, repoFullName);
+        await this.pool.query(
+            `UPDATE repo_sync_state
+                SET embedded_count = NULL, embed_total = NULL,
+                    phase = NULL, phase_done = NULL, phase_total = NULL
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName],
+        );
+    }
+
+    async markPhase(
+        userId: string,
+        repoFullName: string,
+        phase: IngestionPhase,
+        done?: number,
+        total?: number,
+    ): Promise<void> {
+        // Targeted UPDATE — touches only the phase columns so it can't race
+        // with the quality/retrieval fields written by markComplete. No-op if
+        // the row doesn't exist yet (markStarted/markPhase('analyzing') first).
+        await this.pool.query(
+            `UPDATE repo_sync_state
+                SET phase = $3, phase_done = $4, phase_total = $5
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName, phase, done ?? null, total ?? null],
+        );
     }
 
     async markComplete(
@@ -161,6 +225,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         chunkCount: number,
         kbQualityScore?: number,
         kbQualityBreakdown?: Record<string, unknown>,
+        retrievalScore?: number,
+        retrievalBreakdown?: Record<string, unknown>,
     ): Promise<void> {
         return this.upsert({
             userId,
@@ -171,6 +237,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             chunkCount,
             kbQualityScore,
             kbQualityBreakdown,
+            retrievalScore,
+            retrievalBreakdown,
         });
     }
 

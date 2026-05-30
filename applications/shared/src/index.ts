@@ -35,6 +35,7 @@ export type { BasePipelineContext } from './base-agent.js';
 export {
     bootstrapK8sObservability,
     pushFinalMetrics,
+    jobLogger,
     activeTraceContext,
     withSpan,
     recordBedrockUsage,
@@ -44,6 +45,7 @@ export {
 export type {
     ObservabilityHandle,
     BootstrapOptions,
+    JobLogger,
     BedrockUsage,
     RecordBedrockUsageArgs,
 } from './observability/index.js';
@@ -213,7 +215,9 @@ export type {
     IRepoAdapter,
     RepoFile,
     RepoCommit,
+    RepoPullRequest,
     ListCommitsOptions,
+    ListPullRequestsOptions,
 } from './ingestion/interfaces/IRepoAdapter.js';
 export type { IFileFilter }         from './ingestion/interfaces/IFileFilter.js';
 export type { IChunker }            from './ingestion/interfaces/IChunker.js';
@@ -241,6 +245,42 @@ export type {
     KbQualityFactor,
     KbQualityBreakdown,
     KbQualityResult,
+    IRetrievalProbe,
+    RetrievalProbeArgs,
+    RetrievalBreakdown,
+    RetrievalQuestionResult,
+    RetrievalStatus,
+    RankCandidate,
+    ProfileAggInput,
+    LanguageStat,
+    TechStat,
+    ActivityArcEntry,
+    UserProfileRollup,
+    UserProfileRollupResult,
+    IUserProfileRollupRepository,
+    MirrorJson,
+    RevealJson,
+    ArchetypeFit,
+    SeniorityCall,
+    DirectionJson,
+    UnsupportedClaim,
+    UndersoldStrength,
+    ReconciliationJson,
+    DiagnosticJson,
+    RollupRow,
+    ICareerHistoryReadRepository,
+    ResumeForReconciliation,
+    ResumeSkillGroup,
+    ResumeExperienceEntry,
+    ResumeProjectEntry,
+    IDiagnosticInputsReadRepository,
+    DiagnosticInputs,
+    KbStats,
+    ResumeEntryCounts,
+    ComponentKey,
+    ComponentSubScore,
+    DiagnosticComputed,
+    DiagnosticComputeInput,
 } from './rds/index.js';
 
 export {
@@ -250,11 +290,64 @@ export {
     BedrockChunkEnricher,
     IngestionPipeline,
     computeKbQuality,
+    sampleChunks,
+    matchRank,
+    scoreRetrieval,
+    buildRetrievalSuggestions,
     recordBedrockCost,
     computeCostCents,
+    recordInvocationToRds,
+    computeUserProfileRollup,
+    RdsUserProfileRollupRepository,
+    RdsCareerHistoryReadRepository,
+    RdsDiagnosticInputsReadRepository,
+    computeUserDiagnostic,
+    WEIGHTS,
+    KB_SCORE_THRESHOLD,
+    RdsOAuthConnectionsRepository,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
+export type {
+    IOAuthConnectionsRepository,
+    OAuthConnection,
+    NewOAuthConnection,
+} from './rds/index.js';
+
+// Technology graph (Layer 1)
+export { OntologyResolver, normalizeAlias } from './rds/index.js';
+export { TechnologyOntologyRepository }     from './rds/index.js';
+export { TechnologyEvidenceRepository }     from './rds/index.js';
+export { TechnologyCandidateRepository }    from './rds/index.js';
+export { TechnologyParityRunRepository }    from './rds/index.js';
+export { CONFIDENCE_BY_LAYER }             from './rds/index.js';
+export type {
+    SourceLayer, RawTechnologyEvidence, TechnologyEvidenceRow,
+    OntologyRow, ParityRunRow, CandidateUpsertInput,
+} from './rds/index.js';
+
+// Ontology import (Tier 2 importer)
+export type {
+    RawImportEntry, OntologyCategory, CategorizationResult, ImportRunCounts,
+} from './rds/index.js';
+export { ONTOLOGY_CATEGORIES } from './rds/index.js';
+export { OntologyImportRunRepository }    from './rds/index.js';
+export { OntologyImportSourceRepository } from './rds/index.js';
+export { OntologyWriteRepository }        from './rds/index.js';
+export { OntologyReviewQueueRepository }   from './rds/index.js';
+export { OntologySkippedImportRepository } from './rds/index.js';
+export type {
+    OntologyReviewQueueInput,
+    OntologySkippedImportInput,
+} from './rds/index.js';
+
+// ─── Crypto (KMS Envelope Encryption) ────────────────────────────────────────
+export { createKmsEnvelope, KmsEnvelopeError } from './crypto/index.js';
+export type { KmsEnvelope, EncryptedPayload } from './crypto/index.js';
+
+// ─── GitHub App Helpers ──────────────────────────────────────────────────────
+export { signGitHubAppJwt, GitHubAppJwtError, verifyWebhookSignature } from './github/index.js';
+export type { AppJwtOptions } from './github/index.js';
 
 // ─── Retrieval (Reranking + pgvector) ────────────────────────────────────────
 export type {
@@ -269,19 +362,121 @@ export type {
 
 export { BedrockReranker, PgVectorRetriever } from './retrieval/index.js';
 
-// ─── Security (Input/Output Sanitisation) ────────────────────────────────────
-export { InputSanitiser, InputSanitisationError } from './security/input-sanitiser.js';
-export type { InputSanitiserConfig } from './security/input-sanitiser.js';
-export { OutputSanitiser } from './security/output-sanitiser.js';
-export type { OutputSanitiserConfig } from './security/output-sanitiser.js';
-export type {
-    InputPattern,
-    OutputRedactionRule,
-    PiiPattern,
-    SanitiseInputResult,
-    SanitisationResult,
-} from './security/types.js';
+// ─── Security (Input/Output Sanitisation + PII Scrubbing) ────────────────────
+// Single source of truth — re-export the security barrel rather than
+// re-listing every symbol (kept these two lists in lockstep otherwise).
+export * from './security/index.js';
 
 // ─── Chatbot utilities ────────────────────────────────────────────────────────
-export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT } from './chatbot/index.js';
-export type { Metric, ChatbotResponse } from './chatbot/index.js';
+export { buildChatContext, expandQuery, CHATBOT_SYSTEM_PROMPT, recordZeroResultRetrieval } from './chatbot/index.js';
+export type { Metric, ChatbotResponse, ZeroResultRetrievalParams } from './chatbot/index.js';
+
+// ─── Grounding (Answer Self-Correction / Verification) ───────────────────────
+export { BedrockGroundingVerifier, DEFAULT_GROUNDING_FALLBACK } from './grounding/index.js';
+export type {
+    BedrockGroundingVerifierConfig,
+    GroundingInput,
+    GroundingMode,
+    GroundingResult,
+    IGroundingVerifier,
+} from './grounding/index.js';
+
+// ─── Cache (Semantic Response Cache + Redis Read Cache) ──────────────────────
+export { PgSemanticCache } from './cache/index.js';
+export { RedisExactCache } from './cache/index.js';
+export type {
+    ISemanticCache,
+    SemanticCacheConfig,
+    SemanticCacheGetInput,
+    SemanticCacheGetResult,
+    SemanticCachePutInput,
+    SemanticCacheInvalidateInput,
+    RedisExactCacheOptions,
+} from './cache/index.js';
+
+export {
+    RedisReadCache,
+    resolveRedisCacheConfig,
+    createRedisCacheClient,
+    projectCaseStudyKey,
+} from './cache/index.js';
+export type { RedisCacheConfig, RedisLike, CacheMetrics } from './cache/index.js';
+
+// ─── Feature Flags (app_config-backed) ───────────────────────────────────────
+export {
+    isFeatureEnabled,
+    clearFeatureFlagCache,
+    upsertFeatureFlag,
+} from './config/feature-flags.js';
+
+// ─── Projects domain (multi-repo case-study) ─────────────────────────────────
+export {
+    PROJECT_COMPONENT_KINDS,
+    ProjectComponentKindSchema,
+    ClusteringComponentSchema,
+    ClusteringProposalSchema,
+    ClusteringResultSchema,
+    buildClusteringSignals,
+    extractNamingPrefixes,
+    extractSharedTechStack,
+    extractSharedTopics,
+    extractEmbeddingPairs,
+    serialiseSignalsForPrompt,
+    bedrockClusteringAgent,
+    loadRepoDigests,
+    loadDescriptionEmbeddings,
+    persistClusteringResult,
+    runClusteringOrchestration,
+    // Case study (Phase 2B)
+    SourceSignalSchema,
+    CaseStudySchema,
+    PROJECT_TYPES,
+    PROJECT_STATUS,
+    RESUME_BULLET_ANGLES,
+    STACK_CATEGORIES,
+    TEST_COVERAGE_SIGNALS,
+    CI_MATURITY,
+    DOC_DENSITY,
+    computeContentHash,
+    mergeGroundingResult,
+    flattenSignalToContext,
+    bedrockCaseStudyAgent,
+    loadCaseStudyContext,
+    persistCaseStudy,
+    runCaseStudyOrchestration,
+} from './projects/index.js';
+export type {
+    ProjectComponentKind,
+    ClusteringComponent,
+    ClusteringProposal,
+    ClusteringResult,
+    ClusteringSignals,
+    RepoClusteringDigest,
+    DescriptionEmbedding,
+    ClusteringAgent,
+    PersistClusteringInput,
+    PersistClusteringSummary,
+    RunClusteringInput,
+    RunClusteringOutput,
+    // Case study (Phase 2B)
+    SourceSignal,
+    CaseStudy,
+    CaseStudyContext,
+    StackItem,
+    Decision,
+    Highlight,
+    Challenge,
+    ResumeBulletSet,
+    DepthMarkers,
+    Architecture,
+    CaseStudyAgent,
+    CaseStudyCommit,
+    CaseStudyPullRequest,
+    CommitLoader,
+    PullRequestLoader,
+    LoadCaseStudyContextResult,
+    PersistCaseStudyInput,
+    PersistCaseStudySummary,
+    RunCaseStudyInput,
+    RunCaseStudyOutput,
+} from './projects/index.js';

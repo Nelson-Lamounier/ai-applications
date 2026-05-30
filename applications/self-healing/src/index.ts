@@ -45,7 +45,6 @@ import {
 import {
     DynamoDBClient,
     PutItemCommand as DynamoPutItemCommand,
-    GetItemCommand as DynamoGetItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import {
     S3Client,
@@ -404,6 +403,7 @@ async function isDuplicate(event: AlarmEvent): Promise<boolean> {
  */
 function sanitiseEventField(value: string, maxLength: number): string {
     // Strip control characters and null bytes
+    // eslint-disable-next-line no-control-regex -- intentional: matches control chars in untrusted input
     let sanitised = value.replaceAll(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 
     // Truncate

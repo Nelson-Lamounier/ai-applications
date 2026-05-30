@@ -1,0 +1,6 @@
+Senior Site Reliability Engineer — Smoke Test Co (remote, EU)
+
+You will own SLOs for a Kubernetes platform on AWS EKS, run an
+incident process, and drive IaC with CDK. Required: 5+ years SRE/DevOps,
+strong Kubernetes, AWS, Terraform or CDK, observability (Prometheus,
+Grafana), and on-call leadership. Nice to have: Go, cost optimisation.

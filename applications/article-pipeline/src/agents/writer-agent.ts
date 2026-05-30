@@ -12,6 +12,7 @@
  * Pipeline position: Research → **Writer** → QA → Review
  */
 
+import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { BLOG_PERSONA_SYSTEM_PROMPT } from '../prompts/blog-persona.js';
 import type {
@@ -219,86 +220,80 @@ function buildWriterMessage(
  * @returns Validated WriterResult
  * @throws Error if required fields are missing
  */
-function parseArticleMetadata(metadata: Record<string, unknown>): ArticleMetadata {
-    return {
-        title: typeof metadata.title === 'string' ? metadata.title : 'Untitled Article',
-        description: typeof metadata.description === 'string' ? metadata.description : '',
-        tags: Array.isArray(metadata.tags) ? metadata.tags.filter((t): t is string => typeof t === 'string') : [],
-        slug: typeof metadata.slug === 'string' ? metadata.slug : 'untitled',
-        publishDate: typeof metadata.publishDate === 'string' ? metadata.publishDate : new Date().toISOString().split('T')[0],
-        readingTime: typeof metadata.readingTime === 'number' ? metadata.readingTime : 8,
-        category: typeof metadata.category === 'string' ? metadata.category : 'DevOps',
-        aiSummary: typeof metadata.aiSummary === 'string' ? metadata.aiSummary : '',
-        technicalConfidence: typeof metadata.technicalConfidence === 'number'
-            ? Math.max(0, Math.min(100, metadata.technicalConfidence))
-            : 70,
-        skillsDemonstrated: Array.isArray(metadata.skillsDemonstrated)
-            ? metadata.skillsDemonstrated.filter((s): s is string => typeof s === 'string')
-            : [],
-        processingNote: typeof metadata.processingNote === 'string' ? metadata.processingNote : '',
-        primaryKeyword: typeof metadata.primaryKeyword === 'string' ? metadata.primaryKeyword : undefined,
-        secondaryKeywords: Array.isArray(metadata.secondaryKeywords)
-            ? metadata.secondaryKeywords.filter((k): k is string => typeof k === 'string')
-            : undefined,
-    };
-}
+/**
+ * Strict safety-net for the Writer's structured JSON. Writer keeps
+ * extended thinking so forced tool_use is unavailable; this Zod schema
+ * is the constrained-decoding substitute. `.strict()` rejects invented
+ * fields; a failure throws rather than persisting placeholder defaults
+ * to DynamoDB (structure-output-checklist §5/§7). `content` is prose and
+ * stays a free-form string (only emptiness is rejected).
+ */
+const WriterMetadataSchema = z.object({
+    title:               z.string().min(1),
+    description:         z.string(),
+    tags:                z.array(z.string()),
+    slug:                z.string().min(1),
+    publishDate:         z.string(),
+    readingTime:         z.number(),
+    category:            z.string(),
+    aiSummary:           z.string(),
+    technicalConfidence: z.number(),
+    skillsDemonstrated:  z.array(z.string()),
+    processingNote:      z.string(),
+    primaryKeyword:      z.string().optional(),
+    secondaryKeywords:   z.array(z.string()).optional(),
+}).strict();
 
-function parseShotListArray(rawShotList: unknown[]): ShotListItem[] {
-    return rawShotList
-        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
-        .map((item) => ({
-            id: typeof item.id === 'string' ? item.id : 'unknown',
-            type: ['diagram', 'screenshot', 'hero'].includes(item.type as string)
-                ? (item.type as 'diagram' | 'screenshot' | 'hero')
-                : 'diagram',
-            instruction: typeof item.instruction === 'string' ? item.instruction : '',
-            context: typeof item.context === 'string' ? item.context : '',
-        }));
-}
+const ShotListItemSchema = z.object({
+    id:          z.string(),
+    type:        z.enum(['diagram', 'screenshot', 'hero', 'tutorial', 'demo', 'walkthrough']),
+    instruction: z.string(),
+    context:     z.string(),
+    duration:    z.string().optional(),
+}).strict();
 
-function parseSuggestedReferencesArray(rawRefs: unknown[]): SuggestedReference[] {
-    return rawRefs
-        .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null)
-        .map((r) => ({
-            label: typeof r.label === 'string' ? r.label : '',
-            url: typeof r.url === 'string' ? r.url : '',
-            relevance: typeof r.relevance === 'string' ? r.relevance : '',
-            usedInline: typeof r.usedInline === 'boolean' ? r.usedInline : false,
-        }))
-        .filter((r) => r.label && r.url);
-}
+const SuggestedReferenceSchema = z.object({
+    label:      z.string(),
+    url:        z.string(),
+    relevance:  z.string(),
+    usedInline: z.boolean(),
+}).strict();
+
+const WriterOutputSchema = z.object({
+    content:             z.string().min(1, 'Writer Agent: missing or empty "content"'),
+    metadata:            WriterMetadataSchema,
+    shotList:            z.array(ShotListItemSchema).default([]),
+    suggestedReferences: z.array(SuggestedReferenceSchema).optional(),
+}).strict();
 
 /**
- * Parse the Writer Agent's JSON response into a typed WriterResult.
+ * Parse and validate the Writer Agent's JSON response.
  *
  * @param responseText - Raw text response from Bedrock
  * @returns Validated WriterResult
- * @throws Error if required fields are missing
+ * @throws Error if the output is missing content or fails schema validation
  */
-function parseWriterResponse(responseText: string): WriterResult {
-    const parsed = parseJsonResponse<Record<string, unknown>>(responseText, 'writer');
-
-    // Validate required fields
-    if (typeof parsed.content !== 'string' || parsed.content.length === 0) {
-        throw new TypeError('Writer Agent: Missing or empty "content" in response');
+export function parseWriterResponse(responseText: string): WriterResult {
+    const raw = parseJsonResponse<unknown>(responseText, 'writer');
+    const v = WriterOutputSchema.safeParse(raw);
+    if (!v.success) {
+        // Surface the empty-content guard message verbatim when that is
+        // the cause; otherwise a generic schema-validation failure.
+        const msg = v.error.issues.find(i => i.path[0] === 'content')?.message
+            ?? `Writer Agent: output failed schema validation: ${v.error.message}`;
+        throw new TypeError(msg);
     }
-
-    const metadata = parsed.metadata as Record<string, unknown> | undefined;
-    if (!metadata || typeof metadata !== 'object') {
-        throw new TypeError('Writer Agent: Missing "metadata" object in response');
-    }
-
-    const validatedMetadata = parseArticleMetadata(metadata);
-    const rawShotList = Array.isArray(parsed.shotList) ? parsed.shotList : [];
-    const shotList = parseShotListArray(rawShotList);
-    const rawRefs = Array.isArray(parsed.suggestedReferences) ? parsed.suggestedReferences : [];
-    const suggestedReferences = parseSuggestedReferencesArray(rawRefs);
-
+    const d = v.data;
     return {
-        content: parsed.content,
-        metadata: validatedMetadata,
-        shotList,
-        suggestedReferences: suggestedReferences.length > 0 ? suggestedReferences : undefined,
+        content: d.content,
+        metadata: {
+            ...d.metadata,
+            technicalConfidence: Math.max(0, Math.min(100, d.metadata.technicalConfidence)),
+        } as ArticleMetadata,
+        shotList: d.shotList as ShotListItem[],
+        suggestedReferences: d.suggestedReferences && d.suggestedReferences.length > 0
+            ? (d.suggestedReferences as SuggestedReference[])
+            : undefined,
     };
 }
 

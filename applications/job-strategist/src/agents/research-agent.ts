@@ -13,10 +13,12 @@
  * Pipeline position: Trigger → **Research** → Strategist → Coach → RDS persist
  */
 
+import { z } from 'zod';
 import {
     runAgent,
     parseJsonResponse,
     InputSanitiser,
+    PiiScrubber,
     BedrockReranker,
     RdsVectorStore,
     TitanEmbeddingProvider,
@@ -36,6 +38,9 @@ import { formatResumeForPrompt } from '../services/resume-service.js';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
 
+/** Delimiter used to join and later split deduplicated KB passages. */
+export const KB_CONTEXT_SEPARATOR = '\n\n---\n\n';
+
 /**
  * PII patterns specific to job description inputs.
  * Flags (warns) without redacting — JDs may legitimately contain recruiter contact info.
@@ -52,6 +57,9 @@ const inputSanitiser = new InputSanitiser({
     maxLength: 50_000,
     piiPatterns: STRATEGIST_PII_PATTERNS,
 });
+
+/** Module-scoped PII scrubber — always-on redaction before retrieval, Bedrock, and logs */
+const piiScrubber = new PiiScrubber();
 
 // =============================================================================
 // CONFIGURATION
@@ -72,12 +80,8 @@ if (!RESEARCH_MODEL) {
  */
 const EFFECTIVE_MODEL_ID = process.env.INFERENCE_PROFILE_ARN ?? RESEARCH_MODEL;
 
-/** Maximum output tokens — must exceed thinkingBudget + expected JSON output.
- *  thinkingBudget=4096 + research JSON brief ~8-12K tokens = 16384 minimum. */
+/** Maximum output tokens for the forced tool_use research brief. */
 const RESEARCH_MAX_TOKENS = 16000;
-
-/** Thinking budget for analysis tasks */
-const RESEARCH_THINKING_BUDGET = 4096;
 
 /** Max pgvector passages surfaced to the LLM after optional reranking. */
 const MAX_KB_PASSAGES = 15;
@@ -124,7 +128,7 @@ async function querySingleRds(query: string, userId: string, store: RdsVectorSto
 
     log('INFO', 'Querying RDS vector store', {
         agent:        'strategist-research',
-        queryPreview: query.substring(0, 80),
+        queryPreview: piiScrubber.scrub(query.substring(0, 80)).redacted,
         retrieveK:    overfetch,
         finalK:       MAX_KB_PASSAGES,
         rerank:       reranker !== null,
@@ -242,7 +246,7 @@ function deduplicatePassages(passages: string[]): string {
 
     log('INFO', 'Deduplicated passages', { agent: 'strategist-research', total: passages.length, unique: unique.length });
 
-    return unique.length > 0 ? unique.join('\n\n---\n\n') : '';
+    return unique.length > 0 ? unique.join(KB_CONTEXT_SEPARATOR) : '';
 }
 
 
@@ -332,15 +336,206 @@ function buildResearchMessage(
 // AGENT EXECUTION
 // =============================================================================
 
+// =============================================================================
+// STRUCTURED OUTPUT — tool schema + Zod safety-net
+// =============================================================================
+
+const JOB_REQUIREMENT_SCHEMA = {
+    type: 'object',
+    properties: {
+        skill:        { type: 'string' },
+        context:      { type: 'string' },
+        disqualifying: { type: 'boolean' },
+    },
+    required: ['skill', 'context'],
+    additionalProperties: false,
+};
+
+const STR_ARRAY = { type: 'array', items: { type: 'string' } };
+
+/** Tool the research model is forced to call. Non-model fields (resumeData,
+ *  kbContext, resumeConstraints) are injected after validation, not produced
+ *  by the model, so they are absent from the schema. */
+const RESEARCH_TOOL = {
+    name: 'emit_research_brief',
+    description: 'Emit the structured job-fit research brief.',
+    inputSchema: {
+        type: 'object',
+        properties: {
+            targetRole:    { type: 'string' },
+            targetCompany: { type: 'string' },
+            seniority:     { type: 'string' },
+            domain:        { type: 'string' },
+            hardRequirements: { type: 'array', items: JOB_REQUIREMENT_SCHEMA },
+            softRequirements: { type: 'array', items: JOB_REQUIREMENT_SCHEMA },
+            implicitRequirements: STR_ARRAY,
+            technologyInventory: {
+                type: 'object',
+                properties: {
+                    languages: STR_ARRAY, frameworks: STR_ARRAY, infrastructure: STR_ARRAY,
+                    tools: STR_ARRAY, methodologies: STR_ARRAY,
+                },
+                required: ['languages', 'frameworks', 'infrastructure', 'tools', 'methodologies'],
+                additionalProperties: false,
+            },
+            experienceSignals: {
+                type: 'object',
+                properties: {
+                    yearsExpected:         { type: 'string' },
+                    domainExperience:      { type: 'string' },
+                    leadershipExpectation: { type: 'string' },
+                    scaleIndicators:       { type: 'string' },
+                },
+                required: ['yearsExpected', 'domainExperience', 'leadershipExpectation', 'scaleIndicators'],
+                additionalProperties: false,
+            },
+            verifiedMatches: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        skill:         { type: 'string' },
+                        sourceCitation: { type: 'string' },
+                        depth:         { type: 'string', enum: ['surface', 'working', 'expert'] },
+                        recency:       { type: 'string' },
+                    },
+                    required: ['skill', 'sourceCitation', 'depth', 'recency'],
+                    additionalProperties: false,
+                },
+            },
+            partialMatches: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        skill:                 { type: 'string' },
+                        gapDescription:        { type: 'string' },
+                        transferableFoundation: { type: 'string' },
+                        framingSuggestion:     { type: 'string' },
+                    },
+                    required: ['skill', 'gapDescription', 'transferableFoundation', 'framingSuggestion'],
+                    additionalProperties: false,
+                },
+            },
+            gaps: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        skill:                   { type: 'string' },
+                        gapType:                 { type: 'string', enum: ['hard', 'soft'] },
+                        impactSeverity:          { type: 'string', enum: ['blocking', 'significant', 'minor'] },
+                        disqualifyingAssessment: { type: 'string' },
+                    },
+                    required: ['skill', 'gapType', 'impactSeverity', 'disqualifyingAssessment'],
+                    additionalProperties: false,
+                },
+            },
+            overallFitRating: { type: 'string', enum: ['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH'] },
+            fitSummary:        { type: 'string' },
+        },
+        required: [
+            'targetRole', 'targetCompany', 'seniority', 'domain',
+            'hardRequirements', 'softRequirements', 'implicitRequirements',
+            'technologyInventory', 'experienceSignals',
+            'verifiedMatches', 'partialMatches', 'gaps',
+            'overallFitRating', 'fitSummary',
+        ],
+        additionalProperties: false,
+    },
+};
+
+const JobRequirementSchema = z.object({
+    skill: z.string(),
+    context: z.string(),
+    disqualifying: z.boolean().optional(),
+}).strict();
+
+/** Runtime safety-net for the model-produced fields only. */
+const ResearchModelSchema = z.object({
+    targetRole: z.string(),
+    targetCompany: z.string(),
+    seniority: z.string(),
+    domain: z.string(),
+    hardRequirements: z.array(JobRequirementSchema),
+    softRequirements: z.array(JobRequirementSchema),
+    implicitRequirements: z.array(z.string()),
+    technologyInventory: z.object({
+        languages: z.array(z.string()),
+        frameworks: z.array(z.string()),
+        infrastructure: z.array(z.string()),
+        tools: z.array(z.string()),
+        methodologies: z.array(z.string()),
+    }).strict(),
+    experienceSignals: z.object({
+        yearsExpected: z.string(),
+        domainExperience: z.string(),
+        leadershipExpectation: z.string(),
+        scaleIndicators: z.string(),
+    }).strict(),
+    verifiedMatches: z.array(z.object({
+        skill: z.string(),
+        sourceCitation: z.string(),
+        depth: z.enum(['surface', 'working', 'expert']),
+        recency: z.string(),
+    }).strict()),
+    partialMatches: z.array(z.object({
+        skill: z.string(),
+        gapDescription: z.string(),
+        transferableFoundation: z.string(),
+        framingSuggestion: z.string(),
+    }).strict()),
+    gaps: z.array(z.object({
+        skill: z.string(),
+        gapType: z.enum(['hard', 'soft']),
+        impactSeverity: z.enum(['blocking', 'significant', 'minor']),
+        disqualifyingAssessment: z.string(),
+    }).strict()),
+    overallFitRating: z.enum(['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH']),
+    fitSummary: z.string(),
+}).strict();
+
+/**
+ * Validate the forced tool_use output and merge the injected (non-model)
+ * pipeline fields. Fail-fast: an invalid brief must not reach the
+ * Strategist agent / RDS (structure-output-checklist §7).
+ *
+ * @param raw      - Parsed tool input (model output)
+ * @param injected - Pipeline-owned fields not produced by the model
+ */
+export function validateResearchResult(
+    raw: unknown,
+    injected: {
+        resumeData: StructuredResumeData | null;
+        kbContext: string;
+        resumeConstraints: string;
+    },
+): StrategistResearchResult {
+    const validated = ResearchModelSchema.safeParse(raw);
+    if (!validated.success) {
+        throw new Error(
+            `strategist-research: research brief failed schema validation: ${validated.error.message}`,
+        );
+    }
+    return {
+        ...validated.data,
+        ...injected,
+    } as StrategistResearchResult;
+}
+
 /**
  * Agent configuration for the Strategist Research Agent.
+ *
+ * thinkingBudget 0: forced tool_use (constrained decoding) is incompatible
+ * with extended thinking on Claude. See structure-output-checklist §2.
  */
 const RESEARCH_CONFIG: AgentConfig = {
     agentName: 'strategist-research',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: RESEARCH_MAX_TOKENS,
-    thinkingBudget: RESEARCH_THINKING_BUDGET,
+    thinkingBudget: 0,
     systemPrompt: RESEARCH_PERSONA_SYSTEM_PROMPT,
+    tool: RESEARCH_TOOL,
 };
 
 /**
@@ -364,6 +559,7 @@ export async function executeResearchAgent(
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
     const { sanitised, warnings, injectionDetected } = inputSanitiser.sanitiseWithWarnings(ctx.jobDescription);
+    const jd = piiScrubber.scrub(sanitised).redacted;
 
     if (injectionDetected) {
         log('WARN', 'Injection attempt detected — proceeding with sanitised input', { agent: 'strategist-research' });
@@ -383,13 +579,16 @@ export async function executeResearchAgent(
     const { userId } = ctx;
     const store = RdsVectorStore.fromEnvironment();
 
+    const half = Math.min(500, Math.floor(jd.length / 2));
+    const full = Math.min(1000, jd.length);
+
     const [factual1, factual2, factual3, factual4] = await Promise.all([
         // Query 1 — full JD text: surfaces skill/tech matches from across the user's docs
-        querySingleRds(sanitised.substring(0, 1000), userId, store),
+        querySingleRds(jd.substring(0, full), userId, store),
         // Query 2 — JD tail + experience signal: surfaces role-relevant work history
-        querySingleRds(`professional experience skills qualifications ${sanitised.substring(500, 1000)}`, userId, store),
+        querySingleRds(`professional experience skills qualifications ${jd.substring(half)}`, userId, store),
         // Query 3 — JD-aware project query: surfaces project templates matching this role
-        querySingleRds(`portfolio project implementation achievements ${sanitised.substring(0, 500)}`, userId, store),
+        querySingleRds(`portfolio project implementation achievements ${jd.substring(0, half)}`, userId, store),
         // Query 4 — DORA metrics and outcome measurements
         querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
     ]);
@@ -413,48 +612,18 @@ export async function executeResearchAgent(
     }
 
     // 4. Build user message
-    const userMessage = buildResearchMessage(sanitised, kbContext, resumeData);
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData);
 
     // 5. Run agent
     const result = await runAgent<StrategistResearchResult>({
         config: RESEARCH_CONFIG,
         userMessage,
         parseResponse: (text) => {
-            const parsed = parseJsonResponse<StrategistResearchResult>(text, 'strategist-research');
-
-            // Ensure arrays are always arrays (defensive against LLM output)
-            // and provide safe defaults for nested objects the LLM might omit
-            return {
-                ...parsed,
-                targetRole: parsed.targetRole ?? 'Unknown Role',
-                targetCompany: parsed.targetCompany ?? 'Unknown Company',
-                seniority: parsed.seniority ?? 'unspecified',
-                domain: parsed.domain ?? 'unspecified',
-                hardRequirements: Array.isArray(parsed.hardRequirements) ? parsed.hardRequirements : [],
-                softRequirements: Array.isArray(parsed.softRequirements) ? parsed.softRequirements : [],
-                implicitRequirements: Array.isArray(parsed.implicitRequirements) ? parsed.implicitRequirements : [],
-                verifiedMatches: Array.isArray(parsed.verifiedMatches) ? parsed.verifiedMatches : [],
-                partialMatches: Array.isArray(parsed.partialMatches) ? parsed.partialMatches : [],
-                gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
-                technologyInventory: {
-                    languages: Array.isArray(parsed.technologyInventory?.languages) ? parsed.technologyInventory.languages : [],
-                    frameworks: Array.isArray(parsed.technologyInventory?.frameworks) ? parsed.technologyInventory.frameworks : [],
-                    infrastructure: Array.isArray(parsed.technologyInventory?.infrastructure) ? parsed.technologyInventory.infrastructure : [],
-                    tools: Array.isArray(parsed.technologyInventory?.tools) ? parsed.technologyInventory.tools : [],
-                    methodologies: Array.isArray(parsed.technologyInventory?.methodologies) ? parsed.technologyInventory.methodologies : [],
-                },
-                experienceSignals: {
-                    yearsExpected: parsed.experienceSignals?.yearsExpected ?? 'unspecified',
-                    domainExperience: parsed.experienceSignals?.domainExperience ?? 'unspecified',
-                    leadershipExpectation: parsed.experienceSignals?.leadershipExpectation ?? 'none specified',
-                    scaleIndicators: parsed.experienceSignals?.scaleIndicators ?? 'unspecified',
-                },
-                overallFitRating: parsed.overallFitRating ?? 'STRETCH',
-                fitSummary: parsed.fitSummary ?? 'Analysis incomplete — insufficient data for assessment.',
-                resumeData,
-                kbContext,
-                resumeConstraints,
-            };
+            // text is the forced tool_use input as JSON. parseJsonResponse
+            // unwraps it; validateResearchResult fails fast on any schema
+            // deviation instead of papering over it with defaults.
+            const raw = parseJsonResponse<unknown>(text, 'strategist-research');
+            return validateResearchResult(raw, { resumeData, kbContext, resumeConstraints });
         },
         pipelineContext: {
             pipelineId: ctx.pipelineId,

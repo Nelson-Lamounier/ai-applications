@@ -57,6 +57,8 @@ const API_KEY    = 'test-api-key-value';
 
 const BASE_CONFIG: Config = {
   awsRegion:  'eu-west-1',
+  oauthTokenKmsKeyArn: 'arn:aws:kms:eu-west-1:123456789012:key/12345678-1234-1234-1234-123456789012',
+  githubAppSecretArn:  'arn:aws:secretsmanager:eu-west-1:123456789012:secret/github-app-test',
   pgHost:     'localhost',
   pgPort:     5432,
   pgDatabase: 'platform',

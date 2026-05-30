@@ -13,7 +13,8 @@
  *   PGHOST / PGPORT / PGDATABASE / PGUSER / PGPASSWORD — RDS direct
  *   AWS_DEFAULT_REGION     — e.g. eu-west-1
  */
-import { AttributeValue, DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
+import type { AttributeValue} from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { Pool } from 'pg';
 

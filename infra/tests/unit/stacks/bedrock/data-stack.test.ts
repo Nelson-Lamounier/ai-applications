@@ -143,14 +143,16 @@ describe('BedrockDataStack', () => {
     // KMS Key (production mode)
     // =========================================================================
     describe('KMS Encryption Key', () => {
-        it('should NOT create a KMS key when createEncryptionKey is false', () => {
+        it('should NOT create an S3 KMS key when createEncryptionKey is false', () => {
             const { template } = createDataStack({ createEncryptionKey: false });
-            template.resourceCountIs('AWS::KMS::Key', 0);
+            // Only the always-on OAuth token encryption CMK should exist.
+            template.resourceCountIs('AWS::KMS::Key', 1);
         });
 
-        it('should create a KMS key when createEncryptionKey is true', () => {
+        it('should create an S3 KMS key when createEncryptionKey is true', () => {
             const { template } = createDataStack({ createEncryptionKey: true });
-            template.resourceCountIs('AWS::KMS::Key', 1);
+            // S3 encryption CMK + OAuth token encryption CMK.
+            template.resourceCountIs('AWS::KMS::Key', 2);
         });
 
         it('should enable key rotation on the KMS key', () => {
@@ -219,6 +221,44 @@ describe('BedrockDataStack', () => {
 
         it('should not expose encryptionKey when createEncryptionKey is false', () => {
             expect(stack.encryptionKey).toBeUndefined();
+        });
+    });
+
+    describe('OAuth token envelope encryption', () => {
+        it('should create a KMS key with rotation, RETAIN policy, and the OAuth alias', () => {
+            const { template } = createDataStack();
+            template.hasResourceProperties('AWS::KMS::Key', {
+                EnableKeyRotation: true,
+                Description: 'Envelope encryption for oauth_connections.access_token',
+                PendingWindowInDays: 30,
+            });
+            template.hasResourceProperties('AWS::KMS::Alias', {
+                AliasName: 'alias/oauth-token-encryption',
+            });
+        });
+
+        it('should retain the CMK on stack destroy', () => {
+            const { template } = createDataStack();
+            template.hasResource('AWS::KMS::Key', {
+                Properties: { Description: 'Envelope encryption for oauth_connections.access_token' },
+                DeletionPolicy: 'Retain',
+                UpdateReplacePolicy: 'Retain',
+            });
+        });
+
+        it('should publish the CMK ARN to SSM at /oauth/token-encryption-key-arn', () => {
+            const { template } = createDataStack();
+            template.hasResourceProperties('AWS::SSM::Parameter', {
+                Name: '/oauth/token-encryption-key-arn',
+                Description: 'KMS CMK ARN for oauth_connections token envelope encryption',
+            });
+        });
+
+        it('should export OAuthTokenKeyArn as a stack output', () => {
+            const { template } = createDataStack();
+            template.hasOutput('OAuthTokenKeyArn', {
+                Export: { Name: Match.stringLikeRegexp('.*-OAuthTokenKeyArn$') },
+            });
         });
     });
 });

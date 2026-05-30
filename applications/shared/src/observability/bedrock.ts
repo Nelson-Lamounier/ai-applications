@@ -51,7 +51,7 @@ export function setBedrockMetricsRegistry(registry: Registry): void {
 function ensureCounters(): Counters {
     if (_counters) return _counters;
 
-    const prom = require('prom-client') as typeof import('prom-client');
+    const prom = require('prom-client') as typeof import('prom-client'); // eslint-disable-line @typescript-eslint/consistent-type-imports -- typeof import() needed for require's module-shape cast
     const registry = _activeRegistry ?? prom.register;
 
     _counters = {

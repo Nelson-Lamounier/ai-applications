@@ -18,7 +18,7 @@ import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 
 
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 
 /**
  * Props for BedrockAgentStack

@@ -4,7 +4,7 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import {
     log, emitEmfMetric, withSpan,
     InputSanitiser, OutputSanitiser,
-    CHATBOT_SYSTEM_PROMPT, buildChatContext,
+    CHATBOT_SYSTEM_PROMPT, buildChatContext, recordZeroResultRetrieval,
 } from '@bedrock/shared';
 import { getEnv } from './env.js';
 import { multiQueryRetrieve } from './retrieval.js';
@@ -153,11 +153,20 @@ export const handler = withSpan('chatbot-authenticated.handler', async (
         ]);
 
         // ── 6. Build system prompt ─────────────────────────────────────────────
+        if (passages.length === 0) {
+            recordZeroResultRetrieval({
+                namespace: EMF_NAMESPACE, appLabel: 'chatbot-authenticated',
+                sessionId, prompt: parsed.prompt,
+            });
+        }
         const context      = buildChatContext(passages);
         const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
 
         // ── 7. Generate ────────────────────────────────────────────────────────
-        const rawResponse = await invokeClaude(env.chatbotModel, systemPrompt, history, inputCheck.sanitised);
+        const rawResponse = await invokeClaude(env.chatbotModel, systemPrompt, history, inputCheck.sanitised, {
+            pool:   db,
+            userId,
+        });
 
         // ── 8. Output sanitisation ─────────────────────────────────────────────
         const normalised                       = stripCodeFence(rawResponse);

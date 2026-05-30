@@ -1,0 +1,23 @@
+{
+  "skill_name": "self-healing-updater",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just had to manually fix a Calico CNI issue on a worker node. When k8s-dev-general-pool-asg terminated an instance, the replacement node joined the cluster but Calico was stuck in Init:0/1 for 20 minutes. I had to SSH in and run `calicoctl node status` to find the BGP peer was stuck, then restarted the calico-node pod manually with `kubectl delete pod -n kube-system calico-node-xxxxx`. The self-healing agent got triggered by the ASG termination event but only checked node readiness — it didn't check DaemonSet pod health or pod restart counts. I want the agent to: 1) check if all kube-system DaemonSet pods are Running after a worker joins, 2) if a DaemonSet pod is stuck in Init, restart it by deleting the pod. I'll need a new tool for pod restart.",
+      "expected_output": "Skill should: classify as Layer B (update worker node termination prompt to add DaemonSet pod health check step), Layer C+D (add a new restart_pod tool with kubectl delete pod via SSM), update DEFAULT_SYSTEM_PROMPT tool selection guide to mention the new tool, add the tool Lambda to gateway-stack.ts, run tests, and deploy Gateway then Agent.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "The agent just sent me this report and it missed something critical:\n\n---\nALARM: k8s-dev-bootstrap-orchestrator-errors\nNew State: ALARM\nReason: 1 datapoint exceeded threshold\n\nDIAGNOSIS:\n- Called inspect_workloads → clusterHealthy: true, all nodes Ready\n- Called diagnose_alarm → alarm fired 3 minutes ago\n- Could not determine root cause\n\nACTION TAKEN: None — no clear remediation path identified.\n---\n\nThe real issue was that the Step Functions execution failed because the EC2 instance was launched with the wrong AMI — it's a known recurring issue where the golden AMI ID in Parameter Store gets stale. The fix is always: update /k8s/development/golden-ami-id in SSM with the current AMI ID and re-trigger the bootstrap. The agent should know to check the Step Functions execution history when the bootstrap alarm fires, find the failed execution, read the error message, and if it says AMI_MISMATCH, update the SSM parameter and re-trigger.",
+      "expected_output": "Skill should: classify as Layer A (add AMI_MISMATCH handling to system prompt CLUSTER-LEVEL DIAGNOSTIC WORKFLOW and TOOL SELECTION GUIDE), Layer B (update CloudWatch alarm prompt to suggest checking SFN execution history), Layer C+D (add get_sfn_execution_history tool and update_ssm_parameter tool), run tests, deploy Agent only (no new Lambda needed if using existing SSM tools, or Gateway+Agent if new Lambda created).",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I want to add a new trigger: whenever an EC2 instance in the k8s-dev-asg is stopped (not terminated — just stopped), the agent should be triggered to investigate because stopped control-plane nodes break cluster quorum. Right now we only trigger on termination. The EventBridge event for this is source: aws.ec2, detail-type: EC2 Instance State-change Notification, with detail.state = stopped. Add this trigger and update the agent prompt to explain this scenario.",
+      "expected_output": "Skill should: classify as Layer E (new EventBridge rule on aws.ec2 instance-state-change filtered to k8s-dev-asg instances in stopped state), Layer B (add new buildPrompt branch for aws.ec2 source with stopped-instance workflow), Layer A (update system prompt to mention control-plane quorum implications of stopped nodes), run tests for new buildPrompt branch, deploy Agent only.",
+      "files": []
+    }
+  ]
+}

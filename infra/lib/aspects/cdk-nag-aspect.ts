@@ -6,18 +6,20 @@
  * Supports AWS Solutions, HIPAA, NIST 800-53, and PCI DSS rule packs.
  */
 
+import type {
+    NagPackSuppression} from 'cdk-nag';
 import {
     AwsSolutionsChecks,
     HIPAASecurityChecks,
     NIST80053R5Checks,
     PCIDSS321Checks,
-    NagSuppressions,
-    NagPackSuppression,
+    NagSuppressions
 } from 'cdk-nag';
 
-import { Aspects, Stack } from 'aws-cdk-lib/core';
+import type { Stack } from 'aws-cdk-lib/core';
+import { Aspects } from 'aws-cdk-lib/core';
 
-import { IConstruct } from 'constructs';
+import type { IConstruct } from 'constructs';
 
 /**
  * Available compliance packs

@@ -642,3 +642,136 @@ describe('runAgent — Edge Cases', () => {
         expect(result.data).toBe('Large budget output');
     });
 });
+
+// =============================================================================
+// TESTS: Forced tool_use (constrained decoding) path
+// =============================================================================
+
+describe('runAgent — forced tool_use', () => {
+    const TOOL = {
+        name: 'emit_result',
+        description: 'Emit the structured result.',
+        inputSchema: {
+            type: 'object',
+            properties: { verdict: { type: 'string' } },
+            required: ['verdict'],
+            additionalProperties: false,
+        },
+    };
+
+    function configWithTool(): AgentConfig {
+        return { ...buildConfig(VALID_MAX_TOKENS, DISABLED_THINKING_BUDGET), tool: TOOL };
+    }
+
+    function toolUseResponse(input: unknown): Record<string, unknown> {
+        return {
+            output: { message: { content: [{ toolUse: { toolUseId: 't1', name: 'emit_result', input } }] } },
+            usage: { inputTokens: 100, outputTokens: 50 },
+            stopReason: 'tool_use',
+        };
+    }
+
+    beforeEach(() => mockSend.mockReset());
+
+    it('sends a Converse toolConfig with forced toolChoice when config.tool is set', async () => {
+        const { ConverseCommand } = jest.requireMock('@aws-sdk/client-bedrock-runtime') as {
+            ConverseCommand: jest.Mock;
+        };
+        ConverseCommand.mockClear();
+        mockSend.mockResolvedValueOnce(toolUseResponse({ verdict: 'ok' }));
+
+        await runAgent({
+            config: configWithTool(),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => JSON.parse(t),
+            pipelineContext: buildPipelineContext(),
+        });
+
+        const sent = ConverseCommand.mock.calls.at(-1)?.[0] as any;
+        expect(sent.toolConfig.tools[0].toolSpec.name).toBe('emit_result');
+        expect(sent.toolConfig.tools[0].toolSpec.inputSchema.json).toEqual(TOOL.inputSchema);
+        expect(sent.toolConfig.toolChoice).toEqual({ tool: { name: 'emit_result' } });
+    });
+
+    it('passes the tool_use input to parseResponse as a JSON string', async () => {
+        mockSend.mockResolvedValueOnce(toolUseResponse({ verdict: 'shipped' }));
+
+        const result = await runAgent<{ verdict: string }>({
+            config: configWithTool(),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => JSON.parse(t) as { verdict: string },
+            pipelineContext: buildPipelineContext(),
+        });
+
+        expect(result.data.verdict).toBe('shipped');
+    });
+
+    it('fails fast (AgentExecutionError) when a forced-tool call returns no toolUse block', async () => {
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse('I refuse to comply.'));
+
+        await expect(runAgent({
+            config: configWithTool(),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => JSON.parse(t),
+            pipelineContext: buildPipelineContext(),
+        })).rejects.toBeInstanceOf(AgentExecutionError);
+    });
+});
+
+// =============================================================================
+// TESTS: Cost recording via pipeline context (onInvocationComplete)
+// =============================================================================
+
+describe('runAgent — cost recording via pipeline context', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    it('invokes ctx.onInvocationComplete with the ctx userId and token usage', async () => {
+        const sink = jest.fn(async () => {});
+        const ctx = { ...buildPipelineContext(), userId: 'user-42', onInvocationComplete: sink };
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse('ok'));
+
+        await runAgent({
+            config: buildConfig(VALID_MAX_TOKENS, DISABLED_THINKING_BUDGET),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => t,
+            pipelineContext: ctx,
+        });
+
+        expect(sink).toHaveBeenCalledTimes(1);
+        const log = (sink.mock.calls[0] as any)[0];
+        expect(log.userId).toBe('user-42');
+        expect(log.systemPromptTokens).toBe(500);
+        expect(log.outputTokens).toBe(200);
+    });
+
+    it('per-call onInvocationComplete option overrides the ctx sink', async () => {
+        const ctxSink = jest.fn(async () => {});
+        const optSink = jest.fn(async () => {});
+        const ctx = { ...buildPipelineContext(), userId: 'u', onInvocationComplete: ctxSink };
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse('ok'));
+
+        await runAgent({
+            config: buildConfig(VALID_MAX_TOKENS, DISABLED_THINKING_BUDGET),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => t,
+            pipelineContext: ctx,
+            onInvocationComplete: optSink,
+        });
+
+        expect(optSink).toHaveBeenCalledTimes(1);
+        expect(ctxSink).not.toHaveBeenCalled();
+    });
+
+    it('does not require a sink — no recording when ctx has none', async () => {
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse('ok'));
+        const result = await runAgent({
+            config: buildConfig(VALID_MAX_TOKENS, DISABLED_THINKING_BUDGET),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (t: string) => t,
+            pipelineContext: buildPipelineContext(),
+        });
+        expect(result.data).toBe('ok');
+    });
+});

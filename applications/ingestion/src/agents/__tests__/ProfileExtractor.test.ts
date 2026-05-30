@@ -1,6 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- jest.fn<> generic requires any to match the Bedrock SDK response union
 const mockSend = jest.fn<() => Promise<any>>();
 
 jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
@@ -119,6 +119,30 @@ describe('ProfileExtractor', () => {
 
     it('throws ProfileExtractionError(schema_validation_failed) when tool input violates schema', async () => {
         mockBedrockResponse({ ...VALID_TOOL_INPUT, one_liner: 'too short' });
+        await expect(extractor.extract('user-123', makeBundle()))
+            .rejects.toMatchObject({ code: 'schema_validation_failed' });
+    });
+
+    it('throws schema_validation_failed when the model injects an unknown field', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, injected_field: 'unexpected' });
+        await expect(extractor.extract('user-123', makeBundle()))
+            .rejects.toMatchObject({ code: 'schema_validation_failed' });
+    });
+
+    it('clamps an over-long one_liner to 140 chars instead of failing (regression: a long LLM tagline must not kill the whole repo ingestion)', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, one_liner: 'A'.repeat(200) });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.one_liner).toHaveLength(140);
+    });
+
+    it('clamps an over-long description to 800 chars instead of failing', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, description: 'B'.repeat(1000) });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.description).toHaveLength(800);
+    });
+
+    it('still rejects a too-short one_liner (min quality floor preserved)', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, one_liner: 'short' });
         await expect(extractor.extract('user-123', makeBundle()))
             .rejects.toMatchObject({ code: 'schema_validation_failed' });
     });

@@ -12,6 +12,7 @@
  * Pipeline position: Trigger → Research → **Strategist** → Coach → RDS persist
  */
 
+import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
@@ -253,22 +254,6 @@ function extractCoverLetter(xml: string): string {
 }
 
 /**
- * Count specific XML elements in the analysis.
- *
- * @param xml - Raw XML analysis output
- * @param tag - XML tag to count
- * @returns Number of occurrences
- */
-function countXmlElements(xml: string, tag: string): number {
-    const regex = new RegExp(`<${tag}>`, 'g');
-    let count = 0;
-    while (regex.exec(xml) !== null) {
-        count += 1;
-    }
-    return count;
-}
-
-/**
  * Extract structured addition suggestions from the XML analysis.
  *
  * Parses `<addition>` elements within `<resume_tailoring>`, extracting
@@ -439,7 +424,65 @@ function extractArchetypeSelection(xml: string): RoleArchetypeSelection | null {
  * @param xml - Raw XML analysis output
  * @returns Parsed StructuredResumeData, or null
  */
-function extractTailoredResumeJson(xml: string): StructuredResumeData | null {
+/**
+ * Strict safety-net for the embedded tailored-resume JSON. Strategist
+ * keeps extended thinking so forced tool_use is unavailable; this Zod
+ * schema is the constrained-decoding substitute. `.strict()` rejects
+ * invented fields.
+ */
+const TailoredResumeSchema = z.object({
+    profile: z.object({
+        name:     z.string(),
+        title:    z.string(),
+        email:    z.string(),
+        location: z.string(),
+        linkedin: z.string().optional(),
+        github:   z.string().optional(),
+        website:  z.string().optional(),
+    }).strict(),
+    summary: z.string(),
+    experience: z.array(z.object({
+        company:    z.string(),
+        title:      z.string(),
+        period:     z.string(),
+        highlights: z.array(z.string()),
+    }).strict()),
+    skills: z.array(z.object({
+        category: z.string(),
+        skills:   z.array(z.string()),
+    }).strict()),
+    education: z.array(z.object({
+        degree:      z.string(),
+        institution: z.string(),
+        period:      z.string(),
+    }).strict()),
+    certifications: z.array(z.object({
+        name:   z.string(),
+        year:   z.string(),
+        issuer: z.string(),
+    }).strict()),
+    projects: z.array(z.object({
+        name:        z.string(),
+        description: z.string(),
+        github:      z.string().optional(),
+    }).strict()),
+    keyAchievements: z.array(z.object({
+        achievement: z.string(),
+    }).strict()),
+}).strict();
+
+/**
+ * Extract the embedded tailored-resume JSON.
+ *
+ * Absent section → null (the model legitimately may not produce one).
+ * Present but unparseable/invalid → throw: this is structured data the
+ * Resume Builder persists, so a malformed block must fail fast rather
+ * than be silently dropped (structure-output-checklist §7).
+ *
+ * @param xml - Raw XML analysis output
+ * @returns Parsed StructuredResumeData, or null when the section is absent
+ */
+export function extractTailoredResumeJson(xml: string): StructuredResumeData | null {
     const cdataPattern = /<tailored_resume_json><!\[CDATA\[([\s\S]*?)\]\]><\/tailored_resume_json>/;
     const match = xml.match(cdataPattern);
     if (!match) return null;
@@ -447,12 +490,15 @@ function extractTailoredResumeJson(xml: string): StructuredResumeData | null {
     const raw = match[1].trim();
     if (!raw) return null;
 
-    try {
-        return parseJsonResponse<StructuredResumeData>(raw, 'strategist-tailored-resume');
-    } catch (err) {
-        log('WARN', 'Failed to parse tailored_resume_json', { agent: 'strategist-writer', error: (err as Error).message });
-        return null;
+    // parseJsonResponse throws on invalid JSON — fail fast (do not swallow).
+    const parsed = parseJsonResponse<unknown>(raw, 'strategist-tailored-resume');
+    const validated = TailoredResumeSchema.safeParse(parsed);
+    if (!validated.success) {
+        throw new Error(
+            `strategist-tailored-resume: tailored_resume_json failed schema validation: ${validated.error.message}`,
+        );
     }
+    return validated.data as StructuredResumeData;
 }
 
 // =============================================================================

@@ -163,6 +163,40 @@ test-strategist-integration *ARGS:
     for arg in {{ARGS}}; do export "$arg"; done
     npx tsx scripts/test-strategist-integration.ts
 
+# Run the projects-migration (030/031) E2E test against a local Postgres.
+# Creates and drops an ephemeral `tucaken_test_<ts>` database; requires the
+# connecting role to have CREATEDB and a Postgres with pgvector available.
+#
+# Usage:
+#   just test-projects-migration                                    # uses PGHOST/PGUSER/PGPASSWORD from env
+#   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres PGSSL=disable just test-projects-migration
+[group('rds')]
+test-projects-migration:
+    npx tsx scripts/test-projects-migration.ts
+
+# Run the Phase 2A project-clustering E2E test against a local Postgres.
+# Same prerequisites as test-projects-migration. Injects a mocked Bedrock
+# clustering agent so no AWS credentials are required.
+#
+# Usage:
+#   just test-projects-clustering
+#   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres PGSSL=disable just test-projects-clustering
+[group('rds')]
+test-projects-clustering:
+    npx tsx scripts/test-projects-clustering.ts
+
+# Run the Phase 2B project-case-study E2E test against a local Postgres.
+# Same prerequisites as test-projects-clustering. Injects mocked agent +
+# commit loader + in-memory semantic cache so no AWS or GitHub
+# credentials are required.
+#
+# Usage:
+#   just test-projects-case-study
+#   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres PGSSL=disable just test-projects-case-study
+[group('rds')]
+test-projects-case-study:
+    npx tsx scripts/test-projects-case-study.ts
+
 # Build the job-strategist Docker image locally.
 [group('strategist')]
 build-strategist:
@@ -283,3 +317,31 @@ run-resume-processor import_id user_id s3_key:
 [group('ci')]
 gh-dispatch workflow *ARGS:
     gh workflow run {{workflow}} --repo nelson-lamounier/ai-applications {{ARGS}}
+
+# ── E2E Smoke (real Bedrock, dev account — NEVER in CI) ──────────────────────
+
+# Run the end-to-end smoke suite against the deployed dev account.
+# Usage: just smoke-e2e                 # all flows
+#        just smoke-e2e job-strategist  # one flow
+#        just smoke-e2e chatbots SKIP_CLEANUP=1
+[group('smoke')]
+smoke-e2e *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f .env.smoke ]]; then
+      while IFS='=' read -r key value || [[ -n "$key" ]]; do
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${key// }" ]] && continue
+        key="${key// /}"; value="${value// /}"
+        [[ -n "$value" && -z "${!key:-}" ]] && export "$key=$value"
+      done < .env.smoke
+    fi
+    flows=(); for arg in {{ARGS}}; do
+      if [[ "$arg" == *=* ]]; then export "$arg"; else flows+=("$arg"); fi
+    done
+    npx tsx scripts/smoke-e2e.ts "${flows[@]:-all}"
+
+# Open the pgbouncer tunnel for manual psql inspection during a smoke run.
+[group('smoke')]
+smoke-tunnel:
+    kubectl port-forward svc/pgbouncer 15432:5432 -n platform

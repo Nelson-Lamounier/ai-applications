@@ -15,6 +15,9 @@ COPY applications/tsconfig.json ./applications/
 # sibling workspaces in the root yarn.lock.
 COPY applications/shared/package.json            ./applications/shared/
 COPY applications/article-pipeline/package.json  ./applications/article-pipeline/
+COPY applications/ontology-importer/package.json ./applications/ontology-importer/
+COPY applications/tech-extractor/package.json    ./applications/tech-extractor/
+COPY applications/synthetic-monitor/package.json ./applications/synthetic-monitor/
 COPY applications/ingestion/package.json         ./applications/ingestion/
 COPY applications/job-strategist/package.json    ./applications/job-strategist/
 COPY applications/chatbot/package.json           ./applications/chatbot/

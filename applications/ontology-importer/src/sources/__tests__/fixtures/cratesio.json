@@ -1,0 +1,4 @@
+{ "crates": [
+  { "id": "tokio", "name": "tokio", "description": "An async runtime", "repository": "https://github.com/tokio-rs/tokio", "categories": ["asynchronous"] },
+  { "id": "actix-web", "name": "actix-web", "description": "Web framework", "repository": "https://github.com/actix/actix-web", "categories": ["web-programming::http-server"] }
+] }

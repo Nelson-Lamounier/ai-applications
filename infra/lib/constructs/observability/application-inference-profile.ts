@@ -22,7 +22,7 @@
  */
 
 import * as bedrock from 'aws-cdk-lib/aws-bedrock';
-import * as cdk from 'aws-cdk-lib/core';
+import type * as cdk from 'aws-cdk-lib/core';
 
 import { Construct } from 'constructs';
 

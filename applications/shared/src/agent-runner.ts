@@ -33,6 +33,7 @@ import {
     BedrockRuntimeClient,
     ConverseCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import type { DocumentType as __DocumentType } from '@smithy/types';
 
 import { estimateInvocationCost } from './metrics.js';
 import type { TokenUsage } from './metrics.js';
@@ -150,6 +151,37 @@ function extractTextFromResponse(
     }
 
     return textContent;
+}
+
+/**
+ * Extract the forced tool_use input from a Bedrock Converse response.
+ *
+ * With `toolChoice: { tool }` the model is constrained to call exactly that
+ * tool, so the structured payload arrives as a `toolUse` content block — not
+ * free-form text. If no such block is present the model refused or otherwise
+ * failed to satisfy the schema: fail fast rather than persist garbage
+ * (structure-output-checklist §6/§7).
+ *
+ * @returns The tool input serialised as JSON so existing string-based
+ *          `parseResponse` callbacks (parseJsonResponse) work unchanged.
+ */
+function extractToolUseInput(
+    contentBlocks: Array<Record<string, unknown>>,
+    expectedToolName: string,
+    agentName: string,
+): string {
+    const toolUse = contentBlocks
+        .map((b) => (b as { toolUse?: { name?: string; input?: unknown } }).toolUse)
+        .find((tu): tu is { name?: string; input?: unknown } => tu != null);
+
+    if (!toolUse || toolUse.input === undefined) {
+        throw new Error(
+            `Agent '${agentName}': forced tool '${expectedToolName}' produced no ` +
+            `tool_use block (model refusal or schema failure)`,
+        );
+    }
+
+    return JSON.stringify(toolUse.input);
 }
 
 /**
@@ -279,8 +311,23 @@ function emitAgentMetrics(
  * @throws AgentExecutionError wrapping the original error with agent context
  */
 export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentResult<T>> {
-    const { config, userMessage, parseResponse, pipelineContext, onInvocationComplete, userId, resumeGenerationId } = options;
-    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, pipeline, promptId } = config;
+    const { config, userMessage, parseResponse, pipelineContext, resumeGenerationId } = options;
+    // Per-call options win, but fall back to the pipeline context so a pipeline
+    // can opt every agent into cost recording by setting these once at start
+    // (avoids threading them through every execute*Agent wrapper).
+    const invocationSink = options.onInvocationComplete ?? pipelineContext.onInvocationComplete;
+    const userId         = options.userId ?? pipelineContext.userId;
+    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, pipeline, promptId, tool } = config;
+
+    // Anthropic forbids forced tool_use with extended thinking. Catch the
+    // misconfiguration here rather than as an opaque Bedrock 400.
+    if (tool && thinkingBudget > 0) {
+        throw new Error(
+            `[${agentName}] Invalid config: forced tool_use ('${tool.name}') is ` +
+            `incompatible with extended thinking (thinkingBudget=${thinkingBudget}). ` +
+            `Set thinkingBudget: 0 to use constrained decoding.`,
+        );
+    }
 
     // =========================================================================
     // VALIDATION: Extended Thinking requires maxTokens > budget_tokens
@@ -316,6 +363,27 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             inferenceConfig: {
                 maxTokens,
             },
+            ...(tool
+                ? {
+                      toolConfig: {
+                          tools: [
+                              {
+                                  toolSpec: {
+                                      name: tool.name,
+                                      description: tool.description,
+                                      // JSON Schema is a plain object; the SDK
+                                      // types `json` as the recursive
+                                      // DocumentType. Cast at this boundary.
+                                      inputSchema: {
+                                          json: tool.inputSchema as unknown as __DocumentType,
+                                      },
+                                  },
+                              },
+                          ],
+                          toolChoice: { tool: { name: tool.name } },
+                      },
+                  }
+                : {}),
             ...(thinkingBudget > 0
                 ? {
                       additionalModelRequestFields: {
@@ -351,9 +419,14 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             );
         }
 
-        // Extract text content (skip thinking blocks)
+        // Extract the model output. Forced tool_use → the structured tool
+        // input (constrained decoding); otherwise concatenated text blocks
+        // (thinking blocks skipped). Either way parseResponse receives a
+        // string so existing JSON parsers work unchanged.
         const outputBlocks = (response.output?.message?.content ?? []) as unknown as Array<Record<string, unknown>>;
-        const textContent = extractTextFromResponse(outputBlocks, agentName);
+        const textContent = tool
+            ? extractToolUseInput(outputBlocks, tool.name, agentName)
+            : extractTextFromResponse(outputBlocks, agentName);
 
         // Parse agent-specific response
         const data = parseResponse(textContent);
@@ -393,7 +466,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
         );
 
         // Build and dispatch the invocation log (non-blocking — errors are swallowed)
-        if (onInvocationComplete) {
+        if (invocationSink) {
             const systemPromptHash = sha256(JSON.stringify(systemPrompt));
             const outputHash       = sha256(textContent);
             const cacheHit         = tokenUsage.cacheReadInputTokens > 0;
@@ -425,7 +498,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
                 resumeGenerationId,
             };
 
-            onInvocationComplete(log).catch((err) => {
+            invocationSink(log).catch((err) => {
                 console.warn(`[${agentName}] onInvocationComplete failed (non-fatal)`, err);
             });
         }

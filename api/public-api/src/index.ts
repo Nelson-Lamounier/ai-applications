@@ -3,11 +3,15 @@
  * @description Entry point for the public-api Hono service.
  *
  * Assembles the application by mounting:
- *   - CORS middleware (all routes)
- *   - Health route   → GET /healthz
- *   - Articles route → GET /api/articles, GET /api/articles/:slug
- *   - Tags route     → GET /api/tags
- *   - Resumes route  → GET /api/resumes/active
+ *   - Metrics route    → GET /metrics          (no CORS — internal scraping only)
+ *   - CORS middleware  (all subsequent routes)
+ *   - Health route     → GET /healthz
+ *   - Articles route   → GET /api/articles, GET /api/articles/:slug
+ *   - Tags route       → GET /api/tags
+ *   - Resumes route    → GET /api/resumes/active
+ *   - Chatbot route    → POST /api/chatbot/invoke
+ *   - GitHub webhook   → POST /api/github-webhook
+ *   - Projects route   → GET /api/projects
  *
  * ## Credential Chain
  *
@@ -32,6 +36,9 @@ import articles from './routes/articles.js';
 import chatbot from './routes/chatbot.js';
 import tags from './routes/tags.js';
 import resumes from './routes/resumes.js';
+import githubWebhook from './routes/github-webhook.js';
+import projects from './routes/projects.js';
+import metrics from './routes/metrics.js';
 
 const cfg = loadConfig();
 
@@ -43,6 +50,10 @@ const app = new Hono();
 
 /** Structured request logging to stdout. */
 app.use('*', logger());
+
+// Metrics endpoint is mounted before CORS so Prometheus scrapers receive no
+// CORS headers (scraping is server-to-server; browser access is not intended).
+app.route('/', metrics);
 
 /** CORS — allow portfolio origin and local dev. */
 app.use(
@@ -66,6 +77,8 @@ app.route('/', articles);
 app.route('/', chatbot);
 app.route('/', tags);
 app.route('/', resumes);
+app.route('/', githubWebhook);
+app.route('/', projects);
 
 // ---------------------------------------------------------------------------
 // 404 fallback

@@ -25,7 +25,7 @@ import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib/core';
 import * as cr from 'aws-cdk-lib/custom-resources';
 
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 
 // =============================================================================
 // CONSTANTS

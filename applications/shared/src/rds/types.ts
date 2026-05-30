@@ -152,7 +152,29 @@ export interface RepoSyncState {
     readonly kbQualityScore?: number;
     /** Per-factor breakdown matching `KbQualityBreakdown`. */
     readonly kbQualityBreakdown?: Record<string, unknown>;
+    /** Retrieval-probe score in [0, 1], rounded to 2 decimals. */
+    readonly retrievalScore?: number;
+    /** Per-question breakdown matching `RetrievalBreakdown`. */
+    readonly retrievalBreakdown?: Record<string, unknown>;
+    /** Chunks embedded so far in the current run (intra-repo progress). */
+    readonly embeddedCount?: number;
+    /** Total chunks to embed in the current run. */
+    readonly embedTotal?: number;
+    /** Current ingestion phase (analyzing/fetching/enriching/embedding/finalizing). */
+    readonly phase?: IngestionPhase;
+    /** Items completed in the current phase (undefined when indeterminate). */
+    readonly phaseDone?: number;
+    /** Total items in the current phase (undefined when indeterminate). */
+    readonly phaseTotal?: number;
 }
+
+/** Coarse pipeline phase surfaced to the onboarding UI for progress display. */
+export type IngestionPhase =
+    | 'analyzing'
+    | 'fetching'
+    | 'enriching'
+    | 'embedding'
+    | 'finalizing';
 
 // =============================================================================
 // INGESTION REPORT — pipeline output
@@ -179,4 +201,13 @@ export interface IngestionReport {
      * so the UI can show *why* the score is what it is.
      */
     readonly kbQualityBreakdown?: Record<string, unknown>;
+    /**
+     * Retrieval-probe score in [0, 1] (rounded to 2 decimals). Best-effort —
+     * absent when the probe is not configured, skipped, or failed. See
+     * `quality/retrievalProbe.ts`. Persisted to
+     * `repo_sync_state.retrieval_score`.
+     */
+    readonly retrievalScore?: number;
+    /** Per-question breakdown matching `RetrievalBreakdown`. Persisted as JSONB. */
+    readonly retrievalBreakdown?: Record<string, unknown>;
 }

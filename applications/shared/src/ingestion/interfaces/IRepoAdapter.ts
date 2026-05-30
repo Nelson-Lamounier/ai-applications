@@ -43,6 +43,40 @@ export interface ListCommitsOptions {
     readonly since?:      string;
 }
 
+/**
+ * One pull request worth of metadata. Like RepoCommit, this intentionally
+ * omits diffs and file lists — those require additional API calls per PR
+ * and aren't useful for the recruiter-facing case-study surface (which
+ * only references PR numbers + bodies). A future per-file PR derivation
+ * can opt in to that cost.
+ */
+export interface RepoPullRequest {
+    readonly number:     number;
+    readonly title:      string;
+    readonly body:       string | null;
+    /** ISO 8601 timestamp the PR was opened. */
+    readonly createdAt:  string;
+    /** ISO 8601 timestamp the PR was merged; null for unmerged / closed. */
+    readonly mergedAt:   string | null;
+    readonly state:      'open' | 'closed' | 'merged';
+    /** Author's git login; may be null for ghost users. */
+    readonly authorLogin: string | null;
+    /** Public html_url; surfaced as the "evidence link" in the UI. */
+    readonly htmlUrl:    string;
+}
+
+export interface ListPullRequestsOptions {
+    /** Hard cap on PRs returned. Default 100. */
+    readonly maxPullRequests?: number;
+    /** "open" | "closed" | "all" (default 'all'). */
+    readonly state?: 'open' | 'closed' | 'all';
+    /**
+     * Only include PRs updated on or after this ISO 8601 timestamp.
+     * Used for incremental refresh and to bound case-study cost.
+     */
+    readonly since?: string;
+}
+
 export interface IRepoAdapter {
     /**
      * List all files in a repository at the default branch.
@@ -64,4 +98,10 @@ export interface IRepoAdapter {
      * concept of commits (e.g. a Figma adapter).
      */
     listCommits(repoFullName: string, opts?: ListCommitsOptions): Promise<RepoCommit[]>;
+
+    /**
+     * List pull requests on the repository. Implementations may return an
+     * empty array if the source has no concept of pull requests.
+     */
+    listPullRequests?(repoFullName: string, opts?: ListPullRequestsOptions): Promise<RepoPullRequest[]>;
 }

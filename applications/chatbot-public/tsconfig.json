@@ -5,6 +5,9 @@
     "rootDir": "src",
     "isolatedModules": true
   },
+  "references": [
+    { "path": "../shared" }
+  ],
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

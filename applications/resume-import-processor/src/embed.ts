@@ -22,7 +22,10 @@ import {
 import type { Pool } from 'pg';
 import type { ResumeExperience } from './bedrock/extract-career.js';
 import type { EnrichedRoleData } from './bedrock/enrich-role.js';
-import { recordBedrockCost } from '@bedrock/shared';
+import { recordBedrockCost, PiiScrubber, jobLogger } from '@bedrock/shared';
+
+const piiScrubber = new PiiScrubber();
+const log = jobLogger();
 
 const TITAN_MODEL_ID = 'amazon.titan-embed-text-v2:0';
 const EMBEDDING_DIM  = parseInt(process.env['EMBEDDING_DIMENSION'] ?? '1024', 10);
@@ -56,13 +59,16 @@ function buildChunks(
   experience: ResumeExperience,
   enriched: EnrichedRoleData | null,
 ): EmbedChunk[] {
-  const base = { company: experience.company, title: experience.title, period: experience.period };
+  const sTitle   = piiScrubber.scrub(experience.title).redacted;
+  const sCompany = piiScrubber.scrub(experience.company).redacted;
+  const sPeriod  = piiScrubber.scrub(experience.period).redacted;
+  const base = { company: sCompany, title: sTitle, period: sPeriod };
   const chunks: EmbedChunk[] = [];
 
   // Always embed a role description chunk
   chunks.push({
     chunkType: 'role_description',
-    content:   `${experience.title} at ${experience.company} (${experience.period})`,
+    content:   `${sTitle} at ${sCompany} (${sPeriod})`,
     metadata:  base,
   });
 
@@ -70,7 +76,7 @@ function buildChunks(
   for (const highlight of experience.highlights) {
     chunks.push({
       chunkType: 'achievement',
-      content:   highlight,
+      content:   piiScrubber.scrub(highlight).redacted,
       metadata:  base,
     });
   }
@@ -117,6 +123,7 @@ export async function embedAndPersistEntry(
   enriched: EnrichedRoleData | null,
   importId: string,
 ): Promise<number> {
+  const { embedDurationSeconds, persistDurationSeconds } = await import('./metrics.js');
   const client = new BedrockRuntimeClient({ region: bedrockRegion });
   const chunks = buildChunks(experience, enriched);
   let inserted = 0;
@@ -132,17 +139,21 @@ export async function embedAndPersistEntry(
     );
     if (exists.rows[0]) continue;
 
+    const stopEmbed = embedDurationSeconds().startTimer();
     const { embedding, inputTokens } = await embedText(client, chunk.content);
+    stopEmbed();
 
-    recordBedrockCost(pool, {
+    await recordBedrockCost(pool, {
       userId,
       modelId:      TITAN_MODEL_ID,
       pipeline:     'resume-import',
       inputTokens,
       outputTokens: 0,
       importId,
-    }).catch((err) => console.warn('[embed] cost record failed (non-fatal)', err));
+    }).catch((err) => log.warn({ event: 'embed.cost_record_failed', err: (err as Error).message },
+      'cost record failed (non-fatal)'));
 
+    const stopInsert = persistDurationSeconds().startTimer({ op: 'insert_embedding' });
     await pool.query(
       `INSERT INTO experience_embeddings
              (user_id, career_entry_id, chunk_type, content, content_hash, embedding, metadata)
@@ -157,6 +168,7 @@ export async function embedAndPersistEntry(
         JSON.stringify(chunk.metadata),
       ],
     );
+    stopInsert();
     inserted++;
   }
 

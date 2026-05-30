@@ -16,15 +16,49 @@ import {
   GetDocumentTextDetectionCommand,
   type Block,
 } from '@aws-sdk/client-textract';
+import { jobLogger } from '@bedrock/shared';
+
+const log = jobLogger();
 
 const POLL_INTERVAL_MS  = 2_000;
 const POLL_MAX_ATTEMPTS = 60; // 2 min ceiling
+
+// Minimum chars for Textract OCR output to be considered usable.
+// Below this, OCR likely failed to recognise the document (encrypted scan,
+// non-Latin glyphs without language hints, or pure-image PDF with no text).
+const MIN_OCR_TEXT_CHARS = 200;
+
+// Minimum ratio of alphabetic characters in OCR output.
+// Garbled OCR returns long strings of symbols/punctuation that pass the
+// length check but yield nothing useful to Bedrock — the extractor will
+// hallucinate empty fields rather than fail loudly.
+const MIN_OCR_ALPHA_RATIO = 0.5;
+
+function assertTextractTextUsable(text: string): void {
+  if (text.length === 0) {
+    throw new Error('Textract extracted no text from PDF');
+  }
+  if (text.length < MIN_OCR_TEXT_CHARS) {
+    throw new Error(
+      `Textract output below usable floor: ${text.length} chars < ${MIN_OCR_TEXT_CHARS}`,
+    );
+  }
+  const alphaCount = (text.match(/[A-Za-zÀ-ÿ]/g) ?? []).length;
+  const ratio = alphaCount / text.length;
+  if (ratio < MIN_OCR_ALPHA_RATIO) {
+    throw new Error(
+      `Textract output alpha ratio ${ratio.toFixed(2)} below floor ${MIN_OCR_ALPHA_RATIO} — likely garbled OCR`,
+    );
+  }
+}
 
 async function extractViaTextract(
   bucket: string,
   s3Key: string,
   region: string,
 ): Promise<string> {
+  const { textractDurationSeconds } = await import('../metrics.js');
+  const stop = textractDurationSeconds().startTimer();
   const client = new TextractClient({ region });
 
   const { JobId } = await client.send(
@@ -63,12 +97,14 @@ async function extractViaTextract(
       }
 
       const text = lines.join('\n').trim();
-      if (!text) throw new Error('Textract extracted no text from PDF');
+      stop();
+      assertTextractTextUsable(text);
       return text;
     }
     // JobStatus === 'IN_PROGRESS' — keep polling
   }
 
+  stop();
   throw new Error(`Textract job did not complete within ${(POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s`);
 }
 
@@ -93,13 +129,16 @@ export async function extractTextFromPdf(
 ): Promise<{ text: string; method: 'pdf-parse' | 'textract' }> {
   let pdfText = '';
 
+  let fallbackReason: 'threw' | 'empty' | 'short_text' | null = null;
   try {
     const parsed = await pdfParse(buffer);
     pdfText = parsed.text.trim();
   } catch (err) {
     // pdf-parse throws on encrypted PDFs, malformed structures, and certain
     // CIDFont/XFA documents. Fall through to Textract rather than crashing.
-    console.warn('[run-import] pdf-parse threw, falling back to Textract OCR', { s3Key, err });
+    fallbackReason = 'threw';
+    log.warn({ event: 'pdf_parse.fallback', reason: 'threw', s3Key, err: (err as Error).message },
+      'pdf-parse threw, falling back to Textract OCR');
   }
 
   if (pdfText.length >= MIN_USEFUL_TEXT_CHARS) {
@@ -107,13 +146,17 @@ export async function extractTextFromPdf(
   }
 
   if (pdfText.length > 0) {
-    console.info(
-      '[run-import] pdf-parse returned too little text, falling back to Textract OCR',
-      { s3Key, chars: pdfText.length },
-    );
+    fallbackReason ??= 'short_text';
+    log.info({ event: 'pdf_parse.fallback', reason: 'short_text', s3Key, chars: pdfText.length },
+      'pdf-parse returned too little text, falling back to Textract OCR');
   } else {
-    console.info('[run-import] pdf-parse found no text, falling back to Textract OCR', { s3Key });
+    fallbackReason ??= 'empty';
+    log.info({ event: 'pdf_parse.fallback', reason: 'empty', s3Key },
+      'pdf-parse found no text, falling back to Textract OCR');
   }
+
+  const { textractFallbackTotal } = await import('../metrics.js');
+  textractFallbackTotal().inc({ reason: fallbackReason });
 
   const ocrText = await extractViaTextract(bucket, s3Key, awsRegion);
   return { text: ocrText, method: 'textract' };

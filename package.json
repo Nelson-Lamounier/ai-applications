@@ -12,7 +12,10 @@
     "applications/chatbot-authenticated",
     "applications/self-healing",
     "applications/ingestion",
+    "applications/tech-extractor",
+    "applications/ontology-importer",
     "applications/resume-import-processor",
+    "applications/synthetic-monitor",
     "applications/platform-job-watcher",
     "api/public-api",
     "infra"
@@ -20,14 +23,19 @@
   "scripts": {
     "typecheck": "yarn workspaces foreach -A run typecheck",
     "test": "yarn workspaces foreach -A run test",
-    "build": "yarn workspaces foreach -A run build"
+    "build": "yarn workspaces foreach -A run build",
+    "lint": "eslint ."
   },
   "packageManager": "yarn@4.12.0",
   "resolutions": {
     "form-data": "^4.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9",
     "esbuild": "^0.27.3",
-    "tsx": "^4.21.0"
+    "eslint": "^9",
+    "globals": "^17.6.0",
+    "tsx": "^4.21.0",
+    "typescript-eslint": "^8.59.4"
   }
 }

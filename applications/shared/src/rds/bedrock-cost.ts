@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import type { AgentInvocationLog } from '../types.js';
 
 // Pricing in USD cents per 1K tokens (eu-west-1, May 2026).
 // NOTE: EU cross-region inference surcharge is not in AWS Pricing API; these
@@ -9,7 +10,22 @@ const PRICING: Record<string, { inputCentsPerK: number; outputCentsPerK: number 
     inputCentsPerK:  0.080,   // $0.80/1M = $0.00080/1K = 0.080 cents/1K
     outputCentsPerK: 0.400,
   },
+  // Bare (non-EU-profile) id — BedrockChunkEnricher's DEFAULT_MODEL_ID when
+  // ENRICHMENT_MODEL_ID is unset. Same rates; without this it would fall back
+  // to DEFAULT_PRICING (Sonnet) and over-bill Haiku ~3.75x.
+  'anthropic.claude-haiku-4-5-20251001-v1:0': {
+    inputCentsPerK:  0.080,
+    outputCentsPerK: 0.400,
+  },
   'eu.anthropic.claude-sonnet-4-6-20260310-v1:0': {
+    inputCentsPerK:  0.300,
+    outputCentsPerK: 1.500,
+  },
+  // Bare Sonnet id — the ModelId CloudWatch actually reports for Converse
+  // calls (e.g. self-healing, chatbots) is `eu.anthropic.claude-sonnet-4-6`
+  // without the dated version suffix. Same rates; mapping it explicitly avoids
+  // relying on DEFAULT_PRICING coincidentally being Sonnet rates.
+  'eu.anthropic.claude-sonnet-4-6': {
     inputCentsPerK:  0.300,
     outputCentsPerK: 1.500,
   },
@@ -25,7 +41,7 @@ const DEFAULT_MONTHLY_LIMIT_CENTS = 500;
 export interface CostRecord {
   userId:       string;
   modelId:      string;
-  pipeline:     'resume-import' | 'repo-sync' | 'profile-extraction';
+  pipeline:     'resume-import' | 'repo-sync' | 'profile-extraction' | 'retrieval-probe' | 'profile-synthesis' | 'profile-direction' | 'profile-reconciliation' | 'profile-diagnostic' | 'chatbot-public' | 'chatbot-authenticated' | 'job-strategist' | 'article-pipeline' | 'project-clustering' | 'project-case-study' | 'grounding-verify';
   inputTokens:  number;
   outputTokens: number;
   importId?:    string;
@@ -130,4 +146,39 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
       pct: Math.round((spend / budget.monthlyLimitCents) * 100),
     });
   }
+}
+
+/**
+ * Adapt the shared agent runner's {@link AgentInvocationLog} to a
+ * `recordBedrockCost` call. Returns a callback suitable for
+ * `BasePipelineContext.onInvocationComplete`, so every Converse agent in a
+ * pipeline books its spend into `prompt_invocations` — pricing is recomputed
+ * from the model id (single source of truth) rather than trusting the runner's
+ * coarse 60/40 cost split.
+ *
+ * Skips records with no userId: prompt_invocations.user_id is a NOT NULL uuid,
+ * and an unattributed agent call should be surfaced via CloudWatch/CE, not a
+ * fabricated user.
+ */
+export function recordInvocationToRds(
+  pool: Pool,
+  pipeline: CostRecord['pipeline'],
+): (log: AgentInvocationLog) => Promise<void> {
+  return async (log) => {
+    if (!log.userId) {
+      console.warn('[bedrock-cost] skipping invocation record — no userId', {
+        pipeline, agent: log.agent, modelId: log.modelId,
+      });
+      return;
+    }
+    await recordBedrockCost(pool, {
+      userId:       log.userId,
+      modelId:      log.modelId,
+      pipeline,
+      // Converse reports a single input figure; the runner stores it under
+      // systemPromptTokens with userMessageTokens = 0.
+      inputTokens:  log.systemPromptTokens + log.userMessageTokens,
+      outputTokens: log.outputTokens,
+    });
+  };
 }

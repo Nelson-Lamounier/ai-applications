@@ -55,8 +55,7 @@ Thumbs.db
 scripts/local/diagnostics/.troubleshoot-logs/*
 !scripts/local/diagnostics/.troubleshoot-logs/.gitkeep
 
-# ── Generated Docs & Reports ────────────────────────────────────────────────
-docs/
+# ── Generated Reports ───────────────────────────────────────────────────────
 security-reports/
 
 # ── AI Tooling ───────────────────────────────────────────────────────────────
@@ -95,3 +94,10 @@ docker-compose.mcp.yml
 mcp-servers/*/dist/
 mcp-servers/*/build/
 CI-FrontEnd.yml
+.env.smoke
+
+# E2E smoke fixture (tracked despite *.txt ignore)
+!scripts/smoke/fixtures/strategist-jd.txt
+
+# Claude Code local tooling
+.claude/

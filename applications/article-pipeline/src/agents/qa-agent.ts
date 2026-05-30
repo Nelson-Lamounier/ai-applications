@@ -20,6 +20,7 @@
  * Pipeline position: Research → Writer → **QA** → Review/Flagged
  */
 
+import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { QA_PERSONA_SYSTEM_PROMPT } from '../prompts/qa-persona.js';
 import type {
@@ -27,7 +28,6 @@ import type {
     AgentResult,
     DimensionResult,
     PipelineContext,
-    QaIssue,
     QaRecommendation,
     QaValidationResult,
     WriterResult,
@@ -75,8 +75,94 @@ const EFFECTIVE_MODEL_ID = process.env.INFERENCE_PROFILE_ARN ?? QA_MODEL;
 /** Maximum output tokens for QA response (structured JSON with dimension scores and issues) */
 const QA_MAX_TOKENS = 16384;
 
-/** Thinking budget for QA agent — moderate for evaluation + tech accuracy */
-const QA_THINKING_BUDGET = 8192;
+/**
+ * Thinking budget. Forced tool_use (constrained decoding) is incompatible
+ * with extended thinking on Claude; the QA verdict gates publish/reject so a
+ * guaranteed schema is worth more than thinking. See checklist §2.
+ */
+const QA_THINKING_BUDGET = 0;
+
+// =============================================================================
+// STRUCTURED OUTPUT — tool schema + Zod safety-net
+// =============================================================================
+
+const QA_ISSUE_SCHEMA = {
+    type: 'object',
+    properties: {
+        severity:    { type: 'string', enum: ['info', 'warning', 'error'] },
+        location:    { type: 'string' },
+        description: { type: 'string' },
+        fix:         { type: 'string' },
+    },
+    required: ['severity', 'location', 'description', 'fix'],
+    additionalProperties: false,
+};
+
+const QA_DIMENSION_SCHEMA = {
+    type: 'object',
+    properties: {
+        score:  { type: 'number', description: '0-100' },
+        issues: { type: 'array', items: QA_ISSUE_SCHEMA },
+    },
+    required: ['score', 'issues'],
+    additionalProperties: false,
+};
+
+const QA_TOOL = {
+    name: 'emit_qa_result',
+    description: 'Emit the structured QA validation result across the five dimensions.',
+    inputSchema: {
+        type: 'object',
+        properties: {
+            overallScore:   { type: 'number', description: '0-100 weighted overall' },
+            recommendation: { type: 'string', enum: ['publish', 'revise', 'reject'] },
+            dimensions: {
+                type: 'object',
+                properties: {
+                    technicalAccuracy: QA_DIMENSION_SCHEMA,
+                    seoCompliance:     QA_DIMENSION_SCHEMA,
+                    mdxStructure:      QA_DIMENSION_SCHEMA,
+                    metadataQuality:   QA_DIMENSION_SCHEMA,
+                    contentQuality:    QA_DIMENSION_SCHEMA,
+                },
+                required: ['technicalAccuracy', 'seoCompliance', 'mdxStructure',
+                           'metadataQuality', 'contentQuality'],
+                additionalProperties: false,
+            },
+            summary:            { type: 'string' },
+            confidenceOverride: { type: 'number', description: '0-100' },
+        },
+        required: ['overallScore', 'recommendation', 'dimensions', 'summary', 'confidenceOverride'],
+        additionalProperties: false,
+    },
+};
+
+const QaIssueSchema = z.object({
+    severity:    z.enum(['info', 'warning', 'error']),
+    location:    z.string(),
+    description: z.string(),
+    fix:         z.string(),
+}).strict();
+
+const QaDimensionSchema = z.object({
+    score:  z.number(),
+    issues: z.array(QaIssueSchema),
+}).strict();
+
+/** Runtime safety-net. `.strict()` mirrors additionalProperties:false. */
+const QaOutputSchema = z.object({
+    overallScore:   z.number(),
+    recommendation: z.enum(['publish', 'revise', 'reject']),
+    dimensions: z.object({
+        technicalAccuracy: QaDimensionSchema,
+        seoCompliance:     QaDimensionSchema,
+        mdxStructure:      QaDimensionSchema,
+        metadataQuality:   QaDimensionSchema,
+        contentQuality:    QaDimensionSchema,
+    }).strict(),
+    summary:            z.string(),
+    confidenceOverride: z.number(),
+}).strict();
 
 /** QA pass threshold — articles scoring below this are retried or flagged */
 export const QA_PASS_THRESHOLD = 80;
@@ -156,56 +242,45 @@ function clampScore(val: unknown): number {
     return Math.max(0, Math.min(100, n));
 }
 
-/**
- * Parse a dimension result from the QA response.
- *
- * @param raw - Raw dimension object from the parsed JSON
- * @returns Validated DimensionResult
- */
-function parseDimension(raw: Record<string, unknown> | undefined): DimensionResult {
-    return {
-        score: clampScore(raw?.score),
-        issues: Array.isArray(raw?.issues)
-            ? (raw.issues as QaIssue[])
-            : [],
-    };
+/** Clamp a validated DimensionResult's score to 0–100. */
+function clampDimension(d: DimensionResult): DimensionResult {
+    return { score: clampScore(d.score), issues: d.issues };
 }
 
 /**
- * Parse the QA Agent's JSON response into a typed result.
+ * Parse the QA Agent's forced tool_use output into a typed result.
  *
- * @param responseText - Raw text response from Bedrock
+ * `responseText` is the tool input serialised as JSON (constrained
+ * decoding). parseJsonResponse unwraps it; the Zod safety-net then
+ * guarantees the shape before this verdict gates publish/reject
+ * (fail-fast, structure-output-checklist §7). Scores are clamped to
+ * 0–100 to preserve the previous defensive behaviour.
+ *
+ * @param responseText - Forced tool_use input as JSON
  * @returns Validated QA result
- * @throws Error if required fields are missing or invalid
+ * @throws Error if the output fails schema validation
  */
 function parseQaResponse(responseText: string): QaValidationResult {
-    const parsed = parseJsonResponse<Record<string, unknown>>(responseText, 'qa');
-
-    // Validate required fields
-    if (typeof parsed.overallScore !== 'number') {
-        throw new TypeError('QA Agent: Missing or invalid overallScore in response');
+    const raw = parseJsonResponse<unknown>(responseText, 'qa');
+    const validated = QaOutputSchema.safeParse(raw);
+    if (!validated.success) {
+        throw new TypeError(
+            `QA Agent: output failed schema validation: ${validated.error.message}`,
+        );
     }
-    if (!['publish', 'revise', 'reject'].includes(parsed.recommendation as string)) {
-        throw new TypeError(`QA Agent: Invalid recommendation "${String(parsed.recommendation)}"`);
-    }
-    if (typeof parsed.confidenceOverride !== 'number') {
-        throw new TypeError('QA Agent: Missing or invalid confidenceOverride in response');
-    }
-
-    const dimensions = parsed.dimensions as Record<string, Record<string, unknown>> | undefined;
-
+    const d = validated.data;
     return {
-        overallScore: clampScore(parsed.overallScore),
-        recommendation: parsed.recommendation as QaRecommendation,
+        overallScore: clampScore(d.overallScore),
+        recommendation: d.recommendation as QaRecommendation,
         dimensions: {
-            technicalAccuracy: parseDimension(dimensions?.technicalAccuracy),
-            seoCompliance: parseDimension(dimensions?.seoCompliance),
-            mdxStructure: parseDimension(dimensions?.mdxStructure),
-            metadataQuality: parseDimension(dimensions?.metadataQuality),
-            contentQuality: parseDimension(dimensions?.contentQuality),
+            technicalAccuracy: clampDimension(d.dimensions.technicalAccuracy),
+            seoCompliance:     clampDimension(d.dimensions.seoCompliance),
+            mdxStructure:      clampDimension(d.dimensions.mdxStructure),
+            metadataQuality:   clampDimension(d.dimensions.metadataQuality),
+            contentQuality:    clampDimension(d.dimensions.contentQuality),
         },
-        summary: typeof parsed.summary === 'string' ? parsed.summary : 'No summary provided.',
-        confidenceOverride: clampScore(parsed.confidenceOverride),
+        summary: d.summary,
+        confidenceOverride: clampScore(d.confidenceOverride),
     };
 }
 
@@ -222,6 +297,7 @@ const QA_CONFIG: AgentConfig = {
     maxTokens: QA_MAX_TOKENS,
     thinkingBudget: QA_THINKING_BUDGET,
     systemPrompt: QA_PERSONA_SYSTEM_PROMPT,
+    tool: QA_TOOL,
 };
 
 // =============================================================================

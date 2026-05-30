@@ -24,10 +24,11 @@ import * as cdk from 'aws-cdk-lib/core';
 
 import { getBedrockAllocations } from '../../config/bedrock/allocations';
 import { getBedrockConfigs } from '../../config/bedrock/configurations';
-import { Environment, cdkEnvironment } from '../../config/environments';
+import type { Environment} from '../../config/environments';
+import { cdkEnvironment } from '../../config/environments';
 import { Project, getProjectConfig } from '../../config/projects';
 import { SYSTEM_INFERENCE_PROFILES } from '../../config/shared/model-registry';
-import {
+import type {
     IProjectFactory,
     ProjectFactoryContext,
     ProjectStackFamily,

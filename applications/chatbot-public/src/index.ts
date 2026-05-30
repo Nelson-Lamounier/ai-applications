@@ -8,7 +8,7 @@ import {
 import {
     log, emitEmfMetric, withSpan,
     InputSanitiser, OutputSanitiser,
-    CHATBOT_SYSTEM_PROMPT, buildChatContext,
+    CHATBOT_SYSTEM_PROMPT, buildChatContext, recordZeroResultRetrieval,
 } from '@bedrock/shared';
 import { getEnv } from './env.js';
 import { multiQueryRetrieve } from './retrieval.js';
@@ -130,9 +130,18 @@ export const handler = withSpan('chatbot-public.handler', async (
 
         if (CHATBOT_RETRIEVAL_SOURCE() === 'rds-pgvector') {
             const passages     = await multiQueryRetrieve(env.portfolioOwnerUserId, inputCheck.sanitised, getPool());
+            if (passages.length === 0) {
+                recordZeroResultRetrieval({
+                    namespace: EMF_NAMESPACE, appLabel: 'chatbot-public',
+                    sessionId, prompt: parsed.prompt,
+                });
+            }
             const context      = buildChatContext(passages);
             const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
-            rawResponse        = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised);
+            rawResponse        = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised, {
+                pool:   getPool(),
+                userId: env.portfolioOwnerUserId,
+            });
         } else {
             const agentCmd = new InvokeAgentCommand({
                 agentId:      env.agentId,

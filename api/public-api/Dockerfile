@@ -1,38 +1,57 @@
 # ── Stage 1: Build ───────────────────────────────────────────────────────────
-# Installs ALL dependencies, compiles TypeScript, then prunes
-# devDependencies for the runtime image.
+# Compiles @bedrock/shared and @repo/public-api, then prunes devDeps.
+# public-api imports @bedrock/shared (workspace:*), so the whole workspace
+# graph's manifests are needed for `yarn install`, and shared must be built
+# before public-api's tsc can resolve its types. Mirrors the proven
+# applications/job-strategist/Dockerfile pattern.
 FROM node:22-alpine AS builder
 
 WORKDIR /app
 
 # Activate Yarn Berry v4 via Corepack BEFORE copying any files.
-# node:22-alpine ships Yarn 1.x; the root package.json declares
-# "packageManager": "yarn@4.12.0" which requires Corepack.
 RUN corepack enable && corepack prepare yarn@4.12.0 --activate
 
-# Copy workspace root manifests.
-# .yarnrc.yml must be included so Yarn Berry respects nodeLinker: node-modules.
-# .yarn/ is git-ignored and not needed (no PnP cache or offline mirror).
+# Workspace root manifests + tsconfig bases.
 COPY package.json yarn.lock .yarnrc.yml ./
-# tsconfig.base.json lives at the repo root; api/*/tsconfig.json extends it
-# via '../../tsconfig.base.json' so it must be present at /app/.
 COPY tsconfig.base.json ./
+COPY applications/tsconfig.json ./applications/
 
-# Copy only this package's manifest — avoids rebuilding on unrelated changes.
-COPY api/public-api/package.json ./api/public-api/
+# All workspace manifests — required for `yarn install --immutable` to resolve
+# the workspace graph (root package.json declares every workspace).
+COPY applications/shared/package.json                  ./applications/shared/
+COPY applications/ontology-importer/package.json       ./applications/ontology-importer/
+COPY applications/tech-extractor/package.json          ./applications/tech-extractor/
+COPY applications/synthetic-monitor/package.json       ./applications/synthetic-monitor/
+COPY applications/job-strategist/package.json          ./applications/job-strategist/
+COPY applications/article-pipeline/package.json        ./applications/article-pipeline/
+COPY applications/ingestion/package.json               ./applications/ingestion/
+COPY applications/chatbot/package.json                 ./applications/chatbot/
+COPY applications/chatbot-public/package.json          ./applications/chatbot-public/
+COPY applications/chatbot-authenticated/package.json   ./applications/chatbot-authenticated/
+COPY applications/self-healing/package.json            ./applications/self-healing/
+COPY applications/resume-import-processor/package.json ./applications/resume-import-processor/
+COPY applications/platform-job-watcher/package.json    ./applications/platform-job-watcher/
+COPY api/public-api/package.json                       ./api/public-api/
+COPY packages/script-utils/package.json                ./packages/script-utils/
+COPY infra/package.json                                ./infra/
+RUN yarn install --immutable
 
-# Install all deps including devDependencies (needed for tsc).
-# Yarn Berry v4: omit --production to get devDeps.
-RUN yarn workspaces focus @repo/public-api
+# Source for the two workspaces we build.
+COPY applications/shared/tsconfig.json ./applications/shared/
+COPY applications/shared/src           ./applications/shared/src/
+COPY api/public-api/tsconfig.json      ./api/public-api/
+COPY api/public-api/src                ./api/public-api/src/
 
-# Copy source files and compile.
-COPY api/public-api/tsconfig.json ./api/public-api/
-COPY api/public-api/src            ./api/public-api/src/
-
+# Build @bedrock/shared first (project reference), then public-api. Gate the
+# shared build on dist emission rather than tsc exit code (rootDir diagnostics
+# from path mapping are non-fatal for emit).
+RUN node_modules/.bin/tsc -b applications/shared --force \
+ || [ -f applications/shared/dist/index.js ]
+RUN node -e "const f='applications/shared/package.json';const p=require('./'+f);p.main='dist/index.js';p.types='dist/index.d.ts';require('fs').writeFileSync(f,JSON.stringify(p,null,2));"
 RUN yarn workspace @repo/public-api build
 
 # Prune to production-only deps for the runtime layer.
-RUN yarn workspaces focus @repo/public-api --production
+RUN yarn workspaces focus @bedrock/shared @repo/public-api --production
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
@@ -42,13 +61,17 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup -u 1001
 
 WORKDIR /app
 
-# Copy compiled output and production dependencies.
-# node_modules is copied from the workspace root (hoisted by Yarn workspaces).
-COPY --from=builder --chown=appuser:appgroup /app/api/public-api/dist ./dist
-COPY --from=builder --chown=appuser:appgroup /app/node_modules        ./node_modules
-COPY --from=builder --chown=appuser:appgroup /app/api/public-api/package.json ./
+# Compiled output for public-api + its workspace dependency @bedrock/shared,
+# plus the hoisted node_modules (which symlinks @bedrock/shared → applications/shared).
+COPY --from=builder --chown=appuser:appgroup /app/api/public-api/dist         ./api/public-api/dist
+COPY --from=builder --chown=appuser:appgroup /app/api/public-api/package.json ./api/public-api/
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/dist         ./applications/shared/dist
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/package.json ./applications/shared/
+COPY --from=builder --chown=appuser:appgroup /app/node_modules                ./node_modules
 
 USER appuser
+
+WORKDIR /app/api/public-api
 
 EXPOSE 3001
 

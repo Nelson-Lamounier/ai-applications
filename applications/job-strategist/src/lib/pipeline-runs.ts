@@ -39,7 +39,7 @@ export async function updatePipelineRunMetadata(
     metadata: Record<string, unknown>,
 ): Promise<void> {
     await pool.query(
-        `UPDATE pipeline_runs SET metadata = $2, updated_at = NOW() WHERE id = $1`,
+        `UPDATE pipeline_runs SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb, updated_at = NOW() WHERE id = $1`,
         [id, JSON.stringify(metadata)],
     );
 }

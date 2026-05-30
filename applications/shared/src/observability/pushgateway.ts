@@ -24,6 +24,7 @@
  */
 
 import { Pushgateway, type Registry } from 'prom-client';
+import type { Logger as PinoLogger } from 'pino';
 
 const PUSHGATEWAY_URL = process.env['PUSHGATEWAY_URL']
     ?? 'http://pushgateway.monitoring.svc.cluster.local:9091';
@@ -46,7 +47,24 @@ export async function pushFinalMetrics(
         await gateway.pushAdd({ jobName, groupings: { instance } });
     } catch (err) {
         // Best-effort — never crash the Job because Pushgateway is unhappy.
-        // eslint-disable-next-line no-console
-        console.error('[obs] pushgateway failed', { err: (err as Error).message, jobName, instance });
+        // Route through the bootstrap logger so the failure lands in Loki at
+        // error level (promtail picks it up). Without this, push failures look
+        // identical to "the Job didn't run" in Grafana — see dashboard
+        // `resume-import` panels backed by `resume_import_runs_total`.
+        const log = (globalThis as {
+            __obsHandle?: { logger: PinoLogger };
+        }).__obsHandle?.logger;
+        const payload = {
+            err:         (err as Error).message,
+            jobName,
+            instance,
+            pushgateway: PUSHGATEWAY_URL,
+        };
+        if (log) {
+            log.error(payload, 'pushgateway push failed — metrics for this run will be missing');
+        } else {
+             
+            console.error('[obs] pushgateway failed', payload);
+        }
     }
 }

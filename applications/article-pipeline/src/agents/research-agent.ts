@@ -20,8 +20,9 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
+import { z } from 'zod';
 import {
-    runAgent, parseJsonResponse, log, PgVectorRetriever, TitanEmbeddingProvider,
+    runAgent, parseJsonResponse, log, PgVectorRetriever, TitanEmbeddingProvider, PiiScrubber,
     type AgentConfig,
     type AgentResult,
     type ComplexityAnalysis,
@@ -63,9 +64,6 @@ const EFFECTIVE_MODEL_ID = process.env.INFERENCE_PROFILE_ARN ?? RESEARCH_MODEL;
 /** Maximum output tokens for Research Agent response */
 const RESEARCH_MAX_TOKENS = 32768;
 
-/** Thinking budget for Research Agent — moderate for analysis tasks */
-const RESEARCH_THINKING_BUDGET = 4096;
-
 /** Knowledge Base ID for Pinecone retrieval (empty = disabled) */
 const KNOWLEDGE_BASE_ID = process.env.KNOWLEDGE_BASE_ID ?? '';
 
@@ -90,6 +88,7 @@ const PREVIOUS_VERSION_CONTENT_CAP = 3000;
 const s3Client = new S3Client({});
 const bedrockAgentClient = new BedrockAgentRuntimeClient({});
 const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const piiScrubber = new PiiScrubber();
 
 // =============================================================================
 // COMPLEXITY ANALYSIS
@@ -353,7 +352,8 @@ async function fetchPreviousVersionContent(
         log('INFO', 'Reading previous version from S3', { agent: 'research', bucket: ctx.bucket, s3Key });
 
         const content = await readDraftFromS3(ctx.bucket, s3Key);
-        const capped = content.substring(0, PREVIOUS_VERSION_CONTENT_CAP);
+        const redacted = piiScrubber.scrub(content).redacted;
+        const capped = redacted.substring(0, PREVIOUS_VERSION_CONTENT_CAP);
 
         log('INFO', 'Previous version loaded', { agent: 'research', originalLength: content.length, cappedLength: capped.length });
 
@@ -423,31 +423,128 @@ function buildResearchMessage(
  * @param parsed - Raw parsed JSON from the LLM research response
  * @returns Typed SeoResearch or undefined
  */
-function parseSeoResearch(parsed: Record<string, unknown>): SeoResearch | undefined {
-    const raw = parsed.seoResearch;
-    if (!raw || typeof raw !== 'object') return undefined;
+// =============================================================================
+// STRUCTURED OUTPUT — tool schema + Zod safety-net
+// =============================================================================
 
-    const seo = raw as Record<string, unknown>;
-    const primaryKeyword = typeof seo.primaryKeyword === 'string' ? seo.primaryKeyword : '';
-    if (!primaryKeyword) return undefined;
+const STR_ARRAY = { type: 'array', items: { type: 'string' } };
 
-    const secondaryKeywords = Array.isArray(seo.secondaryKeywords)
-        ? seo.secondaryKeywords.filter((k): k is string => typeof k === 'string')
-        : [];
+/** Tool the research model is forced to call. Non-model fields (mode,
+ *  draftContent, complexity, kbPassages, authorDirection,
+ *  previousVersionContent) are injected after validation. seoResearch is
+ *  optional, but when present it must be well-formed. */
+const RESEARCH_TOOL = {
+    name: 'emit_research_brief',
+    description: 'Emit the structured article research brief.',
+    inputSchema: {
+        type: 'object',
+        properties: {
+            outline: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        heading:     { type: 'string' },
+                        wordBudget:  { type: 'number' },
+                        keyPoints:   STR_ARRAY,
+                        needsVisual: { type: 'boolean' },
+                    },
+                    required: ['heading', 'wordBudget', 'keyPoints', 'needsVisual'],
+                    additionalProperties: false,
+                },
+            },
+            technicalFacts: STR_ARRAY,
+            suggestedTitle: { type: 'string' },
+            suggestedTags:  STR_ARRAY,
+            seoResearch: {
+                type: 'object',
+                properties: {
+                    primaryKeyword:    { type: 'string' },
+                    secondaryKeywords: STR_ARRAY,
+                    suggestedReferences: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                label:     { type: 'string' },
+                                url:       { type: 'string' },
+                                relevance: { type: 'string' },
+                            },
+                            required: ['label', 'url', 'relevance'],
+                            additionalProperties: false,
+                        },
+                    },
+                },
+                required: ['primaryKeyword', 'secondaryKeywords', 'suggestedReferences'],
+                additionalProperties: false,
+            },
+        },
+        required: ['outline', 'technicalFacts', 'suggestedTitle', 'suggestedTags'],
+        additionalProperties: false,
+    },
+};
 
-    const suggestedReferences = Array.isArray(seo.suggestedReferences)
-        ? seo.suggestedReferences
-            .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null)
-            .map((r): SuggestedReference => ({
-                label: typeof r.label === 'string' ? r.label : '',
-                url: typeof r.url === 'string' ? r.url : '',
-                relevance: typeof r.relevance === 'string' ? r.relevance : '',
-                usedInline: false, // Research Agent only suggests — Writer decides inline usage
-            }))
-            .filter((r) => r.label && r.url)
-        : [];
+const ResearchModelSchema = z.object({
+    outline: z.array(z.object({
+        heading:     z.string(),
+        wordBudget:  z.number(),
+        keyPoints:   z.array(z.string()),
+        needsVisual: z.boolean(),
+    }).strict()),
+    technicalFacts: z.array(z.string()),
+    suggestedTitle: z.string(),
+    suggestedTags:  z.array(z.string()),
+    seoResearch: z.object({
+        primaryKeyword:    z.string(),
+        secondaryKeywords: z.array(z.string()),
+        suggestedReferences: z.array(z.object({
+            label:     z.string(),
+            url:       z.string(),
+            relevance: z.string(),
+        }).strict()),
+    }).strict().optional(),
+}).strict();
 
-    return { primaryKeyword, secondaryKeywords, suggestedReferences };
+/** The subset of {@link ResearchResult} the model actually produces. */
+export interface ResearchModelOutput {
+    outline: ResearchResult['outline'];
+    technicalFacts: string[];
+    suggestedTitle: string;
+    suggestedTags: string[];
+    seoResearch?: SeoResearch;
+}
+
+/**
+ * Validate the forced tool_use research output. Fail-fast: a malformed
+ * brief must not reach the Writer agent (structure-output-checklist §7).
+ * seoResearch stays optional, but when present it is validated strictly
+ * rather than coerced field-by-field. `usedInline` is owned by the Writer
+ * (always false at research time) so it is injected here, not requested.
+ */
+export function validateArticleResearch(raw: unknown): ResearchModelOutput {
+    const v = ResearchModelSchema.safeParse(raw);
+    if (!v.success) {
+        throw new Error(
+            `research: research brief failed schema validation: ${v.error.message}`,
+        );
+    }
+    const d = v.data;
+    const seoResearch: SeoResearch | undefined = d.seoResearch
+        ? {
+              primaryKeyword: d.seoResearch.primaryKeyword,
+              secondaryKeywords: d.seoResearch.secondaryKeywords,
+              suggestedReferences: d.seoResearch.suggestedReferences.map(
+                  (r): SuggestedReference => ({ ...r, usedInline: false }),
+              ),
+          }
+        : undefined;
+    return {
+        outline: d.outline,
+        technicalFacts: d.technicalFacts,
+        suggestedTitle: d.suggestedTitle,
+        suggestedTags: d.suggestedTags,
+        seoResearch,
+    };
 }
 
 // =============================================================================
@@ -461,8 +558,10 @@ const RESEARCH_CONFIG: AgentConfig = {
     agentName: 'research',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: RESEARCH_MAX_TOKENS,
-    thinkingBudget: RESEARCH_THINKING_BUDGET,
+    // thinkingBudget 0: forced tool_use ⊥ extended thinking on Claude.
+    thinkingBudget: 0,
     systemPrompt: RESEARCH_PERSONA_SYSTEM_PROMPT,
+    tool: RESEARCH_TOOL,
 };
 
 /**
@@ -481,7 +580,7 @@ export async function executeResearchAgent(
 ): Promise<AgentResult<ResearchResult>> {
     // 1. Read draft from S3
     log('INFO', 'Reading draft from S3', { agent: 'research', bucket: ctx.bucket, sourceKey: ctx.sourceKey });
-    const draftContent = await readDraftFromS3(ctx.bucket, ctx.sourceKey);
+    const draftContent = piiScrubber.scrub(await readDraftFromS3(ctx.bucket, ctx.sourceKey)).redacted;
 
     // 2. Detect pipeline mode
     const mode: PipelineMode = draftContent.length <= KB_AUGMENTED_THRESHOLD
@@ -519,24 +618,23 @@ export async function executeResearchAgent(
         config: RESEARCH_CONFIG,
         userMessage,
         parseResponse: (text) => {
-            const parsed = parseJsonResponse<Record<string, unknown>>(text, 'research');
-
-            // Merge local complexity analysis with LLM-generated outline
-            const seoResearch = parseSeoResearch(parsed);
+            // text is the forced tool_use input as JSON. parseJsonResponse
+            // unwraps it; validateArticleResearch fails fast on any schema
+            // deviation. Non-model fields are injected here.
+            const raw = parseJsonResponse<unknown>(text, 'research');
+            const model = validateArticleResearch(raw);
             return {
                 mode,
                 draftContent,
                 complexity: localComplexity, // Use local analysis (deterministic)
                 kbPassages,
-                outline: Array.isArray(parsed.outline) ? parsed.outline : [],
-                technicalFacts: Array.isArray(parsed.technicalFacts) ? parsed.technicalFacts : [],
-                suggestedTitle: typeof parsed.suggestedTitle === 'string'
-                    ? parsed.suggestedTitle
-                    : 'Untitled Article',
-                suggestedTags: Array.isArray(parsed.suggestedTags) ? parsed.suggestedTags : [],
+                outline: model.outline,
+                technicalFacts: model.technicalFacts,
+                suggestedTitle: model.suggestedTitle,
+                suggestedTags: model.suggestedTags,
                 authorDirection,
                 previousVersionContent,
-                seoResearch,
+                seoResearch: model.seoResearch,
             };
         },
         pipelineContext: ctx,

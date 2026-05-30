@@ -1,0 +1,1 @@
+{ "services": ["compute", "storage", "cosmos-db", "cognitiveservices", "containerservice"] }
