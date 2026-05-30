@@ -18,7 +18,7 @@
 -- =============================================================================
 -- 1. resume_imports — import job state machine
 -- =============================================================================
-CREATE TABLE resume_imports (
+CREATE TABLE IF NOT EXISTS resume_imports (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
@@ -60,11 +60,11 @@ CREATE TABLE resume_imports (
   completed_at          TIMESTAMPTZ
 );
 
-CREATE INDEX idx_resume_imports_user
+CREATE INDEX IF NOT EXISTS idx_resume_imports_user
   ON resume_imports (user_id, created_at DESC);
 
 -- Partial index for the job-queue query: "find queued imports to process"
-CREATE INDEX idx_resume_imports_status_active
+CREATE INDEX IF NOT EXISTS idx_resume_imports_status_active
   ON resume_imports (status)
   WHERE status IN ('queued', 'parsing', 'extracting_career', 'enriching');
 
@@ -87,7 +87,7 @@ CREATE INDEX idx_resume_imports_status_active
 --   { roleDescription, responsibilities[], transferableSkills[],
 --     industryContext, typicalTechStack[], careerLevel }
 -- =============================================================================
-CREATE TABLE user_career_history (
+CREATE TABLE IF NOT EXISTS user_career_history (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
@@ -121,16 +121,16 @@ CREATE TABLE user_career_history (
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_career_history_user
+CREATE INDEX IF NOT EXISTS idx_career_history_user
   ON user_career_history (user_id, entry_type, display_order);
 
-CREATE INDEX idx_career_history_import
+CREATE INDEX IF NOT EXISTS idx_career_history_import
   ON user_career_history (import_id)
   WHERE import_id IS NOT NULL;
 
 -- Partial index for the background enrichment query:
 -- "find experience entries for this user that still need enrichment"
-CREATE INDEX idx_career_history_pending_enrichment
+CREATE INDEX IF NOT EXISTS idx_career_history_pending_enrichment
   ON user_career_history (user_id, created_at)
   WHERE enrichment_status = 'pending' AND entry_type = 'experience';
 
@@ -145,7 +145,7 @@ CREATE INDEX idx_career_history_pending_enrichment
 -- CASCADE DELETE: removing a user_career_history row automatically removes
 -- all its embedding rows — no orphaned vectors.
 -- =============================================================================
-CREATE TABLE experience_embeddings (
+CREATE TABLE IF NOT EXISTS experience_embeddings (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   career_entry_id UUID NOT NULL REFERENCES user_career_history(id) ON DELETE CASCADE,
@@ -171,15 +171,15 @@ CREATE TABLE experience_embeddings (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_experience_embeddings_user
+CREATE INDEX IF NOT EXISTS idx_experience_embeddings_user
   ON experience_embeddings (user_id);
 
-CREATE INDEX idx_experience_embeddings_career_entry
+CREATE INDEX IF NOT EXISTS idx_experience_embeddings_career_entry
   ON experience_embeddings (career_entry_id);
 
 -- HNSW index for cosine similarity search.
 -- m=16 and ef_construction=64 match the document_embeddings index parameters.
-CREATE INDEX idx_experience_embeddings_hnsw
+CREATE INDEX IF NOT EXISTS idx_experience_embeddings_hnsw
   ON experience_embeddings
   USING hnsw (embedding vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);

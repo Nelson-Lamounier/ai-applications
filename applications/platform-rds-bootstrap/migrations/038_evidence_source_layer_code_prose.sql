@@ -1,7 +1,7 @@
 BEGIN;
 
 ALTER TABLE technology_evidence
-    DROP CONSTRAINT technology_evidence_source_layer_check;
+    DROP CONSTRAINT IF EXISTS technology_evidence_source_layer_check;
 
 ALTER TABLE technology_evidence
     ADD CONSTRAINT technology_evidence_source_layer_check
