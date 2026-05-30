@@ -7,7 +7,7 @@ BEGIN;
 -- One canonical profile per (user_id, repo_full_name).
 -- ──────────────────────────────────────────────────────────────────────────────
 
-CREATE TABLE repository_profiles (
+CREATE TABLE IF NOT EXISTS repository_profiles (
     id                  UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     repository_id       UUID            REFERENCES repositories(id) ON DELETE CASCADE,
@@ -36,30 +36,32 @@ CREATE TABLE repository_profiles (
     UNIQUE (user_id, repo_full_name)
 );
 
-CREATE INDEX idx_repo_profiles_user_id
+CREATE INDEX IF NOT EXISTS idx_repo_profiles_user_id
     ON repository_profiles (user_id);
 
-CREATE INDEX idx_repo_profiles_featured
+CREATE INDEX IF NOT EXISTS idx_repo_profiles_featured
     ON repository_profiles (user_id, feature_rank)
     WHERE is_featured = TRUE;
 
-CREATE INDEX idx_repo_profiles_classification
+CREATE INDEX IF NOT EXISTS idx_repo_profiles_classification
     ON repository_profiles (user_id, classification);
 
-CREATE INDEX idx_repo_profiles_status
+CREATE INDEX IF NOT EXISTS idx_repo_profiles_status
     ON repository_profiles (extraction_status);
 
 -- Faceted tech-stack filtering via JSONB @> operator.
 -- Usage: WHERE extracted->'tech_stack' @> '["React"]'::jsonb
-CREATE INDEX idx_repo_profiles_tech_stack
+CREATE INDEX IF NOT EXISTS idx_repo_profiles_tech_stack
     ON repository_profiles USING GIN ((extracted->'tech_stack'));
 
+DROP TRIGGER IF EXISTS set_updated_at ON repository_profiles;
 CREATE TRIGGER set_updated_at
     BEFORE UPDATE ON repository_profiles
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 ALTER TABLE repository_profiles ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS rls_repository_profiles ON repository_profiles;
 CREATE POLICY rls_repository_profiles ON repository_profiles
     USING      (user_id = current_setting('app.current_user_id', true)::uuid)
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
@@ -73,7 +75,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON repository_profiles TO tucaken_app;
 --   - faceted filtering on tech_stack uses the GIN index above (exact match)
 -- ──────────────────────────────────────────────────────────────────────────────
 
-CREATE TABLE repository_profile_embeddings (
+CREATE TABLE IF NOT EXISTS repository_profile_embeddings (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     profile_id      UUID            NOT NULL REFERENCES repository_profiles(id) ON DELETE CASCADE,
@@ -87,21 +89,22 @@ CREATE TABLE repository_profile_embeddings (
     UNIQUE (profile_id, chunk_type, content_hash)
 );
 
-CREATE INDEX idx_rpe_user_id
+CREATE INDEX IF NOT EXISTS idx_rpe_user_id
     ON repository_profile_embeddings (user_id);
 
-CREATE INDEX idx_rpe_profile_id
+CREATE INDEX IF NOT EXISTS idx_rpe_profile_id
     ON repository_profile_embeddings (profile_id);
 
-CREATE INDEX idx_rpe_chunk_type
+CREATE INDEX IF NOT EXISTS idx_rpe_chunk_type
     ON repository_profile_embeddings (chunk_type);
 
-CREATE INDEX idx_rpe_hnsw
+CREATE INDEX IF NOT EXISTS idx_rpe_hnsw
     ON repository_profile_embeddings
     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
 
 ALTER TABLE repository_profile_embeddings ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS rls_repository_profile_embeddings ON repository_profile_embeddings;
 CREATE POLICY rls_repository_profile_embeddings ON repository_profile_embeddings
     USING      (user_id = current_setting('app.current_user_id', true)::uuid)
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);

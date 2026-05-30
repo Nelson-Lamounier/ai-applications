@@ -18,7 +18,7 @@
 -- =============================================================================
 -- 1. prompt_invocations — per-call Bedrock audit log
 -- =============================================================================
-CREATE TABLE prompt_invocations (
+CREATE TABLE IF NOT EXISTS prompt_invocations (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
   -- Agent identity
@@ -61,26 +61,26 @@ CREATE TABLE prompt_invocations (
   invoked_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_prompt_invocations_pipeline_agent
+CREATE INDEX IF NOT EXISTS idx_prompt_invocations_pipeline_agent
   ON prompt_invocations (pipeline, agent, invoked_at DESC);
 
-CREATE INDEX idx_prompt_invocations_user
+CREATE INDEX IF NOT EXISTS idx_prompt_invocations_user
   ON prompt_invocations (user_id, invoked_at DESC)
   WHERE user_id IS NOT NULL;
 
-CREATE INDEX idx_prompt_invocations_prompt_id
+CREATE INDEX IF NOT EXISTS idx_prompt_invocations_prompt_id
   ON prompt_invocations (prompt_id, invoked_at DESC)
   WHERE prompt_id IS NOT NULL;
 
 -- Partial index for cache-hit analytics
-CREATE INDEX idx_prompt_invocations_cache_miss
+CREATE INDEX IF NOT EXISTS idx_prompt_invocations_cache_miss
   ON prompt_invocations (pipeline, agent, invoked_at DESC)
   WHERE cache_hit = false;
 
 -- =============================================================================
 -- 2. prompt_feedback — user quality ratings per invocation
 -- =============================================================================
-CREATE TABLE prompt_feedback (
+CREATE TABLE IF NOT EXISTS prompt_feedback (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
   -- Link to the specific invocation that generated the output
@@ -106,14 +106,14 @@ CREATE TABLE prompt_feedback (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_prompt_feedback_invocation
+CREATE INDEX IF NOT EXISTS idx_prompt_feedback_invocation
   ON prompt_feedback (invocation_id);
 
-CREATE INDEX idx_prompt_feedback_user
+CREATE INDEX IF NOT EXISTS idx_prompt_feedback_user
   ON prompt_feedback (user_id, created_at DESC);
 
 -- Partial index for admin review queue
-CREATE INDEX idx_prompt_feedback_unreviewed
+CREATE INDEX IF NOT EXISTS idx_prompt_feedback_unreviewed
   ON prompt_feedback (created_at DESC)
   WHERE admin_reviewed = false AND rating = -1;
 

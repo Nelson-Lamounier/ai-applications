@@ -22,7 +22,7 @@
 
 DROP INDEX IF EXISTS idx_resume_imports_status_active;
 
-CREATE INDEX idx_resume_imports_status_active
+CREATE INDEX IF NOT EXISTS idx_resume_imports_status_active
   ON resume_imports (status)
   WHERE status IN ('queued', 'parsing', 'extracting_career', 'confirmed', 'enriching');
 
