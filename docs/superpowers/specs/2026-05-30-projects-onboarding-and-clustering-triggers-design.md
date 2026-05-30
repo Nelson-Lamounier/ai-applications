@@ -111,16 +111,14 @@ Idempotent (`ON CONFLICT DO UPDATE`), matches existing migration style, applies 
 
 > Migration sequencing note: `044` must follow the bootstrap-idempotency work already merged; the runner re-applies every `.sql` each boot (no `schema_migrations` table), so the seed is safe to re-run.
 
-### B3. Frontend — clustering trigger (tucaken-app)
+### B3 + B4. Frontend — clustering trigger + proposal review (tucaken-app)
 
-- **"Find multi-repo projects" action** on the projects dashboard → calls existing server fns (`runClusteringFn` / `getClusteringProposalsFn`). **Hidden for non-pro** (plan from session/`me`). After dispatch: poll `pipeline_runs` for the clustering run, then surface proposals.
+> **Correction (verified against `origin/main` during planning):** the review flow is **already built and wired** — route `src/app/_dashboard/projects/review.tsx` → `ProjectReviewStep` (`src/features/projects/components/review/ProjectReviewStep.tsx`) already calls `useRunClustering()` + `useConfirmProject()` and lists proposals via `projectsQueries.proposals()`. Server fn `runClusteringFn` exists. So B3/B4 are **not** net-new builds — the only frontend gap is **plan-gating**, and `AuthUser` (`src/server/session.ts`) currently exposes only `{ id, email }` — **no `plan`**.
 
-### B4. Frontend — proposal review (tucaken-app)
-
-- List `is_ai_suggested=TRUE AND is_user_confirmed=FALSE` projects with `proposal_reasoning` + `proposal_confidence`.
-- **Confirm** → existing `confirmProjectFn` (auto-dispatches case-study + now archives superseded defaults).
-- **Dismiss** → delete the proposal row.
-- If `ProjectReviewStep.tsx` exists from Phase-5 scaffolding, wire it; otherwise build a minimal review surface.
+Scope of frontend work, therefore:
+- **Add `plan` to the session/`AuthUser`.** Extend `getUserSessionFn` to read `users.plan` and add `plan: string` to `AuthUser`. (Server gate on `/clustering/run` is the real enforcement; this is for UX hiding.)
+- **Hide the run-clustering trigger for non-pro.** In `ProjectReviewStep` (and any entry point that surfaces "Find multi-repo projects"), gate the `useRunClustering` action on `plan === 'pro'`; show nothing (or a disabled state) for free. Server still rejects non-pro (B1) as the hard guard.
+- **No rebuild** of the confirm/dismiss/proposal-list UI — it exists. Verify it renders the superseded-default archival result if surfaced (optional; `archivedDefaults` is additive in the confirm response).
 
 ---
 
