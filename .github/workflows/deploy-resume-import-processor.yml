@@ -11,6 +11,9 @@ on:
     branches: [develop]
     paths:
       - "applications/resume-import-processor/**"
+      # The image bundles @bedrock/shared (see Dockerfile), so shared-only
+      # changes must rebuild it too — otherwise fixes silently never ship.
+      - "applications/shared/**"
       - ".github/workflows/deploy-resume-import-processor.yml"
   workflow_dispatch:
 

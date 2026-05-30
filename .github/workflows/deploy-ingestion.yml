@@ -10,6 +10,9 @@ on:
     branches: [develop]
     paths:
       - "applications/ingestion/**"
+      # The image bundles @bedrock/shared (see Dockerfile), so shared-only
+      # changes must rebuild it too — otherwise fixes silently never ship.
+      - "applications/shared/**"
       - ".github/workflows/deploy-ingestion.yml"
   workflow_dispatch:
 
