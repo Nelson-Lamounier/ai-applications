@@ -1,0 +1,80 @@
+# On-demand Platform RDS bootstrap / migration Job.
+#
+# WHAT
+#   Runs the platform-rds-bootstrap image once against dev RDS, applying the
+#   base DDL + every numbered migration in migrations/ idempotently
+#   (CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS / etc.). Re-runnable
+#   safely: already-applied objects are no-ops.
+#
+# WHY THIS EXISTS (separate from the ArgoCD-managed Job)
+#   The canonical run is the ArgoCD PostSync hook in the kubernetes-bootstrap
+#   repo (charts/platform-rds/chart/templates/bootstrap-job.yaml). That Job
+#   only ever runs the image tag pinned in values-<env>.yaml. When that tag
+#   lags behind develop, newly-merged migrations never reach the DB even
+#   though the image exists in ECR. This manifest is the break-glass path:
+#   apply the latest image NOW without waiting on a GitOps tag bump + sync.
+#
+#   The permanent fix is still to bump the tag in values-<env>.yaml (see
+#   README.md "Deploying migrations"). This Job is for when you need the
+#   schema applied immediately or want to verify an image before pinning it.
+#
+# USAGE
+#   just db-bootstrap-run                       # uses latest CI image from SSM
+#   IMAGE=<ecr-uri>:<tag> just db-bootstrap-run # pin a specific image
+#   # or directly:
+#   IMAGE=$(aws ssm get-parameter \
+#     --name /k8s/development/job-images/platform-rds-bootstrap \
+#     --profile dev-account --query Parameter.Value --output text) \
+#     envsubst < applications/platform-rds-bootstrap/k8s/bootstrap-job.yaml \
+#     | kubectl apply -f -
+#
+#   Watch:  kubectl logs -n platform -l app=platform-rds-bootstrap-ondemand -f
+#
+# NOTES
+#   - generateName: never collides with the ArgoCD-managed "platform-rds-bootstrap"
+#     Job, so ArgoCD won't treat it as drift / prune it.
+#   - Connects DIRECTLY to RDS (PGHOST from platform-rds-config), like the
+#     canonical Job — not via PgBouncer.
+#   - $IMAGE is the only required substitution. Apply via envsubst.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: platform-rds-bootstrap-ondemand-
+  namespace: platform
+  labels:
+    app: platform-rds-bootstrap-ondemand
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: platform-rds-bootstrap-ondemand
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: platform-rds-bootstrap-sa
+      containers:
+      - name: bootstrap
+        image: ${IMAGE}
+        env:
+          - name: DEPLOY_ENV
+            value: "development"
+          - name: LOG_LEVEL
+            value: "debug"
+          - name: OTEL_SERVICE_NAME
+            value: "platform-rds-bootstrap"
+        envFrom:
+        - secretRef:
+            name: platform-rds-credentials
+            optional: false
+        - secretRef:
+            name: platform-rds-config
+            optional: false
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi

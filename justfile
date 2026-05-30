@@ -197,6 +197,41 @@ test-projects-clustering:
 test-projects-case-study:
     npx tsx scripts/test-projects-case-study.ts
 
+# Apply base DDL + all numbered migrations to dev RDS on-demand, by running
+# the platform-rds-bootstrap image as a one-shot K8s Job in the platform ns.
+# Idempotent (re-runnable). Break-glass path when the ArgoCD-pinned image tag
+# lags develop; the permanent fix is still to bump values-<env>.yaml (see
+# applications/platform-rds-bootstrap/README.md "Deploying migrations").
+#
+# Requires: kubectl context = dev cluster, AWS_PROFILE=dev-account, envsubst.
+# Defaults IMAGE to the latest CI-built image published to SSM.
+#
+# Usage:
+#   AWS_PROFILE=dev-account just db-bootstrap-run
+#   IMAGE=771826808455.dkr.ecr.eu-west-1.amazonaws.com/platform-rds-bootstrap:<tag> just db-bootstrap-run
+[group('rds')]
+db-bootstrap-run image="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    IMAGE="{{image}}"
+    if [ -z "$IMAGE" ]; then
+      echo "Resolving latest CI image from SSM..."
+      IMAGE=$(aws ssm get-parameter \
+        --name /k8s/development/job-images/platform-rds-bootstrap \
+        --query Parameter.Value --output text)
+    fi
+    echo "Bootstrap image: $IMAGE"
+    export IMAGE
+    JOB=$(envsubst '$IMAGE' \
+      < applications/platform-rds-bootstrap/k8s/bootstrap-job.yaml \
+      | kubectl create -f - -o name)
+    echo "Created $JOB — waiting for completion..."
+    kubectl wait -n platform "$JOB" --for=condition=complete --timeout=300s &
+    WAIT_PID=$!
+    kubectl logs -n platform -l app=platform-rds-bootstrap-ondemand -f --tail=-1 || true
+    wait "$WAIT_PID"
+    echo "Bootstrap Job complete."
+
 # Build the job-strategist Docker image locally.
 [group('strategist')]
 build-strategist:
