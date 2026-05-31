@@ -59,6 +59,8 @@ class FakeSyncState implements ISyncStateRepository {
     async markComplete(...args: unknown[]): Promise<void> { this.markCompleteCalls.push(args); }
     async markError(): Promise<void> {}
     async saveArchetypeSignals(): Promise<void> {}
+    async getLastSyncedCommitSha(): Promise<string | null> { return null; }
+    async setLastSyncedCommitSha(): Promise<void> {}
     async get(): Promise<undefined> { return undefined; }
     async upsert(): Promise<void> {}
 }
