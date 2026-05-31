@@ -91,6 +91,8 @@ export function computeInputHash(context: LoadCaseStudyContextResult): string {
     for (const pr of c.pulls) {
         h.update(`pr:${pr.number}:${pr.state}:${pr.mergedAt ?? ''}`);
     }
+    if (c.archetype) h.update(`arch:${c.archetype.id}`);
+    if (c.stage)     h.update(`stage:${c.stage}`);
     return h.digest('hex');
 }
 
