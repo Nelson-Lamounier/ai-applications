@@ -8,7 +8,8 @@
  */
 
 import { RepoIngestionOrchestrator } from './RepoIngestionOrchestrator.js';
-import type { IRepoAdapter, RepoFile, RepoCommit } from '../interfaces/IRepoAdapter.js';
+import type { RepoActivityStore } from './RepoIngestionOrchestrator.js';
+import type { IRepoAdapter, RepoFile, RepoCommit, RepoPullRequest } from '../interfaces/IRepoAdapter.js';
 import type { IFileFilter } from '../interfaces/IFileFilter.js';
 import type { ChunkerRegistry } from '../implementations/ChunkerRegistry.js';
 import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
@@ -157,5 +158,111 @@ describe('RepoIngestionOrchestrator concurrent fetch', () => {
 
         expect(calls[0]).toEqual([0, 30]);
         expect(calls.at(-1)).toEqual([30, 30]);
+    });
+});
+
+// =============================================================================
+// ACTIVITY PERSISTENCE
+// =============================================================================
+
+const SAMPLE_COMMIT: RepoCommit = {
+    sha:        'abc123',
+    authorName: 'Octocat',
+    authoredAt: '2026-01-01T00:00:00Z',
+    message:    'init',
+};
+
+const SAMPLE_PULL: RepoPullRequest = {
+    number:      7,
+    title:       'Add feature',
+    body:        'body',
+    createdAt:   '2026-01-02T00:00:00Z',
+    mergedAt:    '2026-01-03T00:00:00Z',
+    state:       'merged',
+    authorLogin: 'octocat',
+    htmlUrl:     'https://github.com/o/a/pull/7',
+};
+
+/** Adapter with commits + (optionally throwing) pull-request support. */
+class ActivityAdapter implements IRepoAdapter {
+    public listPullRequestsCalled = false;
+    constructor(private readonly opts: { pullsThrow?: boolean } = {}) {}
+
+    async listFiles(): Promise<RepoFile[]> { return []; }
+    async fetchFile(): Promise<string> { return ''; }
+    async listCommits(): Promise<RepoCommit[]> { return [SAMPLE_COMMIT]; }
+    async listPullRequests(): Promise<RepoPullRequest[]> {
+        this.listPullRequestsCalled = true;
+        if (this.opts.pullsThrow) throw new Error('boom: PRs');
+        return [SAMPLE_PULL];
+    }
+}
+
+function makeActivityStore() {
+    return {
+        upsertCommits:      jest.fn(async () => 0),
+        upsertPullRequests: jest.fn(async () => 0),
+    } as unknown as RepoActivityStore & {
+        upsertCommits: jest.Mock;
+        upsertPullRequests: jest.Mock;
+    };
+}
+
+describe('RepoIngestionOrchestrator activity persistence', () => {
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    it('persists structured commits + pull requests when a store is configured', async () => {
+        const adapter = new ActivityAdapter();
+        const store   = makeActivityStore();
+        const { pipeline } = fakePipeline();
+        const orch = new RepoIngestionOrchestrator(
+            adapter,
+            new FakeFileFilter(),
+            {} as never,
+            pipeline,
+            { activityStore: store, repositoryId: 'repo-uuid' },
+        );
+
+        await orch.ingestRepo('user-uuid', 'o/a');
+
+        expect(store.upsertCommits).toHaveBeenCalledWith(
+            'user-uuid', 'repo-uuid', 'o/a', [SAMPLE_COMMIT],
+        );
+        expect(store.upsertPullRequests).toHaveBeenCalledWith(
+            'user-uuid', 'repo-uuid', 'o/a', [SAMPLE_PULL],
+        );
+        expect(adapter.listPullRequestsCalled).toBe(true);
+    });
+
+    it('resolves without throwing when no activity store is configured', async () => {
+        const adapter = new ActivityAdapter();
+        const { pipeline } = fakePipeline();
+        const orch = new RepoIngestionOrchestrator(
+            adapter,
+            new FakeFileFilter(),
+            {} as never,
+            pipeline,
+        );
+
+        await expect(orch.ingestRepo('user-uuid', 'o/a')).resolves.toBeDefined();
+    });
+
+    it('still persists commits when pull-request fetch throws', async () => {
+        const adapter = new ActivityAdapter({ pullsThrow: true });
+        const store   = makeActivityStore();
+        const { pipeline } = fakePipeline();
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const orch = new RepoIngestionOrchestrator(
+            adapter,
+            new FakeFileFilter(),
+            {} as never,
+            pipeline,
+            { activityStore: store, repositoryId: 'repo-uuid' },
+        );
+
+        await expect(orch.ingestRepo('user-uuid', 'o/a')).resolves.toBeDefined();
+        expect(store.upsertCommits).toHaveBeenCalledWith(
+            'user-uuid', 'repo-uuid', 'o/a', [SAMPLE_COMMIT],
+        );
     });
 });
