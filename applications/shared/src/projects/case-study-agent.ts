@@ -99,7 +99,27 @@ The input is a compact JSON envelope describing the project, its
 components, its repositories, recent commits, and selected KB passages.
 Use commits + KB passages as evidence for every grounded claim.`;
 
-const SYSTEM_PROMPT: SystemContentBlock[] = [{ text: SYSTEM_PROMPT_TEXT }];
+/**
+ * Build the system prompt, appending an archetype/stage calibration block
+ * when the context carries a classified archetype. Soft guidance only — it
+ * shifts section emphasis; it never changes the output schema, the evidence
+ * requirement, or the grounding pass. Absent archetype → base prompt verbatim.
+ */
+export function buildSystemPrompt(context: CaseStudyContext): string {
+    if (!context.archetype) return SYSTEM_PROMPT_TEXT;
+    const stageLabel = context.stage ?? 'unspecified';
+    const priority   = (context.prioritySections ?? []).join(', ');
+    const deemph     = (context.deemphasizedSections ?? []).join(', ');
+    const block = [
+        '',
+        'Project calibration:',
+        `This is a ${stageLabel}-level ${context.archetype.name} project.` +
+            (priority ? ` Recruiters at this level look hardest at: ${priority}. Prioritise depth and evidence in those sections.` : ''),
+        deemph ? `De-emphasise: ${deemph}.` : '',
+        'Still emit every section the evidence supports — calibration changes emphasis, never truthfulness. Omit any section you cannot ground.',
+    ].filter(Boolean).join('\n');
+    return `${SYSTEM_PROMPT_TEXT}\n${block}`;
+}
 
 // ─── Forced tool_use schema ─────────────────────────────────────────────────
 
@@ -344,7 +364,7 @@ export const bedrockCaseStudyAgent: CaseStudyAgent = {
             modelId:        EFFECTIVE_MODEL_ID,
             maxTokens:      CASE_STUDY_MAX_TOKENS,
             thinkingBudget: CASE_STUDY_THINKING_BUDGET,
-            systemPrompt:   SYSTEM_PROMPT,
+            systemPrompt:   [{ text: buildSystemPrompt(context) }],
             pipeline:       'project-case-study',
             promptId:       'project-case-study-v1',
             tool:           CASE_STUDY_TOOL,
