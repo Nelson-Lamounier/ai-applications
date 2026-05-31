@@ -75,6 +75,8 @@ export { RdsDiagnosticInputsReadRepository } from './implementations/RdsDiagnost
 export type { IOAuthConnectionsRepository, OAuthConnection, NewOAuthConnection } from './interfaces/IOAuthConnectionsRepository.js';
 export { RdsOAuthConnectionsRepository } from './implementations/RdsOAuthConnectionsRepository.js';
 
+export { RdsRepoActivityStore } from './implementations/RdsRepoActivityStore.js';
+
 // Diagnostic (pure deterministic formula)
 export { computeUserDiagnostic, WEIGHTS, KB_SCORE_THRESHOLD } from './diagnostic/computeUserDiagnostic.js';
 export type {

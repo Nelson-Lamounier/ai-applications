@@ -25,7 +25,7 @@
 import type { IngestionReport, RawChunk } from '../../rds/types.js';
 import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
 import type { IFileFilter }   from '../interfaces/IFileFilter.js';
-import type { IRepoAdapter }  from '../interfaces/IRepoAdapter.js';
+import type { IRepoAdapter, RepoCommit, RepoPullRequest }  from '../interfaces/IRepoAdapter.js';
 import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
 
@@ -40,6 +40,12 @@ const FILE_FETCH_CONCURRENCY = (() => {
     return Number.isFinite(n) && n >= 1 ? n : 8;
 })();
 
+/** Structured commit/PR persistence — RdsRepoActivityStore in production. */
+export interface RepoActivityStore {
+    upsertCommits(userId: string, repositoryId: string, repoFullName: string, commits: readonly RepoCommit[]): Promise<number>;
+    upsertPullRequests(userId: string, repositoryId: string, repoFullName: string, pulls: readonly RepoPullRequest[]): Promise<number>;
+}
+
 export interface OrchestratorOptions {
     /**
      * When provided, the orchestrator pulls the last N commits from the
@@ -50,6 +56,12 @@ export interface OrchestratorOptions {
     readonly commitChunker?: CommitChunker | null;
     /** Hard cap on commits pulled per ingestion. Default 500. */
     readonly maxCommits?:    number;
+    /** When provided (with repositoryId), structured commits + PRs are persisted. */
+    readonly activityStore?: RepoActivityStore;
+    /** repositories.id for the repo being ingested — required to persist activity. */
+    readonly repositoryId?: string;
+    /** Hard cap on PRs pulled per ingestion. Default 100. */
+    readonly maxPullRequests?: number;
 }
 
 export class RepoIngestionOrchestrator {
@@ -59,6 +71,9 @@ export class RepoIngestionOrchestrator {
     private readonly ingestionPipeline: IngestionPipeline;
     private readonly commitChunker:     CommitChunker | null;
     private readonly maxCommits:        number;
+    private readonly activityStore:     RepoActivityStore | null;
+    private readonly repositoryId:      string | null;
+    private readonly maxPullRequests:   number;
 
     constructor(
         repoAdapter:       IRepoAdapter,
@@ -76,6 +91,9 @@ export class RepoIngestionOrchestrator {
             ? null
             : (options.commitChunker ?? new CommitChunker());
         this.maxCommits        = options.maxCommits ?? 500;
+        this.activityStore     = options.activityStore ?? null;
+        this.repositoryId      = options.repositoryId ?? null;
+        this.maxPullRequests   = options.maxPullRequests ?? 100;
     }
 
     // =========================================================================
@@ -135,8 +153,9 @@ export class RepoIngestionOrchestrator {
         // Independent of file ingestion — failures here log and continue
         // so a token-scope problem does not abort the whole run.
         // -----------------------------------------------------------------
-        const commitChunks = await this.fetchAndChunkCommits(repoFullName);
+        const commitChunks = await this.fetchAndChunkCommits(userId, repoFullName);
         rawChunks.push(...commitChunks);
+        await this.fetchAndPersistPulls(userId, repoFullName);
 
         // -----------------------------------------------------------------
         // Step 4: Hand off to IngestionPipeline (hash-check → embed → upsert)
@@ -207,7 +226,7 @@ export class RepoIngestionOrchestrator {
      * Best-effort: any failure (auth, rate limit) logs and returns []
      * so file-content ingestion still completes.
      */
-    private async fetchAndChunkCommits(repoFullName: string): Promise<RawChunk[]> {
+    private async fetchAndChunkCommits(userId: string, repoFullName: string): Promise<RawChunk[]> {
         if (!this.commitChunker) return [];
 
         try {
@@ -215,6 +234,9 @@ export class RepoIngestionOrchestrator {
                 repoFullName,
                 { maxCommits: this.maxCommits },
             );
+            if (this.activityStore && this.repositoryId) {
+                await this.activityStore.upsertCommits(userId, this.repositoryId, repoFullName, commits);
+            }
             const chunks = this.commitChunker.chunkWeekly(commits);
             console.info(
                 `[RepoIngestionOrchestrator] ${repoFullName}: ` +
@@ -227,6 +249,32 @@ export class RepoIngestionOrchestrator {
                 err,
             );
             return [];
+        }
+    }
+
+    /**
+     * Pull pull-request metadata and persist it via the activity store.
+     * Best-effort: PRs produce no RawChunks, and any failure (auth, rate
+     * limit, missing adapter capability) logs and returns so commit + file
+     * ingestion still completes. No-op when no store/repositoryId is wired.
+     */
+    private async fetchAndPersistPulls(userId: string, repoFullName: string): Promise<void> {
+        if (!this.activityStore || !this.repositoryId) return;
+        if (typeof this.repoAdapter.listPullRequests !== 'function') return;
+        try {
+            const pulls = await this.repoAdapter.listPullRequests(
+                repoFullName,
+                { maxPullRequests: this.maxPullRequests },
+            );
+            await this.activityStore.upsertPullRequests(userId, this.repositoryId, repoFullName, pulls);
+            console.info(
+                `[RepoIngestionOrchestrator] ${repoFullName}: persisted ${pulls.length} pull requests`,
+            );
+        } catch (err) {
+            console.warn(
+                `[RepoIngestionOrchestrator] pull-request ingestion skipped for ${repoFullName}:`,
+                err,
+            );
         }
     }
 
@@ -248,7 +296,8 @@ export class RepoIngestionOrchestrator {
         const rawChunks    = await this.fetchAndChunkFiles(repoFullName, includedPaths);
 
         // Mirror Step 3.5 from ingestRepo — re-ingest commit history too.
-        rawChunks.push(...await this.fetchAndChunkCommits(repoFullName));
+        rawChunks.push(...await this.fetchAndChunkCommits(userId, repoFullName));
+        await this.fetchAndPersistPulls(userId, repoFullName);
 
         return this.ingestionPipeline.forceReindex(userId, repoFullName, rawChunks);
     }
