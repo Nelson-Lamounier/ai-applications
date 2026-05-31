@@ -38,6 +38,7 @@ import {
     RdsUserProfileRollupRepository,
     RdsCareerHistoryReadRepository,
     RdsDiagnosticInputsReadRepository,
+    RdsRepoActivityStore,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -126,6 +127,20 @@ async function embedProfile(
     }
 
     await embRepo.upsertBatch(userId, rows);
+}
+
+/**
+ * Resolves the repositories.id for the (user, repo) pair so structured
+ * commit/PR rows can be FK-linked. Returns null when no row exists (e.g. the
+ * repo was never registered via the connect flow) — the caller then skips
+ * structured persistence rather than failing the whole ingestion.
+ */
+async function resolveRepositoryId(pool: Pool, userId: string, repoFullName: string): Promise<string | null> {
+    const r = await pool.query<{ id: string }>(
+        `SELECT id FROM repositories WHERE user_id = $1::uuid AND full_name = $2`,
+        [userId, repoFullName],
+    );
+    return r.rows[0]?.id ?? null;
 }
 
 /**
@@ -242,7 +257,17 @@ async function main(): Promise<void> {
     const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);
 
     const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher, retrievalProbe });
-    const orchestrator = new RepoIngestionOrchestrator(repoAdapter, fileFilter, chunkerReg, pipeline);
+
+    const repositoryId  = await resolveRepositoryId(pgPool, env.userId, env.repoFullName);
+    if (!repositoryId) {
+        console.warn(`[run-ingestion] no repositories row for ${env.repoFullName}; structured commit/PR persistence will be skipped`);
+    }
+    const activityStore = new RdsRepoActivityStore(pgPool);
+
+    const orchestrator = new RepoIngestionOrchestrator(
+        repoAdapter, fileFilter, chunkerReg, pipeline,
+        { activityStore, repositoryId: repositoryId ?? undefined },
+    );
 
     const fileCache        = new FileFetchCache();
     const profileRepo      = new RepositoryProfileRepository(pgPool);
