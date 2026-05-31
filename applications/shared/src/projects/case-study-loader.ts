@@ -158,6 +158,20 @@ export async function loadCaseStudyContext(
 
     const repoNames = repos.map((r) => r.full_name);
 
+    // Pre-derived archetype signals persisted by ingestion. Merge across the
+    // project's repos: a signal is true if true for ANY member repo.
+    const sigRows = (await pool.query<{ archetype_signals: Record<string, boolean> | null }>(
+        `SELECT archetype_signals FROM repo_sync_state
+          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])`,
+        [p.user_id, repoNames],
+    )).rows;
+    const mergedSignals: Record<string, boolean> = {};
+    for (const row of sigRows) {
+        for (const [k, v] of Object.entries(row.archetype_signals ?? {})) {
+            if (v) mergedSignals[k] = true;
+        }
+    }
+
     const kb = (await pool.query<KbRow>(
         `SELECT
             de.repo_full_name AS repo_full_name,
@@ -244,22 +258,7 @@ export async function loadCaseStudyContext(
     // ── Archetype/stage calibration (additive; absent fields = no change) ──
     const ontology   = new RdsProjectOntologyRepository(pool);
     const archetypes = await ontology.listArchetypes();
-    const classified = classifyArchetype(
-        {
-            projectType:  p.type,
-            projectShape: p.shape,
-            repos: repos.map((r) => ({
-                primaryLanguage: r.primary_language,
-                topics:          r.topics ?? [],
-                techStack:       r.tech_stack ?? [],
-                filePaths:       kb
-                    .filter((k) => k.repo_full_name === r.full_name)
-                    .map((k) => k.file_path ?? '')
-                    .filter((path): path is string => path.length > 0),
-            })),
-        },
-        archetypes,
-    );
+    const classified = classifyArchetype(mergedSignals, p.type, archetypes);
 
     let calibration: Partial<Pick<CaseStudyContext,
         'archetype' | 'stage' | 'prioritySections' | 'deemphasizedSections'>> = {};

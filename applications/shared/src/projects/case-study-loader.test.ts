@@ -19,6 +19,7 @@ function makePool(canned: {
     archetypes?: unknown[];
     overlays?: unknown[];
     rollup?: unknown[];
+    syncState?: unknown[];
 }) {
     return {
         async query(sql: string): Promise<QueryResult> {
@@ -28,6 +29,7 @@ function makePool(canned: {
             }
             if (/FROM project_repositories/.test(sql)) return { rows: canned.repositories ?? [] };
             if (/FROM document_embeddings/.test(sql)) return { rows: canned.embeddings ?? [] };
+            if (/FROM repo_sync_state/.test(sql))     return { rows: canned.syncState ?? [] };
             if (/FROM repo_commits/.test(sql))        return { rows: canned.commits ?? [] };
             if (/FROM repo_pull_requests/.test(sql))  return { rows: canned.pulls ?? [] };
             if (/FROM project_archetypes/.test(sql))      return { rows: canned.archetypes ?? [] };
@@ -117,6 +119,7 @@ describe('loadCaseStudyContext', () => {
             components: [],
             repositories: [{ ...repoRow, tech_stack: ['docker','kubernetes'] }],
             embeddings: [{ repo_full_name: 'owner/repo', file_path: 'infra/k8s/deploy.yaml', chunk_type: 'document', content: 'x' }],
+            syncState: [{ archetype_signals: { has_iac: true, has_ci: true } }],
             commits: [], pulls: [],
             archetypes: [{ id: 'production_saas', name: 'Production SaaS Application', description: 'd',
                 classification_signals: { required_any: ['has_iac'], positive: ['has_ci'], negative: [] },
@@ -136,7 +139,7 @@ describe('loadCaseStudyContext', () => {
         const pool = makePool({
             projects: [{ ...projectRow, type: 'side_project', shape: 'single_repo' }],
             components: [], repositories: [{ ...repoRow, tech_stack: [] }],
-            embeddings: [], commits: [], pulls: [],
+            embeddings: [], syncState: [{ archetype_signals: {} }], commits: [], pulls: [],
             archetypes: [{ id: 'production_saas', name: 'P', description: 'd',
                 classification_signals: { required_any: ['has_iac'], positive: [], negative: [] },
                 expected_sections: [], expected_artifacts: [] }],
