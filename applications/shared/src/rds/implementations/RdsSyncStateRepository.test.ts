@@ -40,3 +40,36 @@ describe('RdsSyncStateRepository retrieval persistence', () => {
         expect(upsert.params.slice(-2)).toEqual([null, null]);
     });
 });
+
+describe('RdsSyncStateRepository.saveArchetypeSignals', () => {
+    it('issues a targeted UPDATE of archetype_signals scoped by user_id + repo_full_name', async () => {
+        const pool = fakePool();
+        const repo = new RdsSyncStateRepository({} as never);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+
+        const signals = { has_ci: true, has_dockerfile: false, has_iac: true };
+        await repo.saveArchetypeSignals('u1', 'owner/repo', signals);
+
+        const update = pool.calls.find(c => c.sql.includes('UPDATE repo_sync_state'))!;
+        expect(update).toBeDefined();
+        expect(update.sql).toContain('archetype_signals');
+        expect(update.sql).toContain('WHERE user_id = $1 AND repo_full_name = $2');
+        // scoped params + JSON-stringified signals as the third param.
+        expect(update.params[0]).toBe('u1');
+        expect(update.params[1]).toBe('owner/repo');
+        expect(update.params[2]).toBe(JSON.stringify(signals));
+    });
+
+    it('is a no-op-safe single UPDATE (mirrors markPhase: plain pool.query, no txn/set_config)', async () => {
+        const pool = fakePool();
+        const repo = new RdsSyncStateRepository({} as never);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+
+        await repo.saveArchetypeSignals('u1', 'owner/repo', { has_ci: true });
+
+        // markPhase does not BEGIN a txn nor call set_config — neither should this.
+        expect(pool.calls).toHaveLength(1);
+        expect(pool.calls.some(c => /set_config/i.test(c.sql))).toBe(false);
+        expect(pool.calls.some(c => /^\s*begin/i.test(c.sql))).toBe(false);
+    });
+});

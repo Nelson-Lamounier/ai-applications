@@ -15,6 +15,8 @@ type Pull = CaseStudyContext['pulls'][number];
 function makeContext(overrides?: {
     commits?: Commit[];
     pulls?: Pull[];
+    archetype?: { id: string; name: string } | null;
+    stage?: 'junior' | 'mid' | 'senior' | 'staff' | null;
 }): LoadCaseStudyContextResult {
     const context: CaseStudyContext = {
         projectId:     'proj-1',
@@ -46,6 +48,8 @@ function makeContext(overrides?: {
         ],
         pulls: overrides?.pulls ?? [],
         kbChunks: [],
+        archetype: overrides?.archetype ?? null,
+        stage:     overrides?.stage ?? null,
     };
     return { userId: 'user-1', context };
 }
@@ -99,5 +103,13 @@ describe('computeInputHash', () => {
             }],
         }));
         expect(b).not.toBe(a);
+    });
+
+    it('changes when archetype/stage is added; identical when absent', () => {
+        const base    = computeInputHash(makeContext());
+        const withArch = computeInputHash(makeContext({ archetype: { id: 'production_saas', name: 'Production SaaS Application' }, stage: 'senior' }));
+        expect(withArch).not.toBe(base);
+        // Two absent-archetype contexts hash identically (cache back-compat).
+        expect(computeInputHash(makeContext())).toBe(base);
     });
 });

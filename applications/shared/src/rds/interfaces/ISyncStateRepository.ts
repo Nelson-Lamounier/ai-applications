@@ -54,6 +54,17 @@ export interface ISyncStateRepository {
         retrievalBreakdown?: Record<string, unknown>,
     ): Promise<void>;
 
+    /**
+     * Persist the derived 46-signal archetype map (see repo-signals.ts) onto
+     * the repo_sync_state row for this (userId, repoFullName). Best-effort:
+     * a no-op if the row does not yet exist.
+     */
+    saveArchetypeSignals(
+        userId: string,
+        repoFullName: string,
+        signals: Record<string, boolean>,
+    ): Promise<void>;
+
     /** Shorthand: set status to 'error', record the failure reason. */
     markError(
         userId: string,

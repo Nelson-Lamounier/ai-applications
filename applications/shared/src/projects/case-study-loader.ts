@@ -21,6 +21,9 @@ import type { Pool } from 'pg';
 
 import type { CaseStudyContext } from './case-study-types.js';
 import { packContext } from './case-study-context-budget.js';
+import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectOntologyRepository.js';
+import { classifyArchetype } from './archetype-classifier.js';
+import { pickStage } from './derive-stage.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
 export interface CaseStudyCommit {
@@ -66,6 +69,8 @@ interface ProjectRow {
     tagline:        string | null;
     pitch:          string | null;
     user_overrides: Record<string, unknown> | null;
+    type:           string;
+    shape:          string;
 }
 
 interface ComponentRow {
@@ -111,7 +116,7 @@ export async function loadCaseStudyContext(
     projectId: string,
 ): Promise<LoadCaseStudyContextResult> {
     const project = await pool.query<ProjectRow>(
-        `SELECT id, user_id, name, tagline, pitch, user_overrides
+        `SELECT id, user_id, name, tagline, pitch, user_overrides, type, shape
          FROM projects WHERE id = $1`,
         [projectId],
     );
@@ -152,6 +157,20 @@ export async function loadCaseStudyContext(
     )).rows;
 
     const repoNames = repos.map((r) => r.full_name);
+
+    // Pre-derived archetype signals persisted by ingestion. Merge across the
+    // project's repos: a signal is true if true for ANY member repo.
+    const sigRows = (await pool.query<{ archetype_signals: Record<string, boolean> | null }>(
+        `SELECT archetype_signals FROM repo_sync_state
+          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])`,
+        [p.user_id, repoNames],
+    )).rows;
+    const mergedSignals: Record<string, boolean> = {};
+    for (const row of sigRows) {
+        for (const [k, v] of Object.entries(row.archetype_signals ?? {})) {
+            if (v) mergedSignals[k] = true;
+        }
+    }
 
     const kb = (await pool.query<KbRow>(
         `SELECT
@@ -236,7 +255,36 @@ export async function loadCaseStudyContext(
     // structured output below the context limit. Packing runs here (not in the
     // agent) so the orchestrator's input-hash and the prompt see identical,
     // already-bounded content.
-    const context = packContext(rawContext, { maxTokens: CONTEXT_TOKEN_BUDGET });
+    // ── Archetype/stage calibration (additive; absent fields = no change) ──
+    const ontology   = new RdsProjectOntologyRepository(pool);
+    const archetypes = await ontology.listArchetypes();
+    const classified = classifyArchetype(mergedSignals, p.type, archetypes);
+
+    let calibration: Partial<Pick<CaseStudyContext,
+        'archetype' | 'stage' | 'prioritySections' | 'deemphasizedSections'>> = {};
+
+    if (classified) {
+        const def = archetypes.find((a) => a.id === classified.archetypeId) ?? null;
+        const seniorityRow = await pool.query<{ direction: { seniority?: Array<{ area: string; level: string }> } | null }>(
+            `SELECT direction FROM user_profile_rollup WHERE user_id = $1`,
+            [p.user_id],
+        );
+        const seniority = seniorityRow.rows[0]?.direction?.seniority ?? [];
+        const stage = pickStage(seniority);
+        const overlay = stage ? await ontology.getStageOverlay(classified.archetypeId, stage) : null;
+
+        calibration = {
+            archetype: def ? { id: def.id, name: def.name } : { id: classified.archetypeId, name: classified.archetypeId },
+            stage,
+            prioritySections: overlay?.prioritySections ?? def?.expectedSections ?? [],
+            deemphasizedSections: overlay?.deemphasizedSections ?? [],
+        };
+        // The computed archetype/stage are surfaced via `context.archetype`/
+        // `context.stage` and persisted atomically with the case study inside
+        // persistCaseStudy's transaction — not written here on the pool.
+    }
+
+    const context = packContext({ ...rawContext, ...calibration }, { maxTokens: CONTEXT_TOKEN_BUDGET });
 
     return { userId: p.user_id, context };
 }

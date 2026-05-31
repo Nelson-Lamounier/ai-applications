@@ -242,4 +242,12 @@ export interface CaseStudyContext {
         readonly chunkType:    string;
         readonly content:      string;
     }>;
+
+    // ── Archetype/stage calibration (optional, additive) ──────────────────
+    // Populated by the loader when classification succeeds. Absent → the
+    // agent prompt is unchanged (today's behavior).
+    readonly archetype?:            { readonly id: string; readonly name: string } | null;
+    readonly stage?:                'junior' | 'mid' | 'senior' | 'staff' | null;
+    readonly prioritySections?:     readonly string[];
+    readonly deemphasizedSections?: readonly string[];
 }
