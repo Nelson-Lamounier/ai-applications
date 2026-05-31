@@ -35,8 +35,10 @@ class FakeRepoAdapter implements IRepoAdapter {
     }
 
     async listFiles(): Promise<RepoFile[]> {
-        return [...this.files.keys()].map(path => ({ path, sizeBytes: 100 }));
+        return [...this.files.keys()].map(path => ({ path, sizeBytes: 100, blobSha: `sha_${path}` }));
     }
+
+    async getHeadCommitSha(): Promise<string> { return 'head'; }
 
     async fetchFile(_repo: string, filePath: string): Promise<string> {
         this.concurrentNow++;
@@ -189,6 +191,7 @@ class ActivityAdapter implements IRepoAdapter {
     constructor(private readonly opts: { pullsThrow?: boolean } = {}) {}
 
     async listFiles(): Promise<RepoFile[]> { return []; }
+    async getHeadCommitSha(): Promise<string> { return 'head'; }
     async fetchFile(): Promise<string> { return ''; }
     async listCommits(): Promise<RepoCommit[]> { return [SAMPLE_COMMIT]; }
     async listPullRequests(): Promise<RepoPullRequest[]> {
@@ -275,6 +278,7 @@ describe('RepoIngestionOrchestrator activity persistence', () => {
 class SignalAdapter implements IRepoAdapter {
     constructor(private readonly tree: RepoFile[]) {}
     async listFiles(): Promise<RepoFile[]> { return this.tree; }
+    async getHeadCommitSha(): Promise<string> { return 'head'; }
     async fetchFile(): Promise<string> { return ''; }
     async listCommits(): Promise<RepoCommit[]> { return []; }
 }
@@ -284,9 +288,9 @@ describe('RepoIngestionOrchestrator archetype-signal persistence', () => {
 
     it('derives signals from the full file tree and persists them via the sink', async () => {
         const adapter = new SignalAdapter([
-            { path: '.github/workflows/deploy.yml', sizeBytes: 1 },
-            { path: 'Dockerfile',                   sizeBytes: 1 },
-            { path: 'infra/terraform/main.tf',      sizeBytes: 1 },
+            { path: '.github/workflows/deploy.yml', sizeBytes: 1, blobSha: 'sha1' },
+            { path: 'Dockerfile',                   sizeBytes: 1, blobSha: 'sha2' },
+            { path: 'infra/terraform/main.tf',      sizeBytes: 1, blobSha: 'sha3' },
         ]);
         const saveArchetypeSignals = jest.fn(async () => {});
         const { pipeline } = fakePipeline();
@@ -312,7 +316,7 @@ describe('RepoIngestionOrchestrator archetype-signal persistence', () => {
     });
 
     it('resolves without throwing when no signal sink is configured', async () => {
-        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1 }]);
+        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1, blobSha: 'sha1' }]);
         const { pipeline } = fakePipeline();
         const orch = new RepoIngestionOrchestrator(
             adapter,
@@ -326,7 +330,7 @@ describe('RepoIngestionOrchestrator archetype-signal persistence', () => {
     });
 
     it('does not abort ingestion when the sink throws', async () => {
-        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1 }]);
+        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1, blobSha: 'sha1' }]);
         const saveArchetypeSignals = jest.fn(async () => { throw new Error('boom: sink'); });
         jest.spyOn(console, 'warn').mockImplementation(() => {});
         const { pipeline } = fakePipeline();
