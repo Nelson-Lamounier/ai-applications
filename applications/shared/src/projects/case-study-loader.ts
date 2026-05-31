@@ -279,13 +279,9 @@ export async function loadCaseStudyContext(
             prioritySections: overlay?.prioritySections ?? def?.expectedSections ?? [],
             deemphasizedSections: overlay?.deemphasizedSections ?? [],
         };
-
-        await pool.query(
-            `UPDATE projects
-                SET computed_archetype = $2, computed_stage = $3, archetype_computed_at = now()
-              WHERE id = $1`,
-            [projectId, classified.archetypeId, stage],
-        );
+        // The computed archetype/stage are surfaced via `context.archetype`/
+        // `context.stage` and persisted atomically with the case study inside
+        // persistCaseStudy's transaction — not written here on the pool.
     }
 
     const context = packContext({ ...rawContext, ...calibration }, { maxTokens: CONTEXT_TOKEN_BUDGET });

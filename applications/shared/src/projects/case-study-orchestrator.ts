@@ -93,6 +93,8 @@ export function computeInputHash(context: LoadCaseStudyContextResult): string {
     }
     if (c.archetype) h.update(`arch:${c.archetype.id}`);
     if (c.stage)     h.update(`stage:${c.stage}`);
+    if (c.prioritySections?.length)     h.update(`ps:${c.prioritySections.join(',')}`);
+    if (c.deemphasizedSections?.length) h.update(`ds:${c.deemphasizedSections.join(',')}`);
     return h.digest('hex');
 }
 
@@ -192,6 +194,8 @@ export async function runCaseStudyOrchestration(
             model:         input.model,
             inputHash,
             caseStudy,
+            computedArchetype: contextLoaded.context.archetype?.id ?? null,
+            computedStage:     contextLoaded.context.stage ?? null,
         });
     } finally {
         client.release();
