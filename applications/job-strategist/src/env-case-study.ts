@@ -33,7 +33,7 @@ export function parseCaseStudyEnv(): CaseStudyEnv {
         userId:        required('USER_ID'),
         githubToken:   required('GITHUB_TOKEN'),
         model:         process.env.CASE_STUDY_MODEL
-                       ?? 'eu.anthropic.claude-sonnet-4-6-20260310-v1:0',
+                       ?? 'eu.anthropic.claude-sonnet-4-6',
         kbVersion:     process.env.KB_VERSION ?? 'kb-v1',
         environment:   process.env.ENVIRONMENT ?? 'production',
         pg: {

@@ -64,7 +64,7 @@ export interface QaAgentInput {
  * validation (code snippet checking, claim verification) which
  * benefits from stronger reasoning.
  */
-const QA_MODEL = process.env.QA_MODEL ?? 'eu.anthropic.claude-sonnet-4-6-20260310-v1:0';
+const QA_MODEL = process.env.QA_MODEL ?? 'eu.anthropic.claude-sonnet-4-6';
 
 /**
  * Application Inference Profile ARN — enables granular FinOps cost attribution.

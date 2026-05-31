@@ -30,10 +30,14 @@ describe('computeCostCents', () => {
     expect(bare.totalCostCents).toBeCloseTo(eu.totalCostCents, 6);
   });
 
-  it('prices the bare Sonnet id (CloudWatch ModelId) like the dated Sonnet id', () => {
-    const bare  = computeCostCents('eu.anthropic.claude-sonnet-4-6', 1000, 500);
-    const dated = computeCostCents('eu.anthropic.claude-sonnet-4-6-20260310-v1:0', 1000, 500);
-    expect(bare.totalCostCents).toBeCloseTo(dated.totalCostCents, 6);
+  it('prices the bare Sonnet id (the only valid eu inference-profile form)', () => {
+    // The dated `...-20260310-v1:0` form is not a valid eu inference-profile
+    // id; every agent emits the bare `eu.anthropic.claude-sonnet-4-6`. Verify
+    // it maps to Sonnet rates explicitly (input 0.300 / output 1.500 per 1k).
+    const sonnet = computeCostCents('eu.anthropic.claude-sonnet-4-6', 1000, 500);
+    expect(sonnet.inputCostCents).toBeCloseTo(0.300, 3);
+    expect(sonnet.outputCostCents).toBeCloseTo(0.750, 3);
+    expect(sonnet.totalCostCents).toBeCloseTo(1.050, 3);
   });
 });
 

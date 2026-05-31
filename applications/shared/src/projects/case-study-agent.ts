@@ -43,7 +43,7 @@ import { PROJECT_COMPONENT_KINDS } from './types.js';
 
 const CASE_STUDY_MODEL =
     process.env.CASE_STUDY_MODEL ??
-    'eu.anthropic.claude-sonnet-4-6-20260310-v1:0';
+    'eu.anthropic.claude-sonnet-4-6';
 
 const EFFECTIVE_MODEL_ID =
     process.env.INFERENCE_PROFILE_ARN ?? CASE_STUDY_MODEL;
