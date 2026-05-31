@@ -7,7 +7,6 @@ export interface CaseStudyEnv {
     readonly pipelineRunId: string;
     readonly projectId:     string;
     readonly userId:        string;
-    readonly githubToken:   string;
     readonly model:         string;
     readonly kbVersion:     string;
     readonly environment:   string;
@@ -31,7 +30,6 @@ export function parseCaseStudyEnv(): CaseStudyEnv {
         pipelineRunId: required('CASE_STUDY_PIPELINE_RUN_ID'),
         projectId:     required('PROJECT_ID'),
         userId:        required('USER_ID'),
-        githubToken:   required('GITHUB_TOKEN'),
         model:         process.env.CASE_STUDY_MODEL
                        ?? 'eu.anthropic.claude-sonnet-4-6',
         kbVersion:     process.env.KB_VERSION ?? 'kb-v1',

@@ -15,7 +15,7 @@
  * close out with metadata `{ skipped: 'feature_disabled' }`.
  *
  * Required env:
- *   CASE_STUDY_PIPELINE_RUN_ID, PROJECT_ID, USER_ID, GITHUB_TOKEN,
+ *   CASE_STUDY_PIPELINE_RUN_ID, PROJECT_ID, USER_ID,
  *   PG_HOST/DATABASE/USER/PASSWORD. Optional: CASE_STUDY_MODEL,
  *   KB_VERSION, ENVIRONMENT.
  */
@@ -23,7 +23,6 @@ import { Counter, Gauge, Histogram } from 'prom-client';
 
 import {
     BedrockGroundingVerifier,
-    GitHubAdapter,
     RedisExactCache,
     bedrockCaseStudyAgent,
     bootstrapK8sObservability,
@@ -32,11 +31,7 @@ import {
     recordInvocationToRds,
     runCaseStudyOrchestration,
 } from '@bedrock/shared';
-import type {
-    BasePipelineContext,
-    CommitLoader,
-    PullRequestLoader,
-} from '@bedrock/shared';
+import type { BasePipelineContext } from '@bedrock/shared';
 
 import { parseCaseStudyEnv } from './env-case-study.js';
 import { getPool, closePool } from './lib/pg.js';
@@ -81,41 +76,6 @@ const cacheEnabled = new Gauge({
 });
 for (const result of ['hit', 'miss', 'error'] as const) cacheRequests.inc({ cache: CACHE_NAME, result }, 0);
 
-function buildAdapter(token: string): GitHubAdapter {
-    return new GitHubAdapter(token);
-}
-
-function buildCommitLoader(adapter: GitHubAdapter): CommitLoader {
-    return {
-        async list(repoFullName, options) {
-            const out = await adapter.listCommits(repoFullName, { maxCommits: options.maxCommits });
-            return out.map((c) => ({
-                sha:        c.sha,
-                authorName: c.authorName,
-                authoredAt: c.authoredAt,
-                message:    c.message,
-            }));
-        },
-    };
-}
-
-function buildPullRequestLoader(adapter: GitHubAdapter): PullRequestLoader {
-    return {
-        async list(repoFullName, options) {
-            const out = await adapter.listPullRequests(repoFullName, { maxPullRequests: options.maxPullRequests });
-            return out.map((p) => ({
-                number:    p.number,
-                title:     p.title,
-                body:      p.body,
-                state:     p.state,
-                mergedAt:  p.mergedAt,
-                createdAt: p.createdAt,
-                htmlUrl:   p.htmlUrl,
-            }));
-        },
-    };
-}
-
 async function main(): Promise<void> {
     const env  = parseCaseStudyEnv();
     const pool = getPool(env.pg);
@@ -155,9 +115,6 @@ async function main(): Promise<void> {
             },
         });
         cacheEnabled.set({ cache: CACHE_NAME }, cache.enabled ? 1 : 0);
-        const adapter            = buildAdapter(env.githubToken);
-        const commitLoader       = buildCommitLoader(adapter);
-        const pullRequestLoader  = buildPullRequestLoader(adapter);
         const kbTag = `${env.environment}:${env.kbVersion}:${env.model}`;
 
         await updatePipelineRun(pool, env.pipelineRunId, 'generating');
@@ -170,8 +127,6 @@ async function main(): Promise<void> {
             agent:         bedrockCaseStudyAgent,
             verifier,
             cache,
-            commitLoader,
-            pullRequestLoader,
             ctx,
         });
 
