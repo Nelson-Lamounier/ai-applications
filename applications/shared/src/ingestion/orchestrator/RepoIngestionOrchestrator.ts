@@ -28,6 +28,7 @@ import type { IFileFilter }   from '../interfaces/IFileFilter.js';
 import type { IRepoAdapter, RepoCommit, RepoPullRequest }  from '../interfaces/IRepoAdapter.js';
 import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
+import { deriveRepoSignals }  from '../../projects/repo-signals.js';
 
 /**
  * Bounded concurrency for GitHub file fetches. Override via
@@ -62,6 +63,15 @@ export interface OrchestratorOptions {
     readonly repositoryId?: string;
     /** Hard cap on PRs pulled per ingestion. Default 100. */
     readonly maxPullRequests?: number;
+    /**
+     * When provided, the orchestrator derives the 46-signal archetype map from
+     * the repo's full file tree and persists it. Structural type (not the
+     * concrete RdsSyncStateRepository) so this stays decoupled — same spirit as
+     * {@link RepoActivityStore}. Best-effort: persist failures never abort a run.
+     */
+    readonly syncStateSignalSink?: {
+        saveArchetypeSignals(userId: string, repoFullName: string, signals: Record<string, boolean>): Promise<void>;
+    };
 }
 
 export class RepoIngestionOrchestrator {
@@ -74,6 +84,7 @@ export class RepoIngestionOrchestrator {
     private readonly activityStore:     RepoActivityStore | null;
     private readonly repositoryId:      string | null;
     private readonly maxPullRequests:   number;
+    private readonly syncStateSignalSink: OrchestratorOptions['syncStateSignalSink'] | null;
 
     constructor(
         repoAdapter:       IRepoAdapter,
@@ -94,6 +105,7 @@ export class RepoIngestionOrchestrator {
         this.activityStore     = options.activityStore ?? null;
         this.repositoryId      = options.repositoryId ?? null;
         this.maxPullRequests   = options.maxPullRequests ?? 100;
+        this.syncStateSignalSink = options.syncStateSignalSink ?? null;
     }
 
     // =========================================================================
@@ -117,6 +129,9 @@ export class RepoIngestionOrchestrator {
         // Step 1: List all files in the repo (single API call via tree API)
         // -----------------------------------------------------------------
         const allFiles = await this.repoAdapter.listFiles(repoFullName);
+
+        // Derive + persist archetype signals from the FULL file tree (best-effort).
+        await this.persistArchetypeSignals(userId, repoFullName, allFiles);
 
         // -----------------------------------------------------------------
         // Step 2: Filter — exclude noise, apply size limit
@@ -278,6 +293,32 @@ export class RepoIngestionOrchestrator {
         }
     }
 
+    /**
+     * Derive the 46-signal archetype map from the repo's FULL file tree and
+     * persist it via the optional sink. Best-effort: any failure (derivation or
+     * persistence) is logged and swallowed so it never aborts ingestion. No-op
+     * when no sink is wired.
+     */
+    private async persistArchetypeSignals(
+        userId: string,
+        repoFullName: string,
+        allFiles: readonly { path: string }[],
+    ): Promise<void> {
+        if (!this.syncStateSignalSink) return;
+        try {
+            const signals = deriveRepoSignals(
+                allFiles.map((f) => ({ path: f.path })),
+                { projectShape: undefined },
+            );
+            await this.syncStateSignalSink.saveArchetypeSignals(userId, repoFullName, signals);
+        } catch (err) {
+            console.warn(
+                `[RepoIngestionOrchestrator] archetype-signal persist skipped for ${repoFullName}:`,
+                err,
+            );
+        }
+    }
+
     // =========================================================================
     // forceReindex
     // =========================================================================
@@ -292,6 +333,10 @@ export class RepoIngestionOrchestrator {
         );
 
         const allFiles     = await this.repoAdapter.listFiles(repoFullName);
+
+        // Derive + persist archetype signals from the FULL file tree (best-effort).
+        await this.persistArchetypeSignals(userId, repoFullName, allFiles);
+
         const includedPaths = this.fileFilter.filterWithSize(allFiles);
         const rawChunks    = await this.fetchAndChunkFiles(repoFullName, includedPaths);
 

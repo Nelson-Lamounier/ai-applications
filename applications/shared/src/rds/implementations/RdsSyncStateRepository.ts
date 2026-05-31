@@ -218,6 +218,26 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         );
     }
 
+    /**
+     * Persist the derived 46-signal archetype map onto the existing
+     * repo_sync_state row. Mirrors markPhase exactly: a single targeted UPDATE
+     * via the pool (no explicit txn / set_config — relies on the same pre-set
+     * RLS GUC as the other write methods). No-op safe: if the row doesn't yet
+     * exist the UPDATE affects 0 rows.
+     */
+    async saveArchetypeSignals(
+        userId: string,
+        repoFullName: string,
+        signals: Record<string, boolean>,
+    ): Promise<void> {
+        await this.pool.query(
+            `UPDATE repo_sync_state
+                SET archetype_signals = $3::jsonb
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName, JSON.stringify(signals)],
+        );
+    }
+
     async markComplete(
         userId: string,
         repoFullName: string,

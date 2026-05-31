@@ -266,7 +266,7 @@ async function main(): Promise<void> {
 
     const orchestrator = new RepoIngestionOrchestrator(
         repoAdapter, fileFilter, chunkerReg, pipeline,
-        { activityStore, repositoryId: repositoryId ?? undefined },
+        { activityStore, repositoryId: repositoryId ?? undefined, syncStateSignalSink: syncState },
     );
 
     const fileCache        = new FileFetchCache();

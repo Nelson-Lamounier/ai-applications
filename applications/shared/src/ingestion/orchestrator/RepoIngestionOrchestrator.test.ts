@@ -266,3 +266,79 @@ describe('RepoIngestionOrchestrator activity persistence', () => {
         );
     });
 });
+
+// =============================================================================
+// ARCHETYPE-SIGNAL DERIVATION + PERSISTENCE
+// =============================================================================
+
+/** Adapter whose listFiles returns a fixed tree; fetch/commits are inert. */
+class SignalAdapter implements IRepoAdapter {
+    constructor(private readonly tree: RepoFile[]) {}
+    async listFiles(): Promise<RepoFile[]> { return this.tree; }
+    async fetchFile(): Promise<string> { return ''; }
+    async listCommits(): Promise<RepoCommit[]> { return []; }
+}
+
+describe('RepoIngestionOrchestrator archetype-signal persistence', () => {
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    it('derives signals from the full file tree and persists them via the sink', async () => {
+        const adapter = new SignalAdapter([
+            { path: '.github/workflows/deploy.yml', sizeBytes: 1 },
+            { path: 'Dockerfile',                   sizeBytes: 1 },
+            { path: 'infra/terraform/main.tf',      sizeBytes: 1 },
+        ]);
+        const saveArchetypeSignals = jest.fn(async () => {});
+        const { pipeline } = fakePipeline();
+        const orch = new RepoIngestionOrchestrator(
+            adapter,
+            new FakeFileFilter(),
+            fakeChunkerRegistry(),
+            pipeline,
+            { commitChunker: null, syncStateSignalSink: { saveArchetypeSignals } },
+        );
+
+        await orch.ingestRepo('u', 'o/a');
+
+        expect(saveArchetypeSignals).toHaveBeenCalledTimes(1);
+        const [userId, repoFullName, signals] = saveArchetypeSignals.mock.calls[0] as unknown as [
+            string, string, Record<string, boolean>,
+        ];
+        expect(userId).toBe('u');
+        expect(repoFullName).toBe('o/a');
+        expect(signals.has_ci).toBe(true);
+        expect(signals.has_dockerfile).toBe(true);
+        expect(signals.has_iac).toBe(true);
+    });
+
+    it('resolves without throwing when no signal sink is configured', async () => {
+        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1 }]);
+        const { pipeline } = fakePipeline();
+        const orch = new RepoIngestionOrchestrator(
+            adapter,
+            new FakeFileFilter(),
+            fakeChunkerRegistry(),
+            pipeline,
+            { commitChunker: null },
+        );
+
+        await expect(orch.ingestRepo('u', 'o/a')).resolves.toBeDefined();
+    });
+
+    it('does not abort ingestion when the sink throws', async () => {
+        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1 }]);
+        const saveArchetypeSignals = jest.fn(async () => { throw new Error('boom: sink'); });
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const { pipeline } = fakePipeline();
+        const orch = new RepoIngestionOrchestrator(
+            adapter,
+            new FakeFileFilter(),
+            fakeChunkerRegistry(),
+            pipeline,
+            { commitChunker: null, syncStateSignalSink: { saveArchetypeSignals } },
+        );
+
+        await expect(orch.ingestRepo('u', 'o/a')).resolves.toBeDefined();
+        expect(saveArchetypeSignals).toHaveBeenCalledTimes(1);
+    });
+});

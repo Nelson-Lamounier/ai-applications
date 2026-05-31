@@ -58,6 +58,7 @@ class FakeSyncState implements ISyncStateRepository {
     async markPhase(): Promise<void> {}
     async markComplete(...args: unknown[]): Promise<void> { this.markCompleteCalls.push(args); }
     async markError(): Promise<void> {}
+    async saveArchetypeSignals(): Promise<void> {}
     async get(): Promise<undefined> { return undefined; }
     async upsert(): Promise<void> {}
 }
