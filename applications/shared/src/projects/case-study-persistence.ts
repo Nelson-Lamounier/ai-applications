@@ -98,9 +98,9 @@ async function upsertProjectTopFields(
                 case_study_pipeline_run_id   = $6,
                 case_study_model             = $7,
                 case_study_input_hash        = $8,
-                computed_archetype           = $9,
-                computed_stage               = $10,
-                archetype_computed_at        = CASE WHEN $9 IS NOT NULL THEN NOW() ELSE archetype_computed_at END,
+                computed_archetype           = $9::text,
+                computed_stage               = $10::text,
+                archetype_computed_at        = CASE WHEN $9::text IS NOT NULL THEN NOW() ELSE archetype_computed_at END,
                 updated_at                   = NOW()
           WHERE id = $1`,
         [
