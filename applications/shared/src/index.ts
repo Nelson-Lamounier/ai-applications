@@ -307,6 +307,7 @@ export {
     KB_SCORE_THRESHOLD,
     RdsOAuthConnectionsRepository,
     RdsRepoActivityStore,
+    RdsRepoFileStateRepository,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';

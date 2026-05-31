@@ -39,6 +39,7 @@ import {
     RdsCareerHistoryReadRepository,
     RdsDiagnosticInputsReadRepository,
     RdsRepoActivityStore,
+    RdsRepoFileStateRepository,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -262,11 +263,18 @@ async function main(): Promise<void> {
     if (!repositoryId) {
         console.warn(`[run-ingestion] no repositories row for ${env.repoFullName}; structured commit/PR persistence will be skipped`);
     }
-    const activityStore = new RdsRepoActivityStore(pgPool);
+    const activityStore  = new RdsRepoActivityStore(pgPool);
+    const fileStateStore = new RdsRepoFileStateRepository(pgPool);
 
     const orchestrator = new RepoIngestionOrchestrator(
         repoAdapter, fileFilter, chunkerReg, pipeline,
-        { activityStore, repositoryId: repositoryId ?? undefined, syncStateSignalSink: syncState },
+        {
+            activityStore,
+            repositoryId: repositoryId ?? undefined,
+            syncStateSignalSink: syncState,
+            fileStateStore,
+            watermarkStore: syncState,
+        },
     );
 
     const fileCache        = new FileFetchCache();
