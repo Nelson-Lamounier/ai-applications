@@ -17,14 +17,12 @@ const PRICING: Record<string, { inputCentsPerK: number; outputCentsPerK: number 
     inputCentsPerK:  0.080,
     outputCentsPerK: 0.400,
   },
-  'eu.anthropic.claude-sonnet-4-6-20260310-v1:0': {
-    inputCentsPerK:  0.300,
-    outputCentsPerK: 1.500,
-  },
   // Bare Sonnet id — the ModelId CloudWatch actually reports for Converse
-  // calls (e.g. self-healing, chatbots) is `eu.anthropic.claude-sonnet-4-6`
-  // without the dated version suffix. Same rates; mapping it explicitly avoids
-  // relying on DEFAULT_PRICING coincidentally being Sonnet rates.
+  // calls (e.g. self-healing, chatbots, case-study, article-pipeline) is
+  // `eu.anthropic.claude-sonnet-4-6` without a dated version suffix (the
+  // versioned form is not a valid eu inference-profile id). Same rates;
+  // mapping it explicitly avoids relying on DEFAULT_PRICING coincidentally
+  // being Sonnet rates.
   'eu.anthropic.claude-sonnet-4-6': {
     inputCentsPerK:  0.300,
     outputCentsPerK: 1.500,

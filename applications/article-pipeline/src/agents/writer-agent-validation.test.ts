@@ -9,7 +9,7 @@
 
 import type { parseWriterResponse as ParseWriterResponseFn } from './writer-agent.js';
 
-process.env['WRITER_MODEL'] = 'eu.anthropic.claude-sonnet-4-6-20260310-v1:0';
+process.env['WRITER_MODEL'] = 'eu.anthropic.claude-sonnet-4-6';
 
 let parseWriterResponse: typeof ParseWriterResponseFn;
 

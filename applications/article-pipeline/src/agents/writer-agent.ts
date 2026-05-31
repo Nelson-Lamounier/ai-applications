@@ -49,7 +49,7 @@ export interface WriterAgentInput {
  * Writer Agent model — uses Sonnet 4.6 for creative generation.
  * Falls back to cross-region Sonnet profile if not set.
  */
-const WRITER_MODEL = process.env.FOUNDATION_MODEL ?? 'eu.anthropic.claude-sonnet-4-6-20260310-v1:0';
+const WRITER_MODEL = process.env.FOUNDATION_MODEL ?? 'eu.anthropic.claude-sonnet-4-6';
 
 /**
  * Application Inference Profile ARN — enables granular FinOps cost attribution.

@@ -130,7 +130,7 @@ export interface FailureMetricsContext {
  * @see https://aws.amazon.com/bedrock/pricing/
  */
 const MODEL_PRICING: Record<string, { inputPer1k: number; outputPer1k: number; thinkingPer1k: number }> = {
-    'eu.anthropic.claude-sonnet-4-6-20260310-v1:0': {
+    'eu.anthropic.claude-sonnet-4-6': {
         inputPer1k: 0.003,
         outputPer1k: 0.015,
         thinkingPer1k: 0.015,
