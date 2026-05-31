@@ -48,7 +48,13 @@ const CASE_STUDY_MODEL =
 const EFFECTIVE_MODEL_ID =
     process.env.INFERENCE_PROFILE_ARN ?? CASE_STUDY_MODEL;
 
-const CASE_STUDY_MAX_TOKENS = 16_384;
+// Sonnet 4-6 supports up to 64k output tokens. The full case study (pitch +
+// tagline + stack + decisions + highlights + challenges + depth markers +
+// architecture + resume bullets across angles) is large structured JSON; 16k
+// truncated multi_repo runs (stopReason='max_tokens' → thrown). 32k gives the
+// generation room while staying well under both the output max and, combined
+// with the 120k context budget, the overall context window.
+const CASE_STUDY_MAX_TOKENS = 32_768;
 
 /** Forced tool_use is incompatible with extended thinking. */
 const CASE_STUDY_THINKING_BUDGET = 0;

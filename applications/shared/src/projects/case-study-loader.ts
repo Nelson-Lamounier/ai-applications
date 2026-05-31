@@ -18,6 +18,7 @@
 import type { Pool } from 'pg';
 
 import type { CaseStudyContext } from './case-study-types.js';
+import { packContext } from './case-study-context-budget.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
 export interface CaseStudyCommit {
@@ -93,6 +94,14 @@ const KB_CHUNK_CAP = 24;
 const COMMITS_PER_REPO = 50;
 /** Per-repo PR cap. Multiplied by the number of repos in the project. */
 const PULLS_PER_REPO = 25;
+/**
+ * Global ceiling (estimated tokens) for the serialised context. Sonnet's
+ * window is ~200k; budgeting context to 120k leaves generous headroom for
+ * the system prompt + tool schema + the structured output (raised to 32k).
+ * The per-repo caps above bound how much is *fetched*; this bounds how much
+ * actually reaches the prompt once a project spans multiple repos.
+ */
+const CONTEXT_TOKEN_BUDGET = 120_000;
 
 export interface LoadCaseStudyContextResult {
     readonly userId:  string;
@@ -208,31 +217,40 @@ export async function loadCaseStudyContext(
         );
     }
 
-    return {
-        userId: p.user_id,
-        context: {
-            projectId:     p.id,
-            projectName:   p.name,
-            tagline:       p.tagline,
-            pitch:         p.pitch,
-            userOverrides: p.user_overrides ?? {},
-            components,
-            repositories: repos.map((r) => ({
-                id:               r.id,
-                fullName:         r.full_name,
-                primaryLanguage:  r.primary_language,
-                topics:           r.topics ?? [],
-                techStack:        r.tech_stack ?? [],
-                defaultBranch:    r.default_branch,
-            })),
-            commits,
-            pulls,
-            kbChunks: kb.map((row) => ({
-                repoFullName: row.repo_full_name,
-                filePath:     row.file_path,
-                chunkType:    row.chunk_type,
-                content:      row.content,
-            })),
-        },
+    const rawContext: CaseStudyContext = {
+        projectId:     p.id,
+        projectName:   p.name,
+        tagline:       p.tagline,
+        pitch:         p.pitch,
+        userOverrides: p.user_overrides ?? {},
+        components,
+        repositories: repos.map((r) => ({
+            id:               r.id,
+            fullName:         r.full_name,
+            primaryLanguage:  r.primary_language,
+            topics:           r.topics ?? [],
+            techStack:        r.tech_stack ?? [],
+            defaultBranch:    r.default_branch,
+        })),
+        commits,
+        pulls,
+        kbChunks: kb.map((row) => ({
+            repoFullName: row.repo_full_name,
+            filePath:     row.file_path,
+            chunkType:    row.chunk_type,
+            content:      row.content,
+        })),
     };
+
+    // Bound the prompt to a global token ceiling. Without this, a multi_repo
+    // project (2+ repos × COMMITS_PER_REPO commits + KB chunks, unbounded
+    // per-item text) serialised to ~213k input tokens — near Sonnet's window —
+    // and drove the model past its output cap (stopReason='max_tokens'),
+    // failing the run. CONTEXT_TOKEN_BUDGET leaves ample room for the
+    // structured output below the context limit. Packing runs here (not in the
+    // agent) so the orchestrator's input-hash and the prompt see identical,
+    // already-bounded content.
+    const context = packContext(rawContext, { maxTokens: CONTEXT_TOKEN_BUDGET });
+
+    return { userId: p.user_id, context };
 }
