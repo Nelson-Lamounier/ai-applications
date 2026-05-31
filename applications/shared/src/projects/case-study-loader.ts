@@ -10,10 +10,12 @@
  *   - `repository_profiles.extracted->'tech_stack'` — tech tags
  *   - `document_embeddings` — KB passages for context (no embedding math,
  *      just text retrieval scoped to the project's repos)
+ *   - `repo_commits` — commit evidence (sha, author, authored_at, message)
+ *   - `repo_pull_requests` — PR evidence (number, title, body, state, urls)
  *
- * Commits are NOT loaded from RDS — they live in GitHub. The K8s
- * entrypoint passes a `commitLoader` that wraps GitHubAdapter so the
- * orchestrator stays free of network IO.
+ * Commits + PRs are now read directly from RDS (`repo_commits` /
+ * `repo_pull_requests`, populated by ingestion). No GitHub network IO
+ * happens here, so the loader takes only the pool + projectId.
  */
 import type { Pool } from 'pg';
 
@@ -90,16 +92,12 @@ interface KbRow {
 
 /** Number of KB chunks fed to the prompt. Hard cap to bound input cost. */
 const KB_CHUNK_CAP = 24;
-/** Per-repo commit cap. Multiplied by the number of repos in the project. */
-const COMMITS_PER_REPO = 50;
-/** Per-repo PR cap. Multiplied by the number of repos in the project. */
-const PULLS_PER_REPO = 25;
 /**
  * Global ceiling (estimated tokens) for the serialised context. Sonnet's
  * window is ~200k; budgeting context to 120k leaves generous headroom for
  * the system prompt + tool schema + the structured output (raised to 32k).
- * The per-repo caps above bound how much is *fetched*; this bounds how much
- * actually reaches the prompt once a project spans multiple repos.
+ * Commits + PRs are read in full from RDS; this bounds how much actually
+ * reaches the prompt once a project spans multiple repos.
  */
 const CONTEXT_TOKEN_BUDGET = 120_000;
 
@@ -111,8 +109,6 @@ export interface LoadCaseStudyContextResult {
 export async function loadCaseStudyContext(
     pool: Pool,
     projectId: string,
-    commitLoader: CommitLoader,
-    pullRequestLoader?: PullRequestLoader,
 ): Promise<LoadCaseStudyContextResult> {
     const project = await pool.query<ProjectRow>(
         `SELECT id, user_id, name, tagline, pitch, user_overrides
@@ -155,6 +151,8 @@ export async function loadCaseStudyContext(
         [projectId],
     )).rows;
 
+    const repoNames = repos.map((r) => r.full_name);
+
     const kb = (await pool.query<KbRow>(
         `SELECT
             de.repo_full_name AS repo_full_name,
@@ -166,56 +164,44 @@ export async function loadCaseStudyContext(
            AND de.repo_full_name = ANY($2::text[])
          ORDER BY de.last_synced_at DESC
          LIMIT $3`,
-        [p.user_id, repos.map((r) => r.full_name), KB_CHUNK_CAP],
+        [p.user_id, repoNames, KB_CHUNK_CAP],
     )).rows;
 
-    const commits: CaseStudyContext['commits'][number][] = [];
-    for (const repo of repos) {
-        const repoCommits = await commitLoader.list(repo.full_name, { maxCommits: COMMITS_PER_REPO });
-        for (const c of repoCommits) {
-            commits.push({
-                repoFullName: repo.full_name,
-                sha:          c.sha,
-                authoredAt:   c.authoredAt,
-                authorName:   c.authorName,
-                message:      c.message,
-            });
-        }
-    }
-    // Most-recent first across the merged list.
-    commits.sort((a, b) => b.authoredAt.localeCompare(a.authoredAt));
+    // Commit evidence now lives in RDS (`repo_commits`, populated by
+    // ingestion). Newest first across all member repos.
+    const commitRows = (await pool.query<{ repo_full_name: string; sha: string; author_name: string; authored_at: Date | string; message: string }>(
+        `SELECT repo_full_name, sha, author_name, authored_at, message
+           FROM repo_commits
+          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
+          ORDER BY authored_at DESC`,
+        [p.user_id, repoNames],
+    )).rows;
+    const commits = commitRows.map((r) => ({
+        repoFullName: r.repo_full_name,
+        sha:          r.sha,
+        authoredAt:   r.authored_at instanceof Date ? r.authored_at.toISOString() : String(r.authored_at),
+        authorName:   r.author_name,
+        message:      r.message,
+    }));
 
-    const pulls: CaseStudyContext['pulls'][number][] = [];
-    if (pullRequestLoader) {
-        for (const repo of repos) {
-            // Per-repo failures must not nuke the whole context — PR
-            // listing requires extra GitHub scope (`pull_requests:read`)
-            // which a freshly-connected installation may not yet grant.
-            let repoPulls: readonly CaseStudyPullRequest[] = [];
-            try {
-                repoPulls = await pullRequestLoader.list(repo.full_name, { maxPullRequests: PULLS_PER_REPO });
-            } catch (err) {
-                console.warn(`[case-study-loader] PR listing failed for ${repo.full_name}; continuing without PR evidence`, err);
-            }
-            for (const p of repoPulls) {
-                pulls.push({
-                    repoFullName: repo.full_name,
-                    number:       p.number,
-                    title:        p.title,
-                    body:         p.body,
-                    state:        p.state,
-                    mergedAt:     p.mergedAt,
-                    htmlUrl:      p.htmlUrl,
-                });
-            }
-        }
-        // Newest first across the merged list — mergedAt for merged PRs,
-        // createdAt is a stable fallback for open ones.
-        pulls.sort((a, b) =>
-            (b.mergedAt ?? '').localeCompare(a.mergedAt ?? '')
-            || b.number - a.number,
-        );
-    }
+    // PR evidence likewise from RDS (`repo_pull_requests`). Newest merged
+    // first; open/unmerged PRs sort last via NULLS LAST.
+    const pullRows = (await pool.query<{ repo_full_name: string; number: number; title: string; body: string | null; state: string; merged_at: Date | string | null; html_url: string }>(
+        `SELECT repo_full_name, number, title, body, state, merged_at, html_url
+           FROM repo_pull_requests
+          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
+          ORDER BY merged_at DESC NULLS LAST`,
+        [p.user_id, repoNames],
+    )).rows;
+    const pulls = pullRows.map((r) => ({
+        repoFullName: r.repo_full_name,
+        number:       r.number,
+        title:        r.title,
+        body:         r.body,
+        state:        r.state as 'open' | 'closed' | 'merged',
+        mergedAt:     r.merged_at ? (r.merged_at instanceof Date ? r.merged_at.toISOString() : String(r.merged_at)) : null,
+        htmlUrl:      r.html_url,
+    }));
 
     const rawContext: CaseStudyContext = {
         projectId:     p.id,
