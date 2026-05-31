@@ -25,6 +25,7 @@ import type {
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { trace, context } from '@opentelemetry/api';
+import { jest } from '@jest/globals';
 
 // =============================================================================
 // FAKES
@@ -185,6 +186,40 @@ describe('IngestionPipeline enrichment', () => {
             expect(c.skills).toEqual([]);
             expect(c.technologies).toEqual([]);
         });
+    });
+});
+
+describe('IngestionPipeline — incremental-safe pruning', () => {
+    let store: FakeVectorStore;
+    let sync:  FakeSyncState;
+    let embed: FakeEmbedder;
+    let pruneSpy: ReturnType<typeof jest.spyOn>;
+
+    beforeEach(() => {
+        store = new FakeVectorStore();
+        sync  = new FakeSyncState();
+        embed = new FakeEmbedder();
+        pruneSpy = jest.spyOn(store, 'pruneDeletedFiles');
+    });
+
+    it('prunes against knownFilePaths when provided, not the rawChunks subset', async () => {
+        const pipeline = new IngestionPipeline(store, sync, embed);
+
+        // Incremental run: only the changed file's chunk is passed, but the
+        // caller knows the full current tree via knownFilePaths.
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('changed.ts', 0)], {
+            knownFilePaths: ['changed.ts', 'unchanged.ts'],
+        });
+
+        expect(pruneSpy).toHaveBeenCalledWith('u1', 'o/r', ['changed.ts', 'unchanged.ts']);
+    });
+
+    it('falls back to rawChunks-derived paths when knownFilePaths omitted', async () => {
+        const pipeline = new IngestionPipeline(store, sync, embed);
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0)]);
+
+        expect(pruneSpy).toHaveBeenCalledWith('u1', 'o/r', ['a.ts']);
     });
 });
 
