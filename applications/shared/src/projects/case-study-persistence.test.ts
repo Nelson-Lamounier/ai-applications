@@ -83,6 +83,10 @@ describe('persistCaseStudy — computed archetype/stage', () => {
         expect(upd.sql).toMatch(/computed_archetype/);
         expect(upd.sql).toMatch(/computed_stage/);
         expect(upd.sql).toMatch(/archetype_computed_at/);
+        // Params must be explicitly cast — a bare $9 used only in a NULL-test
+        // makes Postgres throw "could not determine data type of parameter $9".
+        expect(upd.sql).toMatch(/computed_archetype\s*=\s*\$9::text/);
+        expect(upd.sql).toMatch(/CASE WHEN \$9::text IS NOT NULL/);
         expect(upd.params).toContain('production_saas');
         expect(upd.params).toContain('senior');
     });
