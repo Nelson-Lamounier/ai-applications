@@ -121,11 +121,19 @@ export class IngestionPipeline {
      * @param userId       - Owner of the chunks
      * @param repoFullName - "owner/repo" format
      * @param rawChunks    - Pre-split chunks without embedding or hash
+     * @param opts.knownFilePaths - The FULL set of file paths currently included
+     *   in the repo tree. Pruning deletes stored chunks whose file_path is NOT in
+     *   this set. Under incremental ingest, `rawChunks` carries only the CHANGED
+     *   files, so deriving the prune set from `rawChunks` would wrongly delete
+     *   unchanged files. Pass the full tree here to make pruning incremental-safe.
+     *   When omitted, the prune set is derived from `rawChunks` (full-reindex
+     *   behaviour — back-compatible).
      */
     async ingestChunks(
         userId: string,
         repoFullName: string,
         rawChunks: RawChunk[],
+        opts?: { knownFilePaths?: string[] },
     ): Promise<IngestionReport> {
         const startMs = Date.now();
         await this.syncState.markStarted(userId, repoFullName);
@@ -241,7 +249,8 @@ export class IngestionPipeline {
             // ── Phase: Prune ─────────────────────────────────────────────────────
             const pruned = await tracer.startActiveSpan('ingestion.prune', async (span) => {
                 try {
-                    const currentFilePaths = [...new Set(rawChunks.map(c => c.filePath))];
+                    const currentFilePaths = opts?.knownFilePaths
+                        ?? [...new Set(rawChunks.map(c => c.filePath))];
                     const n = await this.vectorStore.pruneDeletedFiles(userId, repoFullName, currentFilePaths);
                     span.setAttribute('prune.count', n);
                     return n;
@@ -255,7 +264,8 @@ export class IngestionPipeline {
             });
 
             // ── Quality + completion ─────────────────────────────────────────────
-            const currentFilePaths = [...new Set(rawChunks.map(c => c.filePath))];
+            const currentFilePaths = opts?.knownFilePaths
+                ?? [...new Set(rawChunks.map(c => c.filePath))];
             const quality = computeKbQuality(rawChunks);
 
             let retrieval: RetrievalBreakdown | undefined;

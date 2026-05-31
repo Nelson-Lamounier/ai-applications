@@ -238,6 +238,34 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         );
     }
 
+    /**
+     * Read the last-synced commit SHA watermark. Plain pool.query (mirrors
+     * markPhase/saveArchetypeSignals — no explicit txn / set_config; relies on
+     * the pool's pre-set RLS GUC). Returns null when no row exists or the
+     * column is NULL.
+     */
+    async getLastSyncedCommitSha(userId: string, repoFullName: string): Promise<string | null> {
+        const { rows } = await this.pool.query<{ last_synced_commit_sha: string | null }>(
+            `SELECT last_synced_commit_sha FROM repo_sync_state
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName],
+        );
+        return rows[0]?.last_synced_commit_sha ?? null;
+    }
+
+    /**
+     * Persist the last-synced commit SHA watermark. Mirrors markPhase exactly:
+     * a single targeted UPDATE via the pool (no explicit txn / set_config). No-op
+     * safe: if the row doesn't yet exist the UPDATE affects 0 rows.
+     */
+    async setLastSyncedCommitSha(userId: string, repoFullName: string, sha: string): Promise<void> {
+        await this.pool.query(
+            `UPDATE repo_sync_state SET last_synced_commit_sha = $3
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName, sha],
+        );
+    }
+
     async markComplete(
         userId: string,
         repoFullName: string,

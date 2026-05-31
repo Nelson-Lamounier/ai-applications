@@ -166,6 +166,7 @@ export class GitHubAdapter implements IRepoAdapter {
                 .map(item => ({
                     path:      item.path,
                     sizeBytes: item.size ?? 0,
+                    blobSha:   item.sha,
                 }));
         }
 
@@ -208,7 +209,7 @@ export class GitHubAdapter implements IRepoAdapter {
             const fullPath = prefix ? `${prefix}/${item.path}` : item.path;
 
             if (item.type === 'blob') {
-                files.push({ path: fullPath, sizeBytes: item.size ?? 0 });
+                files.push({ path: fullPath, sizeBytes: item.size ?? 0, blobSha: item.sha });
 
             } else if (item.type === 'tree') {
                 // Short-circuit well-known large directories to avoid thousands
@@ -231,6 +232,18 @@ export class GitHubAdapter implements IRepoAdapter {
         }
 
         return files;
+    }
+
+    // =========================================================================
+    // IRepoAdapter.getHeadCommitSha
+    // =========================================================================
+
+    async getHeadCommitSha(repoFullName: string): Promise<string> {
+        const repoInfo = await this.get<{ default_branch: string }>(`/repos/${repoFullName}`);
+        const commit = await this.get<{ sha: string }>(
+            `/repos/${repoFullName}/commits/${repoInfo.default_branch}`,
+        );
+        return commit.sha;
     }
 
     // =========================================================================

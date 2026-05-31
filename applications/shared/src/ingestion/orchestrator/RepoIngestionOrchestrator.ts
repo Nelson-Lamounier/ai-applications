@@ -41,6 +41,26 @@ const FILE_FETCH_CONCURRENCY = (() => {
     return Number.isFinite(n) && n >= 1 ? n : 8;
 })();
 
+/**
+ * Per-file blob-sha state for incremental resync — RdsRepoFileStateRepository
+ * in production. Structural type so the orchestrator stays decoupled from the
+ * concrete repository (same spirit as {@link RepoActivityStore}).
+ */
+export interface RepoFileStateStore {
+    getFileState(userId: string, repoFullName: string): Promise<Map<string, string>>;
+    upsertFileState(userId: string, repoFullName: string, files: readonly { path: string; blobSha: string; sizeBytes: number }[]): Promise<void>;
+    deleteFileState(userId: string, repoFullName: string): Promise<void>;
+}
+
+/**
+ * Last-synced HEAD commit watermark for tier-1 skip — RdsSyncStateRepository in
+ * production. Structural type, same decoupling rationale as above.
+ */
+export interface CommitWatermarkStore {
+    getLastSyncedCommitSha(userId: string, repoFullName: string): Promise<string | null>;
+    setLastSyncedCommitSha(userId: string, repoFullName: string, sha: string): Promise<void>;
+}
+
 /** Structured commit/PR persistence — RdsRepoActivityStore in production. */
 export interface RepoActivityStore {
     upsertCommits(userId: string, repositoryId: string, repoFullName: string, commits: readonly RepoCommit[]): Promise<number>;
@@ -72,6 +92,16 @@ export interface OrchestratorOptions {
     readonly syncStateSignalSink?: {
         saveArchetypeSignals(userId: string, repoFullName: string, signals: Record<string, boolean>): Promise<void>;
     };
+    /**
+     * When provided together with {@link watermarkStore}, ingestRepo runs an
+     * incremental two-tier resync: tier 1 skips fetching entirely when HEAD is
+     * unchanged, tier 2 fetches only files whose blob sha differs from the
+     * persisted state. Absent either store, ingestRepo fetches all included
+     * files (degradable to today's behavior).
+     */
+    readonly fileStateStore?: RepoFileStateStore;
+    /** HEAD-commit watermark store — see {@link fileStateStore}. */
+    readonly watermarkStore?: CommitWatermarkStore;
 }
 
 export class RepoIngestionOrchestrator {
@@ -85,6 +115,8 @@ export class RepoIngestionOrchestrator {
     private readonly repositoryId:      string | null;
     private readonly maxPullRequests:   number;
     private readonly syncStateSignalSink: OrchestratorOptions['syncStateSignalSink'] | null;
+    private readonly fileStateStore:    RepoFileStateStore | null;
+    private readonly watermarkStore:    CommitWatermarkStore | null;
 
     constructor(
         repoAdapter:       IRepoAdapter,
@@ -106,6 +138,8 @@ export class RepoIngestionOrchestrator {
         this.repositoryId      = options.repositoryId ?? null;
         this.maxPullRequests   = options.maxPullRequests ?? 100;
         this.syncStateSignalSink = options.syncStateSignalSink ?? null;
+        this.fileStateStore    = options.fileStateStore ?? null;
+        this.watermarkStore    = options.watermarkStore ?? null;
     }
 
     // =========================================================================
@@ -138,7 +172,9 @@ export class RepoIngestionOrchestrator {
         // filterWithSize passes sizeBytes so files > maxSizeBytes are dropped
         // before any content is fetched — saves GitHub API quota and bandwidth.
         // -----------------------------------------------------------------
-        const includedPaths = this.fileFilter.filterWithSize(allFiles);
+        const includedPaths = this.fileFilter.filterWithSize(allFiles);   // string[]
+        const includedSet   = new Set(includedPaths);
+        const includedFiles = allFiles.filter(f => includedSet.has(f.path)); // {path,sizeBytes,blobSha}[]
 
         if (includedPaths.length === 0) {
             console.warn(
@@ -146,21 +182,41 @@ export class RepoIngestionOrchestrator {
             );
         }
 
-        console.info(
-            `[RepoIngestionOrchestrator] ${repoFullName}: ` +
-            `${allFiles.length} files total, ${includedPaths.length} to ingest`,
-        );
+        // -----------------------------------------------------------------
+        // Step 2.5: Decide which files to actually fetch.
+        //  - default (first sync / no stores wired): all included paths.
+        //  - tier 1: HEAD unchanged + state present → fetch nothing.
+        //  - tier 2: fetch only files whose blob sha differs (new or changed).
+        // headSha / includedFiles / pathsToFetch are LOCALS — never instance
+        // fields — so concurrent ingestions of different repos never collide.
+        // -----------------------------------------------------------------
+        let pathsToFetch: string[] = includedPaths;
+        let tier1Skip = false;
+        let headSha: string | null = null;
+        if (this.fileStateStore && this.watermarkStore) {
+            headSha          = await this.repoAdapter.getHeadCommitSha(repoFullName);
+            const lastSha    = await this.watermarkStore.getLastSyncedCommitSha(userId, repoFullName);
+            const priorState = await this.fileStateStore.getFileState(userId, repoFullName);
+            if (lastSha && lastSha === headSha && priorState.size > 0) {
+                pathsToFetch = [];                 // Tier 1: HEAD unchanged
+                tier1Skip = true;
+            } else {
+                pathsToFetch = includedFiles
+                    .filter(f => priorState.get(f.path) !== f.blobSha)  // new or changed
+                    .map(f => f.path);
+            }
+        }
 
         // -----------------------------------------------------------------
         // Step 3: Fetch content + chunk (bounded-concurrency — see class doc)
         // -----------------------------------------------------------------
         const rawChunks = await this.fetchAndChunkFiles(
-            repoFullName, includedPaths, onFileProgress,
+            repoFullName, pathsToFetch, onFileProgress,
         );
 
         console.info(
-            `[RepoIngestionOrchestrator] ${repoFullName}: ` +
-            `${rawChunks.length} chunks from ${includedPaths.length} files`,
+            `[RepoIngestionOrchestrator] ${repoFullName}: ${allFiles.length} files total, ` +
+            `${includedPaths.length} included, ${pathsToFetch.length} to fetch (tier1Skip=${tier1Skip})`,
         );
 
         // -----------------------------------------------------------------
@@ -173,9 +229,24 @@ export class RepoIngestionOrchestrator {
         await this.fetchAndPersistPulls(userId, repoFullName);
 
         // -----------------------------------------------------------------
-        // Step 4: Hand off to IngestionPipeline (hash-check → embed → upsert)
+        // Step 4: Hand off to IngestionPipeline (hash-check → embed → upsert).
+        // Pass the FULL included path set so unchanged files (not re-fetched
+        // this run) are NOT pruned from the vector store.
         // -----------------------------------------------------------------
-        return this.ingestionPipeline.ingestChunks(userId, repoFullName, rawChunks);
+        const report = await this.ingestionPipeline.ingestChunks(
+            userId, repoFullName, rawChunks, { knownFilePaths: includedPaths },
+        );
+
+        // -----------------------------------------------------------------
+        // Step 5: Persist file state + watermark (only when stores wired).
+        // -----------------------------------------------------------------
+        if (this.fileStateStore && this.watermarkStore && headSha !== null) {
+            await this.fileStateStore.upsertFileState(userId, repoFullName,
+                includedFiles.map(f => ({ path: f.path, blobSha: f.blobSha, sizeBytes: f.sizeBytes })));
+            await this.watermarkStore.setLastSyncedCommitSha(userId, repoFullName, headSha);
+        }
+
+        return report;
     }
 
     /**
@@ -332,18 +403,35 @@ export class RepoIngestionOrchestrator {
             `[RepoIngestionOrchestrator] force re-index: ${repoFullName}`,
         );
 
+        // Clear incremental state up front so a partial/failed run can never
+        // leave a stale watermark that would tier-1-skip the next ingestion.
+        if (this.fileStateStore)  await this.fileStateStore.deleteFileState(userId, repoFullName);
+        if (this.watermarkStore)  await this.watermarkStore.setLastSyncedCommitSha(userId, repoFullName, '');
+
         const allFiles     = await this.repoAdapter.listFiles(repoFullName);
 
         // Derive + persist archetype signals from the FULL file tree (best-effort).
         await this.persistArchetypeSignals(userId, repoFullName, allFiles);
 
         const includedPaths = this.fileFilter.filterWithSize(allFiles);
+        const includedSet   = new Set(includedPaths);
+        const includedFiles = allFiles.filter(f => includedSet.has(f.path));
         const rawChunks    = await this.fetchAndChunkFiles(repoFullName, includedPaths);
 
         // Mirror Step 3.5 from ingestRepo — re-ingest commit history too.
         rawChunks.push(...await this.fetchAndChunkCommits(userId, repoFullName));
         await this.fetchAndPersistPulls(userId, repoFullName);
 
-        return this.ingestionPipeline.forceReindex(userId, repoFullName, rawChunks);
+        const report = await this.ingestionPipeline.forceReindex(userId, repoFullName, rawChunks);
+
+        // Refresh state + watermark to the just-synced tree (only when wired).
+        if (this.fileStateStore && this.watermarkStore) {
+            await this.fileStateStore.upsertFileState(userId, repoFullName,
+                includedFiles.map(f => ({ path: f.path, blobSha: f.blobSha, sizeBytes: f.sizeBytes })));
+            await this.watermarkStore.setLastSyncedCommitSha(
+                userId, repoFullName, await this.repoAdapter.getHeadCommitSha(repoFullName));
+        }
+
+        return report;
     }
 }

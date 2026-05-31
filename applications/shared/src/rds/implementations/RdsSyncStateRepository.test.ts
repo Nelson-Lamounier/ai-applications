@@ -73,3 +73,49 @@ describe('RdsSyncStateRepository.saveArchetypeSignals', () => {
         expect(pool.calls.some(c => /^\s*begin/i.test(c.sql))).toBe(false);
     });
 });
+
+describe('RdsSyncStateRepository.getLastSyncedCommitSha', () => {
+    it('returns the stored value scoped by user_id + repo_full_name', async () => {
+        const pool = fakePool();
+        pool.query.mockImplementationOnce((async (sql: string, params: unknown[]) => {
+            pool.calls.push({ sql, params });
+            return { rows: [{ last_synced_commit_sha: 'abc123' }] };
+        }) as never);
+        const repo = new RdsSyncStateRepository({} as never);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+
+        const sha = await repo.getLastSyncedCommitSha('u1', 'owner/repo');
+
+        expect(sha).toBe('abc123');
+        const select = pool.calls.find(c => c.sql.includes('SELECT last_synced_commit_sha'))!;
+        expect(select).toBeDefined();
+        expect(select.sql).toContain('WHERE user_id = $1 AND repo_full_name = $2');
+        expect(select.params).toEqual(['u1', 'owner/repo']);
+    });
+
+    it('returns null when no row exists', async () => {
+        const pool = fakePool(); // default query returns { rows: [] }
+        const repo = new RdsSyncStateRepository({} as never);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+
+        const sha = await repo.getLastSyncedCommitSha('u1', 'owner/repo');
+
+        expect(sha).toBeNull();
+    });
+});
+
+describe('RdsSyncStateRepository.setLastSyncedCommitSha', () => {
+    it('issues UPDATE repo_sync_state SET last_synced_commit_sha = $3 with [userId, repoFullName, sha]', async () => {
+        const pool = fakePool();
+        const repo = new RdsSyncStateRepository({} as never);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+
+        await repo.setLastSyncedCommitSha('u1', 'owner/repo', 'abc123');
+
+        const update = pool.calls.find(c => c.sql.includes('UPDATE repo_sync_state'))!;
+        expect(update).toBeDefined();
+        expect(update.sql).toContain('SET last_synced_commit_sha = $3');
+        expect(update.sql).toContain('WHERE user_id = $1 AND repo_full_name = $2');
+        expect(update.params).toEqual(['u1', 'owner/repo', 'abc123']);
+    });
+});

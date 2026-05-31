@@ -11,6 +11,8 @@ export interface RepoFile {
     readonly path: string;
     /** File size in bytes — used for pre-filtering oversized files */
     readonly sizeBytes: number;
+    /** Git blob SHA from the tree listing — the per-file change key for incremental resync. */
+    readonly blobSha: string;
 }
 
 /**
@@ -83,6 +85,9 @@ export interface IRepoAdapter {
      * Returns metadata only — content is fetched separately.
      */
     listFiles(repoFullName: string): Promise<RepoFile[]>;
+
+    /** HEAD commit SHA of the default branch — the cheap "anything changed" gate. */
+    getHeadCommitSha(repoFullName: string): Promise<string>;
 
     /**
      * Fetch the UTF-8 content of a single file.

@@ -76,6 +76,7 @@ export type { IOAuthConnectionsRepository, OAuthConnection, NewOAuthConnection }
 export { RdsOAuthConnectionsRepository } from './implementations/RdsOAuthConnectionsRepository.js';
 
 export { RdsRepoActivityStore } from './implementations/RdsRepoActivityStore.js';
+export { RdsRepoFileStateRepository } from './implementations/RdsRepoFileStateRepository.js';
 
 // Diagnostic (pure deterministic formula)
 export { computeUserDiagnostic, WEIGHTS, KB_SCORE_THRESHOLD } from './diagnostic/computeUserDiagnostic.js';

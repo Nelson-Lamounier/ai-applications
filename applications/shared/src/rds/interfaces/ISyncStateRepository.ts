@@ -65,6 +65,19 @@ export interface ISyncStateRepository {
         signals: Record<string, boolean>,
     ): Promise<void>;
 
+    /**
+     * Read the last-synced commit SHA watermark for this (userId, repoFullName).
+     * Returns null when no row exists or the column has not been set yet
+     * (e.g. runs that pre-date migration 048).
+     */
+    getLastSyncedCommitSha(userId: string, repoFullName: string): Promise<string | null>;
+
+    /**
+     * Persist the last-synced commit SHA watermark onto the existing
+     * repo_sync_state row. No-op safe: a no-op if the row does not yet exist.
+     */
+    setLastSyncedCommitSha(userId: string, repoFullName: string, sha: string): Promise<void>;
+
     /** Shorthand: set status to 'error', record the failure reason. */
     markError(
         userId: string,

@@ -35,8 +35,10 @@ class FakeRepoAdapter implements IRepoAdapter {
     }
 
     async listFiles(): Promise<RepoFile[]> {
-        return [...this.files.keys()].map(path => ({ path, sizeBytes: 100 }));
+        return [...this.files.keys()].map(path => ({ path, sizeBytes: 100, blobSha: `sha_${path}` }));
     }
+
+    async getHeadCommitSha(): Promise<string> { return 'head'; }
 
     async fetchFile(_repo: string, filePath: string): Promise<string> {
         this.concurrentNow++;
@@ -189,6 +191,7 @@ class ActivityAdapter implements IRepoAdapter {
     constructor(private readonly opts: { pullsThrow?: boolean } = {}) {}
 
     async listFiles(): Promise<RepoFile[]> { return []; }
+    async getHeadCommitSha(): Promise<string> { return 'head'; }
     async fetchFile(): Promise<string> { return ''; }
     async listCommits(): Promise<RepoCommit[]> { return [SAMPLE_COMMIT]; }
     async listPullRequests(): Promise<RepoPullRequest[]> {
@@ -275,18 +278,203 @@ describe('RepoIngestionOrchestrator activity persistence', () => {
 class SignalAdapter implements IRepoAdapter {
     constructor(private readonly tree: RepoFile[]) {}
     async listFiles(): Promise<RepoFile[]> { return this.tree; }
+    async getHeadCommitSha(): Promise<string> { return 'head'; }
     async fetchFile(): Promise<string> { return ''; }
     async listCommits(): Promise<RepoCommit[]> { return []; }
 }
+
+// =============================================================================
+// INCREMENTAL TWO-TIER RESYNC
+// =============================================================================
+
+/**
+ * Adapter whose listFiles + head sha are configurable per test, fetches are
+ * recorded, and one chunk per fetched file is produced via the registry.
+ */
+class ResyncAdapter implements IRepoAdapter {
+    public readonly fetched: string[] = [];
+    constructor(
+        private readonly tree: RepoFile[],
+        private readonly headSha: string,
+    ) {}
+    async listFiles(): Promise<RepoFile[]> { return this.tree; }
+    async getHeadCommitSha(): Promise<string> { return this.headSha; }
+    async fetchFile(_repo: string, path: string): Promise<string> {
+        this.fetched.push(path);
+        return `content-${path}`;
+    }
+    async listCommits(): Promise<RepoCommit[]> { return []; }
+}
+
+function makeFileStateStore(initial: Map<string, string> = new Map()) {
+    return {
+        getFileState: jest.fn(async () => new Map(initial)),
+        upsertFileState: jest.fn(async () => {}),
+        deleteFileState: jest.fn(async () => {}),
+    };
+}
+
+function makeWatermarkStore(initialSha: string | null = null) {
+    return {
+        getLastSyncedCommitSha: jest.fn(async () => initialSha),
+        setLastSyncedCommitSha: jest.fn(async () => {}),
+    };
+}
+
+/** Pipeline that captures both the chunks and the opts passed to ingestChunks. */
+function fakePipelineWithOpts(): {
+    pipeline: IngestionPipeline;
+    lastChunks: () => RawChunk[];
+    lastOpts: () => { knownFilePaths?: string[] } | undefined;
+} {
+    let captured: RawChunk[] = [];
+    let capturedOpts: { knownFilePaths?: string[] } | undefined;
+    const pipeline = {
+        async ingestChunks(
+            _u: string, _r: string, chunks: RawChunk[], opts?: { knownFilePaths?: string[] },
+        ): Promise<IngestionReport> {
+            captured = chunks;
+            capturedOpts = opts;
+            return { totalRawChunks: chunks.length } as unknown as IngestionReport;
+        },
+        async forceReindex(_u: string, _r: string, chunks: RawChunk[]): Promise<IngestionReport> {
+            captured = chunks;
+            return { totalRawChunks: chunks.length } as unknown as IngestionReport;
+        },
+    } as unknown as IngestionPipeline;
+    return { pipeline, lastChunks: () => captured, lastOpts: () => capturedOpts };
+}
+
+describe('RepoIngestionOrchestrator incremental resync', () => {
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    const TREE: RepoFile[] = [
+        { path: 'a.ts', sizeBytes: 10, blobSha: 'sha-a' },
+        { path: 'b.ts', sizeBytes: 20, blobSha: 'sha-b' },
+        { path: 'c.ts', sizeBytes: 30, blobSha: 'sha-c' },
+    ];
+    const ALL_PATHS = TREE.map(f => f.path);
+
+    function build(
+        adapter: ResyncAdapter,
+        opts: {
+            fileStateStore?: ReturnType<typeof makeFileStateStore>;
+            watermarkStore?: ReturnType<typeof makeWatermarkStore>;
+        } = {},
+    ) {
+        const { pipeline, lastChunks, lastOpts } = fakePipelineWithOpts();
+        const orch = new RepoIngestionOrchestrator(
+            adapter,
+            new FakeFileFilter(),
+            fakeChunkerRegistry(),
+            pipeline,
+            {
+                commitChunker: null,
+                fileStateStore: opts.fileStateStore,
+                watermarkStore: opts.watermarkStore,
+            },
+        );
+        return { orch, lastChunks, lastOpts };
+    }
+
+    it('first sync: fetches all included paths, persists state + watermark', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-1');
+        const fileStateStore = makeFileStateStore();      // empty
+        const watermarkStore = makeWatermarkStore(null);  // no prior watermark
+        const { orch, lastOpts } = build(adapter, { fileStateStore, watermarkStore });
+
+        await orch.ingestRepo('u', 'o/a');
+
+        expect(adapter.fetched.sort()).toEqual([...ALL_PATHS].sort());
+        expect(lastOpts()?.knownFilePaths).toEqual(ALL_PATHS);
+        expect(fileStateStore.upsertFileState).toHaveBeenCalledWith(
+            'u', 'o/a',
+            TREE.map(f => ({ path: f.path, blobSha: f.blobSha, sizeBytes: f.sizeBytes })),
+        );
+        expect(watermarkStore.setLastSyncedCommitSha).toHaveBeenCalledWith('u', 'o/a', 'head-1');
+    });
+
+    it('tier-1: HEAD unchanged → fetches nothing, knownFilePaths still full set', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-1');
+        const fileStateStore = makeFileStateStore(
+            new Map([['a.ts', 'sha-a'], ['b.ts', 'sha-b'], ['c.ts', 'sha-c']]),
+        );
+        const watermarkStore = makeWatermarkStore('head-1'); // matches head
+        const { orch, lastOpts } = build(adapter, { fileStateStore, watermarkStore });
+
+        await orch.ingestRepo('u', 'o/a');
+
+        expect(adapter.fetched).toEqual([]);                 // nothing fetched
+        expect(lastOpts()?.knownFilePaths).toEqual(ALL_PATHS); // prune-safety invariant
+    });
+
+    it('tier-2: only the changed file fetched, knownFilePaths still full set', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-2');
+        const fileStateStore = makeFileStateStore(
+            new Map([['a.ts', 'sha-a'], ['b.ts', 'OLD'], ['c.ts', 'sha-c']]),
+        );
+        const watermarkStore = makeWatermarkStore('head-1'); // differs from head-2
+        const { orch, lastOpts } = build(adapter, { fileStateStore, watermarkStore });
+
+        await orch.ingestRepo('u', 'o/a');
+
+        expect(adapter.fetched).toEqual(['b.ts']);             // only changed file
+        expect(lastOpts()?.knownFilePaths).toEqual(ALL_PATHS); // prune-safety invariant
+    });
+
+    it('deleted file: knownFilePaths = current included only (prunes the removed path)', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-2');
+        const fileStateStore = makeFileStateStore(
+            // prior state has an extra path 'gone.ts' absent from the current tree
+            new Map([['a.ts', 'sha-a'], ['b.ts', 'sha-b'], ['c.ts', 'sha-c'], ['gone.ts', 'sha-gone']]),
+        );
+        const watermarkStore = makeWatermarkStore('head-1');
+        const { orch, lastOpts } = build(adapter, { fileStateStore, watermarkStore });
+
+        await orch.ingestRepo('u', 'o/a');
+
+        expect(lastOpts()?.knownFilePaths).toEqual(ALL_PATHS); // 'gone.ts' excluded
+        expect(lastOpts()?.knownFilePaths).not.toContain('gone.ts');
+    });
+
+    it('no stores wired: behaves as today — all included fetched', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-1');
+        const { orch, lastOpts } = build(adapter); // no stores
+
+        await orch.ingestRepo('u', 'o/a');
+
+        expect(adapter.fetched.sort()).toEqual([...ALL_PATHS].sort());
+        expect(lastOpts()?.knownFilePaths).toEqual(ALL_PATHS);
+    });
+
+    it('forceReindex: clears state up front, fetches all, refreshes state + watermark', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-9');
+        const fileStateStore = makeFileStateStore(
+            new Map([['a.ts', 'sha-a'], ['b.ts', 'sha-b'], ['c.ts', 'sha-c']]),
+        );
+        const watermarkStore = makeWatermarkStore('head-9');
+        const { orch } = build(adapter, { fileStateStore, watermarkStore });
+
+        await orch.forceReindex('u', 'o/a');
+
+        expect(fileStateStore.deleteFileState).toHaveBeenCalledWith('u', 'o/a');
+        expect(adapter.fetched.sort()).toEqual([...ALL_PATHS].sort());
+        expect(fileStateStore.upsertFileState).toHaveBeenCalledWith(
+            'u', 'o/a',
+            TREE.map(f => ({ path: f.path, blobSha: f.blobSha, sizeBytes: f.sizeBytes })),
+        );
+        expect(watermarkStore.setLastSyncedCommitSha).toHaveBeenLastCalledWith('u', 'o/a', 'head-9');
+    });
+});
 
 describe('RepoIngestionOrchestrator archetype-signal persistence', () => {
     afterEach(() => { jest.restoreAllMocks(); });
 
     it('derives signals from the full file tree and persists them via the sink', async () => {
         const adapter = new SignalAdapter([
-            { path: '.github/workflows/deploy.yml', sizeBytes: 1 },
-            { path: 'Dockerfile',                   sizeBytes: 1 },
-            { path: 'infra/terraform/main.tf',      sizeBytes: 1 },
+            { path: '.github/workflows/deploy.yml', sizeBytes: 1, blobSha: 'sha1' },
+            { path: 'Dockerfile',                   sizeBytes: 1, blobSha: 'sha2' },
+            { path: 'infra/terraform/main.tf',      sizeBytes: 1, blobSha: 'sha3' },
         ]);
         const saveArchetypeSignals = jest.fn(async () => {});
         const { pipeline } = fakePipeline();
@@ -312,7 +500,7 @@ describe('RepoIngestionOrchestrator archetype-signal persistence', () => {
     });
 
     it('resolves without throwing when no signal sink is configured', async () => {
-        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1 }]);
+        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1, blobSha: 'sha1' }]);
         const { pipeline } = fakePipeline();
         const orch = new RepoIngestionOrchestrator(
             adapter,
@@ -326,7 +514,7 @@ describe('RepoIngestionOrchestrator archetype-signal persistence', () => {
     });
 
     it('does not abort ingestion when the sink throws', async () => {
-        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1 }]);
+        const adapter = new SignalAdapter([{ path: 'Dockerfile', sizeBytes: 1, blobSha: 'sha1' }]);
         const saveArchetypeSignals = jest.fn(async () => { throw new Error('boom: sink'); });
         jest.spyOn(console, 'warn').mockImplementation(() => {});
         const { pipeline } = fakePipeline();
