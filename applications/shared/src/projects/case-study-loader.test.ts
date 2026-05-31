@@ -16,6 +16,9 @@ function makePool(canned: {
     embeddings?: unknown[];
     commits?: unknown[];
     pulls?: unknown[];
+    archetypes?: unknown[];
+    overlays?: unknown[];
+    rollup?: unknown[];
 }) {
     return {
         async query(sql: string): Promise<QueryResult> {
@@ -27,6 +30,10 @@ function makePool(canned: {
             if (/FROM document_embeddings/.test(sql)) return { rows: canned.embeddings ?? [] };
             if (/FROM repo_commits/.test(sql))        return { rows: canned.commits ?? [] };
             if (/FROM repo_pull_requests/.test(sql))  return { rows: canned.pulls ?? [] };
+            if (/FROM project_archetypes/.test(sql))      return { rows: canned.archetypes ?? [] };
+            if (/FROM project_stage_overlays/.test(sql))  return { rows: canned.overlays ?? [] };
+            if (/FROM user_profile_rollup/.test(sql))     return { rows: canned.rollup ?? [] };
+            if (/UPDATE projects/.test(sql))              return { rows: [] };
             throw new Error(`unexpected SQL: ${sql}`);
         },
     };
@@ -39,6 +46,8 @@ const projectRow = {
     tagline:        'A tagline',
     pitch:          'A pitch',
     user_overrides: {},
+    type:           'side_project',
+    shape:          'single_repo',
 };
 
 const repoRow = {
@@ -100,5 +109,42 @@ describe('loadCaseStudyContext', () => {
 
         expect(out.context.commits).toEqual([]);
         expect(out.context.pulls).toEqual([]);
+    });
+
+    it('classifies archetype + stage, persists, and attaches calibration', async () => {
+        const pool = makePool({
+            projects: [{ ...projectRow, type: 'production_saas', shape: 'multi_repo' }],
+            components: [],
+            repositories: [{ ...repoRow, tech_stack: ['docker','kubernetes'] }],
+            embeddings: [{ repo_full_name: 'owner/repo', file_path: 'infra/k8s/deploy.yaml', chunk_type: 'document', content: 'x' }],
+            commits: [], pulls: [],
+            archetypes: [{ id: 'production_saas', name: 'Production SaaS Application', description: 'd',
+                classification_signals: { required_any: ['has_iac'], positive: ['has_ci'], negative: [] },
+                expected_sections: ['architecture'], expected_artifacts: [] }],
+            overlays: [{ archetype_id: 'production_saas', stage: 'senior',
+                priority_sections: ['architecture','deployment'], deemphasized_sections: [], stage_suggestions: [] }],
+            rollup: [{ direction: { seniority: [{ area: 'backend', level: 'senior' }] } }],
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const out = await loadCaseStudyContext(pool as any, 'proj-uuid');
+        expect(out.context.archetype?.id).toBe('production_saas');
+        expect(out.context.stage).toBe('senior');
+        expect(out.context.prioritySections).toEqual(['architecture','deployment']);
+    });
+
+    it('attaches no calibration when classification finds nothing (graceful fallback)', async () => {
+        const pool = makePool({
+            projects: [{ ...projectRow, type: 'side_project', shape: 'single_repo' }],
+            components: [], repositories: [{ ...repoRow, tech_stack: [] }],
+            embeddings: [], commits: [], pulls: [],
+            archetypes: [{ id: 'production_saas', name: 'P', description: 'd',
+                classification_signals: { required_any: ['has_iac'], positive: [], negative: [] },
+                expected_sections: [], expected_artifacts: [] }],
+            rollup: [],
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const out = await loadCaseStudyContext(pool as any, 'proj-uuid');
+        expect(out.context.archetype ?? null).toBeNull();
+        expect(out.context.stage ?? null).toBeNull();
     });
 });

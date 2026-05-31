@@ -21,6 +21,9 @@ import type { Pool } from 'pg';
 
 import type { CaseStudyContext } from './case-study-types.js';
 import { packContext } from './case-study-context-budget.js';
+import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectOntologyRepository.js';
+import { classifyArchetype } from './archetype-classifier.js';
+import { pickStage } from './derive-stage.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
 export interface CaseStudyCommit {
@@ -66,6 +69,8 @@ interface ProjectRow {
     tagline:        string | null;
     pitch:          string | null;
     user_overrides: Record<string, unknown> | null;
+    type:           string;
+    shape:          string;
 }
 
 interface ComponentRow {
@@ -111,7 +116,7 @@ export async function loadCaseStudyContext(
     projectId: string,
 ): Promise<LoadCaseStudyContextResult> {
     const project = await pool.query<ProjectRow>(
-        `SELECT id, user_id, name, tagline, pitch, user_overrides
+        `SELECT id, user_id, name, tagline, pitch, user_overrides, type, shape
          FROM projects WHERE id = $1`,
         [projectId],
     );
@@ -236,7 +241,55 @@ export async function loadCaseStudyContext(
     // structured output below the context limit. Packing runs here (not in the
     // agent) so the orchestrator's input-hash and the prompt see identical,
     // already-bounded content.
-    const context = packContext(rawContext, { maxTokens: CONTEXT_TOKEN_BUDGET });
+    // ── Archetype/stage calibration (additive; absent fields = no change) ──
+    const ontology   = new RdsProjectOntologyRepository(pool);
+    const archetypes = await ontology.listArchetypes();
+    const classified = classifyArchetype(
+        {
+            projectType:  p.type,
+            projectShape: p.shape,
+            repos: repos.map((r) => ({
+                primaryLanguage: r.primary_language,
+                topics:          r.topics ?? [],
+                techStack:       r.tech_stack ?? [],
+                filePaths:       kb
+                    .filter((k) => k.repo_full_name === r.full_name)
+                    .map((k) => k.file_path ?? '')
+                    .filter((path): path is string => path.length > 0),
+            })),
+        },
+        archetypes,
+    );
+
+    let calibration: Partial<Pick<CaseStudyContext,
+        'archetype' | 'stage' | 'prioritySections' | 'deemphasizedSections'>> = {};
+
+    if (classified) {
+        const def = archetypes.find((a) => a.id === classified.archetypeId) ?? null;
+        const seniorityRow = await pool.query<{ direction: { seniority?: Array<{ area: string; level: string }> } | null }>(
+            `SELECT direction FROM user_profile_rollup WHERE user_id = $1`,
+            [p.user_id],
+        );
+        const seniority = seniorityRow.rows[0]?.direction?.seniority ?? [];
+        const stage = pickStage(seniority);
+        const overlay = stage ? await ontology.getStageOverlay(classified.archetypeId, stage) : null;
+
+        calibration = {
+            archetype: def ? { id: def.id, name: def.name } : { id: classified.archetypeId, name: classified.archetypeId },
+            stage,
+            prioritySections: overlay?.prioritySections ?? def?.expectedSections ?? [],
+            deemphasizedSections: overlay?.deemphasizedSections ?? [],
+        };
+
+        await pool.query(
+            `UPDATE projects
+                SET computed_archetype = $2, computed_stage = $3, archetype_computed_at = now()
+              WHERE id = $1`,
+            [projectId, classified.archetypeId, stage],
+        );
+    }
+
+    const context = packContext({ ...rawContext, ...calibration }, { maxTokens: CONTEXT_TOKEN_BUDGET });
 
     return { userId: p.user_id, context };
 }
