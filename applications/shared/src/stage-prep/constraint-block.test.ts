@@ -47,6 +47,21 @@ describe('buildStagePrepConstraintBlock', () => {
         expect(block).toContain('95000');
         expect(block).not.toContain('93794');
     });
+    it('renders roundType and dsaTopics lines when both are present', () => {
+        const block = buildStagePrepConstraintBlock({
+            ...FULL,
+            roundType: 'dsa',
+            dsaTopics: ['Graph traversal (BFS/DFS)'],
+        });
+        expect(block).toContain('Technical round type for this company: dsa.');
+        expect(block).toContain('Graph traversal (BFS/DFS)');
+        expect(block).toContain('LeetCode/NeetCode');
+    });
+    it('omits roundType and dsaTopics lines when both are absent', () => {
+        const block = buildStagePrepConstraintBlock({ ...FULL, roundType: undefined, dsaTopics: undefined });
+        expect(block).not.toContain('Technical round type');
+        expect(block).not.toContain('DSA topics');
+    });
 });
 
 describe('normalizeCompanyKey', () => {

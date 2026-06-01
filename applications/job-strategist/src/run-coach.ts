@@ -109,7 +109,8 @@ async function main(): Promise<void> {
             region:        env.region,
             compTarget:    env.compTarget,
         });
-        const constraintBlock = buildStagePrepConstraintBlock(constraints);
+        const dsaTopics = research?.dsaTopicCalibration?.likelyTopics?.map(t => t.displayName) ?? undefined;
+        const constraintBlock = buildStagePrepConstraintBlock({ ...constraints, dsaTopics });
 
         const evidenceBlock = research ? [
             `Overall fit: ${research.overallFitRating ?? ''} — ${research.fitSummary ?? ''}`,
