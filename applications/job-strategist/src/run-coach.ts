@@ -14,8 +14,12 @@
  * Output: a row in coaching_content (job_application_id, stage_type) upserted.
  */
 import type { Pool } from 'pg';
-import type { StrategistPipelineContext, StrategistAnalysisResult } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistAnalysisResult, StrategistResearchResult } from '@bedrock/shared';
+import {
+    bootstrapK8sObservability, pushFinalMetrics,
+    RdsStagePrepOntologyRepository, toRoleFamily, toCompSeniority,
+    loadStagePrepConstraints, buildStagePrepConstraintBlock,
+} from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeCoachAgent }   from './agents/coach-agent.js';
@@ -26,8 +30,13 @@ import {
     persistCoachingContent,
 } from './lib/pipeline-runs.js';
 
-async function loadAnalysis(pool: Pool, strategistPipelineRunId: string): Promise<StrategistAnalysisResult> {
-    const result = await pool.query<{ metadata: { analysis?: StrategistAnalysisResult } | null }>(
+async function loadAnalysisAndResearch(
+    pool: Pool,
+    strategistPipelineRunId: string,
+): Promise<{ analysis: StrategistAnalysisResult; research: StrategistResearchResult | null }> {
+    const result = await pool.query<{
+        metadata: { analysis?: StrategistAnalysisResult; research?: StrategistResearchResult } | null;
+    }>(
         `SELECT metadata FROM pipeline_runs WHERE id = $1`,
         [strategistPipelineRunId],
     );
@@ -35,7 +44,7 @@ async function loadAnalysis(pool: Pool, strategistPipelineRunId: string): Promis
     if (!analysis) {
         throw new Error(`No analysis found in pipeline_runs.metadata for id=${strategistPipelineRunId}`);
     }
-    return analysis;
+    return { analysis, research: result.rows[0]?.metadata?.research ?? null };
 }
 
 // Same registry shape as run-pipeline.ts so dashboards can SUM across
@@ -64,7 +73,7 @@ async function main(): Promise<void> {
     let outcome: 'success' | 'failed' = 'failed';
 
     try {
-        const analysis = await loadAnalysis(pool, env.strategistPipelineRunId);
+        const { analysis, research } = await loadAnalysisAndResearch(pool, env.strategistPipelineRunId);
 
         await updatePipelineRun(pool, env.coachPipelineRunId, 'coaching');
 
@@ -89,7 +98,20 @@ async function main(): Promise<void> {
             userId:            env.userId,
         };
 
-        const coaching = await executeCoachAgent(ctx, analysis);
+        // Stage-prep ontology calibration (phone-screen and other supported stages).
+        const repo = new RdsStagePrepOntologyRepository(pool);
+        const seniority = toCompSeniority((research?.seniority ?? '').toLowerCase());
+        const constraints = await loadStagePrepConstraints(repo, {
+            targetCompany: env.targetCompany,
+            roleFamily:    toRoleFamily(env.targetRole),
+            stage:         env.interviewStage,
+            seniority,
+            region:        env.region,
+            compTarget:    env.compTarget,
+        });
+        const constraintBlock = buildStagePrepConstraintBlock(constraints);
+
+        const coaching = await executeCoachAgent(ctx, analysis, constraintBlock);
 
         await persistCoachingContent(pool, {
             applicationId: env.applicationId,

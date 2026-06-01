@@ -17,6 +17,8 @@ export interface CoachEnv {
     readonly targetRole:              string;
     readonly jobDescription:          string;
     readonly interviewStage:          string;
+    readonly compTarget:              string | null;
+    readonly region:                  string;
     readonly mode:                    string;
     readonly version:                 number;
     readonly environment:             string;
@@ -46,6 +48,8 @@ export function parseCoachEnv(): CoachEnv {
         targetRole:              required('TARGET_ROLE'),
         jobDescription:          required('JOB_DESCRIPTION'),
         interviewStage:          required('INTERVIEW_STAGE'),
+        compTarget:              process.env['COMPENSATION_TARGET']?.trim() || null,
+        region:                  process.env['REGION']?.trim() || 'eu-remote',
         mode:                    process.env['MODE']        ?? 'standard',
         version:                 parseInt(process.env['PIPELINE_VERSION'] ?? '1', 10),
         environment:             process.env['ENVIRONMENT'] ?? 'production',
