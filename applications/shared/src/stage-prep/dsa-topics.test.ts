@@ -25,7 +25,7 @@ describe('RdsDsaTopicRepository.listTopics', () => {
   it('listByCategory filters by category param', async () => {
     const { pool, query } = fakePool([]);
     await new RdsDsaTopicRepository(pool).listByCategory('graphs');
-    const sql = query.mock.calls[0]![0] as string;
+    const sql = (query.mock.calls[0] as unknown[])[0] as string;
     expect(sql).toMatch(/WHERE category = \$1/);
   });
 });
