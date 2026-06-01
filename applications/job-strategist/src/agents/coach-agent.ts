@@ -37,6 +37,8 @@ export interface CoachAgentInput {
     readonly analysis: StrategistAnalysisResult;
     /** Optional stage-prep calibration block appended to the user message (phone-screen). */
     readonly constraintBlock?: string;
+    /** Verified-evidence digest from the Research result (phone-screen grounding). */
+    readonly evidenceBlock?: string;
 }
 
 // =============================================================================
@@ -223,6 +225,7 @@ function buildCoachMessage(
     analysis: StrategistAnalysisResult,
     ctx: StrategistPipelineContext,
     constraintBlock?: string,
+    evidenceBlock?: string,
 ): string {
     const sections: string[] = [
         `## Interview Stage: ${ctx.interviewStage}`,
@@ -237,6 +240,9 @@ function buildCoachMessage(
         '--- END ANALYSIS ---',
         '',
     ];
+    if (evidenceBlock) {
+        sections.push('## Verified Evidence (from Research)', evidenceBlock, '');
+    }
     if (constraintBlock) {
         sections.push(constraintBlock, '');
     }
@@ -295,7 +301,7 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: CoachAgentInput, ctx: StrategistPipelineContext): string {
-        return buildCoachMessage(input.analysis, ctx, input.constraintBlock);
+        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock);
     }
 
     /**
@@ -384,6 +390,7 @@ export async function executeCoachAgent(
     ctx: StrategistPipelineContext,
     analysis: StrategistAnalysisResult,
     constraintBlock?: string,
+    evidenceBlock?: string,
 ): Promise<AgentResult<InterviewCoachResult>> {
-    return coachAgent.execute({ analysis, constraintBlock }, ctx);
+    return coachAgent.execute({ analysis, constraintBlock, evidenceBlock }, ctx);
 }
