@@ -12,7 +12,7 @@ jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
     ConverseCommand: jest.fn((params: unknown) => ({ input: params })),
 }));
 
-import { coachAgent, CoachAgent } from './coach-agent';
+import { coachAgent, CoachAgent, coachToolForStage } from './coach-agent';
 import type { CoachAgentInput } from './coach-agent';
 import type { StrategistPipelineContext, StrategistAnalysisResult } from '@bedrock/shared';
 
@@ -172,5 +172,31 @@ describe('CoachAgent (forced tool_use)', () => {
     it('fails fast when the model injects an unknown field', async () => {
         mockSend.mockResolvedValueOnce(toolUseReply({ ...VALID_COACH_INPUT, injected: 'nope' }));
         await expect(coachAgent.execute({ analysis: ANALYSIS }, CTX)).rejects.toThrow();
+    });
+});
+
+describe('coachToolForStage — phone-screen required fields', () => {
+    it('requires the phone-screen fields for phone-screen', () => {
+        const required = coachToolForStage('phone-screen').inputSchema.required;
+        expect(required).toEqual(expect.arrayContaining(['careerArcSummary', 'jdTalkingPoints', 'compScript']));
+    });
+    it('does NOT require phone-screen fields for other stages', () => {
+        const required = coachToolForStage('technical-1').inputSchema.required as string[];
+        expect(required).not.toContain('careerArcSummary');
+        expect(required).not.toContain('jdTalkingPoints');
+        expect(required).not.toContain('compScript');
+    });
+    it('forced toolConfig for phone-screen carries the required fields', async () => {
+        const { ConverseCommand } = jest.requireMock('@aws-sdk/client-bedrock-runtime') as { ConverseCommand: jest.Mock };
+        ConverseCommand.mockClear();
+        mockSend.mockResolvedValueOnce(toolUseReply({
+            ...VALID_COACH_INPUT,
+            careerArcSummary: 'arc', jdTalkingPoints: [{ point: 'p', evidence: 'e' }],
+            compScript: { targetEcho: 't', marketContext: null, deflectTemplate: 'd' },
+        }));
+        await coachAgent.execute({ analysis: ANALYSIS }, { ...CTX, interviewStage: 'phone-screen' } as any);
+        const sent = ConverseCommand.mock.calls.at(-1)?.[0] as any;
+        expect(sent.toolConfig.tools[0].toolSpec.inputSchema.json.required)
+            .toEqual(expect.arrayContaining(['careerArcSummary', 'jdTalkingPoints', 'compScript']));
     });
 });

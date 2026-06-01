@@ -263,6 +263,26 @@ function buildCoachMessage(
 // COACH AGENT CLASS
 // =============================================================================
 
+/**
+ * Phone-screen-only output fields. Optional in the shared schema (other stages
+ * must omit them) but REQUIRED for phone-screen via a stage-specific tool so the
+ * model can't silently drop them under output pressure (observed: jdTalkingPoints
+ * omitted while careerArc/compScript emitted). Forced tool_use + required = guaranteed.
+ */
+const PHONE_SCREEN_FIELDS = ['careerArcSummary', 'jdTalkingPoints', 'compScript'] as const;
+
+/** Return the coach tool with phone-screen fields promoted to `required` for that stage. */
+export function coachToolForStage(stage: string): typeof COACH_TOOL {
+    if (stage !== 'phone-screen') return COACH_TOOL;
+    return {
+        ...COACH_TOOL,
+        inputSchema: {
+            ...COACH_TOOL.inputSchema,
+            required: [...COACH_TOOL.inputSchema.required, ...PHONE_SCREEN_FIELDS],
+        },
+    };
+}
+
 /** Agent configuration for the Interview Coach Agent. */
 const COACH_CONFIG: AgentConfig = {
     agentName: 'strategist-coach',
@@ -290,12 +310,15 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
     protected readonly agentName = 'strategist-coach' as const;
 
     /**
-     * Build coach configuration.
+     * Build coach configuration. Stage-aware: phone-screen uses a tool variant
+     * that requires the phone-screen fields, guaranteeing the model emits them.
      *
-     * @returns Static coach agent configuration
+     * @param _input - Unused
+     * @param ctx    - Pipeline context (interview stage)
+     * @returns Coach agent configuration for this stage
      */
-    protected getConfig(): AgentConfig {
-        return COACH_CONFIG;
+    protected getConfig(_input: CoachAgentInput, ctx: StrategistPipelineContext): AgentConfig {
+        return { ...COACH_CONFIG, tool: coachToolForStage(ctx.interviewStage) };
     }
 
     /**
