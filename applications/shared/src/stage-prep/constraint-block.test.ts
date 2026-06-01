@@ -118,7 +118,7 @@ describe('loadStagePrepConstraints', () => {
                 companyKey: 'acme', displayName: 'Acme', companyType: 'startup',
                 leadershipPrinciples: [], valuesTaxonomy: [],
                 processShape: [
-                    { stage: 'phone-screen', format: 'recruiter screen', note: 'fit', round_type: 'behavioral' },
+                    { stage: 'phone-screen', format: 'recruiter screen', note: 'fit', round_type: 'behavioural' },
                     { stage: 'technical-1',  format: 'virtual coding',   note: 'dsa round', round_type: 'dsa' },
                     { stage: 'final-round',  format: 'panel',            note: 'mixed',      round_type: 'mixed' },
                 ],
@@ -140,6 +140,6 @@ describe('loadStagePrepConstraints', () => {
             targetCompany: 'Acme', roleFamily: 'backend', stage: 'phone-screen',
             seniority: 'senior', region: 'us', compTarget: null,
         });
-        expect(phoneScreen.roundType).toBe('behavioral');
+        expect(phoneScreen.roundType).toBe('behavioural');
     });
 });

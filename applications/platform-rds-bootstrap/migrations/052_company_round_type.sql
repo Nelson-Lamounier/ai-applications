@@ -8,11 +8,11 @@
 BEGIN;
 
 UPDATE company_interview_profiles
-SET process_shape = '[{"stage":"phone-screen","format":"recruiter screen","note":"Fit + logistics + comp alignment","round_type":"behavioral"},{"stage":"technical-1","format":"technical phone (coding)","note":"One coding problem, LP probing begins","round_type":"dsa"},{"stage":"final-round","format":"onsite loop (4-5)","note":"Coding, system design, behavioural — every round scored against LPs","round_type":"mixed"}]'::jsonb
+SET process_shape = '[{"stage":"phone-screen","format":"recruiter screen","note":"Fit + logistics + comp alignment","round_type":"behavioural"},{"stage":"technical-1","format":"technical phone (coding)","note":"One coding problem, LP probing begins","round_type":"dsa"},{"stage":"final-round","format":"onsite loop (4-5)","note":"Coding, system design, behavioural — every round scored against LPs","round_type":"mixed"}]'::jsonb
 WHERE company_key = 'amazon';
 
 UPDATE company_interview_profiles
-SET process_shape = '[{"stage":"phone-screen","format":"recruiter screen","note":"Fit + role interest","round_type":"behavioral"},{"stage":"technical-1","format":"technical phone","note":"Practical coding close to real product work","round_type":"practical"},{"stage":"final-round","format":"onsite (4 rounds)","note":"2 coding, 1 system design, 1 behavioural","round_type":"mixed"}]'::jsonb
+SET process_shape = '[{"stage":"phone-screen","format":"recruiter screen","note":"Fit + role interest","round_type":"behavioural"},{"stage":"technical-1","format":"technical phone","note":"Practical coding close to real product work","round_type":"practical"},{"stage":"final-round","format":"onsite (4 rounds)","note":"2 coding, 1 system design, 1 behavioural","round_type":"mixed"}]'::jsonb
 WHERE company_key = 'stripe';
 
 COMMIT;
