@@ -55,3 +55,46 @@ describe('normalizeCompanyKey', () => {
         expect(normalizeCompanyKey('Stripe')).toBe('stripe');
     });
 });
+
+import { loadStagePrepConstraints } from './constraint-block.js';
+import type { StagePrepOntologyReader } from './constraint-block.js';
+
+function fakeReader(over: Partial<StagePrepOntologyReader> = {}): StagePrepOntologyReader {
+    return {
+        getStageExpectation: async () => null,
+        getCompanyProfile:   async () => null,
+        getCompBenchmark:    async () => null,
+        listScaffolds:       async () => [],
+        ...over,
+    };
+}
+
+describe('loadStagePrepConstraints', () => {
+    it('uses companyType from the profile and passes it to getStageExpectation', async () => {
+        let seenCompanyType = '';
+        const reader = fakeReader({
+            getCompanyProfile: async () => ({
+                companyKey: 'amazon', displayName: 'Amazon', companyType: 'faang',
+                leadershipPrinciples: [], processShape: [{ stage: 'phone-screen', format: 'recruiter screen', note: 'n' }],
+                valuesTaxonomy: [],
+            }),
+            getStageExpectation: async (ct) => { seenCompanyType = ct; return null; },
+        });
+        const c = await loadStagePrepConstraints(reader, {
+            targetCompany: 'Amazon', roleFamily: 'backend', stage: 'phone-screen',
+            seniority: 'senior', region: 'us', compTarget: '200000',
+        });
+        expect(seenCompanyType).toBe('faang');
+        expect(c.processShape).toHaveLength(1);
+        expect(c.compTarget).toBe('200000');
+    });
+    it('falls back to companyType "*" when the company is unknown', async () => {
+        let seenCompanyType = '';
+        const reader = fakeReader({ getStageExpectation: async (ct) => { seenCompanyType = ct; return null; } });
+        await loadStagePrepConstraints(reader, {
+            targetCompany: 'Some Unknown GmbH', roleFamily: 'devops', stage: 'phone-screen',
+            seniority: 'mid', region: 'eu-remote', compTarget: null,
+        });
+        expect(seenCompanyType).toBe('*');
+    });
+});
