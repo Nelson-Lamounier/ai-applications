@@ -378,6 +378,18 @@ export interface StrategistResearchResult {
 
     /** Resume domain constraints — rules, gaps, and status thresholds (non-negotiable) */
     readonly resumeConstraints: string;
+
+    /** JD-implied DSA topics (calibration, not guarantee). Optional — empty for no-DSA roles. */
+    readonly dsaTopicCalibration?: {
+        readonly likelyTopics: ReadonlyArray<{
+            readonly canonicalName: string;
+            readonly displayName: string;
+            readonly confidence: number;
+            readonly rationale: string;
+            readonly jdEvidenceQuote: string;
+        }>;
+        readonly honestyNote: string;
+    };
 }
 
 // =============================================================================
