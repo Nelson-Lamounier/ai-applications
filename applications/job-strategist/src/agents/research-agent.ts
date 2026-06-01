@@ -21,9 +21,12 @@ import {
     PiiScrubber,
     BedrockReranker,
     RdsVectorStore,
+    RdsExperienceVectorStore,
     TitanEmbeddingProvider,
     log,
 } from '@bedrock/shared';
+import { getPool } from '../lib/pg.js';
+import { loadCareerHistory, formatCareerHistory } from './career-history.js';
 import type {
     AgentConfig,
     AgentResult,
@@ -275,6 +278,7 @@ function buildResearchMessage(
     jobDescription: string,
     kbContext: string,
     resumeData: StructuredResumeData | null,
+    careerHistorySection = '',
 ): string {
     const sections: string[] = [
         '## Job Description',
@@ -331,6 +335,11 @@ function buildResearchMessage(
             kbContext,
             '',
         );
+    }
+
+    if (careerHistorySection) {
+        sections.push(careerHistorySection);
+        sections.push('');
     }
 
     sections.push('Analyse this job description against the candidate\'s evidence and return the JSON research brief.');
@@ -599,7 +608,14 @@ export async function executeResearchAgent(
         querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
     ]);
 
-    const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4];
+    let career: string[] = [];
+    try {
+        const careerStore = RdsExperienceVectorStore.fromEnvironment();
+        career = await querySingleRds(`work history roles responsibilities ${jd.substring(0, half)}`, userId, careerStore);
+    } catch (e) {
+        log('WARN', 'career vector query failed (non-fatal)', { error: (e as Error).message });
+    }
+    const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4, ...career];
     kbContext = deduplicatePassages(allFactualPassages);
 
     log('INFO', 'Retrieval complete', {
@@ -617,10 +633,26 @@ export async function executeResearchAgent(
         log('INFO', 'Resume loaded from context', { agent: 'strategist-research', profileName: resumeData.profile.name });
     }
 
-    // 4. Build user message
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData);
+    // 4. Load structured career history (citeable evidence — distinct from resume formatting ref)
+    let careerHistorySection = '';
+    try {
+        const pgPool = getPool({
+            host:     process.env['PG_HOST']     ?? '',
+            port:     parseInt(process.env['PG_PORT'] ?? '5432', 10),
+            database: process.env['PG_DATABASE'] ?? '',
+            user:     process.env['PG_USER']     ?? '',
+            password: process.env['PG_PASSWORD'] ?? '',
+        });
+        const careerEntries = await loadCareerHistory(pgPool, userId);
+        careerHistorySection = formatCareerHistory(careerEntries);
+    } catch (e) {
+        log('WARN', 'career history load failed (non-fatal)', { error: (e as Error).message });
+    }
 
-    // 5. Run agent
+    // 5. Build user message
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection);
+
+    // 6. Run agent
     const result = await runAgent<StrategistResearchResult>({
         config: RESEARCH_CONFIG,
         userMessage,
