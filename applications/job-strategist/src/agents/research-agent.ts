@@ -29,7 +29,9 @@ import type {
     AgentResult,
     IReranker,
     PiiPattern,
+    QueryParams,
     RerankCandidate,
+    SimilarityResult,
     StructuredResumeData,
     StrategistPipelineContext,
     StrategistResearchResult,
@@ -123,7 +125,11 @@ const reranker: IReranker | null = RERANKER_DISABLED
  * @param store  - RdsVectorStore instance backed by the pipeline PG pool
  * @returns Annotated passage strings ready for LLM context injection
  */
-async function querySingleRds(query: string, userId: string, store: RdsVectorStore): Promise<string[]> {
+async function querySingleRds(
+    query: string,
+    userId: string,
+    store: { querySimilar(p: QueryParams): Promise<SimilarityResult[]> },
+): Promise<string[]> {
     const overfetch = MAX_KB_PASSAGES * RETRIEVE_OVERFETCH;
 
     log('INFO', 'Querying RDS vector store', {
