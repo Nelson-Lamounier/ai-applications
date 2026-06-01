@@ -35,6 +35,7 @@ import { TavilySearchTool, NoOpSearchTool } from './tools/tavily.js';
 import { CachedSearchTool } from './tools/tavily-cache.js';
 import { fanOutRoleSearches, type FanoutRole } from './tools/tavily-fanout.js';
 import { generateGapAnalysis, type GapAnalysisRole } from './bedrock/gap-analysis.js';
+import { embedBaselineEntries } from './baseline-embed.js';
 
 const piiScrubber = new PiiScrubber();
 
@@ -323,6 +324,26 @@ async function main(): Promise<void> {
           span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
           throw err;
         } finally { stopStep(); span.end(); }
+      });
+
+      // ── Step 4b: baseline embeddings ─────────────────────────────────────
+      // Career data is retrievable immediately after import, not only once the
+      // user confirms enrichment. Non-fatal — a failed embed must not prevent
+      // the import reaching ready_for_review.
+      await tracer.startActiveSpan('resume_import.baseline_embed', async (span) => {
+        try {
+          const region = process.env['AWS_REGION'] ?? process.env['BEDROCK_REGION'] ?? 'eu-west-1';
+          const baseEmbeds = await embedBaselineEntries(
+            pool, region, env.userId, env.importId, experienceIds, extracted.experience,
+          );
+          span.setAttribute('baseline_embeds.count', baseEmbeds);
+        } catch (err) {
+          // embedBaselineEntries already logs per-entry failures; this catches
+          // any unexpected throw from the helper itself.
+          span.recordException(err instanceof Error ? err : new Error(String(err)));
+          span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+          log.warn({ err }, 'baseline embed step failed (non-fatal)');
+        } finally { span.end(); }
       });
 
       // ── Step 5: gap analysis (fan-out → Bedrock → persist report) ────────
