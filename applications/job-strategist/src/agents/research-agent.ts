@@ -25,8 +25,8 @@ import {
     TitanEmbeddingProvider,
     log,
 } from '@bedrock/shared';
-import { getPool } from '../lib/pg.js';
 import { loadCareerHistory, formatCareerHistory } from './career-history.js';
+import type { Pool } from 'pg';
 import type {
     AgentConfig,
     AgentResult,
@@ -570,6 +570,7 @@ const RESEARCH_CONFIG: AgentConfig = {
  */
 export async function executeResearchAgent(
     ctx: StrategistPipelineContext,
+    pool?: Pool,
 ): Promise<AgentResult<StrategistResearchResult>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -635,18 +636,13 @@ export async function executeResearchAgent(
 
     // 4. Load structured career history (citeable evidence — distinct from resume formatting ref)
     let careerHistorySection = '';
-    try {
-        const pgPool = getPool({
-            host:     process.env['PG_HOST']     ?? '',
-            port:     parseInt(process.env['PG_PORT'] ?? '5432', 10),
-            database: process.env['PG_DATABASE'] ?? '',
-            user:     process.env['PG_USER']     ?? '',
-            password: process.env['PG_PASSWORD'] ?? '',
-        });
-        const careerEntries = await loadCareerHistory(pgPool, userId);
-        careerHistorySection = formatCareerHistory(careerEntries);
-    } catch (e) {
-        log('WARN', 'career history load failed (non-fatal)', { error: (e as Error).message });
+    if (pool) {
+        try {
+            const careerEntries = await loadCareerHistory(pool, userId);
+            careerHistorySection = formatCareerHistory(careerEntries);
+        } catch (e) {
+            log('WARN', 'career history load failed (non-fatal)', { error: (e as Error).message });
+        }
     }
 
     // 5. Build user message

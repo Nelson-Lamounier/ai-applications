@@ -238,7 +238,7 @@ export async function main(): Promise<void> {
             return;
         }
 
-        const research = await executeResearchAgent(ctx);
+        const research = await executeResearchAgent(ctx, pool);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
         const analysis = await executeStrategistAgent(ctx, research.data);
