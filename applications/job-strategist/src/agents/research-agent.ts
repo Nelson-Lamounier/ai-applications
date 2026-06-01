@@ -21,15 +21,20 @@ import {
     PiiScrubber,
     BedrockReranker,
     RdsVectorStore,
+    RdsExperienceVectorStore,
     TitanEmbeddingProvider,
     log,
 } from '@bedrock/shared';
+import { loadCareerHistory, formatCareerHistory } from './career-history.js';
+import type { Pool } from 'pg';
 import type {
     AgentConfig,
     AgentResult,
     IReranker,
     PiiPattern,
+    QueryParams,
     RerankCandidate,
+    SimilarityResult,
     StructuredResumeData,
     StrategistPipelineContext,
     StrategistResearchResult,
@@ -123,7 +128,11 @@ const reranker: IReranker | null = RERANKER_DISABLED
  * @param store  - RdsVectorStore instance backed by the pipeline PG pool
  * @returns Annotated passage strings ready for LLM context injection
  */
-async function querySingleRds(query: string, userId: string, store: RdsVectorStore): Promise<string[]> {
+async function querySingleRds(
+    query: string,
+    userId: string,
+    store: { querySimilar(p: QueryParams): Promise<SimilarityResult[]> },
+): Promise<string[]> {
     const overfetch = MAX_KB_PASSAGES * RETRIEVE_OVERFETCH;
 
     log('INFO', 'Querying RDS vector store', {
@@ -269,6 +278,7 @@ function buildResearchMessage(
     jobDescription: string,
     kbContext: string,
     resumeData: StructuredResumeData | null,
+    careerHistorySection = '',
 ): string {
     const sections: string[] = [
         '## Job Description',
@@ -325,6 +335,11 @@ function buildResearchMessage(
             kbContext,
             '',
         );
+    }
+
+    if (careerHistorySection) {
+        sections.push(careerHistorySection);
+        sections.push('');
     }
 
     sections.push('Analyse this job description against the candidate\'s evidence and return the JSON research brief.');
@@ -555,6 +570,7 @@ const RESEARCH_CONFIG: AgentConfig = {
  */
 export async function executeResearchAgent(
     ctx: StrategistPipelineContext,
+    pool?: Pool,
 ): Promise<AgentResult<StrategistResearchResult>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -593,7 +609,14 @@ export async function executeResearchAgent(
         querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
     ]);
 
-    const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4];
+    let career: string[] = [];
+    try {
+        const careerStore = RdsExperienceVectorStore.fromEnvironment();
+        career = await querySingleRds(`work history roles responsibilities ${jd.substring(0, half)}`, userId, careerStore);
+    } catch (e) {
+        log('WARN', 'career vector query failed (non-fatal)', { error: (e as Error).message });
+    }
+    const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4, ...career];
     kbContext = deduplicatePassages(allFactualPassages);
 
     log('INFO', 'Retrieval complete', {
@@ -611,10 +634,21 @@ export async function executeResearchAgent(
         log('INFO', 'Resume loaded from context', { agent: 'strategist-research', profileName: resumeData.profile.name });
     }
 
-    // 4. Build user message
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData);
+    // 4. Load structured career history (citeable evidence — distinct from resume formatting ref)
+    let careerHistorySection = '';
+    if (pool) {
+        try {
+            const careerEntries = await loadCareerHistory(pool, userId);
+            careerHistorySection = formatCareerHistory(careerEntries);
+        } catch (e) {
+            log('WARN', 'career history load failed (non-fatal)', { error: (e as Error).message });
+        }
+    }
 
-    // 5. Run agent
+    // 5. Build user message
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection);
+
+    // 6. Run agent
     const result = await runAgent<StrategistResearchResult>({
         config: RESEARCH_CONFIG,
         userMessage,

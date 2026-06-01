@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StructuredResumeData } from '@bedrock/shared';
+import type { StrategistPipelineContext, StructuredResumeData, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, PgSemanticCache, PiiScrubber, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -31,8 +31,12 @@ import {
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
 
-/** Module-scoped grounding verifier — block mode replaces ungrounded analysis with fallback. */
-const groundingVerifier = new BedrockGroundingVerifier({ mode: 'block' });
+// Default 'flag' — serve the real analysis and surface ungrounded claims via
+// telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
+// Set GROUNDING_MODE=block to restore strict replacement for a stricter tier.
+const groundingVerifier = new BedrockGroundingVerifier({
+    mode: (process.env['GROUNDING_MODE'] as GroundingMode) ?? 'flag',
+});
 
 /** Shared Postgres+pgvector semantic response cache (fail-open). */
 const semanticCache = PgSemanticCache.fromEnvironment();
@@ -234,7 +238,7 @@ export async function main(): Promise<void> {
             return;
         }
 
-        const research = await executeResearchAgent(ctx);
+        const research = await executeResearchAgent(ctx, pool);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
         const analysis = await executeStrategistAgent(ctx, research.data);

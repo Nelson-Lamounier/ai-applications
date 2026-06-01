@@ -111,7 +111,14 @@ async function main(): Promise<void> {
         });
         const constraintBlock = buildStagePrepConstraintBlock(constraints);
 
-        const coaching = await executeCoachAgent(ctx, analysis, constraintBlock);
+        const evidenceBlock = research ? [
+            `Overall fit: ${research.overallFitRating ?? ''} — ${research.fitSummary ?? ''}`,
+            `Experience signals: ${JSON.stringify(research.experienceSignals ?? {})}`,
+            'Verified matches:',
+            ...(research.verifiedMatches ?? []).map(m => `- ${m.skill} (${m.depth}) — ${m.sourceCitation}`),
+        ].join('\n') : undefined;
+
+        const coaching = await executeCoachAgent(ctx, analysis, constraintBlock, evidenceBlock);
 
         await persistCoachingContent(pool, {
             applicationId: env.applicationId,

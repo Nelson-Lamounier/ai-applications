@@ -20,6 +20,9 @@ class TestableCoach extends CoachAgent {
     public parse(text: string, ctx: StrategistPipelineContext) {
         return this.parseResponse(text, {} as CoachAgentInput, ctx);
     }
+    public buildMsg(input: CoachAgentInput, ctx: StrategistPipelineContext) {
+        return this.buildUserMessage(input, ctx);
+    }
 }
 
 const PARSE_CTX = { interviewStage: 'phone-screen' } as unknown as StrategistPipelineContext;
@@ -46,6 +49,36 @@ describe('CoachAgent.parseResponse', () => {
         expect(r.careerArcSummary).toBe('Career arc...');
         expect(r.jdTalkingPoints?.[0]).toEqual({ point: 'p', evidence: 'e' });
         expect(r.compScript?.marketContext).toBeNull();
+    });
+});
+
+const STUB_ANALYSIS = {
+    analysisXml: 'x',
+    metadata: { overallFitRating: 'STRONG FIT', applicationRecommendation: 'APPLY' },
+} as any as StrategistAnalysisResult;
+
+const STUB_CTX = {
+    interviewStage: 'phone-screen',
+    targetRole: 'R',
+    targetCompany: 'C',
+} as any as StrategistPipelineContext;
+
+describe('buildCoachMessage — evidenceBlock injection', () => {
+    it('includes Verified Evidence section when evidenceBlock is provided', () => {
+        const msg = new TestableCoach().buildMsg(
+            { analysis: STUB_ANALYSIS, evidenceBlock: 'V' },
+            STUB_CTX,
+        );
+        expect(msg).toContain('## Verified Evidence (from Research)');
+        expect(msg).toContain('V');
+    });
+
+    it('omits Verified Evidence section when evidenceBlock is absent', () => {
+        const msg = new TestableCoach().buildMsg(
+            { analysis: STUB_ANALYSIS },
+            STUB_CTX,
+        );
+        expect(msg).not.toContain('Verified Evidence');
     });
 });
 
