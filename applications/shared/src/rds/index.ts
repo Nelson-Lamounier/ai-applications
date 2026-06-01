@@ -34,6 +34,7 @@ export type { IChunkEnricher, ChunkEnrichment } from './interfaces/IChunkEnriche
 // Implementations
 export { RdsVectorStore }            from './implementations/RdsVectorStore.js';
 export type { RdsClientConfig }      from './implementations/RdsVectorStore.js';
+export { RdsExperienceVectorStore }  from './implementations/RdsExperienceVectorStore.js';
 export { RdsSyncStateRepository }    from './implementations/RdsSyncStateRepository.js';
 export { TitanEmbeddingProvider }    from './implementations/TitanEmbeddingProvider.js';
 export type { TitanCostContext }     from './implementations/TitanEmbeddingProvider.js';

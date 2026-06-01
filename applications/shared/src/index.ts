@@ -286,6 +286,7 @@ export type {
 
 export {
     RdsVectorStore,
+    RdsExperienceVectorStore,
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
     BedrockChunkEnricher,
