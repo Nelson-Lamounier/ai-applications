@@ -30,8 +30,13 @@ import {
     persistCoachingContent,
 } from './lib/pipeline-runs.js';
 
-async function loadAnalysis(pool: Pool, strategistPipelineRunId: string): Promise<StrategistAnalysisResult> {
-    const result = await pool.query<{ metadata: { analysis?: StrategistAnalysisResult } | null }>(
+async function loadAnalysisAndResearch(
+    pool: Pool,
+    strategistPipelineRunId: string,
+): Promise<{ analysis: StrategistAnalysisResult; research: StrategistResearchResult | null }> {
+    const result = await pool.query<{
+        metadata: { analysis?: StrategistAnalysisResult; research?: StrategistResearchResult } | null;
+    }>(
         `SELECT metadata FROM pipeline_runs WHERE id = $1`,
         [strategistPipelineRunId],
     );
@@ -39,15 +44,7 @@ async function loadAnalysis(pool: Pool, strategistPipelineRunId: string): Promis
     if (!analysis) {
         throw new Error(`No analysis found in pipeline_runs.metadata for id=${strategistPipelineRunId}`);
     }
-    return analysis;
-}
-
-async function loadResearch(pool: Pool, strategistPipelineRunId: string): Promise<StrategistResearchResult | null> {
-    const result = await pool.query<{ metadata: { research?: StrategistResearchResult } | null }>(
-        `SELECT metadata FROM pipeline_runs WHERE id = $1`,
-        [strategistPipelineRunId],
-    );
-    return result.rows[0]?.metadata?.research ?? null;
+    return { analysis, research: result.rows[0]?.metadata?.research ?? null };
 }
 
 // Same registry shape as run-pipeline.ts so dashboards can SUM across
@@ -76,8 +73,7 @@ async function main(): Promise<void> {
     let outcome: 'success' | 'failed' = 'failed';
 
     try {
-        const analysis = await loadAnalysis(pool, env.strategistPipelineRunId);
-        const research = await loadResearch(pool, env.strategistPipelineRunId);
+        const { analysis, research } = await loadAnalysisAndResearch(pool, env.strategistPipelineRunId);
 
         await updatePipelineRun(pool, env.coachPipelineRunId, 'coaching');
 
