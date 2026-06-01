@@ -35,6 +35,8 @@ import type {
 export interface CoachAgentInput {
     /** Strategist Agent's analysis containing the full XML */
     readonly analysis: StrategistAnalysisResult;
+    /** Optional stage-prep calibration block appended to the user message (phone-screen). */
+    readonly constraintBlock?: string;
 }
 
 // =============================================================================
@@ -127,6 +129,29 @@ const COACH_TOOL = {
                 },
             },
             coachingNotes: { type: 'string' },
+            careerArcSummary: { type: 'string' },
+            jdTalkingPoints: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        point:    { type: 'string' },
+                        evidence: { type: 'string' },
+                    },
+                    required: ['point', 'evidence'],
+                    additionalProperties: false,
+                },
+            },
+            compScript: {
+                type: 'object',
+                properties: {
+                    targetEcho:      { type: 'string' },
+                    marketContext:   { type: ['string', 'null'] },
+                    deflectTemplate: { type: 'string' },
+                },
+                required: ['targetEcho', 'marketContext', 'deflectTemplate'],
+                additionalProperties: false,
+            },
         },
         required: [
             'stageDescription', 'technicalQuestions', 'behaviouralQuestions',
@@ -168,6 +193,16 @@ const CoachOutputSchema = z.object({
         rationale: z.string(),
     }).strict()),
     coachingNotes: z.string(),
+    careerArcSummary: z.string().optional(),
+    jdTalkingPoints: z.array(z.object({
+        point:    z.string(),
+        evidence: z.string(),
+    }).strict()).optional(),
+    compScript: z.object({
+        targetEcho:      z.string(),
+        marketContext:   z.string().nullable(),
+        deflectTemplate: z.string(),
+    }).strict().optional(),
 }).strict();
 
 // =============================================================================
@@ -187,6 +222,7 @@ const CoachOutputSchema = z.object({
 function buildCoachMessage(
     analysis: StrategistAnalysisResult,
     ctx: StrategistPipelineContext,
+    constraintBlock?: string,
 ): string {
     const sections: string[] = [
         `## Interview Stage: ${ctx.interviewStage}`,
@@ -200,11 +236,15 @@ function buildCoachMessage(
         analysis.analysisXml,
         '--- END ANALYSIS ---',
         '',
+    ];
+    if (constraintBlock) {
+        sections.push(constraintBlock, '');
+    }
+    sections.push(
         `Prepare interview coaching for the "${ctx.interviewStage}" stage. ` +
         'Use ONLY verified skills and projects from the analysis. ' +
         'Return the JSON coaching brief.',
-    ];
-
+    );
     return sections.join('\n');
 }
 
@@ -255,7 +295,7 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: CoachAgentInput, ctx: StrategistPipelineContext): string {
-        return buildCoachMessage(input.analysis, ctx);
+        return buildCoachMessage(input.analysis, ctx, input.constraintBlock);
     }
 
     /**
@@ -343,6 +383,7 @@ export { coachAgent, CoachAgent };
 export async function executeCoachAgent(
     ctx: StrategistPipelineContext,
     analysis: StrategistAnalysisResult,
+    constraintBlock?: string,
 ): Promise<AgentResult<InterviewCoachResult>> {
-    return coachAgent.execute({ analysis }, ctx);
+    return coachAgent.execute({ analysis, constraintBlock }, ctx);
 }

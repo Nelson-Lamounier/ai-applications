@@ -12,8 +12,42 @@ jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
     ConverseCommand: jest.fn((params: unknown) => ({ input: params })),
 }));
 
-import { coachAgent } from './coach-agent';
+import { coachAgent, CoachAgent } from './coach-agent';
+import type { CoachAgentInput } from './coach-agent';
 import type { StrategistPipelineContext, StrategistAnalysisResult } from '@bedrock/shared';
+
+class TestableCoach extends CoachAgent {
+    public parse(text: string, ctx: StrategistPipelineContext) {
+        return this.parseResponse(text, {} as CoachAgentInput, ctx);
+    }
+}
+
+const PARSE_CTX = { interviewStage: 'phone-screen' } as unknown as StrategistPipelineContext;
+
+const BASE_PAYLOAD = {
+    stageDescription: 'd', technicalQuestions: [], behaviouralQuestions: [],
+    difficultQuestions: [], technicalPrepChecklist: [], questionsToAsk: [], coachingNotes: 'n',
+};
+
+describe('CoachAgent.parseResponse', () => {
+    it('accepts a payload WITHOUT the optional phone-screen fields', () => {
+        const r = new TestableCoach().parse(JSON.stringify(BASE_PAYLOAD), PARSE_CTX);
+        expect(r.stage).toBe('phone-screen');
+        expect(r.careerArcSummary).toBeUndefined();
+    });
+    it('accepts a payload WITH the phone-screen fields', () => {
+        const payload = {
+            ...BASE_PAYLOAD,
+            careerArcSummary: 'Career arc...',
+            jdTalkingPoints: [{ point: 'p', evidence: 'e' }],
+            compScript: { targetEcho: 't', marketContext: null, deflectTemplate: 'd' },
+        };
+        const r = new TestableCoach().parse(JSON.stringify(payload), PARSE_CTX);
+        expect(r.careerArcSummary).toBe('Career arc...');
+        expect(r.jdTalkingPoints?.[0]).toEqual({ point: 'p', evidence: 'e' });
+        expect(r.compScript?.marketContext).toBeNull();
+    });
+});
 
 const VALID_COACH_INPUT = {
     stageDescription: 'Technical screen focused on systems.',
