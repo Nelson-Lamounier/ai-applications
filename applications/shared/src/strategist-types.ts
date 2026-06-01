@@ -630,6 +630,29 @@ export interface QuestionToAsk {
 }
 
 /**
+ * A phone-screen talking point: a verified strength cross-referenced against the JD.
+ */
+export interface PhoneScreenTalkingPoint {
+    /** The talking point to make */
+    readonly point: string;
+    /** The verified evidence backing it (project / role / repo) */
+    readonly evidence: string;
+}
+
+/**
+ * Compensation conversation script for the phone screen.
+ * `marketContext` is null when no benchmark row exists — never a fabricated range.
+ */
+export interface CompScript {
+    /** How to state the candidate's target */
+    readonly targetEcho: string;
+    /** Market context sentence, or null when no benchmark is available */
+    readonly marketContext: string | null;
+    /** Template for deflecting / framing the comp question */
+    readonly deflectTemplate: string;
+}
+
+/**
  * Complete output from the Interview Coach Agent.
  */
 export interface InterviewCoachResult {
@@ -650,6 +673,12 @@ export interface InterviewCoachResult {
     readonly questionsToAsk: QuestionToAsk[];
     /** Stage-specific coaching notes */
     readonly coachingNotes: string;
+    /** Phone-screen only: 2-3 sentence career-arc narrative */
+    readonly careerArcSummary?: string;
+    /** Phone-screen only: JD-cross-referenced verified talking points */
+    readonly jdTalkingPoints?: PhoneScreenTalkingPoint[];
+    /** Phone-screen only: compensation conversation script */
+    readonly compScript?: CompScript;
 }
 
 // =============================================================================
