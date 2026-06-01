@@ -150,6 +150,13 @@ Supporting resolution:
 - **`region`** — a lookup input supplied by the caller (Spec 2 derives it from JD /
   user location; this spec only provides the query path).
 
+`comp_benchmarks` uses the **same `'*'` role fallback**: exact `(role_family, seniority,
+region)` → `('*', seniority, region)`. This is forced by the data — free comp sources
+(levels.fyi public pages) only publish generic "Software Engineer" figures for EU/UK,
+not per-role. Generic rows are stored with `role_family='*'` and labeled as such in
+`source`; only US has real role-split data (Stack Overflow 2025 medians). We never
+duplicate a generic number under multiple role labels to fake role precision.
+
 ## Consumption contract — `applications/shared/src/stage-prep/`
 
 New shared module exposing the ontology as a typed repository:

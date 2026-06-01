@@ -51,9 +51,13 @@ Create the file with exactly this content:
 -- question patterns, leadership principles, process shapes, STAR + gap-handling
 -- scaffolds, and compensation benchmarks. The LLM fills slots; it never invents them.
 --
--- Source: curated 2026-06-01 from public references (per-row `source` column:
--- Glassdoor, levels.fyi, Stack Overflow Developer Survey, official company
--- leadership-principle pages). Frozen snapshot: a future upstream change is a new migration.
+-- Source: curated 2026-06-01 from public references, each row citing its own `source`:
+--   stage_expectations  — Tech Interview Handbook, ByteByteGo, interviewing.io,
+--                         Google-SRE guides (Coditioning/IGotAnOffer), roadmap.sh (URLs per row)
+--   company profiles    — official Amazon Leadership Principles; Glassdoor (process shapes)
+--   comp_benchmarks     — levels.fyi region/level pages + Stack Overflow Developer Survey 2025
+--   scaffolds           — canonical STAR/CAR/SAR frameworks; UI-spec gap-handling guidance
+-- Frozen snapshot: a future upstream change is a new migration.
 --
 -- Idempotent: IF NOT EXISTS + INSERT ... ON CONFLICT DO UPDATE.
 
@@ -127,49 +131,94 @@ git commit -m "feat(rds): stage-prep ontology tables (migration 049 DDL)"
 
 ---
 
-## Task 2: Seed `stage_expectations` — generic `'*'` base + company-type overrides
+## Task 2: Seed `stage_expectations` — 13 web-sourced rows (generic base + overrides)
 
 **Files:**
 - Modify: `applications/platform-rds-bootstrap/migrations/049_stage_prep_ontology.sql` (insert seed block before `COMMIT;`)
 
-The `'*'` base layer carries decade-stable patterns; company-type rows override. Seed the generic base for the stages Phone Screen + near-term stages use, plus FAANG/scaleup overrides for `technical-1`.
+These 13 rows are transcribed from the 2026-06-01 research pass; every row cites a real source URL. Generic `'*'` rows for all 5 stages, plus FAANG / scaleup / backend / devops overrides only where sources show a genuine difference. Scaleup rows are MODERATE-confidence (sources discuss "startups," extrapolated) — note kept in `source`. No specific questions — only `focus_areas` + question `type`s.
 
 - [ ] **Step 1: Add the seed block** immediately before `COMMIT;`
 
 ```sql
--- ── stage_expectations ─────────────────────────────────────────────
+-- ── stage_expectations (13 rows, web-sourced 2026-06-01) ───────────
 INSERT INTO stage_expectations (id, company_type, role_family, stage, focus_areas, question_patterns, expectation_note, source, as_of) VALUES
 ('*|*|phone-screen','*','*','phone-screen',
- '["role interest","career arc","compensation alignment","availability/logistics"]'::jsonb,
- '[{"type":"career-arc","prompt_hint":"Walk me through your background / why this move now"},{"type":"role-interest","prompt_hint":"Why this company / this role"},{"type":"comp-expectations","prompt_hint":"What are your salary expectations"},{"type":"logistics","prompt_hint":"Notice period, location, work authorisation"}]'::jsonb,
- 'Phone screens are a recruiter-led fit + logistics filter. Cover the candidate''s career arc, genuine role interest, and a confident compensation answer — grounded in the user''s real history.',
- 'Glassdoor interview guides + recruiter commentary (aggregated)','2026-06-01'),
+ '["role & motivation fit","background/experience overview","compensation & logistics alignment","communication clarity","basic technical sanity"]'::jsonb,
+ '[{"type":"career-arc","prompt_hint":"walk me through your background / what you recently worked on"},{"type":"motivation","prompt_hint":"why this role / why are you looking to move"},{"type":"logistics","prompt_hint":"expectations, timeline, location, compensation range"},{"type":"role-fit-probe","prompt_hint":"specifics about your responsibilities on a past project"}]'::jsonb,
+ 'A short (15-30 min) recruiter-led filter assessing fit, motivation, and logistics rather than deep technical depth. Coding is generally NOT asked here — it is deferred to the technical screen.',
+ 'Indeed / RippleMatch / Tech Interview Handbook — indeed.com/career-advice/interviewing/software-engineering-phone-interview-questions; ripplematch.com (recruiter phone-screen guide); retrieved 2026-06-01','2026-06-01'),
 ('*|*|technical-1','*','*','technical-1',
- '["core language depth","data structures","problem decomposition","testing instincts"]'::jsonb,
- '[{"type":"coding","prompt_hint":"Implement / debug a focused problem"},{"type":"experience-deep-dive","prompt_hint":"Explain a system you built and the tradeoffs"}]'::jsonb,
- 'First technical round tests core competence and how the candidate reasons about their own prior work. Generate prep from the user''s strongest verified evidence.',
- 'Glassdoor + levels.fyi interview commentary','2026-06-01'),
-('faang|backend|technical-1','faang','backend','technical-1',
- '["distributed systems","system design fundamentals","language-specific depth","complexity analysis"]'::jsonb,
- '[{"type":"coding","prompt_hint":"Medium/hard algorithmic problem with optimal complexity"},{"type":"system-design-lite","prompt_hint":"Design a bounded component, discuss scaling"}]'::jsonb,
- 'FAANG-style backend technical rounds skew toward distributed systems, complexity, and language depth. Calibrate emphasis there — never fabricate experience the user lacks.',
- 'levels.fyi + Glassdoor FAANG interview reports','2026-06-01'),
-('scaleup|backend|technical-1','scaleup','backend','technical-1',
- '["pragmatic delivery","API design","testing + CI","incident/ops awareness"]'::jsonb,
- '[{"type":"coding","prompt_hint":"Practical problem close to real product work"},{"type":"experience-deep-dive","prompt_hint":"Ship-speed vs quality tradeoffs you made"}]'::jsonb,
- 'Series-B / scale-up technical rounds skew pragmatic: delivery, API design, ops awareness over algorithmic puzzles. Calibrate toward the user''s shipped, deployed evidence.',
- 'Glassdoor scale-up interview reports + founder commentary','2026-06-01')
+ '["data structures & algorithms","complexity analysis","coding fluency in a shared editor","edge-case / testing discipline","communicating approach & tradeoffs"]'::jsonb,
+ '[{"type":"algorithmic-coding","prompt_hint":"solve a DS&A problem live in a collaborative editor (e.g. CoderPad)"},{"type":"complexity-reasoning","prompt_hint":"state and justify time/space complexity"},{"type":"optimization-followup","prompt_hint":"improve the brute-force / handle a tighter constraint"},{"type":"edge-case-testing","prompt_hint":"test against normal and corner cases"}]'::jsonb,
+ 'A 30-45 min coding round testing problem-solving, technical competency, communication, and testing. Evaluation weighs HOW you reason and communicate, not just whether the final answer compiles.',
+ 'Tech Interview Handbook — techinterviewhandbook.org/coding-interview-prep; retrieved 2026-06-01','2026-06-01'),
+('*|*|behavioural','*','*','behavioural',
+ '["past-performance signals","teamwork & collaboration","conflict resolution","ownership & impact","adaptability / handling ambiguity"]'::jsonb,
+ '[{"type":"conflict-story","prompt_hint":"a disagreement with a teammate and how you resolved it"},{"type":"impact-story","prompt_hint":"a high-impact project and your specific role"},{"type":"failure-learning","prompt_hint":"a time something went wrong / what you learned"},{"type":"adaptability","prompt_hint":"a time you pivoted under shifting requirements"}]'::jsonb,
+ 'Uses past behaviour as a predictor of future performance; answers expected in STAR shape, ~1-2 min each, drawn from a small bank of high-impact stories.',
+ 'Tech Interview Handbook (behavioural) / MIT CAPD STAR — techinterviewhandbook.org/behavioral-interview; capd.mit.edu/resources/the-star-method-for-behavioral-interviews; retrieved 2026-06-01','2026-06-01'),
+('*|*|system-design','*','*','system-design',
+ '["requirements clarification","scalability & performance","data modeling & storage","tradeoff reasoning","bottleneck / deep-dive analysis"]'::jsonb,
+ '[{"type":"open-ended-design","prompt_hint":"design a well-known product/system from scratch"},{"type":"scale-estimation","prompt_hint":"back-of-the-envelope capacity / QPS / storage"},{"type":"tradeoff-defense","prompt_hint":"justify a choice and name what you sacrifice"},{"type":"deep-dive","prompt_hint":"drill into one component, its bottlenecks and failure modes"}]'::jsonb,
+ 'An intentionally ambiguous, open-ended design problem with no single right answer; evaluated on thought process, clarifying questions, tradeoff reasoning and communication.',
+ 'ByteByteGo framework / interviewing.io — bytebytego.com/courses/system-design-interview; interviewing.io/guides/system-design-interview; retrieved 2026-06-01','2026-06-01'),
+('*|*|final-round','*','*','final-round',
+ '["multiple back-to-back rounds in one loop","coding depth","system/architecture design","behavioural/values fit","cross-round consistency of signal"]'::jsonb,
+ '[{"type":"coding-round","prompt_hint":"one or more live algorithmic/coding rounds"},{"type":"design-round","prompt_hint":"a system/architecture design round"},{"type":"behavioural-round","prompt_hint":"a values / collaboration round"},{"type":"deep-experience-probe","prompt_hint":"drill into past work for depth and ownership"}]'::jsonb,
+ 'The onsite/virtual loop is the last stage before an offer decision — usually several rounds (coding, system design, behavioural) over a few hours, designed to triangulate a consistent signal.',
+ 'Tech Interview Handbook — techinterviewhandbook.org/software-engineering-interview-guide; retrieved 2026-06-01','2026-06-01'),
+('faang|*|technical-1','faang','*','technical-1',
+ '["medium-to-hard DS&A","optimization under follow-ups","edge-case handling","clean code","verbal reasoning of tradeoffs"]'::jsonb,
+ '[{"type":"leetcode-style-coding","prompt_hint":"medium/hard algorithmic problem in a shared editor"},{"type":"optimization-followup","prompt_hint":"first correct solution is table stakes — optimize and discuss tradeoffs after"},{"type":"edge-case-probe","prompt_hint":"handle corner cases the interviewer surfaces"}]'::jsonb,
+ 'At FAANG the first correct solution is the baseline, not the goal; differentiation happens in the follow-up conversation (optimization, edge cases, tradeoffs). Bar has risen in 2024-2026.',
+ 'BeTopTen / DesignGurus FAANG guides — betopten.com/blog/what-to-expect-in-a-faang-onsite-interview; designgurus.io (FAANG 2025 prep); retrieved 2026-06-01','2026-06-01'),
+('faang|*|behavioural','faang','*','behavioural',
+ '["company-specific values/principles","navigating ambiguity","ownership","intellectual humility / disagreement","user & business impact"]'::jsonb,
+ '[{"type":"principle-mapped-story","prompt_hint":"a story that maps to a specific named company principle"},{"type":"ambiguity-navigation","prompt_hint":"a time you operated without clear direction"},{"type":"disagreement","prompt_hint":"how you disagreed-and-committed / handled conflict"}]'::jsonb,
+ 'FAANG behavioural rounds map explicitly to named value frameworks (e.g. Amazon LPs evaluated across every round; Google Googleyness & Leadership). Stories should be pre-mapped to those principles.',
+ 'BeTopTen / Medium (Amazon LPs 2026) — betopten.com/blog/what-to-expect-in-a-faang-onsite-interview; retrieved 2026-06-01','2026-06-01'),
+('faang|*|final-round','faang','*','final-round',
+ '["4-6 back-to-back rounds in one day","two coding rounds","system design (often at lower levels now)","values/leadership round","bar-raiser / cross-calibration"]'::jsonb,
+ '[{"type":"dual-coding-rounds","prompt_hint":"typically two separate medium/hard coding rounds"},{"type":"system-design-round","prompt_hint":"design round testing engineering judgment, not textbook recall"},{"type":"values-round","prompt_hint":"company-specific leadership/values round, sometimes embedded in coding rounds"}]'::jsonb,
+ 'The loop is 4-6 rounds of 45-60 min in a single day, ~2 coding + 1 system design + 1 behavioural. 2024-2026: system design now appears at mid-levels and some loops permit AI tools — confirm format with the recruiter.',
+ 'BeTopTen / DesignGurus — betopten.com/blog/what-to-expect-in-a-faang-onsite-interview; designgurus.io; retrieved 2026-06-01','2026-06-01'),
+('scaleup|*|technical-1','scaleup','*','technical-1',
+ '["practical/applied coding over pure DS&A","shipping feature-style code","working in a real environment","raw coding ability","pragmatism"]'::jsonb,
+ '[{"type":"practical-build","prompt_hint":"build a small app / endpoint / feature live"},{"type":"take-home","prompt_hint":"a time-boxed (~2-3 hr) assignment resembling real work"},{"type":"lightweight-dsa","prompt_hint":"DS&A may appear but carries weaker hiring signal than at big tech"}]'::jsonb,
+ 'Smaller/scaling companies weight practical coding ability over algorithm puzzles and more often use practical-build rounds or short take-homes. MODERATE confidence: sources discuss startups/small companies, "scaleup" extrapolated.',
+ 'Tech Interview Handbook / YC Startup Job Guide — techinterviewhandbook.org; ycombinator.com/library/F2-interviewing-at-a-startup; retrieved 2026-06-01 (extrapolated to scaleup)','2026-06-01'),
+('scaleup|*|final-round','scaleup','*','final-round',
+ '["shorter, more focused loop","practical/applied work","team & culture fit","ability to ramp fast","breadth/ownership"]'::jsonb,
+ '[{"type":"practical-round","prompt_hint":"applied coding or pairing on a realistic task"},{"type":"culture-fit","prompt_hint":"team fit and ways-of-working with founders/leads"},{"type":"experience-deep-dive","prompt_hint":"depth on past delivery and end-to-end ownership"}]'::jsonb,
+ 'Scaleups favor shorter, tighter loops and emphasize whether you can ramp and ship, plus culture fit, versus FAANG''s longer standardized loop. MODERATE confidence: extrapolated from startup sources.',
+ 'Jason Pearson (scaling-startup interview design) / Tech Interview Handbook — jasonpearson.dev; techinterviewhandbook.org; retrieved 2026-06-01 (extrapolated to scaleup)','2026-06-01'),
+('*|backend|system-design','*','backend','system-design',
+ '["API design (REST, statelessness, versioning)","databases (SQL vs NoSQL, replication, indexing)","caching & eviction strategies","concurrency & consistency (locking, CAP)","scaling (load balancing, queues, sharding)"]'::jsonb,
+ '[{"type":"api-design","prompt_hint":"design the API surface and resource model for a service"},{"type":"data-modeling","prompt_hint":"choose and justify a storage engine + schema; replication/indexing"},{"type":"concurrency-control","prompt_hint":"optimistic vs pessimistic locking; consistency under contention"},{"type":"scaling-tradeoff","prompt_hint":"introduce caching/queues/sharding and defend the tradeoffs"}]'::jsonb,
+ 'Backend design rounds center on data and service concerns: API contracts, SQL/NoSQL choice, caching, concurrency/consistency, scaling. Knowing when to use what and the tradeoffs matters more than internals depth.',
+ 'roadmap.sh backend / SystemDesignHandbook — roadmap.sh/questions/backend; systemdesignhandbook.com; retrieved 2026-06-01','2026-06-01'),
+('*|devops|technical-1','*','devops','technical-1',
+ '["Linux/OS internals (processes, signals, memory)","networking (TCP/IP, DNS, OSI)","CI/CD & IaC (pipelines, Terraform/Ansible)","containers & orchestration (Docker, Kubernetes)","scripting (Bash/Python)"]'::jsonb,
+ '[{"type":"systems-internals","prompt_hint":"explain an OS/Linux concept and its failure/performance implications"},{"type":"scripting-task","prompt_hint":"write a practical script/utility, often without an IDE"},{"type":"k8s-scenario","prompt_hint":"troubleshoot or scale a Kubernetes workload"},{"type":"networking-reasoning","prompt_hint":"reason about traffic along a path; pick the right diagnostic tool"}]'::jsonb,
+ 'DevOps/SRE technical rounds emphasize hands-on systems depth (Linux, networking, containers, scripting) and reasoning about behaviour, performance and failure modes — not memorized commands.',
+ 'Coditioning Google SRE / DevOps-Interview-Questions — coditioning.com/blog/17/google-sre-interview-questions; github.com/NotHarshhaa/DevOps-Interview-Questions; retrieved 2026-06-01','2026-06-01'),
+('*|devops|system-design','*','devops','system-design',
+ '["non-abstract/operationally-feasible design (NALSD)","reliability & failure modes","hypothesis-driven troubleshooting","monitoring & observability","capacity/migration strategy"]'::jsonb,
+ '[{"type":"nalsd-design","prompt_hint":"design a concrete, operable production system (capacity, monitoring, failure modes)"},{"type":"troubleshooting-scenario","prompt_hint":"given a failing system, debug it systematically"},{"type":"migration-design","prompt_hint":"migrate/evolve a system without breaking reliability"}]'::jsonb,
+ 'DevOps/SRE design splits into Non-Abstract Large System Design (feasible, operable, tied to monitoring/failure modes) and a distinct troubleshooting round assessing structured, hypothesis-driven debugging.',
+ 'Coditioning / IGotAnOffer Google SRE — coditioning.com/blog/17/google-sre-interview-questions; igotanoffer.com/blogs/tech/google-site-reliability-engineer-interview; retrieved 2026-06-01','2026-06-01')
 ON CONFLICT (company_type, role_family, stage) DO UPDATE SET
     focus_areas=EXCLUDED.focus_areas, question_patterns=EXCLUDED.question_patterns,
     expectation_note=EXCLUDED.expectation_note, source=EXCLUDED.source, as_of=EXCLUDED.as_of;
 ```
 
-> **Curation note for the executor:** the four rows above are the working starter. Extend the `'*'` base to the remaining stages the program will use (`behavioural`, `system-design`, `final-round`) following the identical shape, and add company-type overrides only where a pattern genuinely differs from the `'*'` base. Keep every row's `source` real. Do **not** add specific questions — only `focus_areas` + question `type`s. **Comp/expectation figures the user wants to vet stay flagged in the PR description.**
+> **Curation note:** these 13 are the full sourced set. `phone-screen` has no FAANG/scaleup/role override because sources show the recruiter screen is role- and company-type-agnostic — the generic `'*'` row governs (proven by the sentinel fallback). Do not invent overrides the research didn't support.
 
 - [ ] **Step 2: Re-apply migration, verify rows load**
 
 Run: `psql "$DATABASE_URL" -f applications/platform-rds-bootstrap/migrations/049_stage_prep_ontology.sql && psql "$DATABASE_URL" -c "SELECT count(*) FROM stage_expectations;"`
-Expected: count ≥ 4, no error (idempotent re-run succeeds).
+Expected: count = 13, no error (idempotent re-run succeeds).
 
 - [ ] **Step 3: Commit**
 
@@ -271,28 +320,35 @@ git commit -m "feat(rds): seed prep_scaffolds (STAR variants + gap-handling)"
 **Files:**
 - Modify: `applications/platform-rds-bootstrap/migrations/049_stage_prep_ontology.sql`
 
+**Data honesty (from research pass):** levels.fyi's free pages give real percentiles but only for **generic "Software Engineer"**, not per-role, in EU/UK — so those rows use `role_family='*'` and resolve via the repository's `'*'` fallback (Task 8). Only **US** has real role-split data (Stack Overflow 2025 medians: backend/devops/data). All levels.fyi figures are **total comp** (incl. US equity); SO figures are self-reported total comp — each row's `source` states this. EU proxy = Germany (EUR). Cells with no reliable free data (frontend, ml/data outside US, staff) are deliberately omitted, not fabricated.
+
 - [ ] **Step 1: Add the seed block** before `COMMIT;`
 
 ```sql
--- ── comp_benchmarks ────────────────────────────────────────────────
--- Figures are STARTER values pending user vet (flag in PR). Every row cites source + as_of.
+-- ── comp_benchmarks (web-sourced 2026-06-01; generic rows use role_family '*') ──
+-- TOTAL COMP, not base. levels.fyi US numbers are equity-loaded. Flag in PR for user vet.
 INSERT INTO comp_benchmarks (id, role_family, seniority, region, currency, range_min, range_p50, range_max, source, as_of) VALUES
-('backend|senior|eu-remote','backend','senior','eu-remote','EUR',70000,90000,115000,'levels.fyi + Glassdoor EU 2025 (aggregated)','2026-06-01'),
-('backend|mid|eu-remote','backend','mid','eu-remote','EUR',55000,70000,88000,'levels.fyi + Glassdoor EU 2025 (aggregated)','2026-06-01'),
-('devops|senior|eu-remote','devops','senior','eu-remote','EUR',72000,92000,118000,'levels.fyi + Glassdoor EU 2025 (aggregated)','2026-06-01'),
-('backend|senior|uk','backend','senior','uk','GBP',70000,90000,110000,'levels.fyi + Glassdoor UK 2025 (aggregated)','2026-06-01'),
-('backend|senior|us','backend','senior','us','USD',150000,190000,240000,'levels.fyi US 2025 (aggregated)','2026-06-01')
+-- EU (Germany proxy) + UK: generic SWE only — role_family '*'
+('*|mid|eu-remote','*','mid','eu-remote','EUR',68400,82467,100000,'levels.fyi Software Engineer Germany overall (generic SWE, all-level aggregate as mid proxy), TOTAL comp, retrieved 2026-06-01','2026-06-01'),
+('*|senior|eu-remote','*','senior','eu-remote','EUR',80647,93794,114300,'levels.fyi Senior Software Engineer Germany (generic SWE, not role-specific), TOTAL comp, retrieved 2026-06-01','2026-06-01'),
+('*|mid|uk','*','mid','uk','GBP',60300,87820,127000,'levels.fyi Software Engineer United Kingdom overall (generic SWE, all-level aggregate as mid proxy), TOTAL comp, retrieved 2026-06-01','2026-06-01'),
+('*|senior|uk','*','senior','uk','GBP',86057,114206,161094,'levels.fyi Senior Software Engineer United Kingdom (generic SWE, not role-specific), TOTAL comp, retrieved 2026-06-01','2026-06-01'),
+-- US: generic senior (levels.fyi real percentiles) + role-split mid medians (Stack Overflow 2025)
+('*|senior|us','*','senior','us','USD',176250,250000,355699,'levels.fyi Senior Software Engineer United States (generic SWE), TOTAL comp incl. equity, retrieved 2026-06-01','2026-06-01'),
+('backend|mid|us','backend','mid','us','USD',175000,175000,175000,'Stack Overflow Developer Survey 2025 (US back-end median; single median only), total comp, retrieved 2026-06-01','2026-06-01'),
+('devops|mid|us','devops','mid','us','USD',165000,165000,165000,'Stack Overflow Developer Survey 2025 (US DevOps median; single median only), total comp, retrieved 2026-06-01','2026-06-01'),
+('data|mid|us','data','mid','us','USD',150000,150000,150000,'Stack Overflow Developer Survey 2025 (US data-engineer median; single median only), total comp, retrieved 2026-06-01','2026-06-01')
 ON CONFLICT (role_family, seniority, region) DO UPDATE SET
     currency=EXCLUDED.currency, range_min=EXCLUDED.range_min, range_p50=EXCLUDED.range_p50,
     range_max=EXCLUDED.range_max, source=EXCLUDED.source, as_of=EXCLUDED.as_of;
 ```
 
-> **Curation note:** these are representative starters. The user asked to vet comp figures — call them out explicitly in the PR description so they're reviewed before merge. Add more `(role_family, seniority, region)` combos as needed; missing combos simply yield no range (Spec 2's UI hides the range rather than fabricating).
+> **Curation note:** the three US `mid` rows are median-only (SO publishes no per-role percentiles) → `min=p50=max`; Spec 2's UI should render these as a point, not a band. Flag the whole table for user vet in the PR description. Missing combos resolve via the `'*'` fallback or yield null (UI hides the range — never fabricates).
 
 - [ ] **Step 2: Verify**
 
 Run: `psql "$DATABASE_URL" -f applications/platform-rds-bootstrap/migrations/049_stage_prep_ontology.sql && psql "$DATABASE_URL" -c "SELECT count(*) FROM comp_benchmarks;"`
-Expected: count = 5.
+Expected: count = 8.
 
 - [ ] **Step 3: Commit**
 
@@ -526,15 +582,33 @@ describe('RdsStagePrepOntologyRepository.getStageExpectation', () => {
 });
 
 describe('RdsStagePrepOntologyRepository.getCompBenchmark', () => {
-    it('maps a comp row', async () => {
-        const { pool } = seqPool([[{
-            id: 'backend|senior|eu-remote', role_family: 'backend', seniority: 'senior',
-            region: 'eu-remote', currency: 'EUR', range_min: 70000, range_p50: 90000, range_max: 115000,
+    it('returns an exact role-specific match on the first query', async () => {
+        const { pool, query } = seqPool([[{
+            id: 'backend|mid|us', role_family: 'backend', seniority: 'mid',
+            region: 'us', currency: 'USD', range_min: 175000, range_p50: 175000, range_max: 175000,
         }]]);
         const repo = new RdsStagePrepOntologyRepository(pool);
-        const c = await repo.getCompBenchmark('backend', 'senior', 'eu-remote');
-        expect(c?.rangeP50).toBe(90000);
-        expect(c?.currency).toBe('EUR');
+        const c = await repo.getCompBenchmark('backend', 'mid', 'us');
+        expect(c?.rangeP50).toBe(175000);
+        expect(c?.currency).toBe('USD');
+        expect(query).toHaveBeenCalledTimes(1); // exact hit, no fallback
+    });
+    it('falls back to role_family "*" when no role-specific row exists', async () => {
+        const { pool, query } = seqPool([[], [{
+            id: '*|senior|uk', role_family: '*', seniority: 'senior',
+            region: 'uk', currency: 'GBP', range_min: 86057, range_p50: 114206, range_max: 161094,
+        }]]); // exact miss, generic hit
+        const repo = new RdsStagePrepOntologyRepository(pool);
+        const c = await repo.getCompBenchmark('backend', 'senior', 'uk');
+        expect(c?.roleFamily).toBe('*');
+        expect(c?.rangeP50).toBe(114206);
+        expect(query).toHaveBeenCalledTimes(2);
+    });
+    it('does not double-query when role_family is already "*"', async () => {
+        const { pool, query } = seqPool([[]]);
+        const repo = new RdsStagePrepOntologyRepository(pool);
+        expect(await repo.getCompBenchmark('*', 'senior', 'us')).toBeNull();
+        expect(query).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -635,18 +709,24 @@ export class RdsStagePrepOntologyRepository {
         return r.rows.map(row => ({ id: row.id, kind: row.kind, title: row.title, structure: row.structure ?? {} }));
     }
 
+    /** Exact (role, sen, region) → ('*', sen, region) → null. Free comp data is mostly generic-SWE. */
     async getCompBenchmark(roleFamily: string, seniority: string, region: string): Promise<CompBenchmark | null> {
-        const r = await this.pool.query<CompRow>(
-            `SELECT id, role_family, seniority, region, currency, range_min, range_p50, range_max
-               FROM comp_benchmarks WHERE role_family = $1 AND seniority = $2 AND region = $3`,
-            [roleFamily, seniority, region]);
-        const row = r.rows[0];
-        if (!row) return null;
-        return {
-            id: row.id, roleFamily: row.role_family, seniority: row.seniority as CompBenchmark['seniority'],
-            region: row.region, currency: row.currency,
-            rangeMin: row.range_min, rangeP50: row.range_p50, rangeMax: row.range_max,
-        };
+        const families = roleFamily === '*' ? [roleFamily] : [roleFamily, '*'];
+        for (const rf of families) {
+            const r = await this.pool.query<CompRow>(
+                `SELECT id, role_family, seniority, region, currency, range_min, range_p50, range_max
+                   FROM comp_benchmarks WHERE role_family = $1 AND seniority = $2 AND region = $3`,
+                [rf, seniority, region]);
+            const row = r.rows[0];
+            if (row) {
+                return {
+                    id: row.id, roleFamily: row.role_family, seniority: row.seniority as CompBenchmark['seniority'],
+                    region: row.region, currency: row.currency,
+                    rangeMin: row.range_min, rangeP50: row.range_p50, rangeMax: row.range_max,
+                };
+            }
+        }
+        return null;
     }
 }
 ```
