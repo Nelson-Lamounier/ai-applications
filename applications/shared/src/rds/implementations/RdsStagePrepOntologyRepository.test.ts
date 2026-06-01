@@ -79,3 +79,25 @@ describe('RdsStagePrepOntologyRepository.listScaffolds', () => {
         expect(s[0]).toEqual({ id: 'gap-adjacent-pivot', kind: 'gap_handling', title: 'T', structure: { trigger: 'x' } });
     });
 });
+
+describe('RdsStagePrepOntologyRepository.getCompanyProfile', () => {
+    it('maps a profile row snake_case -> camelCase', async () => {
+        const { pool } = seqPool([[{
+            company_key: 'amazon', display_name: 'Amazon', company_type: 'faang',
+            leadership_principles: [{ name: 'Ownership', description: 'd' }],
+            process_shape: [{ stage: 'phone-screen', format: 'recruiter screen', note: 'n' }],
+            values_taxonomy: [],
+        }]]);
+        const repo = new RdsStagePrepOntologyRepository(pool);
+        const p = await repo.getCompanyProfile('amazon');
+        expect(p?.companyKey).toBe('amazon');
+        expect(p?.displayName).toBe('Amazon');
+        expect(p?.leadershipPrinciples[0]).toEqual({ name: 'Ownership', description: 'd' });
+        expect(p?.processShape[0].stage).toBe('phone-screen');
+    });
+    it('returns null when the company is unknown', async () => {
+        const { pool } = seqPool([[]]);
+        const repo = new RdsStagePrepOntologyRepository(pool);
+        expect(await repo.getCompanyProfile('nope')).toBeNull();
+    });
+});

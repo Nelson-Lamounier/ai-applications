@@ -132,7 +132,8 @@ INSERT INTO stage_expectations (id, company_type, role_family, stage, focus_area
  '[{"type":"nalsd-design","prompt_hint":"design a concrete, operable production system (capacity, monitoring, failure modes)"},{"type":"troubleshooting-scenario","prompt_hint":"given a failing system, debug it systematically"},{"type":"migration-design","prompt_hint":"migrate/evolve a system without breaking reliability"}]'::jsonb,
  'DevOps/SRE design splits into Non-Abstract Large System Design (feasible, operable, tied to monitoring/failure modes) and a distinct troubleshooting round assessing structured, hypothesis-driven debugging.',
  'Coditioning / IGotAnOffer Google SRE — coditioning.com/blog/17/google-sre-interview-questions; igotanoffer.com/blogs/tech/google-site-reliability-engineer-interview; retrieved 2026-06-01','2026-06-01')
-ON CONFLICT (company_type, role_family, stage) DO UPDATE SET
+ON CONFLICT (id) DO UPDATE SET
+    company_type=EXCLUDED.company_type, role_family=EXCLUDED.role_family, stage=EXCLUDED.stage,
     focus_areas=EXCLUDED.focus_areas, question_patterns=EXCLUDED.question_patterns,
     expectation_note=EXCLUDED.expectation_note, source=EXCLUDED.source, as_of=EXCLUDED.as_of;
 
@@ -185,7 +186,8 @@ INSERT INTO comp_benchmarks (id, role_family, seniority, region, currency, range
 ('backend|mid|us','backend','mid','us','USD',175000,175000,175000,'Stack Overflow Developer Survey 2025 (US back-end median; single median only), total comp, retrieved 2026-06-01','2026-06-01'),
 ('devops|mid|us','devops','mid','us','USD',165000,165000,165000,'Stack Overflow Developer Survey 2025 (US DevOps median; single median only), total comp, retrieved 2026-06-01','2026-06-01'),
 ('data|mid|us','data','mid','us','USD',150000,150000,150000,'Stack Overflow Developer Survey 2025 (US data-engineer median; single median only), total comp, retrieved 2026-06-01','2026-06-01')
-ON CONFLICT (role_family, seniority, region) DO UPDATE SET
+ON CONFLICT (id) DO UPDATE SET
+    role_family=EXCLUDED.role_family, seniority=EXCLUDED.seniority, region=EXCLUDED.region,
     currency=EXCLUDED.currency, range_min=EXCLUDED.range_min, range_p50=EXCLUDED.range_p50,
     range_max=EXCLUDED.range_max, source=EXCLUDED.source, as_of=EXCLUDED.as_of;
 

@@ -19,6 +19,7 @@ describe('toCompSeniority', () => {
         expect(toCompSeniority('mid')).toBe('mid');
         expect(toCompSeniority('senior')).toBe('senior');
         expect(toCompSeniority('staff')).toBe('staff');
+        expect(toCompSeniority('principal')).toBe('principal');
     });
     it('defaults null/unknown to "mid"', () => {
         expect(toCompSeniority(null)).toBe('mid');
