@@ -53,13 +53,13 @@ describe('buildStagePrepConstraintBlock', () => {
             roundType: 'dsa',
             dsaTopics: ['Graph traversal (BFS/DFS)'],
         });
-        expect(block).toContain('Technical round type for this company: dsa.');
+        expect(block).toContain("This interview round's type: dsa.");
         expect(block).toContain('Graph traversal (BFS/DFS)');
         expect(block).toContain('LeetCode/NeetCode');
     });
     it('omits roundType and dsaTopics lines when both are absent', () => {
         const block = buildStagePrepConstraintBlock({ ...FULL, roundType: undefined, dsaTopics: undefined });
-        expect(block).not.toContain('Technical round type');
+        expect(block).not.toContain("This interview round's type");
         expect(block).not.toContain('DSA topics');
     });
 });
@@ -111,5 +111,35 @@ describe('loadStagePrepConstraints', () => {
             seniority: 'mid', region: 'eu-remote', compTarget: null,
         });
         expect(seenCompanyType).toBe('*');
+    });
+    it('resolves roundType from the current stage, not always the first technical stage', async () => {
+        const reader = fakeReader({
+            getCompanyProfile: async () => ({
+                companyKey: 'acme', displayName: 'Acme', companyType: 'startup',
+                leadershipPrinciples: [], valuesTaxonomy: [],
+                processShape: [
+                    { stage: 'phone-screen', format: 'recruiter screen', note: 'fit', round_type: 'behavioral' },
+                    { stage: 'technical-1',  format: 'virtual coding',   note: 'dsa round', round_type: 'dsa' },
+                    { stage: 'final-round',  format: 'panel',            note: 'mixed',      round_type: 'mixed' },
+                ],
+            }),
+        });
+        const finalRound = await loadStagePrepConstraints(reader, {
+            targetCompany: 'Acme', roleFamily: 'backend', stage: 'final-round',
+            seniority: 'senior', region: 'us', compTarget: null,
+        });
+        expect(finalRound.roundType).toBe('mixed');
+
+        const technical = await loadStagePrepConstraints(reader, {
+            targetCompany: 'Acme', roleFamily: 'backend', stage: 'technical-1',
+            seniority: 'senior', region: 'us', compTarget: null,
+        });
+        expect(technical.roundType).toBe('dsa');
+
+        const phoneScreen = await loadStagePrepConstraints(reader, {
+            targetCompany: 'Acme', roleFamily: 'backend', stage: 'phone-screen',
+            seniority: 'senior', region: 'us', compTarget: null,
+        });
+        expect(phoneScreen.roundType).toBe('behavioral');
     });
 });

@@ -109,7 +109,9 @@ async function main(): Promise<void> {
             region:        env.region,
             compTarget:    env.compTarget,
         });
-        const dsaTopics = research?.dsaTopicCalibration?.likelyTopics?.map(t => t.displayName) ?? undefined;
+        const dsaTopics = env.interviewStage.startsWith('technical')
+            ? research?.dsaTopicCalibration?.likelyTopics?.map(t => t.displayName)
+            : undefined;
         const constraintBlock = buildStagePrepConstraintBlock({ ...constraints, dsaTopics });
 
         const evidenceBlock = research ? [

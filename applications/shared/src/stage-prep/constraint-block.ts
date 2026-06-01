@@ -50,14 +50,18 @@ export async function loadStagePrepConstraints(
         repo.getCompBenchmark(args.roleFamily, args.seniority, args.region),
         repo.listScaffolds('gap_handling'),
     ]);
-    const technicalStage = profile?.processShape.find(s => s.stage.startsWith('technical'));
+    const relevantStage =
+        profile?.processShape.find(s => s.stage === args.stage)
+        ?? (args.stage.startsWith('technical')
+                ? profile?.processShape.find(s => s.stage.startsWith('technical'))
+                : undefined);
     return {
         expectation,
         processShape: profile?.processShape ?? [],
         comp,
         gapTemplates,
         compTarget: args.compTarget,
-        roundType: technicalStage?.round_type ?? undefined,
+        roundType: relevantStage?.round_type ?? undefined,
     };
 }
 
@@ -102,7 +106,7 @@ export function buildStagePrepConstraintBlock(c: StagePrepConstraints): string {
         lines.push(`When the candidate has an evidence gap on a topic, use a gap-handling approach (${titles}).`);
     }
 
-    if (c.roundType) lines.push(`Technical round type for this company: ${c.roundType}.`);
+    if (c.roundType) lines.push(`This interview round's type: ${c.roundType}.`);
     if (c.dsaTopics && c.dsaTopics.length) {
         lines.push(`DSA topics this role likely tests (calibrated from the JD): ${c.dsaTopics.join(', ')}. ` +
             `Coach honestly: surface the candidate's real-work patterns where they exist; for gaps, recommend external practice (LeetCode/NeetCode) rather than fabricating competence.`);
