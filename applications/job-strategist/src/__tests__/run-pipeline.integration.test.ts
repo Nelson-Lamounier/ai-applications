@@ -487,7 +487,7 @@ describe('job-strategist run-pipeline.js — failure path', () => {
 // They verify the grounding block in run-pipeline.ts — not the subprocess path.
 // =============================================================================
 
-describe('job-strategist run-pipeline — grounding (block mode, in-process)', () => {
+describe('job-strategist run-pipeline — grounding (flag + block modes, in-process)', () => {
     jest.setTimeout(10_000);
 
     // Shared mock handles — resolved after jest.mock hoisting.
@@ -579,7 +579,32 @@ describe('job-strategist run-pipeline — grounding (block mode, in-process)', (
         cachePutMock.mockResolvedValue(undefined);
     });
 
+    afterEach(() => {
+        delete process.env['GROUNDING_MODE'];
+    });
+
+    it('serves the original analysis unchanged when NOT_GROUNDED in DEFAULT (flag) mode', async () => {
+        // GROUNDING_MODE not set → defaults to 'flag' → verify() returns the original answer.
+        delete process.env['GROUNDING_MODE'];
+        groundingVerifyMock.mockResolvedValueOnce({
+            status: 'NOT_GROUNDED',
+            reason: 'some claim not supported',
+            ungroundedClaims: [],
+            answer: FAKE_ANALYSIS_DATA.analysisXml,   // flag: always original
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { main } = require('../run-pipeline') as { main: () => Promise<void> };
+        await main();
+
+        // Flag mode must persist the ORIGINAL analysisXml — never the fallback stub.
+        expect(updatePipelineRunMetadata).toHaveBeenCalledTimes(1);
+        const [, , metadata] = updatePipelineRunMetadata.mock.calls[0] as [unknown, unknown, { analysis: { analysisXml: string } }];
+        expect(metadata.analysis.analysisXml).toBe(FAKE_ANALYSIS_DATA.analysisXml);
+    });
+
     it('substitutes fallback when strategist output is NOT_GROUNDED (block)', async () => {
+        process.env['GROUNDING_MODE'] = 'block';
         groundingVerifyMock.mockResolvedValueOnce({
             status: 'NOT_GROUNDED',
             reason: 'r',
