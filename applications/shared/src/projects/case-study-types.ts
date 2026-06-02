@@ -143,7 +143,7 @@ const DepthMarkersSchema = z.object({
 }).strict();
 export type DepthMarkers = z.infer<typeof DepthMarkersSchema>;
 
-const ArchitectureSchema = z.object({
+export const ArchitectureSchema = z.object({
     diagramFormat: z.enum(['mermaid', 'svg']),
     diagramSource: z.string().min(1),
     nodes: z.array(z.object({

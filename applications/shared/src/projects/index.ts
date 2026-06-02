@@ -59,6 +59,7 @@ export type {
 export {
     SourceSignalSchema,
     CaseStudySchema,
+    ArchitectureSchema,
     PROJECT_TYPES,
     PROJECT_STATUS,
     RESUME_BULLET_ANGLES,
@@ -109,3 +110,11 @@ export type {
     RunCaseStudyInput,
     RunCaseStudyOutput,
 } from './case-study-orchestrator.js';
+
+// ─── System tour (S7a) ──────────────────────────────────────────────────────
+export { SystemTourSchema } from './system-tour-types.js';
+export type {
+    SystemTour,
+    KeyDecision,
+    Tradeoff,
+} from './system-tour-types.js';
