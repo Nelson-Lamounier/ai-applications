@@ -6,7 +6,13 @@ import { scanEcrUris } from './EcrUriScanner.js';
 
 const K8S_KINDS = new Set([
     'Deployment','StatefulSet','DaemonSet','Job','CronJob','Service','Ingress','Pod',
+    // S3: security/networking kinds — recognised as k8s so manifests without a workload
+    // still register, and each emits a distinct DevOps networking/security token below.
+    'NetworkPolicy','Role','RoleBinding','ClusterRole','ClusterRoleBinding',
 ]);
+
+/** RBAC kinds → a single 'k8s_rbac' DevOps security token (resolves via migration 060). */
+const RBAC_KINDS = new Set(['Role','RoleBinding','ClusterRole','ClusterRoleBinding']);
 
 /** Detect k8s manifests; emit a 'kubernetes' token + each container image name. */
 export function parseK8sManifest(src: string, filePath: string): RawTechnologyEvidence[] {
@@ -14,10 +20,19 @@ export function parseK8sManifest(src: string, filePath: string): RawTechnologyEv
     let docs;
     try { docs = parseAllDocuments(src); } catch { return []; }
     let isK8s = false;
+    const emitted = new Set<string>();   // dedup distinct DevOps tokens within one file
     for (const d of docs) {
         const obj = d.toJSON() as { kind?: string } | null;
         if (obj?.kind && K8S_KINDS.has(obj.kind)) {
             isK8s = true;
+            if (obj.kind === 'NetworkPolicy' && !emitted.has('k8s_networkpolicy')) {
+                emitted.add('k8s_networkpolicy');
+                out.push({ raw_name: 'k8s_networkpolicy', ecosystem: 'iac', source_layer: 'iac', file_path: filePath });
+            }
+            if (RBAC_KINDS.has(obj.kind) && !emitted.has('k8s_rbac')) {
+                emitted.add('k8s_rbac');
+                out.push({ raw_name: 'k8s_rbac', ecosystem: 'iac', source_layer: 'iac', file_path: filePath });
+            }
             for (const img of collectImages(obj)) {
                 const name = img.split('@')[0].split(':')[0].split('/').pop()!;
                 out.push({ raw_name: name, ecosystem: 'docker', source_layer: 'iac', file_path: filePath });
