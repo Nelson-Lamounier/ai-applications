@@ -19,10 +19,21 @@ const FULL: StagePrepConstraints = {
         id: 'gap-adjacent-pivot', kind: 'gap_handling', title: 'Acknowledge gap, pivot',
         structure: { template: 'I have not used {missing} but {adjacent}...' },
     }],
+    storyScaffolds: [
+        { id: 'star', kind: 'story_scaffold', title: 'STAR', structure: { steps: [] } },
+        { id: 'incident-response', kind: 'story_scaffold', title: 'Incident response', structure: { steps: [] } },
+    ],
     compTarget: '95000',
 };
 
 describe('buildStagePrepConstraintBlock', () => {
+    it('renders story-structure titles when storyScaffolds present (S6)', () => {
+        const block = buildStagePrepConstraintBlock(FULL);
+        expect(block).toContain('Story structures the candidate can borrow');
+        expect(block).toContain('STAR');
+        expect(block).toContain('Incident response');
+        expect(block.toLowerCase()).toContain('never fabricate');
+    });
     it('renders focus areas, process, comp range+target, and gap guidance', () => {
         const block = buildStagePrepConstraintBlock(FULL);
         expect(block).toContain('career arc');
@@ -35,11 +46,12 @@ describe('buildStagePrepConstraintBlock', () => {
     });
     it('omits absent pieces and still returns the truthfulness reminder', () => {
         const empty: StagePrepConstraints = {
-            expectation: null, processShape: [], comp: null, gapTemplates: [], compTarget: null,
+            expectation: null, processShape: [], comp: null, gapTemplates: [], storyScaffolds: [], compTarget: null,
         };
         const block = buildStagePrepConstraintBlock(empty);
         expect(block).not.toContain('Market compensation');
         expect(block).not.toContain('Typical process');
+        expect(block).not.toContain('Story structures');
         expect(block.toLowerCase()).toContain('never');
     });
     it('shows comp target without a market range when comp is null', () => {
