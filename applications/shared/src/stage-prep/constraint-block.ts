@@ -69,6 +69,19 @@ const TRUTHFULNESS =
     'Calibration changes emphasis, never truthfulness. Ground every point in the candidate’s ' +
     'verified evidence; omit anything you cannot ground.';
 
+/** Round-type-specific prep emphasis for the DevOps/AI round shapes (S5). Generic guidance only. */
+const ROUND_TYPE_GUIDANCE: Record<string, string> = {
+    'architecture-review':
+        'For an architecture-review round, be ready to walk a system the candidate built end-to-end: ' +
+        'starting context, key decisions, tradeoffs, outcomes, and what they would change.',
+    'troubleshooting':
+        'For a troubleshooting round, expect incident-style debugging: log/metric analysis, ' +
+        'hypothesis → isolate → fix, and an on-call/postmortem narrative.',
+    'hands-on-lab':
+        'For a hands-on-lab round, expect a time-boxed exercise (build/debug/eval); ' +
+        'prioritise a working, tested, explainable result over cleverness.',
+};
+
 /** Render the resolved constraints into a soft calibration block for the Coach user message. */
 export function buildStagePrepConstraintBlock(c: StagePrepConstraints): string {
     const lines: string[] = ['## Stage-prep calibration (structural constraints)'];
@@ -107,6 +120,7 @@ export function buildStagePrepConstraintBlock(c: StagePrepConstraints): string {
     }
 
     if (c.roundType) lines.push(`This interview round's type: ${c.roundType}.`);
+    if (c.roundType && ROUND_TYPE_GUIDANCE[c.roundType]) lines.push(ROUND_TYPE_GUIDANCE[c.roundType]);
     if (c.dsaTopics && c.dsaTopics.length) {
         lines.push(`DSA topics this role likely tests (calibrated from the JD): ${c.dsaTopics.join(', ')}. ` +
             `Coach honestly: surface the candidate's real-work patterns where they exist; for gaps, recommend external practice (LeetCode/NeetCode) rather than fabricating competence.`);
