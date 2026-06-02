@@ -85,4 +85,24 @@ describe('mineStoryCandidates — optimization (two-artifact: merged PR + metric
     ];
     expect(mineStoryCandidates([], pulls)).toEqual([]);
   });
+  // Regression (adversarial review): the metric must be a real performance/cost figure,
+  // not a version bump or a trivial dollar amount — those are necessary-not-sufficient.
+  it('NEGATIVE: merged PR closing an issue with a version bump "18->20" emits nothing', () => {
+    const pulls = [
+      { number: 11, body: 'Fixes #8. Bumped Node 18->20 for ESM support.', state: 'merged', htmlUrl: 'https://github.com/o/r/pull/11' },
+    ];
+    expect(mineStoryCandidates([], pulls)).toEqual([]);
+  });
+  it('NEGATIVE: merged PR closing an issue with a trivial "$5" dollar mention emits nothing', () => {
+    const pulls = [
+      { number: 12, body: 'Closes #9. Added a $5 tier.', state: 'merged', htmlUrl: 'https://github.com/o/r/pull/12' },
+    ];
+    expect(mineStoryCandidates([], pulls)).toEqual([]);
+  });
+  it('emits optimization for a real cost metric "$1,200/mo" with a close', () => {
+    const pulls = [
+      { number: 13, body: 'Closes #10. Cut spend by $1,200/mo via rightsizing.', state: 'merged', htmlUrl: 'https://github.com/o/r/pull/13' },
+    ];
+    expect(mineStoryCandidates([], pulls)).toHaveLength(1);
+  });
 });

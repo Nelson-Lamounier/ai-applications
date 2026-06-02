@@ -9,8 +9,20 @@ const REVERT_SUBJECT = /^Revert "(.+)"/m;
 const REVERTS_COMMIT = /This reverts commit ([0-9a-f]{7,40})/;
 /** A GitHub structured issue close — close/fix/resolve (+s/d) #N. */
 const STRUCTURED_CLOSE = /(close|fix|resolve)(s|d)?\s+#(\d+)/i;
-/** A quantified metric — percentage / duration / multiplier / before→after / dollar figure. */
-const METRIC = /(\d+(\.\d+)?\s?(%|ms|s|x|×)|\d+\s?(→|->)\s?\d+|\$\s?\d[\d,]*)/;
+/**
+ * A quantified PERFORMANCE/COST metric. Every alternative carries a unit — a bare
+ * `N->M` (version bumps like "Node 18->20") or a trivial `$1`/`$5` must NOT match
+ * (they are necessary-not-sufficient noise, not measured improvements). A unit-bearing
+ * before→after (e.g. `120ms→40ms`) already matches via the unit alternative on `120ms`.
+ */
+const METRIC = new RegExp([
+  '\\d+(\\.\\d+)?\\s?(%|ms|x|×)',                 // 37% / 120ms / 3x
+  '\\d+(\\.\\d+)?\\s?s\\b',                        // 1.2s (word-bounded so it isn't any trailing 's')
+  '\\$\\s?\\d{1,3}(,\\d{3})+',                     // $1,200
+  '\\$\\s?\\d{4,}',                                // $5000
+  '\\$\\s?\\d+(\\.\\d+)?\\s?[kKmM]\\b',            // $5k / $1.5M
+  '\\$\\s?\\d+(\\.\\d+)?\\s?/\\s?(mo|month|yr|year)', // $200/mo
+].join('|'));
 
 export interface MineCommitInput {
   readonly sha: string;
