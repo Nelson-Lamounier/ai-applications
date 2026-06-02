@@ -29,3 +29,34 @@ describe('RdsDsaEvidenceRepository.insertMany', () => {
     expect(pool.connect).not.toHaveBeenCalled();
   });
 });
+
+describe('RdsDsaEvidenceRepository scan marker (idempotency)', () => {
+  it('hasDsaScanForCommit true when a marker row exists', async () => {
+    const query = jest.fn(async (sql: unknown) =>
+      String(sql).includes('dsa_scanned_commits') ? { rows: [{ '?column?': 1 }] } : { rows: [] });
+    const client = { query, release: jest.fn() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pool = { connect: jest.fn(async () => client) } as any;
+    const seen = await new RdsDsaEvidenceRepository(pool).hasDsaScanForCommit('u1', 'o/r', 'sha');
+    expect(seen).toBe(true);
+    const sql = query.mock.calls.map((c) => (c as unknown[])[0] as string);
+    expect(sql.some((s) => /set_config\('app.current_user_id'/.test(s))).toBe(true);
+    expect(sql.some((s) => /SELECT 1 FROM dsa_scanned_commits/.test(s))).toBe(true);
+  });
+  it('hasDsaScanForCommit false when no marker', async () => {
+    const query = jest.fn(async () => ({ rows: [] }));
+    const client = { query, release: jest.fn() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pool = { connect: jest.fn(async () => client) } as any;
+    expect(await new RdsDsaEvidenceRepository(pool).hasDsaScanForCommit('u1', 'o/r', 'sha')).toBe(false);
+  });
+  it('recordDsaScan upserts the marker with match count', async () => {
+    const query = jest.fn(async () => ({ rows: [] }));
+    const client = { query, release: jest.fn() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pool = { connect: jest.fn(async () => client) } as any;
+    await new RdsDsaEvidenceRepository(pool).recordDsaScan('u1', 'o/r', 'sha', 3);
+    const calls = query.mock.calls.map((c) => (c as unknown[])[0] as string);
+    expect(calls.some((s) => /INSERT INTO dsa_scanned_commits/.test(s) && /ON CONFLICT/.test(s))).toBe(true);
+  });
+});
