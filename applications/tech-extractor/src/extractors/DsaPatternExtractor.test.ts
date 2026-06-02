@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { detectDsaPatterns } from './DsaPatternExtractor.js';
+import type { DsaLang } from './DsaPatternExtractor.js';
 
 describe('detectDsaPatterns — admissible signals', () => {
   it('1. networkx import → dsa_graph_traversal @0.80 with line', () => {
@@ -61,49 +62,28 @@ describe('detectDsaPatterns — do NOT detect (necessary-not-sufficient)', () =>
 });
 
 describe('detectDsaPatterns — comparator FP-gate (2026-06-02)', () => {
-  // (a) Authored-comparator markers fire regardless of path (≈0 web FP).
-  it('python cmp_to_key (any path) → comparator', () => {
-    expect(detectDsaPatterns('ys = sorted(xs, key=cmp_to_key(mycmp))\n', 'python', 'util.py')[0])
+  // Fires when EITHER (a) an authored-comparator marker is present (any path) OR
+  // (b) an inline sort idiom sits in an algorithm-named path.
+  it.each([
+    ['python cmp_to_key, any path',             'ys = sorted(xs, key=cmp_to_key(mycmp))\n',          'python',     'util.py'],
+    ['java implements Comparator, any path',    'class ByAge implements Comparator<P> {\n',          'java',       'Main.java'],
+    ['java implements Comparable, any path',    'public class P implements Comparable<P> {\n',       'java',       'P.java'],
+    ['java compareTo override, any path',        '    public int compareTo(P o) { return 0; }\n',     'java',       'P.java'],
+    ['python inline keyed sort in algorithms/', 'intervals.sort(key=lambda i: i.start)\n',           'python',     'algorithms/array/merge_intervals.py'],
+    ['ts inline comparator in src/algorithms',  'arr.sort((a, b) => a - b)\n',                       'typescript', 'src/algorithms/quicksort.ts'],
+    ['java thenComparing in data_structures',   'Comparator.comparing(P::a).thenComparing(P::b);\n', 'java',       'data_structures/Heap.java'],
+  ])('fires comparator — %s', (_name, src, lang, path) => {
+    expect(detectDsaPatterns(src, lang as DsaLang, path)[0])
       .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 });
   });
-  it('java implements Comparator (any path) → comparator', () => {
-    expect(detectDsaPatterns('class ByAge implements Comparator<P> {\n', 'java', 'Main.java')[0])
-      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
-  });
-  it('java implements Comparable (any path) → comparator', () => {
-    expect(detectDsaPatterns('public class P implements Comparable<P> {\n', 'java', 'P.java')[0])
-      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
-  });
-  it('java compareTo override (any path) → comparator', () => {
-    expect(detectDsaPatterns('    public int compareTo(P o) { return 0; }\n', 'java', 'P.java')[0])
-      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
-  });
 
-  // (b) Inline sort idioms fire ONLY in an algorithm-named path.
-  it('python inline keyed sort in algorithms/ path → comparator', () => {
-    expect(detectDsaPatterns('intervals.sort(key=lambda i: i.start)\n', 'python', 'algorithms/array/merge_intervals.py')[0])
-      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
-  });
-  it('ts inline comparator in src/algorithms path → comparator', () => {
-    expect(detectDsaPatterns('arr.sort((a, b) => a - b)\n', 'typescript', 'src/algorithms/quicksort.ts')[0])
-      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
-  });
-  it('java Comparator.thenComparing in data_structures path → comparator', () => {
-    expect(detectDsaPatterns('Comparator.comparing(P::a).thenComparing(P::b);\n', 'java', 'data_structures/Heap.java')[0])
-      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
-  });
-
-  // FP killers — the web-app sorts that broke the gate now emit NOTHING.
-  it('NEGATIVE: ts web sort in src/retrieval.ts → nothing', () => {
-    expect(detectDsaPatterns('items.sort((a, b) => b.score - a.score)\n', 'typescript', 'src/retrieval.ts')).toEqual([]);
-  });
-  it('NEGATIVE: ts multi-key web sort in a component → nothing', () => {
-    expect(detectDsaPatterns('rows.sort((a, b) => b.x - a.x || a.y - b.y)\n', 'typescript', 'app/components/Dashboard.tsx')).toEqual([]);
-  });
-  it('NEGATIVE: python keyed sort in a non-algo path → nothing', () => {
-    expect(detectDsaPatterns('users.sort(key=lambda x: x.name)\n', 'python', 'app/models.py')).toEqual([]);
-  });
-  it('NEGATIVE: bare Comparator.comparing outside algo path → nothing', () => {
-    expect(detectDsaPatterns('users.sort(Comparator.comparing(User::getName));\n', 'java', 'src/UserService.java')).toEqual([]);
+  // FP killers — mundane web sorts (no marker, non-algo path) emit NOTHING.
+  it.each([
+    ['ts web sort in src/retrieval.ts',       'items.sort((a, b) => b.score - a.score)\n',          'typescript', 'src/retrieval.ts'],
+    ['ts multi-key web sort in a component',   'rows.sort((a, b) => b.x - a.x || a.y - b.y)\n',      'typescript', 'app/components/Dashboard.tsx'],
+    ['python keyed sort in a non-algo path',   'users.sort(key=lambda x: x.name)\n',                 'python',     'app/models.py'],
+    ['bare Comparator.comparing, non-algo',    'users.sort(Comparator.comparing(User::getName));\n', 'java',       'src/UserService.java'],
+  ])('emits nothing — %s', (_name, src, lang, path) => {
+    expect(detectDsaPatterns(src, lang as DsaLang, path)).toEqual([]);
   });
 });
