@@ -8,6 +8,7 @@ import {
     bootstrapK8sObservability, pushFinalMetrics,
     DsaTopicResolver, RdsDsaEvidenceRepository, RdsDsaTopicRepository,
     AiTopicResolver, RdsAiEvidenceRepository, RdsAiTopicRepository,
+    runStoryMining,
 } from '@bedrock/shared';
 import { DsaPatternExtractor } from './extractors/DsaPatternExtractor.js';
 import { AiPatternExtractor } from './extractors/AiPatternExtractor.js';
@@ -245,6 +246,16 @@ async function main(): Promise<void> {
             } catch (err) {
                 log.warn({ err: String(err) }, 'ai.extraction.failed (non-fatal)');
             }
+        }
+
+        // ── Story-mining lane (fail-open: never breaks tech-extract) ──
+        // Reads the already-ingested repo_commits / repo_pull_requests rows (no tarball
+        // needed) and mines two-artifact story candidates deterministically.
+        try {
+            const n = await runStoryMining(pool, env.userId, env.repoFullName);
+            log.info({ repo: env.repoFullName, sha, candidates: n }, 'story.candidates.persisted');
+        } catch (err) {
+            log.warn({ err: String(err) }, 'story.mining.failed (non-fatal)');
         }
     } finally {
         await withTimeout(pool.end(), 10_000, 'pg-pool');
