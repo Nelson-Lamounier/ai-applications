@@ -12,7 +12,7 @@ describe('detectAiPatterns — admissible', () => {
     expect(detectAiPatterns(src, 'typescript', 'mcp.ts')[0]).toMatchObject({ topic_hint: 'ai_mcp_integration', signal: 'mcp_integration', confidence: 0.80 });
   });
   it('grounding class with source-referencing body → ai_grounding', () => {
-    const src = 'class BedrockGroundingVerifier {\n  verify(out: string, context: string) { return context.includes(out); }\n}\n';
+    const src = 'class BedrockGroundingVerifier {\n  verify(output: string, source: string) { return source.includes(output); }\n}\n';
     expect(detectAiPatterns(src, 'typescript', 'g.ts')[0]).toMatchObject({ topic_hint: 'ai_grounding', signal: 'grounding', confidence: 0.70 });
   });
   it('evals.json matching schema (≥3) → ai_eval_quality', () => {
@@ -38,4 +38,15 @@ describe('detectAiPatterns — do NOT detect', () => {
     expect(detectAiPatterns('export const SYSTEM = "You are helpful";\n', 'typescript', 'prompts/system.ts')).toEqual([]));
   it('plain usage logging without a price computation → nothing', () =>
     expect(detectAiPatterns('logger.info({ usage: resp.usage });\n', 'typescript', 'log.ts')).toEqual([]));
+  // Regression: false positives caught in adversarial review (2026-06-02).
+  it('cachePoint mentioned in a comment → nothing', () =>
+    expect(detectAiPatterns('// set cachePoint: true when caching\nconst x = 1;\n', 'typescript', 'c.ts')).toEqual([]));
+  it('grounding-named class whose only "context" is a NestJS ExecutionContext DI param → nothing', () =>
+    expect(detectAiPatterns('class GroundingManager {\n  constructor(private context: ExecutionContext) {}\n}\n', 'typescript', 'g.ts')).toEqual([]));
+  it('generic business code with cost + usage but no LLM token field → nothing', () =>
+    expect(detectAiPatterns('const cost = getCostCenter();\nconst usage = getMonthlyUsage();\nreturn { cost, usage };\n', 'typescript', 'billing.ts')).toEqual([]));
+  it('MCP import + a resources-only setRequestHandler (no tools call-site) → nothing', () =>
+    expect(detectAiPatterns("import { Server } from '@modelcontextprotocol/sdk/server/index.js';\nserver.setRequestHandler(ListResourcesRequestSchema, async () => ({}));\n", 'typescript', 'srv.ts')).toEqual([]));
+  it('an evals.json wrapping the array under a {tests:[...]} key (jest-style fixture) → nothing', () =>
+    expect(detectAiPatterns(JSON.stringify({ tests: [{ prompt: 'a', expected: '1' }, { prompt: 'b', expected: '2' }, { prompt: 'c', expected: '3' }] }), null, 'evals.json')).toEqual([]));
 });
