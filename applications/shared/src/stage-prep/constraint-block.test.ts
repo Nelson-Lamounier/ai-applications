@@ -62,6 +62,25 @@ describe('buildStagePrepConstraintBlock', () => {
         expect(block).not.toContain("This interview round's type");
         expect(block).not.toContain('DSA topics');
     });
+    // S5: per-round-type coach guidance for the DevOps/AI round shapes.
+    it('emits architecture-review guidance', () => {
+        const b = buildStagePrepConstraintBlock({ ...FULL, roundType: 'architecture-review' });
+        expect(b).toContain("This interview round's type: architecture-review.");
+        expect(b).toMatch(/walk a system the candidate built/i);
+    });
+    it('emits troubleshooting guidance', () => {
+        expect(buildStagePrepConstraintBlock({ ...FULL, roundType: 'troubleshooting' }))
+            .toMatch(/incident-style debugging/i);
+    });
+    it('emits hands-on-lab guidance', () => {
+        expect(buildStagePrepConstraintBlock({ ...FULL, roundType: 'hands-on-lab' }))
+            .toMatch(/time-boxed exercise/i);
+    });
+    it('emits NO extra guidance line for an existing round type (dsa)', () => {
+        const b = buildStagePrepConstraintBlock({ ...FULL, roundType: 'dsa', dsaTopics: undefined });
+        expect(b).toContain("This interview round's type: dsa.");
+        expect(b).not.toMatch(/walk a system the candidate built|incident-style|time-boxed exercise/i);
+    });
 });
 
 describe('normalizeCompanyKey', () => {

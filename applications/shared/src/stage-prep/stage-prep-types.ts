@@ -33,7 +33,8 @@ export interface ProcessStage {
     readonly stage: string;
     readonly format: string;
     readonly note: string;
-    readonly round_type?: 'dsa' | 'practical' | 'take-home' | 'system-design' | 'behavioural' | 'mixed';
+    readonly round_type?: 'dsa' | 'practical' | 'take-home' | 'system-design' | 'behavioural' | 'mixed'
+        | 'troubleshooting' | 'architecture-review' | 'hands-on-lab';
 }
 
 export interface CompanyInterviewProfile {
