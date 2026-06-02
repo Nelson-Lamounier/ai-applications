@@ -6,7 +6,9 @@ import {
     OntologyResolver, TechnologyOntologyRepository, TechnologyEvidenceRepository,
     TechnologyCandidateRepository, TechnologyParityRunRepository,
     bootstrapK8sObservability, pushFinalMetrics,
+    DsaTopicResolver, RdsDsaEvidenceRepository, RdsDsaTopicRepository,
 } from '@bedrock/shared';
+import { DsaPatternExtractor } from './extractors/DsaPatternExtractor.js';
 import { Counter, Gauge } from 'prom-client';
 
 import { parseEnv } from './env.js';
@@ -111,9 +113,18 @@ async function main(): Promise<void> {
     const candidateRepo = new TechnologyCandidateRepository(pool);
     const parityRepo    = new TechnologyParityRunRepository(pool);
 
+    const dsaEvidenceRepo = new RdsDsaEvidenceRepository(pool);
+
     try {
-        if (env.commitSha && await evidenceRepo.hasEvidenceForCommit(env.userId, env.repoFullName, env.commitSha)) {
-            log.info({ repo: env.repoFullName, sha }, 'short-circuit: evidence exists');
+        // Per-lane idempotency: tech and DSA each own their own commit short-circuit, so
+        // adding the DSA lane does not inherit tech's cache gate (and vice versa). Only skip
+        // the whole job — and the tarball download — when BOTH lanes are already done.
+        const techDone = !!env.commitSha
+            && await evidenceRepo.hasEvidenceForCommit(env.userId, env.repoFullName, env.commitSha);
+        const dsaDone = !!env.commitSha
+            && await dsaEvidenceRepo.hasDsaScanForCommit(env.userId, env.repoFullName, env.commitSha);
+        if (techDone && dsaDone) {
+            log.info({ repo: env.repoFullName, sha }, 'short-circuit: tech + dsa evidence exist');
             return;
         }
 
@@ -131,50 +142,80 @@ async function main(): Promise<void> {
         const files = await walkTextFiles(extractDir);
         const readFile = (rel: string) => fs.readFile(path.join(extractDir, rel), 'utf-8');
 
-        const ontologyVersion = await ontologyRepo.currentVersion();
-        const resolver = new OntologyResolver(await ontologyRepo.loadAliasMap());
-        const proseSafeAliases = await ontologyRepo.loadProseSafeAliases();
-        log.info({ proseSafe: proseSafeAliases.size }, 'prose-safe-aliases.loaded');
+        // ── Tech lane (syft/treesitter/iac → technology_evidence + parity) ──
+        if (!techDone) {
+            const ontologyVersion = await ontologyRepo.currentVersion();
+            const resolver = new OntologyResolver(await ontologyRepo.loadAliasMap());
+            const proseSafeAliases = await ontologyRepo.loadProseSafeAliases();
+            log.info({ proseSafe: proseSafeAliases.size }, 'prose-safe-aliases.loaded');
 
-        const extractors: Extractor[] = [
-            new SyftExtractor(),
-            new TreeSitterExtractor(readFile, files, proseSafeAliases),
-            iacExtractor(extractDir, files, proseSafeAliases),
-        ];
+            const extractors: Extractor[] = [
+                new SyftExtractor(),
+                new TreeSitterExtractor(readFile, files, proseSafeAliases),
+                iacExtractor(extractDir, files, proseSafeAliases),
+            ];
 
-        const orch = new TechExtractOrchestrator(resolver, evidenceRepo, candidateRepo);
-        const result = await orch.run({
-            userId: env.userId, repoFullName: env.repoFullName, commitSha: sha,
-            rootDir: extractDir, ontologyVersion, extractors,
-        });
-        for (const name of result.failedExtractors) extractorFailed.inc({ extractor: name });
+            const orch = new TechExtractOrchestrator(resolver, evidenceRepo, candidateRepo);
+            const result = await orch.run({
+                userId: env.userId, repoFullName: env.repoFullName, commitSha: sha,
+                rootDir: extractDir, ontologyVersion, extractors,
+            });
+            for (const name of result.failedExtractors) extractorFailed.inc({ extractor: name });
 
-        // Parity vs the LLM enricher's per-chunk technologies (GIN-indexed TEXT[]).
-        let llmTechs: string[] = [];
-        try {
-            const { rows } = await pool.query<{ tech: string }>(
-                `SELECT DISTINCT unnest(technologies) AS tech
-                 FROM document_embeddings WHERE user_id = $1::uuid AND repo_full_name = $2`,
-                [env.userId, env.repoFullName],
-            );
-            llmTechs = rows.map((r) => r.tech);
-        } catch (e) {
-            log.warn({ err: String(e) }, 'parity: failed to read document_embeddings.technologies');
+            // Parity vs the LLM enricher's per-chunk technologies (GIN-indexed TEXT[]).
+            let llmTechs: string[] = [];
+            try {
+                const { rows } = await pool.query<{ tech: string }>(
+                    `SELECT DISTINCT unnest(technologies) AS tech
+                     FROM document_embeddings WHERE user_id = $1::uuid AND repo_full_name = $2`,
+                    [env.userId, env.repoFullName],
+                );
+                llmTechs = rows.map((r) => r.tech);
+            } catch (e) {
+                log.warn({ err: String(e) }, 'parity: failed to read document_embeddings.technologies');
+            }
+
+            const parity = computeParity(resolver, result.canonicalIds, llmTechs);
+            recallGauge.set({ repo: env.repoFullName }, parity.recall);
+            await parityRepo.insert({
+                userId: env.userId, repoFullName: env.repoFullName, commitSha: sha, ontologyVersion,
+                l1CanonicalCount: parity.l1CanonicalCount, llmCanonicalCount: parity.llmCanonicalCount,
+                llmUnresolvableCount: parity.llmUnresolvableCount, intersectionCount: parity.intersectionCount,
+                recall: parity.recall, l1OnlyExamples: parity.l1OnlyExamples, llmOnlyExamples: parity.llmOnlyExamples,
+            });
+
+            log.info({
+                repo: env.repoFullName, sha, matched: result.matched, unmatched: result.unmatched,
+                recall: parity.recall, failed: result.failedExtractors, llm_only: parity.llmOnlyExamples,
+            }, 'tech-extract.complete');
+        } else {
+            log.info({ repo: env.repoFullName, sha }, 'tech lane: evidence exists, skipped (dsa backfill run)');
         }
 
-        const parity = computeParity(resolver, result.canonicalIds, llmTechs);
-        recallGauge.set({ repo: env.repoFullName }, parity.recall);
-        await parityRepo.insert({
-            userId: env.userId, repoFullName: env.repoFullName, commitSha: sha, ontologyVersion,
-            l1CanonicalCount: parity.l1CanonicalCount, llmCanonicalCount: parity.llmCanonicalCount,
-            llmUnresolvableCount: parity.llmUnresolvableCount, intersectionCount: parity.intersectionCount,
-            recall: parity.recall, l1OnlyExamples: parity.l1OnlyExamples, llmOnlyExamples: parity.llmOnlyExamples,
-        });
-
-        log.info({
-            repo: env.repoFullName, sha, matched: result.matched, unmatched: result.unmatched,
-            recall: parity.recall, failed: result.failedExtractors, llm_only: parity.llmOnlyExamples,
-        }, 'tech-extract.complete');
+        // ── DSA real-work pattern lane (fail-open: never breaks tech-extract) ──
+        // Own idempotency via the scan marker, so it backfills commits tech already scanned.
+        if (!dsaDone) {
+            try {
+                const dsaTopics = await new RdsDsaTopicRepository(pool).listTopics();
+                const dsaResolver = new DsaTopicResolver(new Set(dsaTopics.map((t) => t.canonicalName)));
+                const raw = await new DsaPatternExtractor(readFile, files).extract();
+                const dsaRows = raw
+                    .map((e) => ({ canonical: dsaResolver.resolve(e.topic_hint), e }))
+                    .filter((x) => x.canonical !== null)
+                    .map((x) => ({
+                        repoFullName: env.repoFullName, commitSha: sha, dsaTopic: x.canonical as string,
+                        signal: x.e.signal, rawName: x.e.raw_name, filePath: x.e.file_path,
+                        lineStart: x.e.line_start, confidence: x.e.confidence,
+                    }));
+                await dsaEvidenceRepo.insertMany(env.userId, dsaRows);
+                // Marker last: records "scanned" even when 0 matches, so no-DSA repos are not
+                // re-downloaded on every re-sync. On insert failure we skip the marker → retry next run.
+                await dsaEvidenceRepo.recordDsaScan(env.userId, env.repoFullName, sha, dsaRows.length);
+                log.info({ repo: env.repoFullName, sha, inserted: dsaRows.length, raw: raw.length }, 'dsa.evidence.persisted');
+            } catch (err) {
+                log.warn({ err: String(err) }, 'dsa.extraction.failed (non-fatal)');
+            }
+        }
     } finally {
         await withTimeout(pool.end(), 10_000, 'pg-pool');
         await withTimeout(
