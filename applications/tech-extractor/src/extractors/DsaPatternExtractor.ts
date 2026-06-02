@@ -17,7 +17,7 @@ const DSA_EXT_LANG: Record<string, DsaLang> = {
 export function dsaLangForExt(ext: string): DsaLang | null { return DSA_EXT_LANG[ext] ?? null; }
 
 // Each detector returns matches for ONE line. Keep patterns sufficient-not-necessary.
-type Detector = (line: string, lang: DsaLang) => Omit<RawDsaEvidence, 'file_path' | 'line_start'> | null;
+type Detector = (line: string, lang: DsaLang, filePath: string) => Omit<RawDsaEvidence, 'file_path' | 'line_start'> | null;
 
 // Anchored to ^\s* (line start, whitespace-only indent) so a comment like `# import networkx`
 // does NOT match — a commented-out import is not honest evidence.
@@ -66,7 +66,7 @@ export function detectDsaPatterns(src: string, lang: DsaLang, filePath: string):
   const lines = src.split('\n');
   for (let i = 0; i < lines.length; i++) {
     for (const d of DETECTORS) {
-      const hit = d(lines[i], lang);
+      const hit = d(lines[i], lang, filePath);
       if (hit) out.push({ ...hit, file_path: filePath, line_start: i + 1 });
     }
   }
