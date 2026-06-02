@@ -126,3 +126,5 @@ export {
     SYSTEM_TOUR_TOOL,
 } from './system-tour-agent.js';
 export type { SystemTourAgent } from './system-tour-agent.js';
+
+export { RdsSystemTourRepository } from './system-tour-persistence.js';
