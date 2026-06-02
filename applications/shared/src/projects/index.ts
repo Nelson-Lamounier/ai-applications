@@ -118,3 +118,11 @@ export type {
     KeyDecision,
     Tradeoff,
 } from './system-tour-types.js';
+
+export {
+    bedrockSystemTourAgent,
+    buildSystemTourSystemPrompt,
+    parseSystemTourResponse,
+    SYSTEM_TOUR_TOOL,
+} from './system-tour-agent.js';
+export type { SystemTourAgent } from './system-tour-agent.js';

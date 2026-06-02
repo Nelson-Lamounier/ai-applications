@@ -139,6 +139,7 @@ export type AgentName =
     | 'resume-builder'
     | 'project-clustering'
     | 'project-case-study'
+    | 'project-system-tour'
     // Ingestion profile pipeline (migrated off raw InvokeModel onto runAgent).
     | 'profile-mirror' | 'profile-direction' | 'profile-reconciliation'
     | 'profile-diagnostic' | 'profile-extract' | 'retrieval-probe'
