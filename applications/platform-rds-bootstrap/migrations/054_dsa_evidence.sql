@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS dsa_evidence (
   signal         TEXT NOT NULL,        -- which detector fired: networkx_import | heap | tree_type | memoization | comparator
   raw_name       TEXT NOT NULL,        -- matched token, e.g. 'networkx'
   file_path      TEXT NOT NULL,
-  line_start     INT,
+  line_start     INT NOT NULL,         -- always 1-indexed; NOT NULL so the uq_ index dedup holds (NULL != NULL in PG)
   confidence     REAL NOT NULL,        -- per-signal 0.70-0.80
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );

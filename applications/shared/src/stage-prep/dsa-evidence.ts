@@ -10,7 +10,7 @@ export class DsaTopicResolver {
 export interface DsaEvidenceRow {
   readonly repoFullName: string; readonly commitSha: string; readonly dsaTopic: string;
   readonly signal: string; readonly rawName: string; readonly filePath: string;
-  readonly lineStart: number | null; readonly confidence: number;
+  readonly lineStart: number; readonly confidence: number;
 }
 
 export class RdsDsaEvidenceRepository {

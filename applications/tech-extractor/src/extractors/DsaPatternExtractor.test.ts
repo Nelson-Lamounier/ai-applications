@@ -47,4 +47,15 @@ describe('detectDsaPatterns — do NOT detect (necessary-not-sufficient)', () =>
     expect(detectDsaPatterns('s=[]\ns.append(1)\ns.pop()\nseen=set()\n', 'python', 'x.py')).toEqual([]));
   it('plain sort without comparator → nothing', () =>
     expect(detectDsaPatterns('xs.sort()\nsorted(xs)\n', 'python', 'x.py')).toEqual([]));
+  // Regression: false positives caught in adversarial review (2026-06-02).
+  it('Flask-Caching @cache.cached / @cache.memoize → nothing', () => {
+    expect(detectDsaPatterns('@cache.cached(timeout=300)\ndef view(): ...\n', 'python', 'v.py')).toEqual([]);
+    expect(detectDsaPatterns('@cache.memoize()\ndef view(): ...\n', 'python', 'v.py')).toEqual([]);
+  });
+  it('commented-out networkx / heapq imports → nothing', () => {
+    expect(detectDsaPatterns('# import networkx as nx\n', 'python', 'g.py')).toEqual([]);
+    expect(detectDsaPatterns('# import heapq\n', 'python', 'h.py')).toEqual([]);
+  });
+  it('Java util method named compare (not a Comparator) → nothing', () =>
+    expect(detectDsaPatterns('int r = VersionUtil.compare(a, b);\n', 'java', 'X.java')).toEqual([]));
 });
