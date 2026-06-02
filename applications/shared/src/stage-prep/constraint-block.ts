@@ -18,6 +18,7 @@ export interface StagePrepConstraints {
     readonly processShape: ProcessStage[];
     readonly comp: CompBenchmark | null;
     readonly gapTemplates: PrepScaffold[];
+    readonly storyScaffolds: PrepScaffold[];   // STAR-style story STRUCTURES (filled from real evidence)
     readonly compTarget: string | null;
     readonly dsaTopics?: string[];   // display names of JD-implied DSA topics
     readonly roundType?: string;     // technical round_type for the company
@@ -45,10 +46,11 @@ export async function loadStagePrepConstraints(
 ): Promise<StagePrepConstraints> {
     const profile = await repo.getCompanyProfile(normalizeCompanyKey(args.targetCompany));
     const companyType = profile?.companyType ?? '*';
-    const [expectation, comp, gapTemplates] = await Promise.all([
+    const [expectation, comp, gapTemplates, storyScaffolds] = await Promise.all([
         repo.getStageExpectation(companyType, args.roleFamily, args.stage),
         repo.getCompBenchmark(args.roleFamily, args.seniority, args.region),
         repo.listScaffolds('gap_handling'),
+        repo.listScaffolds('story_scaffold'),
     ]);
     const relevantStage =
         profile?.processShape.find(s => s.stage === args.stage)
@@ -60,6 +62,7 @@ export async function loadStagePrepConstraints(
         processShape: profile?.processShape ?? [],
         comp,
         gapTemplates,
+        storyScaffolds,
         compTarget: args.compTarget,
         roundType: relevantStage?.round_type ?? undefined,
     };
@@ -117,6 +120,11 @@ export function buildStagePrepConstraintBlock(c: StagePrepConstraints): string {
     if (c.gapTemplates.length) {
         const titles = c.gapTemplates.map(g => g.title).join('; ');
         lines.push(`When the candidate has an evidence gap on a topic, use a gap-handling approach (${titles}).`);
+    }
+
+    if (c.storyScaffolds.length) {
+        const titles = c.storyScaffolds.map(s => s.title).join('; ');
+        lines.push(`Story structures the candidate can borrow (fill with their OWN verified evidence — never fabricate): ${titles}.`);
     }
 
     if (c.roundType) lines.push(`This interview round's type: ${c.roundType}.`);
