@@ -128,3 +128,14 @@ export {
 export type { SystemTourAgent } from './system-tour-agent.js';
 
 export { RdsSystemTourRepository } from './system-tour-persistence.js';
+
+export {
+    runSystemTour,
+    computeCaseStudyHash,
+} from './system-tour-orchestrator.js';
+export type {
+    RunSystemTourInput,
+    RunSystemTourOutput,
+    SystemTourAgentLike,
+    SystemTourCache,
+} from './system-tour-orchestrator.js';
