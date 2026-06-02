@@ -7,11 +7,14 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS project_system_tours (
   user_id      UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  project_id   UUID            NOT NULL REFERENCES projects(id) ON DELETE CASCADE UNIQUE,
+  project_id   UUID            PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   content      JSONB           NOT NULL,
   content_hash TEXT            NOT NULL,
   generated_at TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
+-- NOTE: no explicit GRANT — the cluster's ALTER DEFAULT PRIVILEGES grants tucaken_app
+-- DML on new tables automatically (verified: has_table_privilege = true), matching every
+-- migration since 049. project_id is the natural PK (one tour per project).
 
 CREATE INDEX IF NOT EXISTS idx_project_system_tours_user_id ON project_system_tours (user_id);
 
