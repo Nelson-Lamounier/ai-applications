@@ -48,14 +48,28 @@ const memoization: Detector = (l, lang) =>
   /^\s*@(functools\.)?(lru_cache|cache|memoize|memo)(?![\w.])/.test(l)
     ? { raw_name: 'memoize', topic_hint: 'dsa_dynamic_programming', signal: 'memoization', confidence: 0.72 } : null;
 
-const comparator: Detector = (l, lang) => {
-  if ((lang === 'python') && /\.sort\(\s*key\s*=|(^|\W)sorted\([^)]*\bkey\s*=/.test(l))
-    return { raw_name: 'comparator', topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 };
-  // Require the explicit Comparator receiver — a bare `.compare(` is any util method, not a custom comparator.
-  if ((lang === 'java') && /\bComparator\.(comparing|reverseOrder|compare)\b/.test(l))
-    return { raw_name: 'comparator', topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 };
+// A file path that looks like deliberate algorithmic work (DSA-practice dirs). Bare `sort`
+// is excluded (would match assort/resort/sortKey); algo `sorting/` dirs sit under `algorithms/`.
+const ALGO_CONTEXT = /(algorithm|leetcode|dsa|kata|competitive|hackerrank|codewars|data[_-]?structures?)/i;
+const isAlgoContextPath = (p: string): boolean => ALGO_CONTEXT.test(p);
+
+const SORTING_HIT = { raw_name: 'comparator', topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 } as const;
+
+// FP-gate (2026-06-02): a bare `.sort((a,b)=>…)` / `.sort(key=…)` is ubiquitous in web code
+// (~92% FP in the audit). Fire only on (a) an authored-comparator marker — any path — or
+// (b) an inline sort idiom located in an algorithm-named file.
+const comparator: Detector = (l, lang, filePath) => {
+  // (a) authored-comparator markers — path-independent (≈0 web FP).
+  if (lang === 'python' && /\bcmp_to_key\b/.test(l)) return SORTING_HIT;
+  if (lang === 'java' && /\bimplements\s+Comparator\b|\bimplements\s+Comparable\b|\bint\s+compareTo\s*\(/.test(l))
+    return SORTING_HIT;
+
+  // (b) inline sort idioms — only in an algorithmic-context file.
+  if (!isAlgoContextPath(filePath)) return null;
+  if (lang === 'python' && /\.sort\(\s*key\s*=|(^|\W)sorted\([^)]*\bkey\s*=/.test(l)) return SORTING_HIT;
+  if (lang === 'java' && /\bComparator\.(comparing|reverseOrder|thenComparing)\b/.test(l)) return SORTING_HIT;
   if ((lang === 'typescript' || lang === 'javascript') && /\.sort\(\s*\([^)]*\)\s*=>|\bcompareFn\b/.test(l))
-    return { raw_name: 'comparator', topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 };
+    return SORTING_HIT;
   return null;
 };
 

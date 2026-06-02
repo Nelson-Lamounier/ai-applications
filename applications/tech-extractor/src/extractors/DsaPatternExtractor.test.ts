@@ -26,8 +26,8 @@ describe('detectDsaPatterns — admissible signals', () => {
       .toMatchObject({ topic_hint: 'dsa_dynamic_programming', signal: 'memoization', confidence: 0.72 });
     expect(detectDsaPatterns('@cache\ndef f(): ...\n', 'python', 'm.py').length).toBe(1);
   });
-  it('5. custom comparator sort → dsa_sorting @0.70', () => {
-    expect(detectDsaPatterns('xs.sort(key=lambda x: x.cost)\n', 'python', 's.py')[0])
+  it('5. inline sort in an algo-context path → dsa_sorting @0.70', () => {
+    expect(detectDsaPatterns('xs.sort(key=lambda x: x.cost)\n', 'python', 'algorithms/greedy/s.py')[0])
       .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 });
   });
 });
@@ -58,4 +58,52 @@ describe('detectDsaPatterns — do NOT detect (necessary-not-sufficient)', () =>
   });
   it('Java util method named compare (not a Comparator) → nothing', () =>
     expect(detectDsaPatterns('int r = VersionUtil.compare(a, b);\n', 'java', 'X.java')).toEqual([]));
+});
+
+describe('detectDsaPatterns — comparator FP-gate (2026-06-02)', () => {
+  // (a) Authored-comparator markers fire regardless of path (≈0 web FP).
+  it('python cmp_to_key (any path) → comparator', () => {
+    expect(detectDsaPatterns('ys = sorted(xs, key=cmp_to_key(mycmp))\n', 'python', 'util.py')[0])
+      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 });
+  });
+  it('java implements Comparator (any path) → comparator', () => {
+    expect(detectDsaPatterns('class ByAge implements Comparator<P> {\n', 'java', 'Main.java')[0])
+      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
+  });
+  it('java implements Comparable (any path) → comparator', () => {
+    expect(detectDsaPatterns('public class P implements Comparable<P> {\n', 'java', 'P.java')[0])
+      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
+  });
+  it('java compareTo override (any path) → comparator', () => {
+    expect(detectDsaPatterns('    public int compareTo(P o) { return 0; }\n', 'java', 'P.java')[0])
+      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
+  });
+
+  // (b) Inline sort idioms fire ONLY in an algorithm-named path.
+  it('python inline keyed sort in algorithms/ path → comparator', () => {
+    expect(detectDsaPatterns('intervals.sort(key=lambda i: i.start)\n', 'python', 'algorithms/array/merge_intervals.py')[0])
+      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
+  });
+  it('ts inline comparator in src/algorithms path → comparator', () => {
+    expect(detectDsaPatterns('arr.sort((a, b) => a - b)\n', 'typescript', 'src/algorithms/quicksort.ts')[0])
+      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
+  });
+  it('java Comparator.thenComparing in data_structures path → comparator', () => {
+    expect(detectDsaPatterns('Comparator.comparing(P::a).thenComparing(P::b);\n', 'java', 'data_structures/Heap.java')[0])
+      .toMatchObject({ topic_hint: 'dsa_sorting', signal: 'comparator' });
+  });
+
+  // FP killers — the web-app sorts that broke the gate now emit NOTHING.
+  it('NEGATIVE: ts web sort in src/retrieval.ts → nothing', () => {
+    expect(detectDsaPatterns('items.sort((a, b) => b.score - a.score)\n', 'typescript', 'src/retrieval.ts')).toEqual([]);
+  });
+  it('NEGATIVE: ts multi-key web sort in a component → nothing', () => {
+    expect(detectDsaPatterns('rows.sort((a, b) => b.x - a.x || a.y - b.y)\n', 'typescript', 'app/components/Dashboard.tsx')).toEqual([]);
+  });
+  it('NEGATIVE: python keyed sort in a non-algo path → nothing', () => {
+    expect(detectDsaPatterns('users.sort(key=lambda x: x.name)\n', 'python', 'app/models.py')).toEqual([]);
+  });
+  it('NEGATIVE: bare Comparator.comparing outside algo path → nothing', () => {
+    expect(detectDsaPatterns('users.sort(Comparator.comparing(User::getName));\n', 'java', 'src/UserService.java')).toEqual([]);
+  });
 });
