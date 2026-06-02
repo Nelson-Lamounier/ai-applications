@@ -25,11 +25,14 @@ import {
     BedrockGroundingVerifier,
     RedisExactCache,
     bedrockCaseStudyAgent,
+    bedrockSystemTourAgent,
     bootstrapK8sObservability,
     isFeatureEnabled,
     pushFinalMetrics,
     recordInvocationToRds,
     runCaseStudyOrchestration,
+    runSystemTour,
+    RdsSystemTourRepository,
 } from '@bedrock/shared';
 import type { BasePipelineContext } from '@bedrock/shared';
 
@@ -130,6 +133,23 @@ async function main(): Promise<void> {
             ctx,
         });
 
+        // S7b: generate the project's system-tour walkthrough from the fresh case study.
+        // Fail-open — the case study is already persisted; a tour failure must not fail the job.
+        let systemTourGenerated = false;
+        try {
+            await runSystemTour({
+                projectId: env.projectId,
+                userId:    env.userId,
+                caseStudy: out.caseStudy,
+                agent:     bedrockSystemTourAgent,
+                repo:      new RdsSystemTourRepository(pool),
+                ctx,
+            });
+            systemTourGenerated = true;
+        } catch (err) {
+            log.warn({ err: String(err) }, 'system-tour generation failed (non-fatal)');
+        }
+
         await updatePipelineRun(
             pool,
             env.pipelineRunId,
@@ -147,6 +167,7 @@ async function main(): Promise<void> {
             architectureUpserted:      out.persisted.architectureUpserted,
             depthMarkersUpserted:      out.persisted.depthMarkersUpserted,
             skippedSections:           out.persisted.skippedSections,
+            systemTourGenerated,
             commitsLoaded:             out.contextLoaded.context.commits.length,
             kbChunksLoaded:            out.contextLoaded.context.kbChunks.length,
             tokens:                    ctx.cumulativeTokens,

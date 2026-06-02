@@ -448,6 +448,14 @@ export {
     loadCaseStudyContext,
     persistCaseStudy,
     runCaseStudyOrchestration,
+    // System tour (S7)
+    SystemTourSchema,
+    bedrockSystemTourAgent,
+    buildSystemTourSystemPrompt,
+    parseSystemTourResponse,
+    RdsSystemTourRepository,
+    runSystemTour,
+    computeCaseStudyHash,
 } from './projects/index.js';
 export type {
     ProjectComponentKind,
@@ -483,6 +491,13 @@ export type {
     PersistCaseStudySummary,
     RunCaseStudyInput,
     RunCaseStudyOutput,
+    // System tour (S7)
+    SystemTour,
+    SystemTourAgent,
+    RunSystemTourInput,
+    RunSystemTourOutput,
+    SystemTourAgentLike,
+    SystemTourCache,
 } from './projects/index.js';
 export * from './stage-prep/index.js';
 export { RdsStagePrepOntologyRepository } from './rds/implementations/RdsStagePrepOntologyRepository.js';
