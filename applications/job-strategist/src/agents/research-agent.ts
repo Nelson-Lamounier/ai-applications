@@ -23,6 +23,7 @@ import {
     RdsVectorStore,
     RdsExperienceVectorStore,
     TitanEmbeddingProvider,
+    RdsDsaTopicRepository,
     log,
 } from '@bedrock/shared';
 import { loadCareerHistory, formatCareerHistory } from './career-history.js';
@@ -279,6 +280,7 @@ function buildResearchMessage(
     kbContext: string,
     resumeData: StructuredResumeData | null,
     careerHistorySection = '',
+    dsaCatalog = '',
 ): string {
     const sections: string[] = [
         '## Job Description',
@@ -354,6 +356,19 @@ function buildResearchMessage(
         '- classificationNote: one line stating this is inferred from JD language, not guaranteed.',
         '',
     );
+
+    if (dsaCatalog) {
+        sections.push(
+            '## DSA topic catalog — map the JD to these CANONICAL names ONLY',
+            dsaCatalog,
+            '',
+            'Emit dsaTopicCalibration.likelyTopics = the subset this JD implies (canonicalName MUST be from the catalog above),' +
+            ' each with a confidence (0..1), a one-line rationale, and the exact jdEvidenceQuote phrase.' +
+            ' If the role implies NO DSA round (e.g. senior platform/infra with no coding signal), return likelyTopics: [].' +
+            ' honestyNote is mandatory: state these are inferred from JD language, not guaranteed.',
+            '',
+        );
+    }
 
     sections.push('Analyse this job description against the candidate\'s evidence and return the JSON research brief.');
 
@@ -471,6 +486,30 @@ const RESEARCH_TOOL = {
                     classificationNote: { type: 'string' },
                 },
                 required: ['primaryPillar','secondaryPillars','confidence','jdEvidenceTokens','classificationNote'],
+                additionalProperties: false,
+            },
+            dsaTopicCalibration: {
+                type: 'object',
+                properties: {
+                    likelyTopics: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                canonicalName:   { type: 'string' },
+                                displayName:     { type: 'string' },
+                                confidence:      { type: 'number' },
+                                rationale:       { type: 'string' },
+                                jdEvidenceQuote: { type: 'string' },
+                            },
+                            required: ['canonicalName','displayName','confidence','rationale','jdEvidenceQuote'],
+                            additionalProperties: false,
+                        },
+                    },
+                    honestyNote: { type: 'string' },
+                },
+                required: ['likelyTopics','honestyNote'],
+                additionalProperties: false,
             },
         },
         required: [
@@ -538,6 +577,13 @@ const ResearchModelSchema = z.object({
         confidence: z.number(),
         jdEvidenceTokens: z.array(z.string()),
         classificationNote: z.string(),
+    }).strict().optional(),
+    dsaTopicCalibration: z.object({
+        likelyTopics: z.array(z.object({
+            canonicalName: z.string(), displayName: z.string(), confidence: z.number(),
+            rationale: z.string(), jdEvidenceQuote: z.string(),
+        }).strict()),
+        honestyNote: z.string(),
     }).strict().optional(),
 }).strict();
 
@@ -676,10 +722,23 @@ export async function executeResearchAgent(
         }
     }
 
-    // 5. Build user message
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection);
+    // 5. Load DSA topic catalog and build catalog section (fail-open)
+    let dsaCatalog = '';
+    if (pool) {
+        try {
+            const topics = await new RdsDsaTopicRepository(pool).listTopics();
+            dsaCatalog = topics
+                .map(t => `- ${t.canonicalName} (${t.displayName}) [${t.category}] signals: ${t.jdSignalKeywords.join(', ')}`)
+                .join('\n');
+        } catch {
+            /* fail-open: no catalog → model emits empty calibration or omits */
+        }
+    }
 
-    // 6. Run agent
+    // 6. Build user message
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog);
+
+    // 7. Run agent
     const result = await runAgent<StrategistResearchResult>({
         config: RESEARCH_CONFIG,
         userMessage,

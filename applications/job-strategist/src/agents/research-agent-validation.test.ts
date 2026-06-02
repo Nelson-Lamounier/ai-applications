@@ -40,6 +40,19 @@ const VALID = {
 
 const INJECTED = { resumeData: null, kbContext: 'ctx', resumeConstraints: 'rules' };
 
+const VALID_DSA_CALIBRATION = {
+    likelyTopics: [
+        {
+            canonicalName: 'arrays-strings',
+            displayName: 'Arrays & Strings',
+            confidence: 0.85,
+            rationale: 'JD requires in-place array manipulation problems',
+            jdEvidenceQuote: 'solve complex array manipulation problems',
+        },
+    ],
+    honestyNote: 'These topics are inferred from JD language and signals — not confirmed interview format. Verify with recruiter.',
+};
+
 describe('validateResearchResult', () => {
     it('returns a typed result merged with injected (non-model) fields', () => {
         const r = validateResearchResult(VALID, INJECTED);
@@ -63,6 +76,43 @@ describe('validateResearchResult', () => {
     it('rejects an invalid enum (overallFitRating)', () => {
         expect(() => validateResearchResult({ ...VALID, overallFitRating: 'MAYBE' }, INJECTED))
             .toThrow(/schema validation/i);
+    });
+
+    it('validates and passes through dsaTopicCalibration when present', () => {
+        const r = validateResearchResult({ ...VALID, dsaTopicCalibration: VALID_DSA_CALIBRATION }, INJECTED);
+        expect(r.dsaTopicCalibration).toBeDefined();
+        expect(r.dsaTopicCalibration!.likelyTopics).toHaveLength(1);
+        expect(r.dsaTopicCalibration!.likelyTopics[0]!.canonicalName).toBe('arrays-strings');
+        expect(r.dsaTopicCalibration!.likelyTopics[0]!.confidence).toBe(0.85);
+        expect(r.dsaTopicCalibration!.honestyNote).toMatch(/inferred/i);
+    });
+
+    it('validates without dsaTopicCalibration (field is optional)', () => {
+        const r = validateResearchResult(VALID, INJECTED);
+        expect(r.dsaTopicCalibration).toBeUndefined();
+    });
+
+    it('rejects dsaTopicCalibration with a missing required topic sub-field', () => {
+        const broken = {
+            ...VALID,
+            dsaTopicCalibration: {
+                likelyTopics: [{ canonicalName: 'arrays-strings', displayName: 'Arrays & Strings', confidence: 0.9, rationale: 'test' }],
+                // missing jdEvidenceQuote
+                honestyNote: 'note',
+            },
+        };
+        expect(() => validateResearchResult(broken, INJECTED)).toThrow(/schema validation/i);
+    });
+
+    it('rejects dsaTopicCalibration missing honestyNote', () => {
+        const broken = {
+            ...VALID,
+            dsaTopicCalibration: {
+                likelyTopics: [],
+                // missing honestyNote
+            },
+        };
+        expect(() => validateResearchResult(broken, INJECTED)).toThrow(/schema validation/i);
     });
 });
 
