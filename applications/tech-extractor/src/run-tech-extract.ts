@@ -6,7 +6,9 @@ import {
     OntologyResolver, TechnologyOntologyRepository, TechnologyEvidenceRepository,
     TechnologyCandidateRepository, TechnologyParityRunRepository,
     bootstrapK8sObservability, pushFinalMetrics,
+    DsaTopicResolver, RdsDsaEvidenceRepository, RdsDsaTopicRepository,
 } from '@bedrock/shared';
+import { DsaPatternExtractor } from './extractors/DsaPatternExtractor.js';
 import { Counter, Gauge } from 'prom-client';
 
 import { parseEnv } from './env.js';
@@ -148,6 +150,25 @@ async function main(): Promise<void> {
             rootDir: extractDir, ontologyVersion, extractors,
         });
         for (const name of result.failedExtractors) extractorFailed.inc({ extractor: name });
+
+        // ── DSA real-work pattern evidence (fail-open: never breaks tech-extract) ──
+        try {
+            const dsaTopics = await new RdsDsaTopicRepository(pool).listTopics();
+            const dsaResolver = new DsaTopicResolver(new Set(dsaTopics.map((t) => t.canonicalName)));
+            const raw = await new DsaPatternExtractor(readFile, files).extract();
+            const dsaRows = raw
+                .map((e) => ({ canonical: dsaResolver.resolve(e.topic_hint), e }))
+                .filter((x) => x.canonical !== null)
+                .map((x) => ({
+                    repoFullName: env.repoFullName, commitSha: sha, dsaTopic: x.canonical as string,
+                    signal: x.e.signal, rawName: x.e.raw_name, filePath: x.e.file_path,
+                    lineStart: x.e.line_start, confidence: x.e.confidence,
+                }));
+            await new RdsDsaEvidenceRepository(pool).insertMany(env.userId, dsaRows);
+            log.info({ repo: env.repoFullName, sha, inserted: dsaRows.length, raw: raw.length }, 'dsa.evidence.persisted');
+        } catch (err) {
+            log.warn({ err: String(err) }, 'dsa.extraction.failed (non-fatal)');
+        }
 
         // Parity vs the LLM enricher's per-chunk technologies (GIN-indexed TEXT[]).
         let llmTechs: string[] = [];
