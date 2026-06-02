@@ -50,7 +50,7 @@ const memoization: Detector = (l, lang) =>
 
 // A file path that looks like deliberate algorithmic work (DSA-practice dirs). Bare `sort`
 // is excluded (would match assort/resort/sortKey); algo `sorting/` dirs sit under `algorithms/`.
-const ALGO_CONTEXT = /(algorithm|leetcode|dsa|kata|competitive|hackerrank|codewars|data[_-]?structures?)/i;
+const ALGO_CONTEXT = /(algorithm|leetcode|dsa|\bkatas?\b|competitive|hackerrank|codewars|data[_-]?structures?)/i;
 const isAlgoContextPath = (p: string): boolean => ALGO_CONTEXT.test(p);
 
 const SORTING_HIT = { raw_name: 'comparator', topic_hint: 'dsa_sorting', signal: 'comparator', confidence: 0.70 } as const;
