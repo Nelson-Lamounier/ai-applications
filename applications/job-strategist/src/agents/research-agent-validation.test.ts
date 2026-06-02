@@ -115,3 +115,43 @@ describe('validateResearchResult', () => {
         expect(() => validateResearchResult(broken, INJECTED)).toThrow(/schema validation/i);
     });
 });
+
+// =============================================================================
+// pillarClassification — optional field tests (S2)
+// =============================================================================
+
+const BASE = {
+    targetRole: 'SRE', targetCompany: 'Acme', seniority: 'senior', domain: 'infra',
+    hardRequirements: [], softRequirements: [], implicitRequirements: [],
+    technologyInventory: { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
+    experienceSignals: { yearsExpected: '5', domainExperience: 'x', leadershipExpectation: 'y', scaleIndicators: 'z' },
+    verifiedMatches: [], partialMatches: [], gaps: [],
+    overallFitRating: 'STRONG FIT', fitSummary: 'ok',
+};
+const INJECTED_BASE = { resumeData: null, kbContext: '', resumeConstraints: '' };
+
+describe('validateResearchResult — pillarClassification (optional)', () => {
+    it('accepts a brief WITHOUT pillarClassification (optional)', () => {
+        const r = validateResearchResult(BASE, INJECTED_BASE);
+        expect(r.pillarClassification).toBeUndefined();
+    });
+
+    it('passes pillarClassification through when present', () => {
+        const r = validateResearchResult({
+            ...BASE,
+            pillarClassification: {
+                primaryPillar: 'devops-sre-platform', secondaryPillars: ['ai-engineering'],
+                confidence: 0.8, jdEvidenceTokens: ['on-call rotation', 'Kubernetes'], classificationNote: 'inferred from JD',
+            },
+        }, INJECTED_BASE);
+        expect(r.pillarClassification?.primaryPillar).toBe('devops-sre-platform');
+        expect(r.pillarClassification?.secondaryPillars).toEqual(['ai-engineering']);
+    });
+
+    it('rejects an invalid primaryPillar enum', () => {
+        expect(() => validateResearchResult({
+            ...BASE,
+            pillarClassification: { primaryPillar: 'wizardry', secondaryPillars: [], confidence: 1, jdEvidenceTokens: [], classificationNote: 'x' },
+        }, INJECTED_BASE)).toThrow(/schema validation/);
+    });
+});

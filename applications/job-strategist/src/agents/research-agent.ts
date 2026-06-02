@@ -344,6 +344,19 @@ function buildResearchMessage(
         sections.push('');
     }
 
+    sections.push(
+        '## Interview-prep pillar classification',
+        'Classify the role\'s interview-prep focus from the JOB DESCRIPTION LANGUAGE ONLY and emit it as `pillarClassification`.',
+        '- primaryPillar = "swe-general" UNLESS the JD clearly emphasizes one of:',
+        '  • "swe-dsa" — algorithms/data-structures/LeetCode/coding-interview/complexity',
+        '  • "devops-sre-platform" — Kubernetes/Terraform/cloud/SRE/on-call/incident/SLO/reliability/platform',
+        '  • "ai-engineering" — LLM/RAG/embeddings/vector/prompt/evals/fine-tune/agent/MCP/inference',
+        '- secondaryPillars: every OTHER pillar the JD also applies to (multi-label; [] if none).',
+        '- jdEvidenceTokens: the VERBATIM JD phrases that drove the choice (≥1 when primaryPillar≠"swe-general").',
+        '- classificationNote: one line stating this is inferred from JD language, not guaranteed.',
+        '',
+    );
+
     if (dsaCatalog) {
         sections.push(
             '## DSA topic catalog — map the JD to these CANONICAL names ONLY',
@@ -463,6 +476,18 @@ const RESEARCH_TOOL = {
             },
             overallFitRating: { type: 'string', enum: ['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH'] },
             fitSummary:        { type: 'string' },
+            pillarClassification: {
+                type: 'object',
+                properties: {
+                    primaryPillar: { type: 'string', enum: ['swe-general','swe-dsa','devops-sre-platform','ai-engineering'] },
+                    secondaryPillars: { type: 'array', items: { type: 'string', enum: ['swe-general','swe-dsa','devops-sre-platform','ai-engineering'] } },
+                    confidence: { type: 'number' },
+                    jdEvidenceTokens: STR_ARRAY,
+                    classificationNote: { type: 'string' },
+                },
+                required: ['primaryPillar','secondaryPillars','confidence','jdEvidenceTokens','classificationNote'],
+                additionalProperties: false,
+            },
             dsaTopicCalibration: {
                 type: 'object',
                 properties: {
@@ -546,6 +571,13 @@ const ResearchModelSchema = z.object({
     }).strict()),
     overallFitRating: z.enum(['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH']),
     fitSummary: z.string(),
+    pillarClassification: z.object({
+        primaryPillar: z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering']),
+        secondaryPillars: z.array(z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering'])),
+        confidence: z.number(),
+        jdEvidenceTokens: z.array(z.string()),
+        classificationNote: z.string(),
+    }).strict().optional(),
     dsaTopicCalibration: z.object({
         likelyTopics: z.array(z.object({
             canonicalName: z.string(), displayName: z.string(), confidence: z.number(),

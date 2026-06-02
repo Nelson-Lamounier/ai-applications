@@ -370,6 +370,15 @@ export interface StrategistResearchResult {
     /** One-paragraph honest assessment */
     readonly fitSummary: string;
 
+    /** JD interview-prep pillar classification (inferred from JD language; optional). */
+    readonly pillarClassification?: {
+        readonly primaryPillar: 'swe-general' | 'swe-dsa' | 'devops-sre-platform' | 'ai-engineering';
+        readonly secondaryPillars: ReadonlyArray<'swe-general' | 'swe-dsa' | 'devops-sre-platform' | 'ai-engineering'>;
+        readonly confidence: number;
+        readonly jdEvidenceTokens: string[];
+        readonly classificationNote: string;
+    };
+
     /** Structured resume data passed through pipeline context (source of truth) */
     readonly resumeData: StructuredResumeData | null;
 
