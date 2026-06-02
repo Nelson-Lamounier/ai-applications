@@ -7,8 +7,10 @@ import {
     TechnologyCandidateRepository, TechnologyParityRunRepository,
     bootstrapK8sObservability, pushFinalMetrics,
     DsaTopicResolver, RdsDsaEvidenceRepository, RdsDsaTopicRepository,
+    AiTopicResolver, RdsAiEvidenceRepository, RdsAiTopicRepository,
 } from '@bedrock/shared';
 import { DsaPatternExtractor } from './extractors/DsaPatternExtractor.js';
+import { AiPatternExtractor } from './extractors/AiPatternExtractor.js';
 import { Counter, Gauge } from 'prom-client';
 
 import { parseEnv } from './env.js';
@@ -114,6 +116,7 @@ async function main(): Promise<void> {
     const parityRepo    = new TechnologyParityRunRepository(pool);
 
     const dsaEvidenceRepo = new RdsDsaEvidenceRepository(pool);
+    const aiEvidenceRepo = new RdsAiEvidenceRepository(pool);
 
     try {
         // Per-lane idempotency: tech and DSA each own their own commit short-circuit, so
@@ -123,8 +126,10 @@ async function main(): Promise<void> {
             && await evidenceRepo.hasEvidenceForCommit(env.userId, env.repoFullName, env.commitSha);
         const dsaDone = !!env.commitSha
             && await dsaEvidenceRepo.hasDsaScanForCommit(env.userId, env.repoFullName, env.commitSha);
-        if (techDone && dsaDone) {
-            log.info({ repo: env.repoFullName, sha }, 'short-circuit: tech + dsa evidence exist');
+        const aiDone = !!env.commitSha
+            && await aiEvidenceRepo.hasAiScanForCommit(env.userId, env.repoFullName, env.commitSha);
+        if (techDone && dsaDone && aiDone) {
+            log.info({ repo: env.repoFullName, sha }, 'short-circuit: tech + dsa + ai evidence exist');
             return;
         }
 
@@ -214,6 +219,31 @@ async function main(): Promise<void> {
                 log.info({ repo: env.repoFullName, sha, inserted: dsaRows.length, raw: raw.length }, 'dsa.evidence.persisted');
             } catch (err) {
                 log.warn({ err: String(err) }, 'dsa.extraction.failed (non-fatal)');
+            }
+        }
+
+        // ── AI real-work practice lane (fail-open; own scan marker) ──
+        // Own idempotency via the scan marker, so it backfills commits tech/dsa already scanned.
+        if (!aiDone) {
+            try {
+                const aiTopics = await new RdsAiTopicRepository(pool).listCanonicalNames();
+                const aiResolver = new AiTopicResolver(new Set(aiTopics));
+                const raw = await new AiPatternExtractor(readFile, files).extract();
+                const aiRows = raw
+                    .map((e) => ({ canonical: aiResolver.resolve(e.topic_hint), e }))
+                    .filter((x) => x.canonical !== null)
+                    .map((x) => ({
+                        repoFullName: env.repoFullName, commitSha: sha, aiTopic: x.canonical as string,
+                        signal: x.e.signal, rawName: x.e.raw_name, filePath: x.e.file_path,
+                        lineStart: x.e.line_start, confidence: x.e.confidence,
+                    }));
+                await aiEvidenceRepo.insertMany(env.userId, aiRows);
+                // Marker last: records "scanned" even when 0 matches, so no-AI repos are not
+                // re-downloaded on every re-sync. On insert failure we skip the marker → retry next run.
+                await aiEvidenceRepo.recordAiScan(env.userId, env.repoFullName, sha, aiRows.length);
+                log.info({ repo: env.repoFullName, sha, inserted: aiRows.length, raw: raw.length }, 'ai.evidence.persisted');
+            } catch (err) {
+                log.warn({ err: String(err) }, 'ai.extraction.failed (non-fatal)');
             }
         }
     } finally {
