@@ -157,3 +157,33 @@ describe('parseK8sManifestValues', () => {
         expect(out.filter(o => o.raw_name === 'aws_iam')).toHaveLength(1);
     });
 });
+
+describe('parseK8sManifest — S3 NetworkPolicy/RBAC distinct tokens', () => {
+    const names = (s: string) => parseK8sManifest(s, 'k8s.yaml').map(e => e.raw_name);
+
+    it('NetworkPolicy → kubernetes + k8s_networkpolicy (not k8s_rbac)', () => {
+        const out = names('apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: deny-all\n');
+        expect(out).toContain('kubernetes');
+        expect(out).toContain('k8s_networkpolicy');
+        expect(out).not.toContain('k8s_rbac');
+    });
+
+    it('RBAC kind → kubernetes + k8s_rbac (emitted once)', () => {
+        const out = names('apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: x\n');
+        expect(out).toContain('kubernetes');
+        expect(out.filter(n => n === 'k8s_rbac')).toHaveLength(1);
+    });
+
+    it('multiple RBAC docs in one file → k8s_rbac emitted once', () => {
+        const out = names('kind: Role\nmetadata:\n  name: r\n---\nkind: RoleBinding\nmetadata:\n  name: rb\n');
+        expect(out.filter(n => n === 'k8s_rbac')).toHaveLength(1);
+    });
+
+    it('Deployment unchanged → kubernetes + image, no k8s_networkpolicy/k8s_rbac', () => {
+        const out = names('kind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n      - image: nginx:1.25\n');
+        expect(out).toContain('kubernetes');
+        expect(out).toContain('nginx');
+        expect(out).not.toContain('k8s_networkpolicy');
+        expect(out).not.toContain('k8s_rbac');
+    });
+});
