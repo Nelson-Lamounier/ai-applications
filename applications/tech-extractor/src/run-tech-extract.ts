@@ -18,6 +18,7 @@ import { parseEnv } from './env.js';
 import { fetchTarball } from './tarball/fetchTarball.js';
 import { safeExtract } from './tarball/safeExtract.js';
 import { walkTextFiles } from './util/fileWalk.js';
+import { isTestFile } from './util/isTestFile.js';
 import { SyftExtractor } from './extractors/SyftExtractor.js';
 import { TreeSitterExtractor } from './extractors/TreeSitterExtractor.js';
 import { parseDockerfile } from './extractors/iac/DockerfileParser.js';
@@ -146,6 +147,10 @@ async function main(): Promise<void> {
         await safeExtract(tarPath, extractDir);
 
         const files = await walkTextFiles(extractDir);
+        // DSA + AI "real-work" lanes must not score test fixtures (a test's `class TreeNode`
+        // / `.sort((a,b)=>…)` / `cmp_to_key` is not real-work evidence). The tech/IaC lane
+        // keeps the full list — a real import in a test is still valid "uses X" evidence.
+        const patternFiles = files.filter((f) => !isTestFile(f));
         const readFile = (rel: string) => fs.readFile(path.join(extractDir, rel), 'utf-8');
 
         // ── Tech lane (syft/treesitter/iac → technology_evidence + parity) ──
@@ -204,7 +209,7 @@ async function main(): Promise<void> {
             try {
                 const dsaTopics = await new RdsDsaTopicRepository(pool).listTopics();
                 const dsaResolver = new DsaTopicResolver(new Set(dsaTopics.map((t) => t.canonicalName)));
-                const raw = await new DsaPatternExtractor(readFile, files).extract();
+                const raw = await new DsaPatternExtractor(readFile, patternFiles).extract();
                 const dsaRows = raw
                     .map((e) => ({ canonical: dsaResolver.resolve(e.topic_hint), e }))
                     .filter((x) => x.canonical !== null)
@@ -229,7 +234,7 @@ async function main(): Promise<void> {
             try {
                 const aiTopics = await new RdsAiTopicRepository(pool).listCanonicalNames();
                 const aiResolver = new AiTopicResolver(new Set(aiTopics));
-                const raw = await new AiPatternExtractor(readFile, files).extract();
+                const raw = await new AiPatternExtractor(readFile, patternFiles).extract();
                 const aiRows = raw
                     .map((e) => ({ canonical: aiResolver.resolve(e.topic_hint), e }))
                     .filter((x) => x.canonical !== null)
