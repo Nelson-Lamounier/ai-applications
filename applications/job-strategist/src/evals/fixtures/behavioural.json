@@ -1,0 +1,21 @@
+{
+  "input": {
+    "analysisXml": "<analysis><fit>STRONG</fit></analysis>",
+    "stage": "behavioural",
+    "candidateSets": []
+  },
+  "output": {
+    "stage": "behavioural",
+    "stageDescription": "Behavioural round — STAR stories.",
+    "technicalQuestions": [],
+    "behaviouralQuestions": [
+      { "question": "Tell me about a conflict you resolved.", "answerFramework": "STAR: Situation (migration), Task, Action (I led), Result (quantified).", "sourceProject": "cdk-monitoring", "difficulty": "medium", "keyPoints": ["ownership", "influence without authority"] }
+    ],
+    "difficultQuestions": [
+      { "question": "Tell me about a failure.", "answerFramework": "Honest example with lesson.", "bridgeStrategy": "Show growth, not blame." }
+    ],
+    "technicalPrepChecklist": [],
+    "questionsToAsk": [ { "question": "How does the team give feedback?", "rationale": "culture read" } ],
+    "coachingNotes": "Anchor every story in a real, documented experience."
+  }
+}

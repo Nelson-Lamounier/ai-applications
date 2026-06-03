@@ -1,0 +1,35 @@
+{
+  "input": {
+    "analysisXml": "<analysis><fit>STRONG</fit></analysis>",
+    "stage": "technical-1",
+    "candidateSets": [
+      { "jdSkill": "Kubernetes", "candidates": [
+        { "projectId": "p1", "projectName": "AI Applications", "source": "component", "tier": "demonstrated", "id": "c1", "label": "EKS self-healing operator" }
+      ] },
+      { "jdSkill": "Kafka", "candidates": [] }
+    ]
+  },
+  "output": {
+    "stage": "technical-1",
+    "stageDescription": "Technical interview — coding, AWS, K8s.",
+    "technicalQuestions": [
+      { "question": "Walk through your K8s operator.", "answerFramework": "Concept then your EKS operator.", "sourceProject": "AI Applications", "difficulty": "medium", "keyPoints": ["controller pattern", "drift remediation"] }
+    ],
+    "behaviouralQuestions": [],
+    "difficultQuestions": [
+      { "question": "No Kafka experience — how do you cope?", "answerFramework": "Honest bridge from streaming basics.", "bridgeStrategy": "Acknowledge gap, map to SQS/Kinesis." }
+    ],
+    "technicalPrepChecklist": [
+      { "topic": "Kafka fundamentals", "priority": "high", "rationale": "No project evidence; needed for JD.", "suggestedResources": ["Kafka docs"] }
+    ],
+    "questionsToAsk": [ { "question": "How does the team run on-call?", "rationale": "ops maturity" } ],
+    "coachingNotes": "Lead with the operator project.",
+    "skillTransfer": [
+      { "jdSkill": "Kubernetes", "tier": "demonstrated", "projectId": "p1", "projectName": "AI Applications",
+        "evidenceRefs": [ { "source": "component", "id": "c1", "label": "EKS self-healing operator" } ],
+        "narrative": "The JD needs Kubernetes; in AI Applications you built an EKS self-healing operator — that transfers directly." },
+      { "jdSkill": "Kafka", "tier": "gap", "projectId": null, "projectName": null, "evidenceRefs": [],
+        "narrative": "No documented Kafka work; prepare streaming fundamentals." }
+    ]
+  }
+}
