@@ -208,7 +208,7 @@ const InterviewQuestionSchema = z.object({
  * Runtime safety-net. `stage` is injected from pipeline context (not model
  * output) so it is omitted here. `.strict()` mirrors additionalProperties:false.
  */
-const CoachOutputSchema = z.object({
+export const CoachOutputSchema = z.object({
     stageDescription:     z.string(),
     technicalQuestions:   z.array(InterviewQuestionSchema),
     behaviouralQuestions: z.array(InterviewQuestionSchema),
@@ -337,7 +337,7 @@ function buildCoachMessage(
  * model can't silently drop them under output pressure (observed: jdTalkingPoints
  * omitted while careerArc/compScript emitted). Forced tool_use + required = guaranteed.
  */
-const PHONE_SCREEN_FIELDS = ['careerArcSummary', 'jdTalkingPoints', 'compScript'] as const;
+export const PHONE_SCREEN_FIELDS = ['careerArcSummary', 'jdTalkingPoints', 'compScript'] as const;
 
 /** Return the coach tool with phone-screen fields promoted to `required` for that stage. */
 export function coachToolForStage(stage: string): typeof COACH_TOOL {
