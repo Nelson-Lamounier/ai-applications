@@ -1,6 +1,6 @@
 /** @format */
 import type {
-  ProjectEvidenceInput, SkillCandidate, SkillCandidateSet,
+  ProjectEvidenceInput, SkillCandidate, SkillCandidateSet, SkillTransferEntry,
 } from './skill-transfer-types.js';
 
 const STOPWORDS = new Set([
@@ -61,4 +61,35 @@ export function joinSkillCandidates(
     }
     return { jdSkill, candidates };
   });
+}
+
+const GAP_NARRATIVE_FALLBACK =
+  'Not demonstrated in your projects yet — be honest about this and bridge from an adjacent strength.';
+
+/**
+ * Sanitise coach-emitted skillTransfer against the deterministic candidate sets.
+ * Any non-gap entry whose projectId or evidenceRef id is not a real candidate for
+ * that skill is demoted to an honest gap (anti-invention). Entries for skills not
+ * in the sets are dropped. Gap entries pass through.
+ */
+export function validateSkillTransfer(
+  entries: readonly SkillTransferEntry[],
+  sets: readonly SkillCandidateSet[],
+): SkillTransferEntry[] {
+  const bySkill = new Map(sets.map(s => [s.jdSkill, new Set(s.candidates.map(c => c.id))]));
+  const projectsBySkill = new Map(sets.map(s => [s.jdSkill, new Set(s.candidates.map(c => c.projectId))]));
+  const out: SkillTransferEntry[] = [];
+  for (const e of entries) {
+    const ids = bySkill.get(e.jdSkill);
+    if (!ids) continue; // unknown skill → drop
+    if (e.tier === 'gap') { out.push(e); continue; }
+    const projectOk = e.projectId != null && projectsBySkill.get(e.jdSkill)!.has(e.projectId);
+    const refsOk = e.evidenceRefs.every(r => ids.has(r.id));
+    if (projectOk && refsOk && e.evidenceRefs.length > 0) {
+      out.push(e);
+    } else {
+      out.push({ jdSkill: e.jdSkill, tier: 'gap', projectId: null, projectName: null, evidenceRefs: [], narrative: GAP_NARRATIVE_FALLBACK });
+    }
+  }
+  return out;
 }
