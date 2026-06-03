@@ -19,7 +19,9 @@ import {
     bootstrapK8sObservability, pushFinalMetrics,
     RdsStagePrepOntologyRepository, toRoleFamily, toCompSeniority,
     loadStagePrepConstraints, buildStagePrepConstraintBlock,
+    RdsProjectEvidenceRepository, joinSkillCandidates,
 } from '@bedrock/shared';
+import type { SkillCandidateSet } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeCoachAgent }   from './agents/coach-agent.js';
@@ -121,7 +123,26 @@ async function main(): Promise<void> {
             ...(research.verifiedMatches ?? []).map(m => `- ${m.skill} (${m.depth}) — ${m.sourceCitation}`),
         ].join('\n') : undefined;
 
-        const coaching = await executeCoachAgent(ctx, analysis, constraintBlock, evidenceBlock);
+        // Skill-transfer candidate sets (technical stage only, fail-open).
+        let skillCandidateSets: SkillCandidateSet[] = [];
+        if (env.interviewStage.startsWith('technical')) {
+            try {
+                const evidence = await new RdsProjectEvidenceRepository(pool).load(env.userId);
+                if (evidence.projects.length > 0) {
+                    const jdSkills = [
+                        ...(research?.verifiedMatches ?? []),
+                        ...(research?.partialMatches ?? []),
+                        ...(research?.gaps ?? []),
+                    ].map(m => m.skill).filter((s): s is string => !!s);
+                    const uniqueSkills = [...new Set(jdSkills)];
+                    skillCandidateSets = joinSkillCandidates(uniqueSkills, evidence);
+                }
+            } catch (err) {
+                log.warn({ err: String(err) }, 'skill-transfer.candidates.failed (non-fatal)');
+            }
+        }
+
+        const coaching = await executeCoachAgent(ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets);
 
         await persistCoachingContent(pool, {
             applicationId: env.applicationId,
