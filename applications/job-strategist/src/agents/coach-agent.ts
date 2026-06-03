@@ -13,7 +13,7 @@
  */
 
 import { z } from 'zod';
-import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
+import { BaseAgent, parseJsonResponse, log, validateSkillTransfer } from '@bedrock/shared';
 import { COACH_PERSONA_SYSTEM_PROMPT } from '../prompts/coach-persona.js';
 import type {
     AgentConfig,
@@ -21,6 +21,8 @@ import type {
     StrategistPipelineContext,
     StrategistAnalysisResult,
     InterviewCoachResult,
+    SkillCandidateSet,
+    SkillTransferEntry,
 } from '@bedrock/shared';
 
 // =============================================================================
@@ -39,6 +41,8 @@ export interface CoachAgentInput {
     readonly constraintBlock?: string;
     /** Verified-evidence digest from the Research result (phone-screen grounding). */
     readonly evidenceBlock?: string;
+    /** Pre-serialised candidate block (from buildSkillCandidateBlock). */
+    readonly skillCandidateBlock?: string;
 }
 
 // =============================================================================
@@ -136,6 +140,30 @@ const COACH_TOOL = {
                 },
             },
             coachingNotes: { type: 'string' },
+            skillTransfer: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        jdSkill:     { type: 'string' },
+                        tier:        { type: 'string', enum: ['demonstrated', 'claimed', 'declared', 'gap'] },
+                        projectId:   { type: ['string', 'null'] },
+                        projectName: { type: ['string', 'null'] },
+                        evidenceRefs: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: { source: { type: 'string' }, id: { type: 'string' }, label: { type: 'string' }, fileLine: { type: 'string' } },
+                                required: ['source', 'id', 'label'],
+                                additionalProperties: false,
+                            },
+                        },
+                        narrative:   { type: 'string' },
+                    },
+                    required: ['jdSkill', 'tier', 'projectId', 'projectName', 'evidenceRefs', 'narrative'],
+                    additionalProperties: false,
+                },
+            },
             careerArcSummary: { type: 'string' },
             jdTalkingPoints: {
                 type: 'array',
@@ -200,6 +228,16 @@ const CoachOutputSchema = z.object({
         rationale: z.string(),
     }).strict()),
     coachingNotes: z.string(),
+    skillTransfer: z.array(z.object({
+        jdSkill:     z.string(),
+        tier:        z.enum(['demonstrated', 'claimed', 'declared', 'gap']),
+        projectId:   z.string().nullable(),
+        projectName: z.string().nullable(),
+        evidenceRefs: z.array(z.object({
+            source: z.string(), id: z.string(), label: z.string(), fileLine: z.string().optional(),
+        }).strict()),
+        narrative:   z.string(),
+    }).strict()).optional(),
     careerArcSummary: z.string().optional(),
     jdTalkingPoints: z.array(z.object({
         point:    z.string(),
@@ -211,6 +249,32 @@ const CoachOutputSchema = z.object({
         deflectTemplate: z.string(),
     }).strict().optional(),
 }).strict();
+
+// =============================================================================
+// SKILL CANDIDATE BLOCK SERIALISER
+// =============================================================================
+
+/** Render candidate sets as a compact, id-bearing block the model must cite from. */
+export function buildSkillCandidateBlock(sets: readonly SkillCandidateSet[]): string {
+    if (sets.length === 0) return '';
+    const lines = ['## Candidate project evidence per JD skill (cite ONLY these ids)'];
+    for (const s of sets) {
+        if (s.candidates.length === 0) { lines.push(`- ${s.jdSkill}: (no project evidence → tier=gap)`); continue; }
+        lines.push(`- ${s.jdSkill}:`);
+        for (const c of s.candidates) {
+            lines.push(`    [${c.tier}] project=${c.projectId} (${c.projectName}) source=${c.source} id=${c.id} :: ${c.label}${c.fileLine ? ` @${c.fileLine}` : ''}`);
+        }
+    }
+    lines.push(
+        'For EACH JD skill above, emit one skillTransfer entry. Pick the single best candidate ' +
+        '(prefer demonstrated > declared > claimed); set projectId/projectName/evidenceRefs to that ' +
+        "candidate's exact ids; narrate how the project work transfers to the JD skill. If a skill " +
+        'has no candidates, emit tier="gap", projectId=null, evidenceRefs=[], and honest bridge guidance. ' +
+        'NEVER cite an id not listed above. Also reference the matched project in any related ' +
+        'technicalPrepChecklist rationale.',
+    );
+    return lines.join('\n');
+}
 
 // =============================================================================
 // USER MESSAGE BUILDER
@@ -231,6 +295,7 @@ function buildCoachMessage(
     ctx: StrategistPipelineContext,
     constraintBlock?: string,
     evidenceBlock?: string,
+    skillCandidateBlock?: string,
 ): string {
     const sections: string[] = [
         `## Interview Stage: ${ctx.interviewStage}`,
@@ -250,6 +315,9 @@ function buildCoachMessage(
     }
     if (constraintBlock) {
         sections.push(constraintBlock, '');
+    }
+    if (skillCandidateBlock) {
+        sections.push(skillCandidateBlock, '');
     }
     sections.push(
         `Prepare interview coaching for the "${ctx.interviewStage}" stage. ` +
@@ -329,7 +397,7 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: CoachAgentInput, ctx: StrategistPipelineContext): string {
-        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock);
+        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock);
     }
 
     /**
@@ -419,6 +487,13 @@ export async function executeCoachAgent(
     analysis: StrategistAnalysisResult,
     constraintBlock?: string,
     evidenceBlock?: string,
+    skillCandidateSets?: readonly SkillCandidateSet[],
 ): Promise<AgentResult<InterviewCoachResult>> {
-    return coachAgent.execute({ analysis, constraintBlock, evidenceBlock }, ctx);
+    const skillCandidateBlock = buildSkillCandidateBlock(skillCandidateSets ?? []);
+    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock }, ctx);
+    if (skillCandidateSets && skillCandidateSets.length > 0) {
+        const raw = (result.data.skillTransfer ?? []) as SkillTransferEntry[];
+        (result.data as { skillTransfer?: unknown }).skillTransfer = validateSkillTransfer(raw, skillCandidateSets);
+    }
+    return result;
 }

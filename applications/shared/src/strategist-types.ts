@@ -15,6 +15,7 @@
  */
 
 import type { AgentResult, AgentInvocationLog } from './types.js';
+import type { SkillTransferEntry } from './stage-prep/skill-transfer-types.js';
 
 // =============================================================================
 // ENUMS & DOMAIN TYPES
@@ -700,6 +701,8 @@ export interface InterviewCoachResult {
     readonly jdTalkingPoints?: PhoneScreenTalkingPoint[];
     /** Phone-screen only: compensation conversation script */
     readonly compScript?: CompScript;
+    /** Optional grounded JD-skill ↔ project mapping (technical stage). */
+    readonly skillTransfer?: readonly SkillTransferEntry[];
 }
 
 // =============================================================================

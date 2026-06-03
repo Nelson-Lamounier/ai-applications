@@ -200,3 +200,20 @@ describe('coachToolForStage — phone-screen required fields', () => {
             .toEqual(expect.arrayContaining(['careerArcSummary', 'jdTalkingPoints', 'compScript']));
     });
 });
+
+import { buildSkillCandidateBlock } from './coach-agent.js';
+
+describe('buildSkillCandidateBlock', () => {
+    it('lists candidate ids per skill and a gap note for empties', () => {
+        const block = buildSkillCandidateBlock([
+            { jdSkill: 'Kubernetes', candidates: [{ projectId: 'p1', projectName: 'AI Apps', source: 'component', tier: 'demonstrated', id: 'c1', label: 'EKS' }] },
+            { jdSkill: 'Kafka', candidates: [] },
+        ]);
+        expect(block).toContain('id=c1');
+        expect(block).toContain('Kafka: (no project evidence → tier=gap)');
+        expect(block).toContain('cite ONLY these ids');
+    });
+    it('returns empty string for no sets', () => {
+        expect(buildSkillCandidateBlock([])).toBe('');
+    });
+});
