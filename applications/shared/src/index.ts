@@ -385,6 +385,24 @@ export type {
     IGroundingVerifier,
 } from './grounding/index.js';
 
+// ─── Prose Quality (stop-slop linter, flag mode) ─────────────────────────────
+export {
+    BedrockProseLinter,
+    PROSE_PASS_THRESHOLD,
+} from './prose-quality/index.js';
+export type {
+    BedrockProseLinterConfig,
+    ProseLinterCostContext,
+    IProseLinter,
+    ProseIssue,
+    ProseLinterMode,
+    ProseQualityInput,
+    ProseQualityResult,
+    ProseRegister,
+    ProseScore,
+    ProseSection,
+} from './prose-quality/index.js';
+
 // ─── Cache (Semantic Response Cache + Redis Read Cache) ──────────────────────
 export { PgSemanticCache } from './cache/index.js';
 export { RedisExactCache } from './cache/index.js';
