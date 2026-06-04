@@ -138,6 +138,31 @@ async function handleWaitPipeline(args: {
   }
 }
 
+/** Tail logs of transient coach/strategist Job pods in the job-strategist
+ *  namespace via kubectl (dev profile). Fail-soft: any kubectl/no-pod error
+ *  yields a friendly message instead of throwing. The AWS Labs eks MCP is the
+ *  richer alternative; this is the built-in fallback. */
+async function handleJobLogs(args: {
+  label?: string; runId?: string;
+}): Promise<{ pods: string; logs: string }> {
+  const sel = args.label ?? (args.runId ? `run-id=${args.runId}` : '');
+  const { execFileSync } = await import('node:child_process');
+  const env = { ...process.env, AWS_PROFILE: 'dev-account', AWS_REGION: DEV_TARGET.region };
+  const get = (kArgs: string[]): string => execFileSync('kubectl', kArgs, { env, encoding: 'utf-8' });
+  try {
+    const podArgs = ['get', 'pods', '-n', 'job-strategist', ...(sel ? ['-l', sel] : []), '-o', 'name'];
+    const pods = get(podArgs).trim();
+    if (!pods) return { pods: '(none)', logs: '(no pods — Job may be TTL-cleaned)' };
+    const logs = pods.split('\n')
+      .map((p) => get(['logs', '-n', 'job-strategist', p, '--tail', '200']))
+      .join('\n---\n');
+    return { pods, logs };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { pods: '(none)', logs: `(no pods or kubectl error: ${msg})` };
+  }
+}
+
 async function handleCleanup(): Promise<{ removed: number }> {
   const targets = session.cleanup;
   let removed = 0;
@@ -168,6 +193,10 @@ export function registerPrimitives(server: McpServer, logger: SessionLogger): vo
   tool(server, logger, 'smoke_wait_pipeline', {
     pipelineRunId: z.string(), timeoutMs: z.number().optional(),
   }, (args) => handleWaitPipeline(args as { pipelineRunId: string; timeoutMs?: number }));
+
+  tool(server, logger, 'smoke_job_logs', {
+    label: z.string().optional(), runId: z.string().optional(),
+  }, (args) => handleJobLogs(args));
 
   tool(server, logger, 'smoke_cleanup', {}, () => handleCleanup());
 }
