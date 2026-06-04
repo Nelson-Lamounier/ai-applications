@@ -14,7 +14,7 @@
 
 import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, log, validateSkillTransfer } from '@bedrock/shared';
-import { COACH_PERSONA_SYSTEM_PROMPT } from '../prompts/coach-persona.js';
+import { assembleCoachSystemPrompt } from '../prompts/coach/stages/index.js';
 import type {
     AgentConfig,
     AgentResult,
@@ -208,7 +208,7 @@ const InterviewQuestionSchema = z.object({
  * Runtime safety-net. `stage` is injected from pipeline context (not model
  * output) so it is omitted here. `.strict()` mirrors additionalProperties:false.
  */
-const CoachOutputSchema = z.object({
+export const CoachOutputSchema = z.object({
     stageDescription:     z.string(),
     technicalQuestions:   z.array(InterviewQuestionSchema),
     behaviouralQuestions: z.array(InterviewQuestionSchema),
@@ -337,7 +337,7 @@ function buildCoachMessage(
  * model can't silently drop them under output pressure (observed: jdTalkingPoints
  * omitted while careerArc/compScript emitted). Forced tool_use + required = guaranteed.
  */
-const PHONE_SCREEN_FIELDS = ['careerArcSummary', 'jdTalkingPoints', 'compScript'] as const;
+export const PHONE_SCREEN_FIELDS = ['careerArcSummary', 'jdTalkingPoints', 'compScript'] as const;
 
 /** Return the coach tool with phone-screen fields promoted to `required` for that stage. */
 export function coachToolForStage(stage: string): typeof COACH_TOOL {
@@ -352,12 +352,11 @@ export function coachToolForStage(stage: string): typeof COACH_TOOL {
 }
 
 /** Agent configuration for the Interview Coach Agent. */
-const COACH_CONFIG: AgentConfig = {
+const COACH_CONFIG: Omit<AgentConfig, 'systemPrompt'> = {
     agentName: 'strategist-coach',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: COACH_MAX_TOKENS,
     thinkingBudget: COACH_THINKING_BUDGET,
-    systemPrompt: COACH_PERSONA_SYSTEM_PROMPT,
     tool: COACH_TOOL,
 };
 
@@ -386,7 +385,11 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Coach agent configuration for this stage
      */
     protected getConfig(_input: CoachAgentInput, ctx: StrategistPipelineContext): AgentConfig {
-        return { ...COACH_CONFIG, tool: coachToolForStage(ctx.interviewStage) };
+        return {
+            ...COACH_CONFIG,
+            systemPrompt: assembleCoachSystemPrompt(ctx.interviewStage),
+            tool: coachToolForStage(ctx.interviewStage),
+        };
     }
 
     /**

@@ -27,6 +27,7 @@ export default tseslint.config(
       globals: { ...globals.node, ...globals.jest },
     },
     rules: {
+      'complexity':                                 ['error', 10],
       '@typescript-eslint/no-explicit-any':         'error',
       '@typescript-eslint/no-unused-vars':          ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],

@@ -1,0 +1,35 @@
+{
+  "input": {
+    "analysisXml": "<analysis><fit>STRONG</fit></analysis>",
+    "stage": "system-design",
+    "candidateSets": [
+      { "jdSkill": "Distributed Systems", "candidates": [
+        { "projectId": "p1", "projectName": "AI Applications", "source": "decision", "tier": "demonstrated", "id": "d1", "label": "Sharded ingestion pipeline with backpressure" }
+      ] },
+      { "jdSkill": "Event Streaming", "candidates": [] }
+    ]
+  },
+  "output": {
+    "stage": "system-design",
+    "stageDescription": "System design — architecture, scale, trade-offs.",
+    "technicalQuestions": [
+      { "question": "Design a horizontally-scalable ingestion pipeline.", "answerFramework": "Requirements then your sharded design.", "sourceProject": "AI Applications", "difficulty": "hard", "keyPoints": ["partitioning", "backpressure", "idempotent writes"] }
+    ],
+    "behaviouralQuestions": [],
+    "difficultQuestions": [
+      { "question": "No event-streaming experience — how would you approach it?", "answerFramework": "Honest bridge from batch ingestion.", "bridgeStrategy": "Acknowledge gap, map to Kinesis/SQS semantics." }
+    ],
+    "technicalPrepChecklist": [
+      { "topic": "Event streaming fundamentals", "priority": "high", "rationale": "No project evidence; needed for JD.", "suggestedResources": ["Kinesis docs"] }
+    ],
+    "questionsToAsk": [ { "question": "What is the current peak ingestion throughput?", "rationale": "scale envelope" } ],
+    "coachingNotes": "Lead with the sharded ingestion decision.",
+    "skillTransfer": [
+      { "jdSkill": "Distributed Systems", "tier": "demonstrated", "projectId": "p1", "projectName": "AI Applications",
+        "evidenceRefs": [ { "source": "decision", "id": "d1", "label": "Sharded ingestion pipeline with backpressure" } ],
+        "narrative": "The JD needs Distributed Systems; in AI Applications you designed a sharded ingestion pipeline with backpressure — that architectural decision transfers directly." },
+      { "jdSkill": "Event Streaming", "tier": "gap", "projectId": null, "projectName": null, "evidenceRefs": [],
+        "narrative": "No documented event-streaming work; prepare streaming fundamentals and bridge from batch ingestion." }
+    ]
+  }
+}
