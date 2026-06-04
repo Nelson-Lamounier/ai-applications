@@ -5,7 +5,9 @@ import { SessionLogger, defaultLogsDir, pruneLogs } from './logger.js';
 import { LOG_RETAIN } from './config.js';
 import { registerPrimitives } from './tools/primitives.js';
 import { registerSystemDesign } from './tools/system-design.js';
+import { loadEnvSmoke } from './env-file.js';
 
+const envFile = loadEnvSmoke();   // hydrate SMOKE_* creds before any tool runs
 const logsDir = defaultLogsDir();
 pruneLogs(logsDir, LOG_RETAIN);
 const stamp = new Date().toISOString();
@@ -16,4 +18,4 @@ registerPrimitives(server, logger);
 registerSystemDesign(server, logger);
 
 await server.connect(new StdioServerTransport());
-logger.log({ tool: '_boot', ok: true, params: { logsDir, retain: LOG_RETAIN } });
+logger.log({ tool: '_boot', ok: true, params: { logsDir, retain: LOG_RETAIN, envFile: envFile ?? '(none)' } });
