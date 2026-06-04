@@ -14,17 +14,22 @@
  * Output: a row in coaching_content (job_application_id, stage_type) upserted.
  */
 import type { Pool } from 'pg';
-import type { StrategistPipelineContext, StrategistAnalysisResult, StrategistResearchResult } from '@bedrock/shared';
+import type {
+    StrategistPipelineContext, StrategistAnalysisResult, StrategistResearchResult,
+    SkillCandidateSet, InterviewStage,
+} from '@bedrock/shared';
 import {
     bootstrapK8sObservability, pushFinalMetrics,
     RdsStagePrepOntologyRepository, toRoleFamily, toCompSeniority,
     loadStagePrepConstraints, buildStagePrepConstraintBlock,
     RdsProjectEvidenceRepository, joinSkillCandidates,
+    BedrockGroundingVerifier,
 } from '@bedrock/shared';
-import type { SkillCandidateSet } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
-import { executeCoachAgent }   from './agents/coach-agent.js';
+import { executeCoachAgent, buildSkillCandidateBlock } from './agents/coach-agent.js';
+import { stageUsesSkillTransfer } from './prompts/coach/stages/index.js';
+import { buildCoachContextChunks, extractCoachClaims } from './lib/coach-grounding.js';
 import { parseCoachEnv }       from './env-coach.js';
 import { getPool, closePool }  from './lib/pg.js';
 import {
@@ -67,6 +72,62 @@ const strategistDuration = new Histogram({
     buckets:    [10, 30, 60, 120, 300, 600, 1200, 1800],
     registers:  [obs.registry],
 });
+
+// Coach grounding verdicts (text-level). status ∈ GROUNDED|NOT_GROUNDED|error|skipped.
+const coachGrounding = new Counter({
+    name:       'job_strategist_coach_grounding_total',
+    help:       'Coach output grounding verdicts by stage and status.',
+    labelNames: ['stage', 'status'] as const,
+    registers:  [obs.registry],
+});
+
+// Coach grounding runs in 'flag' mode only: coach output is structured JSON, so
+// block-mode fallback substitution (a one-line string) would corrupt it. Flag
+// records an ungrounded verdict via telemetry without altering what is persisted.
+const coachGroundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
+
+/**
+ * Verify the coach's experiential claims against its grounding sources and record
+ * the verdict (metric + log). Flag-mode + fail-open: this is pure observability —
+ * it never alters persisted output and never throws into the pipeline.
+ */
+async function verifyCoachGrounding(
+    pool: Pool,
+    env: ReturnType<typeof parseCoachEnv>,
+    sources: Parameters<typeof buildCoachContextChunks>[0],
+    coaching: Parameters<typeof extractCoachClaims>[0],
+): Promise<void> {
+    try {
+        const contextChunks = buildCoachContextChunks(sources);
+        const claims = extractCoachClaims(coaching);
+        if (contextChunks.length === 0 || claims.trim().length === 0) {
+            coachGrounding.inc({ stage: env.interviewStage, status: 'skipped' });
+            return;
+        }
+        const g = await coachGroundingVerifier.verify({
+            query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
+            contextChunks,
+            answer: claims,
+        }, { pool, userId: env.userId });
+        coachGrounding.inc({ stage: env.interviewStage, status: g.status });
+        if (g.status === 'NOT_GROUNDED') {
+            log.warn({
+                coachPipelineRunId: env.coachPipelineRunId,
+                applicationId:      env.applicationId,
+                stage:              env.interviewStage,
+                reason:             g.reason,
+                ungroundedClaims:   g.ungroundedClaims,
+            }, 'coach_grounding_not_grounded');
+        }
+    } catch (e) {
+        coachGrounding.inc({ stage: env.interviewStage, status: 'error' });
+        log.warn({
+            coachPipelineRunId: env.coachPipelineRunId,
+            stage:              env.interviewStage,
+            err:                (e as Error).message,
+        }, 'coach_grounding_failed (non-fatal)');
+    }
+}
 
 async function main(): Promise<void> {
     const env  = parseCoachEnv();
@@ -123,9 +184,11 @@ async function main(): Promise<void> {
             ...(research.verifiedMatches ?? []).map(m => `- ${m.skill} (${m.depth}) — ${m.sourceCitation}`),
         ].join('\n') : undefined;
 
-        // Skill-transfer candidate sets (technical stage only, fail-open).
+        // Skill-transfer candidate sets (project-anchored stages — technical +
+        // system-design — fail-open). joinSkillCandidates is skill-agnostic, so
+        // system-design reuses the same deterministic candidate machinery.
         let skillCandidateSets: SkillCandidateSet[] = [];
-        if (env.interviewStage.startsWith('technical')) {
+        if (stageUsesSkillTransfer(env.interviewStage as InterviewStage)) {
             try {
                 const evidence = await new RdsProjectEvidenceRepository(pool).load(env.userId);
                 if (evidence.projects.length > 0) {
@@ -143,6 +206,16 @@ async function main(): Promise<void> {
         }
 
         const coaching = await executeCoachAgent(ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets);
+
+        // Text-level grounding on coach output — runs for EVERY stage. Complements
+        // the deterministic citation-level guard already in executeCoachAgent
+        // (validateSkillTransfer). Fail-open: never fails the run.
+        await verifyCoachGrounding(pool, env, {
+            analysisXml:         analysis.analysisXml,
+            evidenceBlock,
+            constraintBlock,
+            skillCandidateBlock: buildSkillCandidateBlock(skillCandidateSets),
+        }, coaching.data);
 
         await persistCoachingContent(pool, {
             applicationId: env.applicationId,
