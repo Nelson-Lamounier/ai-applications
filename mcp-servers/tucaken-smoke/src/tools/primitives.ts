@@ -1,4 +1,147 @@
 /** @format */
+import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionLogger } from '../logger.js';
-export function registerPrimitives(_server: McpServer, _logger: SessionLogger): void { /* Task 8 */ }
+import {
+  COGNITO,
+  resolveCognitoClientId,
+  resolveRdsConn,
+  mintCognitoJwt,
+  decodeJwtSub,
+  startPortForward,
+  connectRds,
+  type Endpoints,
+  type PortForward,
+  type RdsClient,
+  SmokeSetupError,
+} from '../../../../scripts/smoke/lib/index.js';
+import { tool } from './register.js';
+import { session, requireAuth } from '../session.js';
+import { assertDevTarget, isSelectOnly } from '../guards.js';
+import { DEV_TARGET } from '../config.js';
+
+// Forwarded local ports — mirror scripts/smoke-e2e.ts so the tunnels map the
+// in-cluster services (svc/pgbouncer:5432, svc/admin-api:3002) to localhost.
+const PG_LOCAL_PORT = 15432;
+const ADMIN_API_LOCAL_PORT = 13002;
+const ADMIN_API_BASE_URL = `http://127.0.0.1:${ADMIN_API_LOCAL_PORT}`;
+const PG_HOST = '127.0.0.1';
+
+/** Lazily open (and remember) the pgbouncer port-forward used by SQL reads. */
+async function ensureTunnel(): Promise<void> {
+  if (session.tunnelStop) return;
+  const fwd: PortForward = await startPortForward({
+    namespace: 'platform', target: 'svc/pgbouncer',
+    localPort: PG_LOCAL_PORT, remotePort: 5432,
+  });
+  session.tunnelStop = fwd.stop;
+}
+
+/** Connect to the forwarded RDS using the resolved credentials + authed user. */
+async function connectViaTunnel(): Promise<RdsClient> {
+  const { testUserId, endpoints } = requireAuth();
+  await ensureTunnel();
+  assertDevTarget({ account: DEV_TARGET.account, region: DEV_TARGET.region, db: endpoints.pgDatabase });
+  return connectRds({
+    host: PG_HOST, port: PG_LOCAL_PORT, database: endpoints.pgDatabase,
+    user: endpoints.pgUser, password: endpoints.pgPassword, testUserId,
+  });
+}
+
+async function handleAuth(): Promise<{ authed: true; testUserId: string; db: string }> {
+  if (!COGNITO.username || !COGNITO.password) {
+    throw new SmokeSetupError('SMOKE_COGNITO_USERNAME / SMOKE_COGNITO_PASSWORD are required');
+  }
+  const [clientId, rds] = await Promise.all([resolveCognitoClientId(), resolveRdsConn()]);
+  const { idToken, sub } = await mintCognitoJwt({
+    clientId, username: COGNITO.username, password: COGNITO.password, region: COGNITO.region,
+  });
+  const testUserId = decodeJwtSub(idToken);
+  assertDevTarget({ account: DEV_TARGET.account, region: DEV_TARGET.region, db: rds.database });
+  const endpoints: Endpoints = {
+    adminApiBaseUrl: ADMIN_API_BASE_URL,
+    cognitoIdToken: idToken,
+    cognitoSub: sub,
+    chatbotUrl: '', chatbotPublicUrl: '', chatbotAuthenticatedUrl: '',
+    chatbotApiKey: null,
+    pgPassword: rds.password, pgHost: PG_HOST, pgPort: PG_LOCAL_PORT,
+    pgDatabase: rds.database, pgUser: rds.user,
+  };
+  session.idToken = idToken;
+  session.testUserId = testUserId;
+  session.endpoints = endpoints;
+  return { authed: true, testUserId, db: rds.database };
+}
+
+async function handleAdminApi(args: {
+  method: string; path: string; body?: Record<string, unknown>;
+}): Promise<{ status: number; body: unknown }> {
+  const { endpoints, idToken } = requireAuth();
+  const init: RequestInit = {
+    method: args.method,
+    headers: { Authorization: `Bearer ${idToken}`, 'content-type': 'application/json' },
+  };
+  if (args.body !== undefined) init.body = JSON.stringify(args.body);
+  const res = await fetch(`${endpoints.adminApiBaseUrl}${args.path}`, init);
+  const text = await res.text();
+  let body: unknown = text;
+  try { body = text ? JSON.parse(text) : null; } catch { /* keep raw text */ }
+  return { status: res.status, body };
+}
+
+async function handleSql(args: { sql: string; params?: unknown[] }): Promise<{ rows: unknown[] }> {
+  if (!isSelectOnly(args.sql)) throw new SmokeSetupError('smoke_sql accepts a single SELECT/WITH statement only');
+  const client = await connectViaTunnel();
+  try {
+    const rows = await client.maybeRows(args.sql, args.params ?? []);
+    return { rows };
+  } finally {
+    await client.close();
+  }
+}
+
+async function handleWaitPipeline(args: {
+  pipelineRunId: string; timeoutMs?: number;
+}): Promise<{ status: string }> {
+  const client = await connectViaTunnel();
+  try {
+    const status = await client.waitForPipelineStatus(args.pipelineRunId, args.timeoutMs ?? 600000, 5000);
+    return { status };
+  } finally {
+    await client.close();
+  }
+}
+
+async function handleCleanup(): Promise<{ removed: number }> {
+  const targets = session.cleanup;
+  let removed = 0;
+  if (targets.length > 0) {
+    const client = await connectViaTunnel();
+    try {
+      for (const t of targets) { await client.cleanupRun(t); removed += 1; }
+    } finally {
+      await client.close();
+    }
+  }
+  session.cleanup = [];
+  if (session.tunnelStop) { session.tunnelStop(); session.tunnelStop = undefined; }
+  return { removed };
+}
+
+export function registerPrimitives(server: McpServer, logger: SessionLogger): void {
+  tool(server, logger, 'smoke_auth', {}, () => handleAuth());
+
+  tool(server, logger, 'smoke_admin_api', {
+    method: z.string(), path: z.string(), body: z.record(z.unknown()).optional(),
+  }, (args) => handleAdminApi(args as { method: string; path: string; body?: Record<string, unknown> }));
+
+  tool(server, logger, 'smoke_sql', {
+    sql: z.string(), params: z.array(z.unknown()).optional(),
+  }, (args) => handleSql(args as { sql: string; params?: unknown[] }));
+
+  tool(server, logger, 'smoke_wait_pipeline', {
+    pipelineRunId: z.string(), timeoutMs: z.number().optional(),
+  }, (args) => handleWaitPipeline(args as { pipelineRunId: string; timeoutMs?: number }));
+
+  tool(server, logger, 'smoke_cleanup', {}, () => handleCleanup());
+}
