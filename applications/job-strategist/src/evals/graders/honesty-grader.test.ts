@@ -28,4 +28,19 @@ describe('honestyGrader', () => {
     it('passes with no skillTransfer (nothing to verify)', () => {
         expect(honestyGrader(input, out(undefined)).pass).toBe(true);
     });
+    it('fails a gap entry with a non-null projectId', () => {
+        const r = honestyGrader(input, out([
+            { jdSkill: 'K8s', tier: 'gap', projectId: 'ghost', projectName: null, evidenceRefs: [], narrative: 'g' },
+        ]));
+        expect(r.pass).toBe(false);
+        expect(r.failures.join(' ')).toContain('projectId=null');
+    });
+    it('fails a gap entry with non-empty evidenceRefs', () => {
+        const r = honestyGrader(input, out([
+            { jdSkill: 'K8s', tier: 'gap', projectId: null, projectName: null,
+              evidenceRefs: [{ source: 'component', id: 'c1', label: 'EKS' }], narrative: 'g' },
+        ]));
+        expect(r.pass).toBe(false);
+        expect(r.failures.join(' ')).toContain('empty evidenceRefs');
+    });
 });

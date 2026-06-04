@@ -22,5 +22,13 @@ export const honestyGrader: Grader = (input, output) => {
         failures.push('skillTransfer not honest: validateSkillTransfer demoted/dropped entries');
     }
 
+    // Gap-shape: a gap must be a true gap (no project, no evidence). validateSkillTransfer
+    // passes gap entries through unchanged, so it does NOT catch a malformed gap — enforce here.
+    for (const e of entries) {
+        if (e.tier !== 'gap') continue;
+        if (e.projectId !== null) failures.push(`gap entry for "${e.jdSkill}" must have projectId=null, got "${e.projectId}"`);
+        if (e.evidenceRefs.length > 0) failures.push(`gap entry for "${e.jdSkill}" must have empty evidenceRefs`);
+    }
+
     return mkResult('honesty', failures);
 };
