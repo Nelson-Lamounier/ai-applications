@@ -1,6 +1,7 @@
 /** @format */
 import phoneScreen from './fixtures/phone-screen.json';
 import technical from './fixtures/technical.json';
+import systemDesign from './fixtures/system-design.json';
 import behavioural from './fixtures/behavioural.json';
 import { runGraders } from './graders.js';
 import type { EvalInput } from './graders.js';
@@ -14,6 +15,7 @@ const GRADERS = [schemaGrader, groundingGrader, stageFocusGrader, honestyGrader]
 const FIXTURES = [
     { name: 'phone-screen', fx: phoneScreen },
     { name: 'technical', fx: technical },
+    { name: 'system-design', fx: systemDesign },
     { name: 'behavioural', fx: behavioural },
 ];
 

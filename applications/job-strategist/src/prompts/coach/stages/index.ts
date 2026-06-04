@@ -5,8 +5,9 @@ import { COACH_BASE_TEXT } from '../base.js';
 import { PHONE_SCREEN_DELTA } from './phone-screen.js';
 import { TECHNICAL_DELTA } from './technical.js';
 import { BEHAVIOURAL_DELTA } from './behavioural.js';
+import { SYSTEM_DESIGN_DELTA } from './system-design.js';
 
-export type CoachBranch = 'phone-screen' | 'technical' | 'behavioural' | 'general';
+export type CoachBranch = 'phone-screen' | 'technical' | 'system-design' | 'behavioural' | 'general';
 
 /** Map a canonical interview stage to its coach branch. */
 export function resolveCoachBranch(stage: InterviewStage): CoachBranch {
@@ -14,14 +15,26 @@ export function resolveCoachBranch(stage: InterviewStage): CoachBranch {
         case 'phone-screen': return 'phone-screen';
         case 'technical-1':
         case 'technical-2': return 'technical';
+        case 'system-design': return 'system-design';
         case 'behavioural': return 'behavioural';
         default: return 'general';
     }
 }
 
+/**
+ * Branches whose coaching is anchored in project evidence (the candidate block +
+ * runtime validateSkillTransfer). run-coach uses this to decide whether to build
+ * skill-candidate sets; the stage-focus grader uses it to require skillTransfer.
+ */
+export function stageUsesSkillTransfer(stage: InterviewStage): boolean {
+    const b = resolveCoachBranch(stage);
+    return b === 'technical' || b === 'system-design';
+}
+
 const DELTA: Record<CoachBranch, string> = {
     'phone-screen': PHONE_SCREEN_DELTA,
     technical: TECHNICAL_DELTA,
+    'system-design': SYSTEM_DESIGN_DELTA,
     behavioural: BEHAVIOURAL_DELTA,
     general: '',
 };
