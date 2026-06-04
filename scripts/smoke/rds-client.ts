@@ -127,9 +127,22 @@ export class RdsClient {
   /** Run-scoped cleanup, dispatched per flow. Always children → parents,
    *  always test-user scoped. There are no pipeline_run_id FKs in the
    *  schema — linkage is by applicationId / slug / importId / repo. */
+  /** Delete a seeded project + its components. project_components FK has
+   *  ON DELETE CASCADE, but we delete children explicitly so cleanup stays
+   *  deterministic and self-documenting. Scoped to the test user so a stray
+   *  id can never widen the blast radius. */
+  private async cleanupProject(projectId: string): Promise<void> {
+    const uid = this.testUserId;
+    await this.runStmts([
+      ['DELETE FROM project_components WHERE project_id = $1 AND user_id = $2', [projectId, uid]],
+      ['DELETE FROM projects WHERE id = $1 AND user_id = $2', [projectId, uid]],
+    ]);
+  }
+
   async cleanupRun(t: CleanupTarget): Promise<void> {
     this.guard();
     const uid = this.testUserId;
+    if (t.projectId) { await this.cleanupProject(t.projectId); return; }
     // normaliseStartResponse yields '' (not undefined) when there is no
     // run id (e.g. ingestion); coalesce to null so the ::uuid cast is
     // skipped instead of failing on ''::uuid.

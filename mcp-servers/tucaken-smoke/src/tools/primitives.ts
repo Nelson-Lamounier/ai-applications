@@ -54,7 +54,10 @@ async function ensurePlatformUserId(endpoints: Endpoints): Promise<string> {
   return platformUserId;
 }
 
-/** Connect to the forwarded RDS using the resolved credentials + platform user. */
+/** Connect to the forwarded RDS using the resolved credentials + platform user.
+ *  Exported as `connectDev` so other tool modules (e.g. system-design) reuse the
+ *  one tunnel + lazy users.id + assertDevTarget path instead of duplicating it. */
+export async function connectDev(): Promise<RdsClient> { return connectViaTunnel(); }
 async function connectViaTunnel(): Promise<RdsClient> {
   const { endpoints } = requireAuth();
   await ensureTunnel();
