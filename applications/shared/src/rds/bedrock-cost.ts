@@ -39,7 +39,7 @@ const DEFAULT_MONTHLY_LIMIT_CENTS = 500;
 export interface CostRecord {
   userId:       string;
   modelId:      string;
-  pipeline:     'resume-import' | 'repo-sync' | 'profile-extraction' | 'retrieval-probe' | 'profile-synthesis' | 'profile-direction' | 'profile-reconciliation' | 'profile-diagnostic' | 'chatbot-public' | 'chatbot-authenticated' | 'job-strategist' | 'article-pipeline' | 'project-clustering' | 'project-case-study' | 'grounding-verify';
+  pipeline:     'resume-import' | 'repo-sync' | 'profile-extraction' | 'retrieval-probe' | 'profile-synthesis' | 'profile-direction' | 'profile-reconciliation' | 'profile-diagnostic' | 'chatbot-public' | 'chatbot-authenticated' | 'job-strategist' | 'article-pipeline' | 'project-clustering' | 'project-case-study' | 'grounding-verify' | 'prose-lint';
   inputTokens:  number;
   outputTokens: number;
   importId?:    string;
