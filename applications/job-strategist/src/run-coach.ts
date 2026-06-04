@@ -16,7 +16,7 @@
 import type { Pool } from 'pg';
 import type {
     StrategistPipelineContext, StrategistAnalysisResult, StrategistResearchResult,
-    SkillCandidateSet, InterviewStage, InterviewCoachResult,
+    SkillCandidateSet, InterviewStage,
 } from '@bedrock/shared';
 import {
     bootstrapK8sObservability, pushFinalMetrics,
@@ -151,7 +151,7 @@ async function verifyCoachGrounding(
 async function lintCoachProse(
     pool: Pool,
     env: ReturnType<typeof parseCoachEnv>,
-    coaching: InterviewCoachResult,
+    coaching: Parameters<typeof extractProseSections>[0],
 ): Promise<void> {
     try {
         const sections = extractProseSections(coaching);
@@ -288,16 +288,18 @@ async function main(): Promise<void> {
         // Text-level grounding on coach output — runs for EVERY stage. Complements
         // the deterministic citation-level guard already in executeCoachAgent
         // (validateSkillTransfer). Fail-open: never fails the run.
-        await verifyCoachGrounding(pool, env, {
-            analysisXml:         analysis.analysisXml,
-            evidenceBlock,
-            constraintBlock,
-            skillCandidateBlock: buildSkillCandidateBlock(skillCandidateSets),
-        }, coaching.data);
-
         // Prose-quality lint on coach output — flag-mode, runs for EVERY stage.
         // Fail-open: never fails the run, never alters what is persisted.
-        await lintCoachProse(pool, env, coaching.data);
+        // Both are independent observability calls — run concurrently to halve latency.
+        await Promise.all([
+            verifyCoachGrounding(pool, env, {
+                analysisXml:         analysis.analysisXml,
+                evidenceBlock,
+                constraintBlock,
+                skillCandidateBlock: buildSkillCandidateBlock(skillCandidateSets),
+            }, coaching.data),
+            lintCoachProse(pool, env, coaching.data),
+        ]);
 
         await persistCoachingContent(pool, {
             applicationId: env.applicationId,
