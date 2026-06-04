@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionLogger } from '../logger.js';
 import type { RdsClient, CleanupTarget } from '../../../../scripts/smoke/lib/index.js';
+import { AdminApiClient } from '../../../../scripts/smoke/lib/index.js';
 import { tool } from './register.js';
 import { session, requireAuth } from '../session.js';
 import { connectDev } from './primitives.js';
@@ -67,9 +68,90 @@ async function handleSeed(args: SeedArgs): Promise<{ projectId: string; componen
   }
 }
 
+// --- flow tools (dispatch Bedrock-spending pipelines) -----------------------
+//
+// These trigger real Bedrock spend, so they are gated behind `confirm:true`.
+// Without it they are a no-op (no auth, no admin-api call, no DB write).
+
+const SKIPPED = { skipped: true, reason: 'confirm:true required — triggers Bedrock spend' } as const;
+type Skipped = typeof SKIPPED;
+
+const RUN_TIMEOUT_MS = 600000;
+const RUN_INTERVAL_MS = 5000;
+
+interface RunStrategistArgs { company: string; role: string; jobDescription: string; confirm: boolean }
+interface RunCoachArgs { slug: string; interviewStage: string; confirm: boolean }
+
+/** Build an AdminApiClient bound to the session's admin-api base url + JWT. */
+function adminApi(): AdminApiClient {
+  const { endpoints, idToken } = requireAuth();
+  return new AdminApiClient(endpoints.adminApiBaseUrl, idToken);
+}
+
+/** Look up the application row created by the strategist run, scoped to the
+ *  resolved platform user. When applicationId is known we pin to it; otherwise
+ *  we take the most recent. Returns the row or null. */
+async function findApplication(
+  client: RdsClient, userId: string, applicationId: string | undefined,
+): Promise<unknown> {
+  const rows = await client.maybeRows(
+    `SELECT id, slug FROM job_applications
+     WHERE user_id = $1 AND ($2::uuid IS NULL OR id = $2)
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId, applicationId ?? null],
+  );
+  return rows[0] ?? null;
+}
+
+async function handleRunStrategist(
+  args: RunStrategistArgs,
+): Promise<Skipped | { pipelineRunId: string; status: string; application: unknown }> {
+  if (args.confirm !== true) return SKIPPED;
+  requireAuth();
+  const { pipelineRunId, applicationId } = await adminApi().startStrategist({
+    targetCompany: args.company, targetRole: args.role, jobDescription: args.jobDescription,
+  });
+  const target: CleanupTarget = { flow: 'job-strategist', pipelineRunId, applicationId, s3Keys: [] };
+  session.cleanup.push(target);
+  const client = await connectDev();
+  try {
+    const status = await client.waitForPipelineStatus(pipelineRunId, RUN_TIMEOUT_MS, RUN_INTERVAL_MS);
+    const { testUserId } = requireAuth();
+    const application = await findApplication(client, testUserId, applicationId);
+    return { pipelineRunId, status, application };
+  } finally {
+    await client.close();
+  }
+}
+
+async function handleRunCoach(
+  args: RunCoachArgs,
+): Promise<Skipped | { pipelineRunId: string; status: string }> {
+  if (args.confirm !== true) return SKIPPED;
+  requireAuth();
+  const { pipelineRunId } = await adminApi().startCoach(args.slug, args.interviewStage);
+  const target: CleanupTarget = { flow: 'job-strategist', pipelineRunId, slug: args.slug, s3Keys: [] };
+  session.cleanup.push(target);
+  const client = await connectDev();
+  try {
+    const status = await client.waitForPipelineStatus(pipelineRunId, RUN_TIMEOUT_MS, RUN_INTERVAL_MS);
+    return { pipelineRunId, status };
+  } finally {
+    await client.close();
+  }
+}
+
 export function registerSystemDesign(server: McpServer, logger: SessionLogger): void {
   tool(server, logger, 'smoke_seed_project_evidence', {
     projectName: z.string().optional(),
     components: z.array(ComponentInput).min(1),
   }, (args) => handleSeed(args as unknown as SeedArgs));
+
+  tool(server, logger, 'smoke_run_strategist', {
+    company: z.string(), role: z.string(), jobDescription: z.string(), confirm: z.boolean(),
+  }, (args) => handleRunStrategist(args as unknown as RunStrategistArgs));
+
+  tool(server, logger, 'smoke_run_coach', {
+    slug: z.string(), interviewStage: z.string(), confirm: z.boolean(),
+  }, (args) => handleRunCoach(args as unknown as RunCoachArgs));
 }
