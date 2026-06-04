@@ -129,6 +129,90 @@ async function verifyCoachGrounding(
     }
 }
 
+/**
+ * Construct the StrategistPipelineContext for a coach run. Some fields are
+ * placeholders since the coach path needs no resume data or S3 bucket — mirrors
+ * the pattern in run-pipeline.ts.
+ */
+function buildCoachCtx(env: ReturnType<typeof parseCoachEnv>): StrategistPipelineContext {
+    return {
+        pipelineId:        env.coachPipelineRunId,
+        operation:         'coach',
+        applicationSlug:   env.applicationSlug,
+        jobDescription:    env.jobDescription,
+        targetCompany:     env.targetCompany,
+        targetRole:        env.targetRole,
+        resumeId:          process.env['RESUME_ID'] ?? '',
+        resumeData:        null,
+        interviewStage:    env.interviewStage as StrategistPipelineContext['interviewStage'],
+        bucket:            process.env['S3_BUCKET'] ?? '',
+        environment:       env.environment,
+        cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+        cumulativeCostUsd: 0,
+        startedAt:         new Date().toISOString(),
+        userId:            env.userId,
+    };
+}
+
+/** Stage-prep ontology calibration block (phone-screen + other supported stages). */
+async function buildConstraintBlock(
+    pool: Pool,
+    env: ReturnType<typeof parseCoachEnv>,
+    research: StrategistResearchResult | null,
+): Promise<string> {
+    const repo = new RdsStagePrepOntologyRepository(pool);
+    const seniority = toCompSeniority((research?.seniority ?? '').toLowerCase());
+    const constraints = await loadStagePrepConstraints(repo, {
+        targetCompany: env.targetCompany,
+        roleFamily:    toRoleFamily(env.targetRole),
+        stage:         env.interviewStage,
+        seniority,
+        region:        env.region,
+        compTarget:    env.compTarget,
+    });
+    const dsaTopics = env.interviewStage.startsWith('technical')
+        ? research?.dsaTopicCalibration?.likelyTopics?.map(t => t.displayName)
+        : undefined;
+    return buildStagePrepConstraintBlock({ ...constraints, dsaTopics });
+}
+
+/** Verified-evidence digest from the Research result (phone-screen grounding). */
+function buildEvidenceBlock(research: StrategistResearchResult | null): string | undefined {
+    if (!research) return undefined;
+    return [
+        `Overall fit: ${research.overallFitRating ?? ''} — ${research.fitSummary ?? ''}`,
+        `Experience signals: ${JSON.stringify(research.experienceSignals ?? {})}`,
+        'Verified matches:',
+        ...(research.verifiedMatches ?? []).map(m => `- ${m.skill} (${m.depth}) — ${m.sourceCitation}`),
+    ].join('\n');
+}
+
+/**
+ * Skill-transfer candidate sets for project-anchored stages (technical +
+ * system-design), fail-open. joinSkillCandidates is skill-agnostic, so
+ * system-design reuses the same deterministic candidate machinery.
+ */
+async function buildSkillCandidateSets(
+    pool: Pool,
+    env: ReturnType<typeof parseCoachEnv>,
+    research: StrategistResearchResult | null,
+): Promise<SkillCandidateSet[]> {
+    if (!stageUsesSkillTransfer(env.interviewStage as InterviewStage)) return [];
+    try {
+        const evidence = await new RdsProjectEvidenceRepository(pool).load(env.userId);
+        if (evidence.projects.length === 0) return [];
+        const jdSkills = [
+            ...(research?.verifiedMatches ?? []),
+            ...(research?.partialMatches ?? []),
+            ...(research?.gaps ?? []),
+        ].map(m => m.skill).filter((s): s is string => !!s);
+        return joinSkillCandidates([...new Set(jdSkills)], evidence);
+    } catch (err) {
+        log.warn({ err: String(err) }, 'skill-transfer.candidates.failed (non-fatal)');
+        return [];
+    }
+}
+
 async function main(): Promise<void> {
     const env  = parseCoachEnv();
     const pool = getPool(env.pg);
@@ -140,70 +224,10 @@ async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.coachPipelineRunId, 'coaching');
 
-        // Construct StrategistPipelineContext. Some fields are placeholders since
-        // the coach path doesn't need resume data or S3 bucket — mirrors the
-        // pattern in run-pipeline.ts.
-        const ctx: StrategistPipelineContext = {
-            pipelineId:        env.coachPipelineRunId,
-            operation:         'coach',
-            applicationSlug:   env.applicationSlug,
-            jobDescription:    env.jobDescription,
-            targetCompany:     env.targetCompany,
-            targetRole:        env.targetRole,
-            resumeId:          process.env['RESUME_ID'] ?? '',
-            resumeData:        null,
-            interviewStage:    env.interviewStage as StrategistPipelineContext['interviewStage'],
-            bucket:            process.env['S3_BUCKET'] ?? '',
-            environment:       env.environment,
-            cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
-            cumulativeCostUsd: 0,
-            startedAt:         new Date().toISOString(),
-            userId:            env.userId,
-        };
-
-        // Stage-prep ontology calibration (phone-screen and other supported stages).
-        const repo = new RdsStagePrepOntologyRepository(pool);
-        const seniority = toCompSeniority((research?.seniority ?? '').toLowerCase());
-        const constraints = await loadStagePrepConstraints(repo, {
-            targetCompany: env.targetCompany,
-            roleFamily:    toRoleFamily(env.targetRole),
-            stage:         env.interviewStage,
-            seniority,
-            region:        env.region,
-            compTarget:    env.compTarget,
-        });
-        const dsaTopics = env.interviewStage.startsWith('technical')
-            ? research?.dsaTopicCalibration?.likelyTopics?.map(t => t.displayName)
-            : undefined;
-        const constraintBlock = buildStagePrepConstraintBlock({ ...constraints, dsaTopics });
-
-        const evidenceBlock = research ? [
-            `Overall fit: ${research.overallFitRating ?? ''} — ${research.fitSummary ?? ''}`,
-            `Experience signals: ${JSON.stringify(research.experienceSignals ?? {})}`,
-            'Verified matches:',
-            ...(research.verifiedMatches ?? []).map(m => `- ${m.skill} (${m.depth}) — ${m.sourceCitation}`),
-        ].join('\n') : undefined;
-
-        // Skill-transfer candidate sets (project-anchored stages — technical +
-        // system-design — fail-open). joinSkillCandidates is skill-agnostic, so
-        // system-design reuses the same deterministic candidate machinery.
-        let skillCandidateSets: SkillCandidateSet[] = [];
-        if (stageUsesSkillTransfer(env.interviewStage as InterviewStage)) {
-            try {
-                const evidence = await new RdsProjectEvidenceRepository(pool).load(env.userId);
-                if (evidence.projects.length > 0) {
-                    const jdSkills = [
-                        ...(research?.verifiedMatches ?? []),
-                        ...(research?.partialMatches ?? []),
-                        ...(research?.gaps ?? []),
-                    ].map(m => m.skill).filter((s): s is string => !!s);
-                    const uniqueSkills = [...new Set(jdSkills)];
-                    skillCandidateSets = joinSkillCandidates(uniqueSkills, evidence);
-                }
-            } catch (err) {
-                log.warn({ err: String(err) }, 'skill-transfer.candidates.failed (non-fatal)');
-            }
-        }
+        const ctx = buildCoachCtx(env);
+        const constraintBlock = await buildConstraintBlock(pool, env, research);
+        const evidenceBlock = buildEvidenceBlock(research);
+        const skillCandidateSets = await buildSkillCandidateSets(pool, env, research);
 
         const coaching = await executeCoachAgent(ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets);
 
