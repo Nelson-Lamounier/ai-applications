@@ -28,7 +28,6 @@ const LIVE_ENABLED = process.env['RUN_LIVE_EVALS'] === '1';
 
 async function main(): Promise<void> {
     if (!LIVE_ENABLED) {
-        // eslint-disable-next-line no-console
         console.log('RUN_LIVE_EVALS not set — skipping prose-quality live evals.');
         return;
     }
@@ -52,11 +51,9 @@ async function main(): Promise<void> {
     }
 
     if (failures.length) {
-        // eslint-disable-next-line no-console
         console.error('PROSE EVAL FAILURES:\n' + failures.join('\n'));
         process.exitCode = 1;
     } else {
-        // eslint-disable-next-line no-console
         console.log('Prose-quality live evals PASSED (clean + slop).');
     }
 }
