@@ -142,7 +142,7 @@ async function handleRunCoach(
   }
 }
 
-interface AssertSystemDesignArgs { slug: string; tier: 'A' | 'B' }
+interface AssertSystemDesignArgs { slug: string; tier: 'A' | 'B'; applicationId: string }
 
 // The validator's `Coaching` shape is structural; pass the extracted payload.
 type CoachResult = Parameters<typeof validateSystemDesign>[1];
@@ -160,7 +160,7 @@ async function handleAssertSystemDesign(
   args: AssertSystemDesignArgs,
 ): Promise<{ tier: 'A' | 'B'; verdict: ReturnType<typeof validateSystemDesign>; coaching: CoachResult }> {
   requireAuth();
-  const resp = await adminApi().getCoaching(args.slug, 'system-design');
+  const resp = await adminApi().getCoaching(args.slug, 'system-design', args.applicationId);
   const coaching = extractCoachResult(resp);
   const verdict = validateSystemDesign(args.tier, coaching);
   return { tier: args.tier, verdict, coaching };
@@ -181,6 +181,6 @@ export function registerSystemDesign(server: McpServer, logger: SessionLogger): 
   }, (args) => handleRunCoach(args as unknown as RunCoachArgs));
 
   tool(server, logger, 'smoke_assert_system_design', {
-    slug: z.string(), tier: z.enum(['A', 'B']),
+    slug: z.string(), tier: z.enum(['A', 'B']), applicationId: z.string(),
   }, (args) => handleAssertSystemDesign(args as unknown as AssertSystemDesignArgs));
 }

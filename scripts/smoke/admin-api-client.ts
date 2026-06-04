@@ -122,11 +122,10 @@ export class AdminApiClient {
     return this.postJson(`${ADMIN_API.routes.coach}/${slug}/coach`, { interviewStage });
   }
 
-  /** GET /api/admin/applications/:slug/coaching/:stage — read a coaching_content row. */
-  async getCoaching(slug: string, stage: string): Promise<unknown> {
-    const raw = await this.send('GET', `${this.baseUrl}${ADMIN_API.routes.coach}/${slug}/coaching/${stage}`, {
-      headers: { ...bearer(this.idToken) },
-    });
+  /** GET /api/admin/applications/:slug/coaching/:stage?applicationId=… */
+  async getCoaching(slug: string, stage: string, applicationId: string): Promise<unknown> {
+    const url = `${this.baseUrl}${ADMIN_API.routes.coach}/${slug}/coaching/${stage}?applicationId=${encodeURIComponent(applicationId)}`;
+    const raw = await this.send('GET', url, { headers: { ...bearer(this.idToken) } });
     return raw ? JSON.parse(raw) : null;
   }
 }
