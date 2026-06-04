@@ -28,15 +28,15 @@ describe('stageFocusGrader', () => {
         const input: EvalInput = { analysisXml: '<x/>', candidateSets: withCands, stage: 'technical-1' };
         expect(stageFocusGrader(input, out).pass).toBe(false);
     });
-    it('system-design fails when candidates exist but skillTransfer is empty', () => {
-        const out = { skillTransfer: [], behaviouralQuestions: [] } as unknown as InterviewCoachResult;
-        const input: EvalInput = { analysisXml: '<x/>', candidateSets: withCands, stage: 'system-design' };
-        expect(stageFocusGrader(input, out).pass).toBe(false);
-    });
-    it('system-design passes when candidates exist and skillTransfer is populated', () => {
-        const out = { skillTransfer: [{ jdSkill: 'K8s', tier: 'demonstrated', projectId: 'p1', projectName: 'A', evidenceRefs: [{ source: 'component', id: 'c1', label: 'EKS' }], narrative: 'n' }] } as unknown as InterviewCoachResult;
+    it('system-design passes when a walkthrough card is present', () => {
+        const out = { systemDesignWalkthrough: [{ concernId: 'rls', concernQuestion: 'q', whyItMatters: 'w', evidenceRefs: [], choiceMade: 'RLS', articulation: 'I…', followUps: [], gapGuidance: null }] } as unknown as InterviewCoachResult;
         const input: EvalInput = { analysisXml: '<x/>', candidateSets: withCands, stage: 'system-design' };
         expect(stageFocusGrader(input, out).pass).toBe(true);
+    });
+    it('system-design fails when the walkthrough is empty', () => {
+        const out = { systemDesignWalkthrough: [] } as unknown as InterviewCoachResult;
+        const input: EvalInput = { analysisXml: '<x/>', candidateSets: withCands, stage: 'system-design' };
+        expect(stageFocusGrader(input, out).pass).toBe(false);
     });
     it('behavioural fails with no behaviouralQuestions', () => {
         const out = { behaviouralQuestions: [] } as unknown as InterviewCoachResult;
