@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "tucaken-smoke": {
+      "command": "node",
+      "args": ["mcp-servers/tucaken-smoke/dist/index.js"],
+      "env": { "AWS_PROFILE": "dev-account", "AWS_REGION": "eu-west-1" }
+    },
+    "eks": {
+      "command": "uvx",
+      "args": ["awslabs.eks-mcp-server@latest"],
+      "env": { "AWS_PROFILE": "dev-account", "AWS_REGION": "eu-west-1", "FASTMCP_LOG_LEVEL": "ERROR" }
+    },
+    "cloudwatch": {
+      "command": "uvx",
+      "args": ["awslabs.cloudwatch-mcp-server@latest"],
+      "env": { "AWS_PROFILE": "dev-account", "AWS_REGION": "eu-west-1", "FASTMCP_LOG_LEVEL": "ERROR" }
+    },
+    "aws-api": {
+      "command": "uvx",
+      "args": ["awslabs.aws-api-mcp-server@latest"],
+      "env": { "AWS_PROFILE": "dev-account", "AWS_REGION": "eu-west-1", "READ_OPERATIONS_ONLY": "true", "FASTMCP_LOG_LEVEL": "ERROR" }
+    }
+  }
+}
