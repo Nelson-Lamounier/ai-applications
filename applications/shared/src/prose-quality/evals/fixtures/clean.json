@@ -1,0 +1,12 @@
+{
+  "sections": [
+    { "location": "jdTalkingPoints[0].point", "register": "resume-prose",
+      "text": "I cut the deploy pipeline from 40 minutes to 9 by caching the Docker layer build and parallelising the test shards." },
+    { "location": "behaviouralQuestions[0].answerFramework", "register": "storytelling",
+      "text": "We disagreed about the rollback plan. I pulled the on-call data, showed two prior incidents where the manual path failed, and we agreed to automate it. The next incident recovered in four minutes." },
+    { "location": "coachingNotes", "register": "advice",
+      "text": "Bring the migration metrics to the screen. Recruiters at this company ask for concrete before/after numbers." }
+  ],
+  "stage": "phone_screen",
+  "expect": { "minTotal": 35, "noHighSeverity": true }
+}

@@ -1,0 +1,15 @@
+{
+  "sections": [
+    { "location": "jdTalkingPoints[0].point", "register": "resume-prose",
+      "text": "It's worth noting that I'm genuinely passionate about engineering. At the end of the day, this is what leadership actually looks like." },
+    { "location": "behaviouralQuestions[0].answerFramework", "register": "storytelling",
+      "text": "The problem wasn't the code. It was the culture. Mistakes were made. But that's another story." },
+    { "location": "coachingNotes", "register": "advice",
+      "text": "Let me be clear: you need to lean into the deep dive and circle back on the landscape. Full stop." }
+  ],
+  "stage": "phone_screen",
+  "expect": {
+    "status": "FAIL",
+    "mustMatch": ["It's worth noting", "Mistakes were made", "Let me be clear"]
+  }
+}
