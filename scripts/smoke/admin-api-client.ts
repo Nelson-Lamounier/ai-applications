@@ -115,4 +115,17 @@ export class AdminApiClient {
   completeResumeImport(importId: string): Promise<StartResponse> {
     return this.postJson(`${ADMIN_API.routes.resumeComplete}/${importId}/complete`, {});
   }
+
+  /** POST /api/admin/applications/:slug/coach — dispatch a coach run for a stage. */
+  startCoach(slug: string, interviewStage: string): Promise<StartResponse> {
+    return this.postJson(`${ADMIN_API.routes.coach}/${slug}/coach`, { interviewStage });
+  }
+
+  /** GET /api/admin/applications/:slug/coaching/:stage — read a coaching_content row. */
+  async getCoaching(slug: string, stage: string): Promise<unknown> {
+    const raw = await this.send('GET', `${this.baseUrl}${ADMIN_API.routes.coach}/${slug}/coaching/${stage}`, {
+      headers: { ...bearer(this.idToken) },
+    });
+    return raw ? JSON.parse(raw) : null;
+  }
 }
