@@ -24,6 +24,7 @@ import {
     loadStagePrepConstraints, buildStagePrepConstraintBlock,
     RdsProjectEvidenceRepository, joinSkillCandidates,
     BedrockGroundingVerifier,
+    BedrockProseLinter,
     RdsSystemDesignConcernRepository, detectConcernEvidence, validateSystemDesignWalkthrough,
 } from '@bedrock/shared';
 import type { ConcernCoverage, SystemDesignConcern, SystemDesignWalkthroughCard } from '@bedrock/shared';
@@ -32,6 +33,7 @@ import { Counter, Histogram } from 'prom-client';
 import { executeCoachAgent, buildSkillCandidateBlock, buildConcernWalkthroughBlock } from './agents/coach-agent.js';
 import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough } from './prompts/coach/stages/index.js';
 import { buildCoachContextChunks, extractCoachClaims } from './lib/coach-grounding.js';
+import { extractProseSections } from './lib/coach-prose.js';
 import { parseCoachEnv }       from './env-coach.js';
 import { getPool, closePool }  from './lib/pg.js';
 import {
@@ -88,6 +90,18 @@ const coachGrounding = new Counter({
 // records an ungrounded verdict via telemetry without altering what is persisted.
 const coachGroundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
 
+// Coach prose-quality verdicts (stop-slop). status ∈ PASS|FAIL|error|skipped.
+const coachProse = new Counter({
+    name:       'job_strategist_coach_prose_total',
+    help:       'Coach output prose-quality verdicts by stage and status.',
+    labelNames: ['stage', 'status'] as const,
+    registers:  [obs.registry],
+});
+
+// Prose linting runs in 'flag' mode only: telemetry on AI-tell language, never
+// alters persisted coach output, never throws into the pipeline.
+const coachProseLinter = new BedrockProseLinter({ mode: 'flag' });
+
 /**
  * Verify the coach's experiential claims against its grounding sources and record
  * the verdict (metric + log). Flag-mode + fail-open: this is pure observability —
@@ -128,6 +142,46 @@ async function verifyCoachGrounding(
             stage:              env.interviewStage,
             err:                (e as Error).message,
         }, 'coach_grounding_failed (non-fatal)');
+    }
+}
+
+/**
+ * Lint the coach's prose surfaces for AI-tell language and record the verdict
+ * (metric + log). Flag-mode + fail-open: pure observability — never alters
+ * persisted output and never throws into the pipeline.
+ */
+async function lintCoachProse(
+    pool: Pool,
+    env: ReturnType<typeof parseCoachEnv>,
+    coaching: Parameters<typeof extractProseSections>[0],
+): Promise<void> {
+    try {
+        const sections = extractProseSections(coaching);
+        if (sections.length === 0) {
+            coachProse.inc({ stage: env.interviewStage, status: 'skipped' });
+            return;
+        }
+        const q = await coachProseLinter.lint(
+            { sections, stage: env.interviewStage },
+            { pool, userId: env.userId },
+        );
+        coachProse.inc({ stage: env.interviewStage, status: q.status });
+        if (q.status === 'FAIL') {
+            log.warn({
+                coachPipelineRunId: env.coachPipelineRunId,
+                applicationId:      env.applicationId,
+                stage:              env.interviewStage,
+                proseScore:         q.score,
+                proseIssues:        q.issues,
+            }, 'coach_prose_below_threshold');
+        }
+    } catch (e) {
+        coachProse.inc({ stage: env.interviewStage, status: 'error' });
+        log.warn({
+            coachPipelineRunId: env.coachPipelineRunId,
+            stage:              env.interviewStage,
+            err:                (e as Error).message,
+        }, 'coach_prose_lint_failed (non-fatal)');
     }
 }
 
@@ -274,12 +328,18 @@ async function main(): Promise<void> {
         // Text-level grounding on coach output — runs for EVERY stage. Complements
         // the deterministic citation-level guard already in executeCoachAgent
         // (validateSkillTransfer). Fail-open: never fails the run.
-        await verifyCoachGrounding(pool, env, {
-            analysisXml:         analysis.analysisXml,
-            evidenceBlock,
-            constraintBlock,
-            skillCandidateBlock: buildSkillCandidateBlock(skillCandidateSets),
-        }, coaching.data);
+        // Prose-quality lint on coach output — flag-mode, runs for EVERY stage.
+        // Fail-open: never fails the run, never alters what is persisted.
+        // Both are independent observability calls — run concurrently to halve latency.
+        await Promise.all([
+            verifyCoachGrounding(pool, env, {
+                analysisXml:         analysis.analysisXml,
+                evidenceBlock,
+                constraintBlock,
+                skillCandidateBlock: buildSkillCandidateBlock(skillCandidateSets),
+            }, coaching.data),
+            lintCoachProse(pool, env, coaching.data),
+        ]);
 
         await persistCoachingContent(pool, {
             applicationId: env.applicationId,
