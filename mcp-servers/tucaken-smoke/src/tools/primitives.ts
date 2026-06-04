@@ -70,17 +70,21 @@ async function connectViaTunnel(): Promise<RdsClient> {
 }
 
 async function handleAuth(): Promise<{ authed: true; cognitoSub: string; email: string; db: string }> {
-  if (!COGNITO.username || !COGNITO.password) {
+  // Read creds from process.env at CALL time (not the import-time COGNITO
+  // constant) — .env.smoke is hydrated by loadEnvSmoke() in the bootstrap,
+  // which runs before any tool is invoked but after COGNITO was evaluated.
+  const username = process.env.SMOKE_COGNITO_USERNAME?.trim() || COGNITO.username;
+  const password = process.env.SMOKE_COGNITO_PASSWORD?.trim() || COGNITO.password;
+  const region   = process.env.SMOKE_COGNITO_REGION?.trim() || COGNITO.region;
+  if (!username || !password) {
     throw new SmokeSetupError('SMOKE_COGNITO_USERNAME / SMOKE_COGNITO_PASSWORD are required');
   }
   const [clientId, rds] = await Promise.all([resolveCognitoClientId(), resolveRdsConn()]);
-  const { idToken, sub, email } = await mintCognitoJwt({
-    clientId, username: COGNITO.username, password: COGNITO.password, region: COGNITO.region,
-  });
+  const { idToken, sub, email } = await mintCognitoJwt({ clientId, username, password, region });
   // The platform users.id is resolved lazily (by email) on the first DB
   // connection — smoke_auth intentionally does not open the tunnel. The
   // Cognito sub is stored provisionally only so requireAuth() is satisfied.
-  const testEmail = email ?? COGNITO.username;
+  const testEmail = email ?? username;
   assertDevTarget({ account: DEV_TARGET.account, region: DEV_TARGET.region, db: rds.database });
   const endpoints: Endpoints = {
     adminApiBaseUrl: ADMIN_API_BASE_URL,
