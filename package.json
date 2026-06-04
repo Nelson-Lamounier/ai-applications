@@ -18,7 +18,8 @@
     "applications/synthetic-monitor",
     "applications/platform-job-watcher",
     "api/public-api",
-    "infra"
+    "infra",
+    "mcp-servers/tucaken-smoke"
   ],
   "scripts": {
     "typecheck": "yarn workspaces foreach -A run typecheck",

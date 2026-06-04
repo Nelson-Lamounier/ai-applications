@@ -31,6 +31,9 @@ export interface CleanupTarget {
   repoFullName?: string;
   s3Keys: string[];
   chatSessionId?: string;
+  /** Seeded `projects.id` (system-design smoke seed). project_components
+   *  cascade via FK, but cleanupRun deletes them explicitly for determinism. */
+  projectId?: string;
 }
 
 export class SmokeSetupError extends Error {

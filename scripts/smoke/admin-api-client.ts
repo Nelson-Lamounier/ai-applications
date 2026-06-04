@@ -107,12 +107,25 @@ export class AdminApiClient {
         'Content-Type': contentType,
         'Content-Length': String(bytes.length),
       },
-      body: bytes,
+      // Buffer is a Uint8Array at runtime; wrap to satisfy the node fetch BodyInit type.
+      body: new Uint8Array(bytes),
     });
   }
 
   /** Step 3: tell the admin-api the upload is done so it queues parsing. */
   completeResumeImport(importId: string): Promise<StartResponse> {
     return this.postJson(`${ADMIN_API.routes.resumeComplete}/${importId}/complete`, {});
+  }
+
+  /** POST /api/admin/applications/:slug/coach — dispatch a coach run for a stage. */
+  startCoach(slug: string, interviewStage: string): Promise<StartResponse> {
+    return this.postJson(`${ADMIN_API.routes.coach}/${slug}/coach`, { interviewStage });
+  }
+
+  /** GET /api/admin/applications/:slug/coaching/:stage?applicationId=… */
+  async getCoaching(slug: string, stage: string, applicationId: string): Promise<unknown> {
+    const url = `${this.baseUrl}${ADMIN_API.routes.coach}/${slug}/coaching/${stage}?applicationId=${encodeURIComponent(applicationId)}`;
+    const raw = await this.send('GET', url, { headers: { ...bearer(this.idToken) } });
+    return raw ? JSON.parse(raw) : null;
   }
 }
