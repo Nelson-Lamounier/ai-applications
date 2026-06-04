@@ -12,7 +12,7 @@ describe('markJobFailed', () => {
   });
 
   it('updates the correct table with JOB_FAILED and the import-id from labels', async () => {
-    const { markJobFailed } = await import('../src/watcher.js');
+    const { markJobFailed } = await import('../src/mark-job-failed.js');
 
     await markJobFailed(mockPool, 'resume_imports', 'abc-123-uuid');
 
@@ -24,7 +24,7 @@ describe('markJobFailed', () => {
   });
 
   it('logs a warning when no rows were updated (import already terminal)', async () => {
-    const { markJobFailed } = await import('../src/watcher.js');
+    const { markJobFailed } = await import('../src/mark-job-failed.js');
     queryMock.mockResolvedValueOnce({ rowCount: 0 });
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -38,7 +38,7 @@ describe('markJobFailed', () => {
   });
 
   it('does not throw when the importId is missing from job labels', async () => {
-    const { markJobFailed } = await import('../src/watcher.js');
+    const { markJobFailed } = await import('../src/mark-job-failed.js');
 
     await expect(markJobFailed(mockPool, 'resume_imports', undefined)).resolves.not.toThrow();
     expect(queryMock).not.toHaveBeenCalled();

@@ -67,9 +67,14 @@ describe('validateSession', () => {
             'SELECT id FROM chat_sessions WHERE id = $1': { rows: [] },
         });
         await validateSession(pool, 'user-1', 'session-uuid');
-        const calls = client.query.mock.calls.map(c => c[0]);
-        const rlsIdx    = calls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
-        const selectIdx = calls.findIndex(q => typeof q === 'string' && q.includes('SELECT id FROM chat_sessions'));
+        const calls = client.query.mock.calls;
+        const sqls = calls.map(c => c[0]);
+        const rlsIdx    = sqls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
+        expect(calls[rlsIdx]).toEqual([
+            "SELECT set_config('app.current_user_id', $1, true)",
+            ['user-1'],
+        ]);
+        const selectIdx = sqls.findIndex(q => typeof q === 'string' && q.includes('SELECT id FROM chat_sessions'));
         expect(rlsIdx).toBeGreaterThan(-1);
         expect(rlsIdx).toBeLessThan(selectIdx);
     });
@@ -88,9 +93,14 @@ describe('createSession', () => {
         const { pool, client } = makeMockPool();
         await createSession(pool, 'user-1');
 
-        const calls = client.query.mock.calls.map(c => c[0]);
-        const rlsIdx = calls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
-        const insertIdx = calls.findIndex(q => typeof q === 'string' && q.includes('INSERT INTO chat_sessions'));
+        const calls = client.query.mock.calls;
+        const sqls = calls.map(c => c[0]);
+        const rlsIdx = sqls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
+        expect(calls[rlsIdx]).toEqual([
+            "SELECT set_config('app.current_user_id', $1, true)",
+            ['user-1'],
+        ]);
+        const insertIdx = sqls.findIndex(q => typeof q === 'string' && q.includes('INSERT INTO chat_sessions'));
         expect(rlsIdx).toBeGreaterThan(-1);
         expect(rlsIdx).toBeLessThan(insertIdx);
     });
@@ -144,9 +154,14 @@ describe('appendMessages', () => {
         const { pool, client } = makeMockPool();
         await appendMessages(pool, 'user-1', 'session-uuid', 'hello', 'hi');
 
-        const calls = client.query.mock.calls.map(c => c[0]);
-        const rlsIdx   = calls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
-        const insertIdx = calls.findIndex(q => typeof q === 'string' && q.includes('INSERT INTO chat_messages'));
+        const calls = client.query.mock.calls;
+        const sqls = calls.map(c => c[0]);
+        const rlsIdx   = sqls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
+        expect(calls[rlsIdx]).toEqual([
+            "SELECT set_config('app.current_user_id', $1, true)",
+            ['user-1'],
+        ]);
+        const insertIdx = sqls.findIndex(q => typeof q === 'string' && q.includes('INSERT INTO chat_messages'));
         expect(rlsIdx).toBeGreaterThan(-1);
         expect(rlsIdx).toBeLessThan(insertIdx);
     });

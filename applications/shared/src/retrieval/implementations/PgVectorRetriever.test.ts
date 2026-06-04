@@ -140,6 +140,21 @@ describe('PgVectorRetriever', () => {
         expect(profileQuery.mock.calls[2][1]).toContain(3);
     });
 
+    it('sets profile-layer RLS via parameterized set_config before querying', async () => {
+        const profileQuery = makeQueryMock([]);
+        const profileClient = { query: profileQuery, release: jest.fn() } as unknown as PoolClient;
+        mockConnect
+            .mockResolvedValueOnce(profileClient)
+            .mockResolvedValueOnce(makeClient([]));
+
+        await retriever.retrieve(USER_ID, 'test');
+
+        expect(profileQuery.mock.calls[1]).toEqual([
+            "SELECT set_config('app.current_user_id', $1, true)",
+            [USER_ID],
+        ]);
+    });
+
     it('passes maxChunks as LIMIT to chunk query', async () => {
         const chunkQuery = makeQueryMock([]);
         const chunkClient = { query: chunkQuery, release: jest.fn() } as unknown as PoolClient;
@@ -149,6 +164,21 @@ describe('PgVectorRetriever', () => {
         await retriever.retrieve(USER_ID, 'test', { maxChunks: 2 });
         // Index 2 is the actual query call (after BEGIN and SET LOCAL)
         expect(chunkQuery.mock.calls[2][1]).toContain(2);
+    });
+
+    it('sets chunk-layer RLS via parameterized set_config before querying', async () => {
+        const chunkQuery = makeQueryMock([]);
+        const chunkClient = { query: chunkQuery, release: jest.fn() } as unknown as PoolClient;
+        mockConnect
+            .mockResolvedValueOnce(makeClient([]))
+            .mockResolvedValueOnce(chunkClient);
+
+        await retriever.retrieve(USER_ID, 'test');
+
+        expect(chunkQuery.mock.calls[1]).toEqual([
+            "SELECT set_config('app.current_user_id', $1, true)",
+            [USER_ID],
+        ]);
     });
 
     it('rolls back and rethrows when profile query throws', async () => {

@@ -17,7 +17,7 @@ import { Counter, Gauge } from 'prom-client';
 import { parseEnv } from './env.js';
 import { fetchTarball } from './tarball/fetchTarball.js';
 import { safeExtract } from './tarball/safeExtract.js';
-import { walkTextFiles } from './util/fileWalk.js';
+import { readTextFileWithinLimit, walkTextFiles } from './util/fileWalk.js';
 import { isTestFile } from './util/isTestFile.js';
 import { SyftExtractor } from './extractors/SyftExtractor.js';
 import { TreeSitterExtractor } from './extractors/TreeSitterExtractor.js';
@@ -34,6 +34,9 @@ import { TechExtractOrchestrator } from './orchestrator/TechExtractOrchestrator.
 import { computeParity } from './parity/ParityReporter.js';
 
 const MAX_TARBALL_BYTES = Number(process.env.MAX_TARBALL_BYTES ?? 200 * 1024 * 1024);
+const MAX_EXTRACTED_BYTES = Number(process.env.MAX_EXTRACTED_BYTES ?? 500 * 1024 * 1024);
+const MAX_EXTRACTED_FILE_BYTES = Number(process.env.MAX_EXTRACTED_FILE_BYTES ?? 25 * 1024 * 1024);
+const MAX_TEXT_FILE_BYTES = Number(process.env.MAX_TEXT_FILE_BYTES ?? 500 * 1024);
 
 const obs = bootstrapK8sObservability({ serviceName: 'tech-extractor' });
 const log = obs.logger;
@@ -55,14 +58,18 @@ async function withTimeout(p: Promise<unknown>, ms: number, label: string): Prom
 }
 
 /** All IaC parsers as one fault-isolation unit over walked files. */
-function iacExtractor(rootDir: string, files: string[], proseSafeAliases: ReadonlySet<string>): Extractor {
+function iacExtractor(
+    files: string[],
+    proseSafeAliases: ReadonlySet<string>,
+    readFile: (rel: string) => Promise<string>,
+): Extractor {
     return {
         name: 'iac',
         async extract(): Promise<RawTechnologyEvidence[]> {
             const out: RawTechnologyEvidence[] = [];
             for (const rel of files) {
                 const base = path.basename(rel).toLowerCase();
-                const src = await fs.readFile(path.join(rootDir, rel), 'utf-8');
+                const src = await readFile(rel);
                 if (base.startsWith('dockerfile')) out.push(...parseDockerfile(src, rel));
                 else if (rel.includes('.github/workflows/')) out.push(...parseGithubActions(src, rel));
                 else if (rel.endsWith('.tf') || rel.endsWith('.hcl')) out.push(...parseTerraform(src, rel));
@@ -144,14 +151,17 @@ async function main(): Promise<void> {
             if (String(e).includes('repo_too_large')) { log.warn({ repo: env.repoFullName }, 'repo_too_large'); return; }
             throw e;
         }
-        await safeExtract(tarPath, extractDir);
+        await safeExtract(tarPath, extractDir, {
+            maxTotalBytes: MAX_EXTRACTED_BYTES,
+            maxFileBytes:  MAX_EXTRACTED_FILE_BYTES,
+        });
 
-        const files = await walkTextFiles(extractDir);
+        const files = await walkTextFiles(extractDir, { maxFileBytes: MAX_TEXT_FILE_BYTES });
         // DSA + AI "real-work" lanes must not score test fixtures (a test's `class TreeNode`
         // / `.sort((a,b)=>…)` / `cmp_to_key` is not real-work evidence). The tech/IaC lane
         // keeps the full list — a real import in a test is still valid "uses X" evidence.
         const patternFiles = files.filter((f) => !isTestFile(f));
-        const readFile = (rel: string) => fs.readFile(path.join(extractDir, rel), 'utf-8');
+        const readFile = (rel: string) => readTextFileWithinLimit(extractDir, rel, MAX_TEXT_FILE_BYTES);
 
         // ── Tech lane (syft/treesitter/iac → technology_evidence + parity) ──
         if (!techDone) {
@@ -163,7 +173,7 @@ async function main(): Promise<void> {
             const extractors: Extractor[] = [
                 new SyftExtractor(),
                 new TreeSitterExtractor(readFile, files, proseSafeAliases),
-                iacExtractor(extractDir, files, proseSafeAliases),
+                iacExtractor(files, proseSafeAliases, readFile),
             ];
 
             const orch = new TechExtractOrchestrator(resolver, evidenceRepo, candidateRepo);

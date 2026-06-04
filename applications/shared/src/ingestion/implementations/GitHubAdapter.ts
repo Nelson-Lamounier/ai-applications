@@ -112,9 +112,17 @@ const SKIP_DIRS = new Set([
     '.git',
 ]);
 
+const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = Number(process.env.GITHUB_REQUEST_TIMEOUT_MS ?? 10_000);
+const DEFAULT_GITHUB_MAX_RESPONSE_BYTES = Number(process.env.GITHUB_MAX_RESPONSE_BYTES ?? 10 * 1024 * 1024);
+
 // =============================================================================
 // PUBLIC TYPES — GitHubAdapter-specific (not part of IRepoAdapter)
 // =============================================================================
+
+export interface GitHubAdapterOptions {
+    requestTimeoutMs?: number;
+    maxResponseBytes?: number;
+}
 
 export interface GitHubRepoMeta {
     primary_language: string | null;
@@ -130,9 +138,13 @@ export interface GitHubRepoMeta {
 export class GitHubAdapter implements IRepoAdapter {
     private readonly token: string;
     private readonly apiBase = 'api.github.com';
+    private readonly requestTimeoutMs: number;
+    private readonly maxResponseBytes: number;
 
-    constructor(token: string) {
+    constructor(token: string, options: GitHubAdapterOptions = {}) {
         this.token = token;
+        this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_GITHUB_REQUEST_TIMEOUT_MS;
+        this.maxResponseBytes = options.maxResponseBytes ?? DEFAULT_GITHUB_MAX_RESPONSE_BYTES;
     }
 
     static fromEnvironment(): GitHubAdapter {
@@ -431,6 +443,7 @@ export class GitHubAdapter implements IRepoAdapter {
 
     private get<T>(path: string): Promise<T> {
         return new Promise((resolve, reject) => {
+            let settled = false;
             const options = {
                 hostname: this.apiBase,
                 path,
@@ -445,12 +458,31 @@ export class GitHubAdapter implements IRepoAdapter {
 
             const req = https.request(options, res => {
                 const chunks: Buffer[] = [];
+                let totalBytes = 0;
 
-                res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                const fail = (err: Error): void => {
+                    if (settled) return;
+                    settled = true;
+                    reject(err);
+                    req.destroy();
+                };
+
+                res.on('data', (chunk: Buffer | string) => {
+                    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                    totalBytes += bytes.byteLength;
+                    if (totalBytes > this.maxResponseBytes) {
+                        fail(new Error(`GitHub API ${path} response too large: ${totalBytes} > ${this.maxResponseBytes}`));
+                        return;
+                    }
+                    chunks.push(bytes);
+                });
+                res.on('error', fail);
                 res.on('end', () => {
+                    if (settled) return;
                     const body = Buffer.concat(chunks).toString('utf-8');
 
                     if (!res.statusCode || res.statusCode >= 400) {
+                        settled = true;
                         reject(new Error(
                             `GitHub API ${path} returned ${res.statusCode}: ${body}`,
                         ));
@@ -458,14 +490,26 @@ export class GitHubAdapter implements IRepoAdapter {
                     }
 
                     try {
+                        settled = true;
                         resolve(JSON.parse(body) as T);
                     } catch {
+                        settled = true;
                         reject(new Error(`GitHub API ${path}: invalid JSON response`));
                     }
                 });
             });
 
-            req.on('error', reject);
+            req.setTimeout(this.requestTimeoutMs, () => {
+                if (settled) return;
+                settled = true;
+                reject(new Error(`GitHub API ${path} timed out after ${this.requestTimeoutMs}ms`));
+                req.destroy();
+            });
+            req.on('error', (err) => {
+                if (settled) return;
+                settled = true;
+                reject(err);
+            });
             req.end();
         });
     }

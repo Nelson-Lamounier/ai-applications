@@ -68,7 +68,7 @@ export class PgVectorRetriever {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`SET LOCAL app.current_user_id = $1`, [userId]);
+            await client.query("SELECT set_config('app.current_user_id', $1, true)", [userId]);
 
             const params: unknown[] = [userId, vectorStr, profileWeight, limit];
             let domainFilter    = '';
@@ -140,7 +140,7 @@ export class PgVectorRetriever {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`SET LOCAL app.current_user_id = $1`, [userId]);
+            await client.query("SELECT set_config('app.current_user_id', $1, true)", [userId]);
 
             const result = await client.query<{
                 content:        string;

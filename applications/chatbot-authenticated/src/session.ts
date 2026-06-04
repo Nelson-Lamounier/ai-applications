@@ -4,7 +4,7 @@ import type { Message } from '@aws-sdk/client-bedrock-runtime';
 // ─── RLS helper ───────────────────────────────────────────────────────────────
 
 async function setRlsUser(client: PoolClient, userId: string): Promise<void> {
-    await client.query('SET LOCAL app.current_user_id = $1', [userId]);
+    await client.query("SELECT set_config('app.current_user_id', $1, true)", [userId]);
 }
 
 // ─── Session management ───────────────────────────────────────────────────────

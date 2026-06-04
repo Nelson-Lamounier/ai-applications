@@ -6,6 +6,7 @@
   "description": "Platform RDS DDL bootstrap — runs CREATE EXTENSION + CREATE TABLE IF NOT EXISTS",
   "scripts": {
     "build": "tsc",
+    "test": "jest --config jest.config.cjs --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js"
   },

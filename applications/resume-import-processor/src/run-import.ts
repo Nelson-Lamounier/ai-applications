@@ -17,7 +17,7 @@
  *   0 — extraction succeeded, status is ready_for_review
  *   1 — fatal error before any data was written
  */
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 import { bootstrapK8sObservability, pushFinalMetrics, recordBedrockCost, PiiScrubber } from '@bedrock/shared';
@@ -36,6 +36,14 @@ import { CachedSearchTool } from './tools/tavily-cache.js';
 import { fanOutRoleSearches, type FanoutRole } from './tools/tavily-fanout.js';
 import { generateGapAnalysis, type GapAnalysisRole } from './bedrock/gap-analysis.js';
 import { embedBaselineEntries } from './baseline-embed.js';
+import {
+  DEFAULT_MAX_RESUME_FILE_BYTES,
+  fetchFileFromS3,
+  loadResumeImportFileMetadata,
+  resolveSupportedResumeContentType,
+  type SupportedResumeFileKind,
+} from './file-intake.js';
+import { persistCareerEntries } from './career-persistence.js';
 
 const piiScrubber = new PiiScrubber();
 
@@ -83,20 +91,6 @@ for (const step of ['extract', 'parse', 'persist'] as const) {
 seedSubStepSeries();
 
 const tracer = trace.getTracer('resume-import-processor');
-
-async function fetchFileFromS3(
-  s3: S3Client,
-  bucket: string,
-  key: string,
-): Promise<Buffer> {
-  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  const stream = response.Body as NodeJS.ReadableStream;
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of stream) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-  }
-  return Buffer.concat(chunks);
-}
 
 async function updateImportStatus(
   pool: Pool,
@@ -148,63 +142,6 @@ async function updateImportStatus(
   stop();
 }
 
-async function persistCareerEntries(
-  pool: Pool,
-  userId: string,
-  importId: string,
-  data: ExtractedCareerData,
-): Promise<string[]> {
-  const createdIds: string[] = [];
-
-  const { persistDurationSeconds } = await import('./metrics.js');
-  const insertEntry = async (
-    entryType: string,
-    rawData: Record<string, unknown>,
-    displayOrder: number,
-  ): Promise<string> => {
-    const stop = persistDurationSeconds().startTimer({ op: 'insert_career' });
-    const result = await pool.query<{ id: string }>(
-      `INSERT INTO user_career_history
-             (user_id, import_id, entry_type, raw_data, display_order)
-       VALUES ($1::uuid, $2::uuid, $3, $4, $5)
-       RETURNING id`,
-      [userId, importId, entryType, JSON.stringify(rawData), displayOrder],
-    );
-    stop();
-    const row = result.rows[0];
-    if (!row) throw new Error('persistCareerEntries: INSERT returned no row');
-    return row.id;
-  };
-
-  for (let i = 0; i < data.experience.length; i++) {
-    const id = await insertEntry('experience', data.experience[i] as unknown as Record<string, unknown>, i);
-    createdIds.push(id);
-  }
-  for (let i = 0; i < data.education.length; i++) {
-    await insertEntry('education', data.education[i] as unknown as Record<string, unknown>, i);
-  }
-  for (const skillGroup of data.skills) {
-    await insertEntry('skill', skillGroup as unknown as Record<string, unknown>, 0);
-  }
-  for (let i = 0; i < data.certifications.length; i++) {
-    await insertEntry('certification', data.certifications[i] as unknown as Record<string, unknown>, i);
-  }
-  for (let i = 0; i < data.projects.length; i++) {
-    await insertEntry('project', data.projects[i] as unknown as Record<string, unknown>, i);
-  }
-  for (let i = 0; i < data.keyAchievements.length; i++) {
-    await insertEntry('achievement', data.keyAchievements[i] as unknown as Record<string, unknown>, i);
-  }
-
-  // Update career_entries_created array on the import record
-  await pool.query(
-    `UPDATE resume_imports SET career_entries_created = $1 WHERE id = $2::uuid`,
-    [createdIds, importId],
-  );
-
-  return createdIds;
-}
-
 async function main(): Promise<void> {
   const env = parseEnv();
   const jobStart = process.hrtime.bigint();
@@ -243,11 +180,26 @@ async function main(): Promise<void> {
 
       // ── Step 1: fetch file from S3 ────────────────────────────────────────
       let fileBuffer!: Buffer;
+      let resumeFileKind!: SupportedResumeFileKind;
       await tracer.startActiveSpan('resume_import.fetch', async (span) => {
         try {
           await updateImportStatus(pool, env.importId, 'parsing', 'Downloading resume file');
-          fileBuffer = await fetchFileFromS3(s3, env.assetsBucketName, env.s3Key);
+          const importFile = await loadResumeImportFileMetadata(pool, env.importId);
+          const contentType = importFile.contentType ?? env.contentType;
+          resumeFileKind = resolveSupportedResumeContentType(contentType);
+          if (importFile.contentType && env.contentType) {
+            const envFileKind = resolveSupportedResumeContentType(env.contentType);
+            if (envFileKind !== resumeFileKind) {
+              throw new Error(`resume_content_type_mismatch: env=${env.contentType} db=${importFile.contentType}`);
+            }
+          }
+          fileBuffer = await fetchFileFromS3(s3, env.assetsBucketName, env.s3Key, {
+            maxBytes:          DEFAULT_MAX_RESUME_FILE_BYTES,
+            expectedSizeBytes: importFile.fileSizeBytes,
+          });
           span.setAttribute('s3.key', env.s3Key);
+          span.setAttribute('resume.file_kind', resumeFileKind);
+          if (importFile.fileSizeBytes !== undefined) span.setAttribute('resume.file_size_bytes', importFile.fileSizeBytes);
         } catch (err) {
           span.recordException(err instanceof Error ? err : new Error(String(err)));
           span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
@@ -261,7 +213,7 @@ async function main(): Promise<void> {
       await tracer.startActiveSpan('resume_import.parse', async (span) => {
         const stopStep = stepDurationSeconds.startTimer({ step: 'parse' });
         try {
-          if (env.contentType === 'application/pdf') {
+          if (resumeFileKind === 'pdf') {
             const result     = await extractTextFromPdf(fileBuffer, env.s3Key, env.assetsBucketName, env.awsRegion);
             rawText          = result.text;
             extractionMethod = result.method;
@@ -311,14 +263,17 @@ async function main(): Promise<void> {
 
       // ── Step 4: persist career entries ───────────────────────────────────
       let experienceIds!: string[];
+      let allEntryIds!: string[];
       await tracer.startActiveSpan('resume_import.save_entries', async (span) => {
         const stopStep = stepDurationSeconds.startTimer({ step: 'persist' });
         try {
-          experienceIds = await persistCareerEntries(pool, env.userId, env.importId, extracted);
+          const persisted = await persistCareerEntries(pool, env.userId, env.importId, extracted);
+          experienceIds = persisted.experienceIds;
+          allEntryIds = persisted.allEntryIds;
           await updateImportStatus(pool, env.importId, 'analyzing', 'Analyzing your experience', {
-            careerEntriesCreated: experienceIds,
+            careerEntriesCreated: allEntryIds,
           });
-          span.setAttribute('entries.saved', experienceIds.length);
+          span.setAttribute('entries.saved', allEntryIds.length);
         } catch (err) {
           span.recordException(err instanceof Error ? err : new Error(String(err)));
           span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
@@ -407,7 +362,7 @@ async function main(): Promise<void> {
       // resume-enrichment Job, dispatched by admin-api only after the user
       // reviews and confirms their extracted career history.
       await updateImportStatus(pool, env.importId, 'ready_for_review', 'Career data extracted');
-      log.info({ entries: experienceIds.length }, 'ready_for_review');
+      log.info({ entries: allEntryIds.length, experience_entries: experienceIds.length }, 'ready_for_review');
       outcome = 'success';
 
       await pool.end();

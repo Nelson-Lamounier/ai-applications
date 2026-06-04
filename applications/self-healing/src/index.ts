@@ -720,6 +720,16 @@ async function discoverTools(): Promise<AgentTool[]> {
  * @returns The tool's response as a string
  */
 async function invokeTool(toolName: string, toolInput: Record<string, unknown>): Promise<string> {
+    if (DRY_RUN && WRITE_TOOLS.has(toolName)) {
+        log('INFO', 'DRY_RUN blocked write tool invocation', { toolName, toolInput });
+        return JSON.stringify({
+            status: 'dry_run_blocked',
+            tool: toolName,
+            message: `DRY_RUN is enabled; write tool '${toolName}' was not invoked`,
+            input: toolInput,
+        });
+    }
+
     if (!GATEWAY_URL) {
         return JSON.stringify({
             status: 'stub',
@@ -1618,5 +1628,5 @@ export const handler = withSpan('self-healing.handler', async (event: AlarmEvent
 // Exported for testing
 // =============================================================================
 
-export { buildPrompt, isDuplicate, getDefaultTools, buildToolConfig, sanitiseAlarmKey, buildPreviousSessionContext, sanitiseEventField, loadSystemPrompt };
+export { buildPrompt, isDuplicate, getDefaultTools, buildToolConfig, sanitiseAlarmKey, buildPreviousSessionContext, sanitiseEventField, loadSystemPrompt, invokeTool };
 export type { AlarmEvent, AgentTool, AgentResult, SessionRecord };

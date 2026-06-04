@@ -17,6 +17,7 @@
  * the role can apply against a fresh database — previously the role was
  * created out-of-band on the dev cluster.
  */
+import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -197,6 +198,12 @@ CREATE TABLE IF NOT EXISTS app_config (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name              TEXT        PRIMARY KEY,
+  checksum          TEXT        NOT NULL,
+  applied_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS ingestion_audit_log (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id           UUID        NOT NULL REFERENCES users(id),
@@ -320,14 +327,42 @@ export function createPool(overrides: Partial<ConstructorParameters<typeof Pool>
     });
 }
 
-export async function runBootstrap(pool: Pool): Promise<void> {
+export function migrationChecksum(sql: string): string {
+    return createHash('sha256').update(sql).digest('hex');
+}
+
+export async function runBootstrap(pool: Pool, migrations = loadMigrations()): Promise<void> {
     const client = await pool.connect();
     try {
         await client.query(DDL);
-        const migrations = loadMigrations();
         for (const { name, sql } of migrations) {
+            const checksum = migrationChecksum(sql);
+            const existing = await client.query<{ checksum: string }>(
+                'SELECT checksum FROM schema_migrations WHERE name = $1',
+                [name],
+            );
+
+            if (existing.rows[0]) {
+                if (existing.rows[0].checksum !== checksum) {
+                    throw new Error(`Migration checksum mismatch for ${name}`);
+                }
+                console.log(`  ↷ ${name} (already applied)`);
+                continue;
+            }
+
             console.log(`  → ${name}`);
-            await client.query(sql);
+            await client.query('BEGIN');
+            try {
+                await client.query(sql);
+                await client.query(
+                    'INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)',
+                    [name, checksum],
+                );
+                await client.query('COMMIT');
+            } catch (err) {
+                await client.query('ROLLBACK');
+                throw err;
+            }
         }
     } finally {
         client.release();

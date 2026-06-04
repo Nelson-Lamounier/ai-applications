@@ -7,7 +7,9 @@
  * This keeps the tests hermetic and faithful to the adapter's real call shapes.
  */
 
-import { describe, it, expect } from '@jest/globals';
+import { EventEmitter } from 'node:events';
+import https from 'https';
+import { describe, it, expect, jest, afterEach } from '@jest/globals';
 
 import { GitHubAdapter } from './GitHubAdapter.js';
 
@@ -61,5 +63,61 @@ describe('GitHubAdapter.getHeadCommitSha', () => {
         });
 
         await expect(adapter.getHeadCommitSha('o/r')).resolves.toBe('head123');
+    });
+});
+
+describe('GitHubAdapter HTTPS guardrails', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('rejects responses that exceed the configured byte cap', async () => {
+        jest.spyOn(https, 'request').mockImplementation(((_options: unknown, cb: (res: EventEmitter & { statusCode?: number }) => void) => {
+            const req = new EventEmitter() as EventEmitter & {
+                end: () => void;
+                setTimeout: () => void;
+                destroy: (err?: Error) => void;
+            };
+            req.setTimeout = jest.fn();
+            req.destroy = jest.fn((err?: Error) => {
+                if (err) req.emit('error', err);
+            });
+            req.end = () => {
+                const res = new EventEmitter() as EventEmitter & { statusCode?: number };
+                res.statusCode = 200;
+                cb(res);
+                res.emit('data', Buffer.alloc(6));
+            };
+            return req;
+        }) as never);
+
+        const adapter = new GitHubAdapter('token', { maxResponseBytes: 5 });
+
+        await expect(
+            (adapter as unknown as { get<T>(path: string): Promise<T> }).get('/repos/o/r'),
+        ).rejects.toThrow(/too large/i);
+    });
+
+    it('times out stalled GitHub requests', async () => {
+        jest.spyOn(https, 'request').mockImplementation(((_options: unknown, _cb: unknown) => {
+            const req = new EventEmitter() as EventEmitter & {
+                end: () => void;
+                setTimeout: (ms: number, cb: () => void) => void;
+                destroy: (err?: Error) => void;
+            };
+            let timeout: (() => void) | undefined;
+            req.setTimeout = jest.fn((_ms: number, cb: () => void) => { timeout = cb; });
+            req.destroy = jest.fn((err?: Error) => {
+                if (err) req.emit('error', err);
+            });
+            req.end = () => { timeout?.(); };
+            return req;
+        }) as never);
+
+        const adapter = new GitHubAdapter('token', { requestTimeoutMs: 1 });
+
+        await expect(
+            (adapter as unknown as { get<T>(path: string): Promise<T> }).get('/repos/o/r'),
+        ).rejects.toThrow(/timed out/i);
     });
 });

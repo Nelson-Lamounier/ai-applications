@@ -42,8 +42,33 @@ const CALLER_ROLE_SUFFIX: Record<CallerRole, string> = {
     engineer:  '\n\nCALLER CONTEXT: callerRole=engineer. Prioritise architecture decisions, trade-offs, and implementation specifics.',
     unknown:   '',
 };
+const AUTH_USER_ID_CLAIMS = ['custom:user_id', 'user_id', 'sub'] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+type AuthorizerContext = {
+    claims?:      Record<string, unknown>;
+    jwt?:         { claims?: Record<string, unknown> };
+    principalId?: unknown;
+    userId?:      unknown;
+};
+
+function stringValue(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function resolveAuthenticatedUserId(event: APIGatewayProxyEvent): string | undefined {
+    const authorizer = event.requestContext.authorizer as AuthorizerContext | undefined;
+    const claims = authorizer?.claims ?? authorizer?.jwt?.claims ?? {};
+
+    const candidate = [
+        ...AUTH_USER_ID_CLAIMS.map((claim) => claims[claim]),
+        authorizer?.userId,
+        authorizer?.principalId,
+    ].map(stringValue).find((value): value is string => value !== undefined);
+
+    return candidate && UUID_REGEX.test(candidate) ? candidate : undefined;
+}
 
 function resolveOrigin(event: APIGatewayProxyEvent): string {
     const { allowedOrigins } = getEnv();
@@ -109,7 +134,10 @@ export const handler = withSpan('chatbot-authenticated.handler', async (
 
     try {
         const env    = getEnv();
-        const userId = env.portfolioOwnerUserId;
+        const userId = resolveAuthenticatedUserId(event);
+        if (!userId) {
+            return buildResponse(401, { error: 'Unauthorized', message: 'Authenticated user id is required' }, origin);
+        }
 
         // ── 1. Parse + validate ────────────────────────────────────────────────
         if (!event.body) {

@@ -57,6 +57,7 @@ import { invokeClaude } from '../invoke-claude.js';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const VALID_SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
+const AUTH_USER_ID = '11111111-1111-4111-8111-111111111111';
 
 function makeEvent(body: object, headers: Record<string, string> = {}): APIGatewayProxyEvent {
     return {
@@ -70,7 +71,13 @@ function makeEvent(body: object, headers: Record<string, string> = {}): APIGatew
         isBase64Encoded: false,
         pathParameters: null,
         stageVariables: null,
-        requestContext: {} as never,
+        requestContext: {
+            authorizer: {
+                claims: {
+                    sub: AUTH_USER_ID,
+                },
+            },
+        } as never,
         resource:       '',
     };
 }
@@ -115,7 +122,7 @@ describe('chatbot-authenticated handler', () => {
         const body = JSON.parse(result.body);
         expect(body.response).toBe('model response');
         expect(body.sessionId).toBe('new-session-uuid');
-        expect(createSession).toHaveBeenCalledWith(expect.anything(), 'owner-uuid');
+        expect(createSession).toHaveBeenCalledWith(expect.anything(), AUTH_USER_ID);
     });
 
     it('reuses existing session when valid sessionId provided', async () => {
@@ -123,7 +130,7 @@ describe('chatbot-authenticated handler', () => {
             makeEvent({ prompt: 'follow-up', sessionId: VALID_SESSION_ID }),
         );
         expect(result.statusCode).toBe(200);
-        expect(validateSession).toHaveBeenCalledWith(expect.anything(), 'owner-uuid', VALID_SESSION_ID);
+        expect(validateSession).toHaveBeenCalledWith(expect.anything(), AUTH_USER_ID, VALID_SESSION_ID);
         expect(createSession).not.toHaveBeenCalled();
         const body = JSON.parse(result.body);
         expect(body.sessionId).toBe(VALID_SESSION_ID);
@@ -143,7 +150,7 @@ describe('chatbot-authenticated handler', () => {
             'next question',
             // Cost context added by the Bedrock spend-tracking change (invokeClaude
             // now books spend into prompt_invocations via { pool, userId }).
-            expect.objectContaining({ userId: 'owner-uuid' }),
+            expect.objectContaining({ userId: AUTH_USER_ID }),
         );
     });
 
@@ -151,11 +158,22 @@ describe('chatbot-authenticated handler', () => {
         await handler(makeEvent({ prompt: 'hello', sessionId: VALID_SESSION_ID }));
         expect(appendMessages).toHaveBeenCalledWith(
             expect.anything(),
-            'owner-uuid',
+            AUTH_USER_ID,
             VALID_SESSION_ID,
             'hello',
             'model response',
         );
+    });
+
+    it('returns 401 when the authorizer has no stable user id claim', async () => {
+        const event = makeEvent({ prompt: 'hello' });
+        event.requestContext = {} as never;
+
+        const result = await handler(event);
+
+        expect(result.statusCode).toBe(401);
+        expect(createSession).not.toHaveBeenCalled();
+        expect(multiQueryRetrieve).not.toHaveBeenCalled();
     });
 
     // ── Validation errors ──────────────────────────────────────────────────────
