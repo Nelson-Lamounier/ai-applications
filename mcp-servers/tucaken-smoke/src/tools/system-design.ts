@@ -7,6 +7,7 @@ import { AdminApiClient } from '../../../../scripts/smoke/lib/index.js';
 import { tool } from './register.js';
 import { session, requireAuth } from '../session.js';
 import { connectDev } from './primitives.js';
+import { validateSystemDesign } from '../validators.js';
 
 // project_components.kind CHECK enum (migration 030_projects.sql).
 const COMPONENT_KINDS = [
@@ -141,6 +142,30 @@ async function handleRunCoach(
   }
 }
 
+interface AssertSystemDesignArgs { slug: string; tier: 'A' | 'B' }
+
+// The validator's `Coaching` shape is structural; pass the extracted payload.
+type CoachResult = Parameters<typeof validateSystemDesign>[1];
+
+/** The admin-api GET /:slug/coaching/:stage wraps the InterviewCoachResult
+ *  (topics_to_study) under `coaching`. Stay robust to alternate shapes
+ *  (topics_to_study / topicsToStudy / the row directly). */
+function extractCoachResult(resp: unknown): CoachResult {
+  const r = (resp ?? {}) as Record<string, unknown>;
+  const payload = r.coaching ?? r.topics_to_study ?? r.topicsToStudy ?? resp;
+  return (payload ?? {}) as CoachResult;
+}
+
+async function handleAssertSystemDesign(
+  args: AssertSystemDesignArgs,
+): Promise<{ tier: 'A' | 'B'; verdict: ReturnType<typeof validateSystemDesign>; coaching: CoachResult }> {
+  requireAuth();
+  const resp = await adminApi().getCoaching(args.slug, 'system-design');
+  const coaching = extractCoachResult(resp);
+  const verdict = validateSystemDesign(args.tier, coaching);
+  return { tier: args.tier, verdict, coaching };
+}
+
 export function registerSystemDesign(server: McpServer, logger: SessionLogger): void {
   tool(server, logger, 'smoke_seed_project_evidence', {
     projectName: z.string().optional(),
@@ -154,4 +179,8 @@ export function registerSystemDesign(server: McpServer, logger: SessionLogger): 
   tool(server, logger, 'smoke_run_coach', {
     slug: z.string(), interviewStage: z.string(), confirm: z.boolean(),
   }, (args) => handleRunCoach(args as unknown as RunCoachArgs));
+
+  tool(server, logger, 'smoke_assert_system_design', {
+    slug: z.string(), tier: z.enum(['A', 'B']),
+  }, (args) => handleAssertSystemDesign(args as unknown as AssertSystemDesignArgs));
 }
