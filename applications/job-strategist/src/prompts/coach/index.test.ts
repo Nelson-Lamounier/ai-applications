@@ -41,10 +41,10 @@ describe('assembleCoachSystemPrompt', () => {
         expect(t).toContain('SKILL TRANSFER');
         expect(t).not.toContain('careerArcSummary');
     });
-    it('system-design includes an architecture delta + skill-transfer, not phone-screen fields', () => {
+    it('system-design includes the project-anchored walkthrough delta, not phone-screen fields', () => {
         const t = text(assembleCoachSystemPrompt('system-design') as { text?: string }[]);
         expect(t).toContain('SYSTEM DESIGN INTERVIEW');
-        expect(t).toContain('SKILL TRANSFER');
+        expect(t).toContain('systemDesignWalkthrough');
         expect(t).not.toContain('careerArcSummary');
     });
     it('phone-screen includes the phone delta fields', () => {

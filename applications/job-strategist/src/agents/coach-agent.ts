@@ -23,6 +23,8 @@ import type {
     InterviewCoachResult,
     SkillCandidateSet,
     SkillTransferEntry,
+    ConcernCoverage,
+    SystemDesignConcern,
 } from '@bedrock/shared';
 
 // =============================================================================
@@ -43,6 +45,8 @@ export interface CoachAgentInput {
     readonly evidenceBlock?: string;
     /** Pre-serialised candidate block (from buildSkillCandidateBlock). */
     readonly skillCandidateBlock?: string;
+    /** Pre-serialised system-design concern block (from buildConcernWalkthroughBlock). */
+    readonly systemDesignBlock?: string;
 }
 
 // =============================================================================
@@ -187,6 +191,44 @@ const COACH_TOOL = {
                 required: ['targetEcho', 'marketContext', 'deflectTemplate'],
                 additionalProperties: false,
             },
+            systemDesignWalkthrough: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        concernId:       { type: 'string' },
+                        concernQuestion: { type: 'string' },
+                        whyItMatters:    { type: 'string' },
+                        evidenceRefs: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: { source: { type: 'string' }, id: { type: 'string' }, label: { type: 'string' }, fileLine: { type: 'string' } },
+                                required: ['source', 'id', 'label'],
+                                additionalProperties: false,
+                            },
+                        },
+                        choiceMade:   { type: ['string', 'null'] },
+                        articulation: { type: 'string' },
+                        followUps: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    question: { type: 'string' },
+                                    status:   { type: 'string', enum: ['addressed', 'partial', 'gap'] },
+                                    framing:  { type: 'string' },
+                                },
+                                required: ['question', 'status', 'framing'],
+                                additionalProperties: false,
+                            },
+                        },
+                        gapGuidance: { type: ['string', 'null'] },
+                    },
+                    required: ['concernId', 'concernQuestion', 'whyItMatters', 'evidenceRefs', 'choiceMade', 'articulation', 'followUps', 'gapGuidance'],
+                    additionalProperties: false,
+                },
+            },
         },
         required: [
             'stageDescription', 'technicalQuestions', 'behaviouralQuestions',
@@ -248,6 +290,22 @@ export const CoachOutputSchema = z.object({
         marketContext:   z.string().nullable(),
         deflectTemplate: z.string(),
     }).strict().optional(),
+    systemDesignWalkthrough: z.array(z.object({
+        concernId:       z.string(),
+        concernQuestion: z.string(),
+        whyItMatters:    z.string(),
+        evidenceRefs: z.array(z.object({
+            source: z.string(), id: z.string(), label: z.string(), fileLine: z.string().optional(),
+        }).strict()),
+        choiceMade:   z.string().nullable(),
+        articulation: z.string(),
+        followUps: z.array(z.object({
+            question: z.string(),
+            status:   z.enum(['addressed', 'partial', 'gap']),
+            framing:  z.string(),
+        }).strict()),
+        gapGuidance: z.string().nullable(),
+    }).strict()).optional(),
 }).strict();
 
 // =============================================================================
@@ -276,6 +334,45 @@ export function buildSkillCandidateBlock(sets: readonly SkillCandidateSet[]): st
     return lines.join('\n');
 }
 
+/** Render detected concerns + their grounded evidence as a block the model must cite from. */
+export function buildConcernWalkthroughBlock(
+    coverage: ConcernCoverage,
+    concerns: readonly SystemDesignConcern[],
+): string {
+    const byId = new Map(concerns.map(c => [c.concernId, c]));
+    const relevant = coverage.detected.filter(d => d.relevantToJd);
+    if (relevant.length === 0) return '';
+    const lines = ['## System-design concerns for THIS role (emit one walkthrough card per concern, cite ONLY these evidence ids)'];
+    for (const d of relevant) {
+        const c = byId.get(d.concernId);
+        if (!c) continue;
+        appendConcernLines(lines, d, c);
+    }
+    lines.push(
+        'For EACH concern: cite ONLY the evidence ids listed for it. Write the articulation in ' +
+        'first person ("I chose…"), name the trade-off and the failure mode you avoided. For each ' +
+        'follow-up set status addressed/partial/gap against the evidence and give honest framing. ' +
+        'Never invent evidence or claim scale not shown. No evidence → honest gap card.',
+    );
+    return lines.join('\n');
+}
+
+/** Append the lines for a single detected concern (kept separate for complexity). */
+function appendConcernLines(
+    lines: string[],
+    d: ConcernCoverage['detected'][number],
+    c: SystemDesignConcern,
+): void {
+    lines.push(`- [${d.strength}] ${d.concernId}: ${c.concernQuestion}`);
+    lines.push(`    why: ${c.whyInterviewersAsk}`);
+    if (d.evidenceRefs.length > 0) {
+        for (const r of d.evidenceRefs) lines.push(`    evidence: source=${r.source} id=${r.id} :: ${r.label}${r.fileLine ? ` @${r.fileLine}` : ''}`);
+    } else {
+        lines.push('    evidence: (none — emit an honest gap card: choiceMade=null, evidenceRefs=[], followUps status="gap")');
+    }
+    for (const f of c.followUpQuestions) lines.push(`    follow-up: ${f}`);
+}
+
 // =============================================================================
 // USER MESSAGE BUILDER
 // =============================================================================
@@ -296,6 +393,7 @@ function buildCoachMessage(
     constraintBlock?: string,
     evidenceBlock?: string,
     skillCandidateBlock?: string,
+    systemDesignBlock?: string,
 ): string {
     const sections: string[] = [
         `## Interview Stage: ${ctx.interviewStage}`,
@@ -319,6 +417,9 @@ function buildCoachMessage(
     if (skillCandidateBlock) {
         sections.push(skillCandidateBlock, '');
     }
+    if (systemDesignBlock) {
+        sections.push(systemDesignBlock, '');
+    }
     sections.push(
         `Prepare interview coaching for the "${ctx.interviewStage}" stage. ` +
         'Use ONLY verified skills and projects from the analysis. ' +
@@ -339,15 +440,18 @@ function buildCoachMessage(
  */
 export const PHONE_SCREEN_FIELDS = ['careerArcSummary', 'jdTalkingPoints', 'compScript'] as const;
 
-/** Return the coach tool with phone-screen fields promoted to `required` for that stage. */
+export const SYSTEM_DESIGN_FIELDS = ['systemDesignWalkthrough'] as const;
+
+/** Return the coach tool with stage-specific fields promoted to `required`. */
 export function coachToolForStage(stage: string): typeof COACH_TOOL {
-    if (stage !== 'phone-screen') return COACH_TOOL;
+    const extra =
+        stage === 'phone-screen'  ? PHONE_SCREEN_FIELDS  :
+        stage === 'system-design' ? SYSTEM_DESIGN_FIELDS :
+        null;
+    if (!extra) return COACH_TOOL;
     return {
         ...COACH_TOOL,
-        inputSchema: {
-            ...COACH_TOOL.inputSchema,
-            required: [...COACH_TOOL.inputSchema.required, ...PHONE_SCREEN_FIELDS],
-        },
+        inputSchema: { ...COACH_TOOL.inputSchema, required: [...COACH_TOOL.inputSchema.required, ...extra] },
     };
 }
 
@@ -400,7 +504,7 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: CoachAgentInput, ctx: StrategistPipelineContext): string {
-        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock);
+        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock, input.systemDesignBlock);
     }
 
     /**
@@ -491,9 +595,10 @@ export async function executeCoachAgent(
     constraintBlock?: string,
     evidenceBlock?: string,
     skillCandidateSets?: readonly SkillCandidateSet[],
+    systemDesignBlock?: string,
 ): Promise<AgentResult<InterviewCoachResult>> {
     const skillCandidateBlock = buildSkillCandidateBlock(skillCandidateSets ?? []);
-    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock }, ctx);
+    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock }, ctx);
     if (skillCandidateSets && skillCandidateSets.length > 0) {
         const raw = (result.data.skillTransfer ?? []) as SkillTransferEntry[];
         (result.data as { skillTransfer?: unknown }).skillTransfer = validateSkillTransfer(raw, skillCandidateSets);
