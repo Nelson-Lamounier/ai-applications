@@ -9,9 +9,10 @@ import { schemaGrader } from './graders/schema-grader.js';
 import { groundingGrader } from './graders/grounding-grader.js';
 import { stageFocusGrader } from './graders/stage-focus-grader.js';
 import { honestyGrader } from './graders/honesty-grader.js';
+import { systemDesignGrader } from './graders/system-design-grader.js';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
-const GRADERS = [schemaGrader, groundingGrader, stageFocusGrader, honestyGrader];
+const GRADERS = [schemaGrader, groundingGrader, stageFocusGrader, honestyGrader, systemDesignGrader];
 const FIXTURES = [
     { name: 'phone-screen', fx: phoneScreen },
     { name: 'technical', fx: technical },

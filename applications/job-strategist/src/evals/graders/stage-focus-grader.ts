@@ -3,8 +3,8 @@ import { mkResult } from '../graders.js';
 import type { Grader, EvalInput } from '../graders.js';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
-/** Stages anchored in project evidence — system-design reuses the technical machinery. */
-const PROJECT_ANCHORED = new Set(['technical-1', 'technical-2', 'system-design']);
+/** Stages anchored in project evidence via the technical skill-transfer machinery. */
+const PROJECT_ANCHORED = new Set(['technical-1', 'technical-2']);
 
 function phoneScreenFailures(o: InterviewCoachResult): string[] {
     const f: string[] = [];
@@ -19,6 +19,12 @@ function skillTransferFailures(stage: string, input: EvalInput, o: InterviewCoac
     const hasCandidates = input.candidateSets.some(set => set.candidates.length > 0);
     const hasTransfer = !!(o.skillTransfer && o.skillTransfer.length > 0);
     return hasCandidates && !hasTransfer ? [`${stage}: candidates present but skillTransfer empty`] : [];
+}
+
+/** System-design stage: the project-anchored walkthrough must be emitted. */
+function systemDesignFailures(o: InterviewCoachResult): string[] {
+    const cards = o.systemDesignWalkthrough;
+    return cards && cards.length > 0 ? [] : ['system-design: empty systemDesignWalkthrough'];
 }
 
 function behaviouralFailures(o: InterviewCoachResult): string[] {
@@ -37,6 +43,7 @@ export const stageFocusGrader: Grader = (input, output) => {
     let failures: string[] = [];
     if (s === 'phone-screen') failures = phoneScreenFailures(output);
     else if (PROJECT_ANCHORED.has(s)) failures = skillTransferFailures(s, input, output);
+    else if (s === 'system-design') failures = systemDesignFailures(output);
     else if (s === 'behavioural') failures = behaviouralFailures(output);
     return mkResult('stage-focus', failures);
 };

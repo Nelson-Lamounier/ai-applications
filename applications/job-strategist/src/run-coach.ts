@@ -25,11 +25,13 @@ import {
     RdsProjectEvidenceRepository, joinSkillCandidates,
     BedrockGroundingVerifier,
     BedrockProseLinter,
+    RdsSystemDesignConcernRepository, detectConcernEvidence, validateSystemDesignWalkthrough,
 } from '@bedrock/shared';
+import type { ConcernCoverage, SystemDesignConcern, SystemDesignWalkthroughCard } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
-import { executeCoachAgent, buildSkillCandidateBlock } from './agents/coach-agent.js';
-import { stageUsesSkillTransfer } from './prompts/coach/stages/index.js';
+import { executeCoachAgent, buildSkillCandidateBlock, buildConcernWalkthroughBlock } from './agents/coach-agent.js';
+import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough } from './prompts/coach/stages/index.js';
 import { buildCoachContextChunks, extractCoachClaims } from './lib/coach-grounding.js';
 import { extractProseSections } from './lib/coach-prose.js';
 import { parseCoachEnv }       from './env-coach.js';
@@ -267,6 +269,35 @@ async function buildSkillCandidateSets(
     }
 }
 
+interface WalkthroughInputs { block: string; coverage: ConcernCoverage | null; concerns: SystemDesignConcern[]; }
+
+/**
+ * Deterministic system-design concern detection over project evidence + the curated
+ * ontology, rendered into a block for the coach. Fail-open: any error → empty
+ * walkthrough + generic coaching, never fails the run.
+ */
+async function buildSystemDesignWalkthroughInputs(
+    pool: Pool,
+    env: ReturnType<typeof parseCoachEnv>,
+    research: StrategistResearchResult | null,
+): Promise<WalkthroughInputs> {
+    if (!stageUsesSystemDesignWalkthrough(env.interviewStage as InterviewStage)) {
+        return { block: '', coverage: null, concerns: [] };
+    }
+    try {
+        const [concerns, evidence] = await Promise.all([
+            new RdsSystemDesignConcernRepository(pool).listConcerns(),
+            new RdsProjectEvidenceRepository(pool).load(env.userId),
+        ]);
+        const jdText = `${env.jobDescription} ${(research?.gaps ?? []).map(g => g.skill).join(' ')}`;
+        const coverage = detectConcernEvidence(concerns, evidence, jdText);
+        return { block: buildConcernWalkthroughBlock(coverage, concerns), coverage, concerns };
+    } catch (err) {
+        log.warn({ err: String(err) }, 'system-design.walkthrough.detect.failed (non-fatal)');
+        return { block: '', coverage: null, concerns: [] };
+    }
+}
+
 async function main(): Promise<void> {
     const env  = parseCoachEnv();
     const pool = getPool(env.pg);
@@ -282,8 +313,17 @@ async function main(): Promise<void> {
         const constraintBlock = await buildConstraintBlock(pool, env, research);
         const evidenceBlock = buildEvidenceBlock(research);
         const skillCandidateSets = await buildSkillCandidateSets(pool, env, research);
+        const sd = await buildSystemDesignWalkthroughInputs(pool, env, research);
 
-        const coaching = await executeCoachAgent(ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets);
+        const coaching = await executeCoachAgent(
+            ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets, sd.block,
+        );
+        if (sd.coverage) {
+            const raw = (coaching.data.systemDesignWalkthrough ?? []) as SystemDesignWalkthroughCard[];
+            (coaching.data as { systemDesignWalkthrough?: unknown }).systemDesignWalkthrough =
+                validateSystemDesignWalkthrough(raw, sd.coverage);
+            (coaching.data as { systemDesignCoverage?: unknown }).systemDesignCoverage = sd.coverage;
+        }
 
         // Text-level grounding on coach output — runs for EVERY stage. Complements
         // the deterministic citation-level guard already in executeCoachAgent

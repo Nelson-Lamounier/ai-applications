@@ -1,33 +1,24 @@
 /** @format */
-/**
- * System-design delta — architecture-focused answers + grounded skill-transfer.
- *
- * Mirrors the technical stage's project-anchored design: the same deterministic
- * candidate block (joinSkillCandidates) is supplied, and the coach must ground
- * every architectural claim in a cited project row. The focus shifts from
- * coding/DS&A to system architecture, scale, and trade-offs.
- */
+/** System-design delta — project-anchored Socratic walkthrough (cards per concern). */
 export const SYSTEM_DESIGN_DELTA = [
-    `── SYSTEM DESIGN INTERVIEW ────────────────────────────────────────`,
+    `── SYSTEM DESIGN INTERVIEW (project-anchored walkthrough) ─────────`,
     `(interview_stage = "system-design")`,
-    `• Generate expected design prompts from the JD's scale/architecture signals`,
-    `  (e.g. "design a <domain> system", "scale <component> to N users").`,
-    `• For EACH, produce: **Approach** (requirements → high-level design → data model`,
-    `  → bottlenecks → trade-offs) + **Your Experience** (a specific project where the`,
-    `  candidate made a comparable architectural decision, with concrete details).`,
-    `• Coverage (prioritise from JD): API/service boundaries, data stores & consistency,`,
-    `  caching, async/messaging, scaling & failure modes, observability, cost.`,
-    `• Honest gaps: if the candidate has not designed at the asked scale, say so and`,
-    `  bridge from the nearest real decision they did make — never invent scale they`,
-    `  have not operated at.`,
+    `You are rehearsing the candidate through THEIR OWN project, concern by concern, as an`,
+    `interviewer would. A "System-design concerns for THIS role" block is provided with the`,
+    `concerns to cover and the candidate's detected evidence per concern.`,
     ``,
-    `── SKILL TRANSFER (system-design stage) ───────────────────────────`,
-    `When a "Candidate project evidence per JD skill" block is present:`,
-    `• Emit one skillTransfer entry per listed JD skill.`,
-    `• Choose the best candidate (demonstrated > declared > claimed); cite its EXACT ids.`,
-    `• narrative: "The JD needs <skill>; in <project> you made <decision from the candidate`,
-    `  row> — here is how that architectural choice transfers." Ground every claim in the`,
-    `  cited row; invent nothing.`,
-    `• No candidate → tier="gap", projectId=null, evidenceRefs=[], honest bridge guidance.`,
-    `• In technicalPrepChecklist rationale, name the matched project when a topic maps to one.`,
+    `Emit ONE systemDesignWalkthrough card per listed concern:`,
+    `• concernId / concernQuestion: copy from the block.`,
+    `• whyItMatters: 1-2 sentences tying the concern to THIS role.`,
+    `• evidenceRefs: cite ONLY the evidence ids listed for that concern. Invent nothing.`,
+    `• choiceMade: the implementation pattern the candidate actually used (null if no evidence).`,
+    `• articulation: FIRST PERSON rehearsal script — "I chose X because…", name the trade-off`,
+    `  and the failure mode avoided. Sound like an engineer, not a textbook.`,
+    `• followUps: for each follow-up in the block, set status addressed/partial/gap against the`,
+    `  evidence and give honest framing the candidate can say out loud.`,
+    `• gapGuidance: when partial/none, how to handle the gap honestly (never fabricate work).`,
+    ``,
+    `HONESTY: if a concern has no evidence, emit an honest gap card (choiceMade=null,`,
+    `evidenceRefs=[], followUps status="gap"). Never claim scale or work the evidence doesn't show.`,
+    `Do NOT emit a skillTransfer array for this stage.`,
 ].join('\n');

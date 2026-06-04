@@ -13,9 +13,10 @@ import type { Grader } from '../graders.js';
 export const schemaGrader: Grader = (input, output) => {
     const failures: string[] = [];
 
-    // `stage` is injected from context, not part of CoachOutputSchema (which is strict).
+    // `stage` and `systemDesignCoverage` are injected by run-coach (not the model) and are not
+    // part of the strict CoachOutputSchema, so strip them before parsing.
     const rec = output as unknown as Record<string, unknown>;
-    const { stage: _stage, ...rest } = rec;
+    const { stage: _stage, systemDesignCoverage: _coverage, ...rest } = rec;
     const parsed = CoachOutputSchema.safeParse(rest);
     if (!parsed.success) failures.push(`schema: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
 

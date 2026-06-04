@@ -519,3 +519,4 @@ export type {
 } from './projects/index.js';
 export * from './stage-prep/index.js';
 export { RdsStagePrepOntologyRepository } from './rds/implementations/RdsStagePrepOntologyRepository.js';
+export { RdsSystemDesignConcernRepository } from './rds/implementations/RdsSystemDesignConcernRepository.js';
