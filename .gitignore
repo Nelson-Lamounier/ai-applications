@@ -101,3 +101,6 @@ CI-FrontEnd.yml
 
 # Claude Code local tooling
 .claude/
+
+# graphify skill output (generated AST cache, graph reports, labels)
+graphify-out/
