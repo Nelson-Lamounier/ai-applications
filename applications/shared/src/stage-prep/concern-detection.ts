@@ -23,47 +23,34 @@ function overlaps(sig: Set<string>, label: string): boolean {
 
 type Hit = { ref: ConcernEvidenceRef; tier: 'strong' | 'weak' };
 
-function componentHits(sig: Set<string>, ev: ProjectEvidenceInput): Hit[] {
-  const hits: Hit[] = [];
-  for (const c of ev.components) if (overlaps(sig, c.name))
-    hits.push({ ref: { source: 'component', id: c.id, label: c.name }, tier: 'strong' });
-  return hits;
+/** A row source: the rows, the text fields to match, how to build a ref, and the tier. */
+interface HitSource<T> {
+  rows: readonly T[];
+  texts: (r: T) => string[];
+  ref: (r: T) => ConcernEvidenceRef;
+  tier: 'strong' | 'weak';
 }
-function decisionHits(sig: Set<string>, ev: ProjectEvidenceInput): Hit[] {
+
+/** Collect hits from one source — a row matches when any of its texts overlaps the signal. */
+function collectHits<T>(sig: Set<string>, src: HitSource<T>): Hit[] {
   const hits: Hit[] = [];
-  for (const d of ev.decisions) if (overlaps(sig, d.title) || (d.decision != null && overlaps(sig, d.decision)))
-    hits.push({ ref: { source: 'decision', id: d.id, label: d.title }, tier: 'strong' });
-  return hits;
-}
-function stackHits(sig: Set<string>, ev: ProjectEvidenceInput): Hit[] {
-  const hits: Hit[] = [];
-  for (const s of ev.stackItems) if (overlaps(sig, s.name))
-    hits.push({ ref: { source: 'stack_item', id: s.id, label: s.name }, tier: 'weak' });
-  return hits;
-}
-function tagHits(sig: Set<string>, ev: ProjectEvidenceInput): Hit[] {
-  const hits: Hit[] = [];
-  for (const t of ev.tags) if (overlaps(sig, t.tag))
-    hits.push({ ref: { source: 'tag', id: `${t.projectId}:${t.tag}`, label: t.tag }, tier: 'weak' });
-  return hits;
-}
-function repoHits(sig: Set<string>, ev: ProjectEvidenceInput): Hit[] {
-  const hits: Hit[] = [];
-  for (const e of ev.repoEvidence) if (overlaps(sig, e.rawName))
-    hits.push({ ref: { source: e.source, id: e.id, label: e.rawName, fileLine: e.fileLine }, tier: 'weak' });
+  for (const r of src.rows) {
+    if (src.texts(r).some(t => overlaps(sig, t))) hits.push({ ref: src.ref(r), tier: src.tier });
+  }
   return hits;
 }
 
 function hitsFor(concern: SystemDesignConcern, ev: ProjectEvidenceInput): Hit[] {
   const sig = signalTokens(concern.detectionSignals);
   if (sig.size === 0) return [];
+  // Tier by source: component/decision = demonstrated (strong); stack/tag/repo = claimed/declared (weak).
   return [
-    ...componentHits(sig, ev),
-    ...decisionHits(sig, ev),
-    ...stackHits(sig, ev),
-    ...tagHits(sig, ev),
-    ...repoHits(sig, ev),
-  ];
+    collectHits(sig, { rows: ev.components, texts: c => [c.name], ref: c => ({ source: 'component', id: c.id, label: c.name }), tier: 'strong' }),
+    collectHits(sig, { rows: ev.decisions, texts: d => (d.decision != null ? [d.title, d.decision] : [d.title]), ref: d => ({ source: 'decision', id: d.id, label: d.title }), tier: 'strong' }),
+    collectHits(sig, { rows: ev.stackItems, texts: s => [s.name], ref: s => ({ source: 'stack_item', id: s.id, label: s.name }), tier: 'weak' }),
+    collectHits(sig, { rows: ev.tags, texts: t => [t.tag], ref: t => ({ source: 'tag', id: `${t.projectId}:${t.tag}`, label: t.tag }), tier: 'weak' }),
+    collectHits(sig, { rows: ev.repoEvidence, texts: e => [e.rawName], ref: e => ({ source: e.source, id: e.id, label: e.rawName, fileLine: e.fileLine }), tier: 'weak' }),
+  ].flat();
 }
 
 function strengthOf(hits: Hit[]): ConcernStrength {

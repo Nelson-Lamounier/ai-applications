@@ -94,6 +94,17 @@ const INTERVIEW_QUESTION_SCHEMA = {
     additionalProperties: false,
 };
 
+/** Shared evidence-pointer array schema — cited by both skillTransfer and the system-design walkthrough. */
+const EVIDENCE_REFS_SCHEMA = {
+    type: 'array',
+    items: {
+        type: 'object',
+        properties: { source: { type: 'string' }, id: { type: 'string' }, label: { type: 'string' }, fileLine: { type: 'string' } },
+        required: ['source', 'id', 'label'],
+        additionalProperties: false,
+    },
+};
+
 /** Tool the model is forced to call — input is the coaching brief. */
 const COACH_TOOL = {
     name: 'emit_interview_coaching',
@@ -153,15 +164,7 @@ const COACH_TOOL = {
                         tier:        { type: 'string', enum: ['demonstrated', 'claimed', 'declared', 'gap'] },
                         projectId:   { type: ['string', 'null'] },
                         projectName: { type: ['string', 'null'] },
-                        evidenceRefs: {
-                            type: 'array',
-                            items: {
-                                type: 'object',
-                                properties: { source: { type: 'string' }, id: { type: 'string' }, label: { type: 'string' }, fileLine: { type: 'string' } },
-                                required: ['source', 'id', 'label'],
-                                additionalProperties: false,
-                            },
-                        },
+                        evidenceRefs: EVIDENCE_REFS_SCHEMA,
                         narrative:   { type: 'string' },
                     },
                     required: ['jdSkill', 'tier', 'projectId', 'projectName', 'evidenceRefs', 'narrative'],
@@ -199,15 +202,7 @@ const COACH_TOOL = {
                         concernId:       { type: 'string' },
                         concernQuestion: { type: 'string' },
                         whyItMatters:    { type: 'string' },
-                        evidenceRefs: {
-                            type: 'array',
-                            items: {
-                                type: 'object',
-                                properties: { source: { type: 'string' }, id: { type: 'string' }, label: { type: 'string' }, fileLine: { type: 'string' } },
-                                required: ['source', 'id', 'label'],
-                                additionalProperties: false,
-                            },
-                        },
+                        evidenceRefs: EVIDENCE_REFS_SCHEMA,
                         choiceMade:   { type: ['string', 'null'] },
                         articulation: { type: 'string' },
                         followUps: {
@@ -246,6 +241,11 @@ const InterviewQuestionSchema = z.object({
     keyPoints:       z.array(z.string()),
 }).strict();
 
+/** Shared Zod for evidence-pointer arrays — reused by skillTransfer + system-design walkthrough. */
+const EvidenceRefsSchema = z.array(z.object({
+    source: z.string(), id: z.string(), label: z.string(), fileLine: z.string().optional(),
+}).strict());
+
 /**
  * Runtime safety-net. `stage` is injected from pipeline context (not model
  * output) so it is omitted here. `.strict()` mirrors additionalProperties:false.
@@ -275,9 +275,7 @@ export const CoachOutputSchema = z.object({
         tier:        z.enum(['demonstrated', 'claimed', 'declared', 'gap']),
         projectId:   z.string().nullable(),
         projectName: z.string().nullable(),
-        evidenceRefs: z.array(z.object({
-            source: z.string(), id: z.string(), label: z.string(), fileLine: z.string().optional(),
-        }).strict()),
+        evidenceRefs: EvidenceRefsSchema,
         narrative:   z.string(),
     }).strict()).optional(),
     careerArcSummary: z.string().optional(),
@@ -294,9 +292,7 @@ export const CoachOutputSchema = z.object({
         concernId:       z.string(),
         concernQuestion: z.string(),
         whyItMatters:    z.string(),
-        evidenceRefs: z.array(z.object({
-            source: z.string(), id: z.string(), label: z.string(), fileLine: z.string().optional(),
-        }).strict()),
+        evidenceRefs: EvidenceRefsSchema,
         choiceMade:   z.string().nullable(),
         articulation: z.string(),
         followUps: z.array(z.object({
