@@ -104,3 +104,7 @@ CI-FrontEnd.yml
 
 # graphify skill output (generated AST cache, graph reports, labels)
 graphify-out/
+
+# Résumé parser fixtures — real PII, never commit (use synthetic fixtures)
+applications/resume-import-processor/src/parsers/__tests__/fixtures/*.pdf
+applications/resume-import-processor/src/parsers/__tests__/fixtures/*.docx
