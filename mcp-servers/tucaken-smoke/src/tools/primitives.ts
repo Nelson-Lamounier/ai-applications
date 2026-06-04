@@ -7,9 +7,9 @@ import {
   resolveCognitoClientId,
   resolveRdsConn,
   mintCognitoJwt,
-  decodeJwtSub,
   startPortForward,
   connectRds,
+  resolvePlatformUserId,
   type Endpoints,
   type PortForward,
   type RdsClient,
@@ -37,26 +37,47 @@ async function ensureTunnel(): Promise<void> {
   session.tunnelStop = fwd.stop;
 }
 
-/** Connect to the forwarded RDS using the resolved credentials + authed user. */
+/** Lazily resolve the platform `users.id` (by email) the first time a DB
+ *  connection is needed, then cache it on the session. smoke_auth stores the
+ *  Cognito sub provisionally; the sub is NOT the platform users.id, so all DB
+ *  scoping must use the resolved id. Pure smoke_admin_api calls never reach
+ *  here, so they don't need the tunnel. */
+async function ensurePlatformUserId(endpoints: Endpoints): Promise<string> {
+  if (session.platformUserIdResolved && session.testUserId) return session.testUserId;
+  if (!session.email) throw new SmokeSetupError('smoke_auth did not capture an email to resolve users.id');
+  const platformUserId = await resolvePlatformUserId({
+    host: PG_HOST, port: PG_LOCAL_PORT, database: endpoints.pgDatabase,
+    user: endpoints.pgUser, password: endpoints.pgPassword, email: session.email,
+  });
+  session.testUserId = platformUserId;
+  session.platformUserIdResolved = true;
+  return platformUserId;
+}
+
+/** Connect to the forwarded RDS using the resolved credentials + platform user. */
 async function connectViaTunnel(): Promise<RdsClient> {
-  const { testUserId, endpoints } = requireAuth();
+  const { endpoints } = requireAuth();
   await ensureTunnel();
   assertDevTarget({ account: DEV_TARGET.account, region: DEV_TARGET.region, db: endpoints.pgDatabase });
+  const testUserId = await ensurePlatformUserId(endpoints);
   return connectRds({
     host: PG_HOST, port: PG_LOCAL_PORT, database: endpoints.pgDatabase,
     user: endpoints.pgUser, password: endpoints.pgPassword, testUserId,
   });
 }
 
-async function handleAuth(): Promise<{ authed: true; testUserId: string; db: string }> {
+async function handleAuth(): Promise<{ authed: true; cognitoSub: string; email: string; db: string }> {
   if (!COGNITO.username || !COGNITO.password) {
     throw new SmokeSetupError('SMOKE_COGNITO_USERNAME / SMOKE_COGNITO_PASSWORD are required');
   }
   const [clientId, rds] = await Promise.all([resolveCognitoClientId(), resolveRdsConn()]);
-  const { idToken, sub } = await mintCognitoJwt({
+  const { idToken, sub, email } = await mintCognitoJwt({
     clientId, username: COGNITO.username, password: COGNITO.password, region: COGNITO.region,
   });
-  const testUserId = decodeJwtSub(idToken);
+  // The platform users.id is resolved lazily (by email) on the first DB
+  // connection — smoke_auth intentionally does not open the tunnel. The
+  // Cognito sub is stored provisionally only so requireAuth() is satisfied.
+  const testEmail = email ?? COGNITO.username;
   assertDevTarget({ account: DEV_TARGET.account, region: DEV_TARGET.region, db: rds.database });
   const endpoints: Endpoints = {
     adminApiBaseUrl: ADMIN_API_BASE_URL,
@@ -68,9 +89,14 @@ async function handleAuth(): Promise<{ authed: true; testUserId: string; db: str
     pgDatabase: rds.database, pgUser: rds.user,
   };
   session.idToken = idToken;
-  session.testUserId = testUserId;
+  session.cognitoSub = sub;
+  session.email = testEmail;
+  // Provisional only so requireAuth() passes; upgraded to the real platform
+  // users.id by ensurePlatformUserId() on the first DB connection.
+  session.testUserId = sub;
+  session.platformUserIdResolved = false;
   session.endpoints = endpoints;
-  return { authed: true, testUserId, db: rds.database };
+  return { authed: true, cognitoSub: sub, email: testEmail, db: rds.database };
 }
 
 async function handleAdminApi(args: {
