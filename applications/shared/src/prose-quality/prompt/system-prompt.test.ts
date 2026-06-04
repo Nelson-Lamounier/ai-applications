@@ -11,6 +11,8 @@ describe('assembleProseLinterSystemPrompt', () => {
         expect(text).toContain('Binary Contrasts');
         expect(text).toContain('Directness');
         expect(blocks.some(b => 'cachePoint' in (b as object))).toBe(true);
+        expect(blocks[0]).toHaveProperty('text');
+        expect(blocks[1]).toHaveProperty('cachePoint');
     });
 });
 
