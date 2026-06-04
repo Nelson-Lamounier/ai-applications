@@ -107,7 +107,8 @@ export class AdminApiClient {
         'Content-Type': contentType,
         'Content-Length': String(bytes.length),
       },
-      body: bytes,
+      // Buffer is a Uint8Array at runtime; wrap to satisfy the node fetch BodyInit type.
+      body: new Uint8Array(bytes),
     });
   }
 
