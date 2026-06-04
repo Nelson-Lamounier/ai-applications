@@ -41,13 +41,15 @@ export interface BedrockProseLinterConfig {
     readonly client?: BedrockRuntimeClient;
 }
 
-/** A fail-open PASS result, used whenever the model output cannot be trusted. */
-const PASS_OPEN: ProseQualityResult = {
-    status: 'PASS',
-    score: { directness: 0, rhythm: 0, trust: 0, authenticity: 0, density: 0, total: 0 },
-    belowThreshold: false,
-    issues: [],
-};
+/** Returns a fresh fail-open PASS result each time — never a shared mutable singleton. */
+function passOpen(): ProseQualityResult {
+    return {
+        status: 'PASS',
+        score: { directness: 0, rhythm: 0, trust: 0, authenticity: 0, density: 0, total: 0 },
+        belowThreshold: false,
+        issues: [],
+    };
+}
 
 function renderUserMessage(sections: readonly ProseSection[]): string {
     return sections
@@ -63,16 +65,32 @@ function extractToolInput(response: ConverseCommandOutput): unknown {
     return toolUse?.input;
 }
 
+const VALID_CATEGORIES = new Set(['phrase', 'structure']);
+const VALID_SEVERITIES  = new Set(['high', 'medium', 'low']);
+
+function isValidIssue(item: unknown): item is ProseQualityResult['issues'][number] {
+    if (typeof item !== 'object' || item === null) return false;
+    const i = item as Record<string, unknown>;
+    return (
+        typeof i['category'] === 'string' && VALID_CATEGORIES.has(i['category']) &&
+        typeof i['match']    === 'string' &&
+        typeof i['location'] === 'string' &&
+        typeof i['severity'] === 'string' && VALID_SEVERITIES.has(i['severity']) &&
+        typeof i['rule']     === 'string'
+    );
+}
+
 /** Validate the model payload into a ProseQualityResult, or null if malformed. */
 function coerce(raw: unknown): ProseQualityResult | null {
     if (typeof raw !== 'object' || raw === null) return null;
     const o = raw as Record<string, unknown>;
     const s = o['score'] as Record<string, unknown> | undefined;
     const dims = ['directness', 'rhythm', 'trust', 'authenticity', 'density', 'total'] as const;
-    if (!s || dims.some(d => typeof s[d] !== 'number')) return null;
+    if (!s || dims.some(d => !Number.isFinite(s[d]))) return null;
     if (o['status'] !== 'PASS' && o['status'] !== 'FAIL') return null;
     if (typeof o['belowThreshold'] !== 'boolean') return null;
     if (!Array.isArray(o['issues'])) return null;
+    const issues: ProseQualityResult['issues'] = o['issues'].filter(isValidIssue);
     return {
         status: o['status'] as 'PASS' | 'FAIL',
         score: {
@@ -84,7 +102,7 @@ function coerce(raw: unknown): ProseQualityResult | null {
             total:        s['total'] as number,
         },
         belowThreshold: o['belowThreshold'] as boolean,
-        issues: o['issues'] as ProseQualityResult['issues'],
+        issues,
     };
 }
 
@@ -101,7 +119,7 @@ export class BedrockProseLinter implements IProseLinter {
     }
 
     async lint(input: ProseQualityInput, costCtx?: ProseLinterCostContext): Promise<ProseQualityResult> {
-        if (input.sections.length === 0) return PASS_OPEN;
+        if (input.sections.length === 0) return passOpen();
 
         let response: ConverseCommandOutput;
         try {
@@ -124,7 +142,7 @@ export class BedrockProseLinter implements IProseLinter {
             response = await this.client.send(command);
         } catch (err) {
             console.warn('[prose-linter] Bedrock call failed — failing open (PASS):', (err as Error).message);
-            return PASS_OPEN;
+            return passOpen();
         }
 
         if (costCtx?.userId) {
@@ -147,7 +165,7 @@ export class BedrockProseLinter implements IProseLinter {
                 { name: 'ProseChecked', value: 1, unit: 'Count' },
                 { name: 'ProseFailed', value: 0, unit: 'Count' },
             ]);
-            return PASS_OPEN;
+            return passOpen();
         }
         emitEmfMetric(METRIC_NAMESPACE, { Module: 'prose-quality', Mode: this.mode }, [
             { name: 'ProseChecked', value: 1, unit: 'Count' },

@@ -88,4 +88,23 @@ describe('BedrockProseLinter', () => {
             { name: 'ProseFailed', value: 1, unit: 'Count' },
         ]);
     });
+
+    it('fails OPEN when the Bedrock call throws (transport error)', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        sendMock.mockRejectedValueOnce(new Error('throttled'));
+        const r = await new BedrockProseLinter({ mode: 'flag' }).lint(input);
+        expect(r.status).toBe('PASS');
+        expect(r.issues).toEqual([]);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
+    it('does not record cost when costCtx has no userId', async () => {
+        recordCostMock.mockClear();
+        sendMock.mockResolvedValueOnce(toolReply(goodVerdict));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pool = {} as any;
+        await new BedrockProseLinter({ mode: 'flag' }).lint(input, { pool, userId: '' });
+        expect(recordCostMock).not.toHaveBeenCalled();
+    });
 });
