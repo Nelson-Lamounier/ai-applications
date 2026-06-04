@@ -12,4 +12,5 @@ export * from './story-mining-persistence.js';
 export * from './skill-transfer-types.js';
 export * from './skill-transfer.js';
 export * from './system-design-concerns-types.js';
+export * from './concern-detection.js';
 export * from './project-evidence.js';
