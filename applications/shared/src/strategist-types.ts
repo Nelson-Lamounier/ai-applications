@@ -16,6 +16,7 @@
 
 import type { AgentResult, AgentInvocationLog } from './types.js';
 import type { SkillTransferEntry } from './stage-prep/skill-transfer-types.js';
+import type { SystemDesignWalkthroughCard, ConcernCoverage } from './stage-prep/index.js';
 
 // =============================================================================
 // ENUMS & DOMAIN TYPES
@@ -703,6 +704,10 @@ export interface InterviewCoachResult {
     readonly compScript?: CompScript;
     /** Optional grounded JD-skill ↔ project mapping (technical stage). */
     readonly skillTransfer?: readonly SkillTransferEntry[];
+    /** System-design only: project-anchored walkthrough cards. */
+    readonly systemDesignWalkthrough?: readonly SystemDesignWalkthroughCard[];
+    /** System-design only: deterministic coverage map + alignment (written by run-coach, not the model). */
+    readonly systemDesignCoverage?: ConcernCoverage;
 }
 
 // =============================================================================

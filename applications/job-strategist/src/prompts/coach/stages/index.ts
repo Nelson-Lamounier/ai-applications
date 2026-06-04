@@ -25,10 +25,15 @@ export function resolveCoachBranch(stage: InterviewStage): CoachBranch {
  * Branches whose coaching is anchored in project evidence (the candidate block +
  * runtime validateSkillTransfer). run-coach uses this to decide whether to build
  * skill-candidate sets; the stage-focus grader uses it to require skillTransfer.
+ * Technical only now — system-design has its own project-anchored walkthrough gate.
  */
 export function stageUsesSkillTransfer(stage: InterviewStage): boolean {
-    const b = resolveCoachBranch(stage);
-    return b === 'technical' || b === 'system-design';
+    return resolveCoachBranch(stage) === 'technical';
+}
+
+/** Project-anchored system-design walkthrough stage. */
+export function stageUsesSystemDesignWalkthrough(stage: InterviewStage): boolean {
+    return resolveCoachBranch(stage) === 'system-design';
 }
 
 const DELTA: Record<CoachBranch, string> = {

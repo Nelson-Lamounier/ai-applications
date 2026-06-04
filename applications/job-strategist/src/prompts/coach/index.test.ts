@@ -1,5 +1,8 @@
 /** @format */
-import { resolveCoachBranch, assembleCoachSystemPrompt, stageUsesSkillTransfer } from './stages/index.js';
+import {
+    resolveCoachBranch, assembleCoachSystemPrompt,
+    stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough,
+} from './stages/index.js';
 
 function text(blocks: { text?: string }[]): string {
     return blocks.map(b => b.text ?? '').join('\n');
@@ -18,15 +21,26 @@ describe('resolveCoachBranch', () => {
 });
 
 describe('stageUsesSkillTransfer', () => {
-    it('is true for project-anchored stages (technical, system-design)', () => {
+    it('is true for technical (skill-transfer) stages', () => {
         expect(stageUsesSkillTransfer('technical-1')).toBe(true);
         expect(stageUsesSkillTransfer('technical-2')).toBe(true);
-        expect(stageUsesSkillTransfer('system-design')).toBe(true);
     });
-    it('is false for non-anchored stages', () => {
+    it('is false for non-skill-transfer stages (incl. system-design)', () => {
+        expect(stageUsesSkillTransfer('system-design')).toBe(false);
         expect(stageUsesSkillTransfer('phone-screen')).toBe(false);
         expect(stageUsesSkillTransfer('behavioural')).toBe(false);
         expect(stageUsesSkillTransfer('final-round')).toBe(false);
+    });
+});
+
+describe('stageUsesSystemDesignWalkthrough', () => {
+    it('is true only for system-design', () => {
+        expect(stageUsesSystemDesignWalkthrough('system-design')).toBe(true);
+    });
+    it('is false for other stages', () => {
+        expect(stageUsesSystemDesignWalkthrough('technical-1')).toBe(false);
+        expect(stageUsesSystemDesignWalkthrough('phone-screen')).toBe(false);
+        expect(stageUsesSystemDesignWalkthrough('behavioural')).toBe(false);
     });
 });
 
@@ -41,10 +55,10 @@ describe('assembleCoachSystemPrompt', () => {
         expect(t).toContain('SKILL TRANSFER');
         expect(t).not.toContain('careerArcSummary');
     });
-    it('system-design includes an architecture delta + skill-transfer, not phone-screen fields', () => {
+    it('system-design includes the project-anchored walkthrough delta, not phone-screen fields', () => {
         const t = text(assembleCoachSystemPrompt('system-design') as { text?: string }[]);
         expect(t).toContain('SYSTEM DESIGN INTERVIEW');
-        expect(t).toContain('SKILL TRANSFER');
+        expect(t).toContain('systemDesignWalkthrough');
         expect(t).not.toContain('careerArcSummary');
     });
     it('phone-screen includes the phone delta fields', () => {

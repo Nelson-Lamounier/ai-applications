@@ -2,34 +2,66 @@
   "input": {
     "analysisXml": "<analysis><fit>STRONG</fit></analysis>",
     "stage": "system-design",
-    "candidateSets": [
-      { "jdSkill": "Distributed Systems", "candidates": [
-        { "projectId": "p1", "projectName": "AI Applications", "source": "decision", "tier": "demonstrated", "id": "d1", "label": "Sharded ingestion pipeline with backpressure" }
-      ] },
-      { "jdSkill": "Event Streaming", "candidates": [] }
-    ]
+    "candidateSets": []
   },
   "output": {
     "stage": "system-design",
-    "stageDescription": "System design — architecture, scale, trade-offs.",
-    "technicalQuestions": [
-      { "question": "Design a horizontally-scalable ingestion pipeline.", "answerFramework": "Requirements then your sharded design.", "sourceProject": "AI Applications", "difficulty": "hard", "keyPoints": ["partitioning", "backpressure", "idempotent writes"] }
-    ],
+    "stageDescription": "System design — project-anchored walkthrough, concern by concern.",
+    "technicalQuestions": [],
     "behaviouralQuestions": [],
-    "difficultQuestions": [
-      { "question": "No event-streaming experience — how would you approach it?", "answerFramework": "Honest bridge from batch ingestion.", "bridgeStrategy": "Acknowledge gap, map to Kinesis/SQS semantics." }
-    ],
-    "technicalPrepChecklist": [
-      { "topic": "Event streaming fundamentals", "priority": "high", "rationale": "No project evidence; needed for JD.", "suggestedResources": ["Kinesis docs"] }
-    ],
-    "questionsToAsk": [ { "question": "What is the current peak ingestion throughput?", "rationale": "scale envelope" } ],
-    "coachingNotes": "Lead with the sharded ingestion decision.",
-    "skillTransfer": [
-      { "jdSkill": "Distributed Systems", "tier": "demonstrated", "projectId": "p1", "projectName": "AI Applications",
-        "evidenceRefs": [ { "source": "decision", "id": "d1", "label": "Sharded ingestion pipeline with backpressure" } ],
-        "narrative": "The JD needs Distributed Systems; in AI Applications you designed a sharded ingestion pipeline with backpressure — that architectural decision transfers directly." },
-      { "jdSkill": "Event Streaming", "tier": "gap", "projectId": null, "projectName": null, "evidenceRefs": [],
-        "narrative": "No documented event-streaming work; prepare streaming fundamentals and bridge from batch ingestion." }
+    "difficultQuestions": [],
+    "technicalPrepChecklist": [],
+    "questionsToAsk": [],
+    "coachingNotes": "Walk the interviewer through your own architecture, concern by concern; be honest where the project has no evidence.",
+    "systemDesignCoverage": {
+      "detected": [
+        {
+          "concernId": "data_isolation_tenant_scoping",
+          "category": "data_isolation",
+          "strength": "strong",
+          "evidenceRefs": [
+            { "source": "component", "id": "c1", "label": "Tenant RLS policy layer" }
+          ],
+          "relevantToJd": true
+        },
+        {
+          "concernId": "scaling_stateless_horizontal",
+          "category": "scaling",
+          "strength": "none",
+          "evidenceRefs": [],
+          "relevantToJd": true
+        }
+      ],
+      "relevantTotal": 2,
+      "relevantAddressed": 1
+    },
+    "systemDesignWalkthrough": [
+      {
+        "concernId": "data_isolation_tenant_scoping",
+        "concernQuestion": "How do you ensure users cannot access other users' data?",
+        "whyItMatters": "Multi-tenant data leaks are catastrophic; this role demands airtight isolation.",
+        "evidenceRefs": [
+          { "source": "component", "id": "c1", "label": "Tenant RLS policy layer" }
+        ],
+        "choiceMade": "Postgres row-level security",
+        "articulation": "I enforced isolation at the database with Postgres RLS so a forgotten tenant filter on a new query cannot leak data; the trade-off was policy-evaluation overhead, which I accepted because the failure mode of a cross-tenant leak is unacceptable.",
+        "followUps": [
+          { "question": "What if a developer forgets the tenant filter on a new query?", "status": "addressed", "framing": "RLS enforces it at the database, so a missing app-layer filter still cannot leak rows." }
+        ],
+        "gapGuidance": null
+      },
+      {
+        "concernId": "scaling_stateless_horizontal",
+        "concernQuestion": "How does the system scale horizontally under load?",
+        "whyItMatters": "The role expects the design to absorb load by adding instances rather than vertical scaling.",
+        "evidenceRefs": [],
+        "choiceMade": null,
+        "articulation": "My project has no evidence for horizontal scaling yet. I would keep request handlers stateless and push session state to a shared store so instances can be added behind the load balancer.",
+        "followUps": [
+          { "question": "How do you scale stateless services?", "status": "gap", "framing": "I have not implemented this yet; I would externalise state and autoscale on CPU and queue depth." }
+        ],
+        "gapGuidance": "Be honest that the project has no scaling evidence; describe the stateless approach you would take and bridge from the isolation work you did ship."
+      }
     ]
   }
 }
