@@ -15,58 +15,36 @@
  * its principle is dropped; a card left with no grounded stories is demoted to
  * an honest gap. No invented story survives.
  */
-import type { ProjectEvidenceInput } from '@bedrock/shared';
+import type {
+  ProjectEvidenceInput,
+  PrincipleCoverageStrength,
+  BarRaiserEvidenceRef,
+  PrincipleCoverage,
+  BarRaiserPrinciple,
+} from '@bedrock/shared';
 import type { LeadershipPrinciple } from './leadership-principles-repository.js';
 
 // =============================================================================
-// TYPES (local, mirroring how leadership-principles types live in this lib/)
+// TYPES
 // =============================================================================
+// The detection-side shapes now live in `@bedrock/shared`
+// (stage-prep/bar-raiser-types.ts) as the single source of truth, so the
+// InterviewCoachResult schema in shared and this detection lib agree by
+// construction. Re-exported here for the existing import sites + tests.
 
-export type Coverage = 'strong' | 'partial' | 'none';
+export type {
+  PrincipleCoverageStrength,
+  BarRaiserEvidenceRef,
+  BarRaiserStory,
+  BarRaiserProbingQuestion,
+  PrincipleCoverage,
+  BarRaiserPrinciple,
+} from '@bedrock/shared';
 
-/** Evidence pointer cited from a real project row (mirrors ConcernEvidenceRef). */
-export interface EvidenceRef {
-  readonly source: string;
-  readonly id: string;
-  readonly label: string;
-  readonly fileLine?: string;
-}
-
-/** Per-principle detection result — produced deterministically, never by the model. */
-export interface PrincipleCoverage {
-  readonly principleId: string;
-  readonly coverage: Coverage;
-  readonly evidenceRefs: EvidenceRef[];
-  readonly relevantToJd: boolean;
-}
-
-/** One STAR story emitted by the coach (prose) + grounded evidence (from detection). */
-export interface BarRaiserStory {
-  readonly title: string;
-  readonly situation: string;
-  readonly task: string;
-  readonly action: string;
-  readonly result: string;
-  readonly evidenceRefs: EvidenceRef[];
-  readonly honestyCalibration: string;
-  readonly seniorityNote: string;
-}
-
-export interface BarRaiserProbingQuestion {
-  readonly question: string;
-  readonly framing: string;
-}
-
-/** One principle card emitted by the coach + sanitised by validateBarRaiserWalkthrough. */
-export interface BarRaiserPrinciple {
-  readonly principleId: string;
-  readonly principleName: string;
-  readonly interpretation: string;
-  readonly coverage: Coverage;
-  readonly stories: BarRaiserStory[];
-  readonly probingQuestions: BarRaiserProbingQuestion[];
-  readonly gapGuidance: string | null;
-}
+/** Local detection-side alias for the shared coverage-strength union. */
+type Coverage = PrincipleCoverageStrength;
+/** Local detection-side alias for the shared evidence ref. */
+type EvidenceRef = BarRaiserEvidenceRef;
 
 // =============================================================================
 // TOKENIZER + HIT COLLECTION (mirrors concern-detection.ts)

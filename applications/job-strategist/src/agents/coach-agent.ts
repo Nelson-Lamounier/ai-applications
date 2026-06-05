@@ -47,6 +47,8 @@ export interface CoachAgentInput {
     readonly skillCandidateBlock?: string;
     /** Pre-serialised system-design concern block (from buildConcernWalkthroughBlock). */
     readonly systemDesignBlock?: string;
+    /** Pre-serialised bar-raiser leadership-principle block (from buildBarRaiserBlock). */
+    readonly barRaiserBlock?: string;
 }
 
 // =============================================================================
@@ -471,6 +473,7 @@ function buildCoachMessage(
     evidenceBlock?: string,
     skillCandidateBlock?: string,
     systemDesignBlock?: string,
+    barRaiserBlock?: string,
 ): string {
     const sections: string[] = [
         `## Interview Stage: ${ctx.interviewStage}`,
@@ -496,6 +499,9 @@ function buildCoachMessage(
     }
     if (systemDesignBlock) {
         sections.push(systemDesignBlock, '');
+    }
+    if (barRaiserBlock) {
+        sections.push(barRaiserBlock, '');
     }
     sections.push(
         `Prepare interview coaching for the "${ctx.interviewStage}" stage. ` +
@@ -587,7 +593,7 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: CoachAgentInput, ctx: StrategistPipelineContext): string {
-        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock, input.systemDesignBlock);
+        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock, input.systemDesignBlock, input.barRaiserBlock);
     }
 
     /**
@@ -679,9 +685,10 @@ export async function executeCoachAgent(
     evidenceBlock?: string,
     skillCandidateSets?: readonly SkillCandidateSet[],
     systemDesignBlock?: string,
+    barRaiserBlock?: string,
 ): Promise<AgentResult<InterviewCoachResult>> {
     const skillCandidateBlock = buildSkillCandidateBlock(skillCandidateSets ?? []);
-    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock }, ctx);
+    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock, barRaiserBlock }, ctx);
     if (skillCandidateSets && skillCandidateSets.length > 0) {
         const raw = (result.data.skillTransfer ?? []) as SkillTransferEntry[];
         (result.data as { skillTransfer?: unknown }).skillTransfer = validateSkillTransfer(raw, skillCandidateSets);
