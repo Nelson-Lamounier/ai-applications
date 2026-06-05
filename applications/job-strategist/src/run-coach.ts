@@ -34,7 +34,8 @@ import type {
 import { Counter, Histogram } from 'prom-client';
 
 import { executeCoachAgent, buildSkillCandidateBlock, buildConcernWalkthroughBlock } from './agents/coach-agent.js';
-import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough, stageUsesBarRaiserWalkthrough } from './prompts/coach/stages/index.js';
+import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough, stageUsesBarRaiserWalkthrough, stageUsesFinalPrep } from './prompts/coach/stages/index.js';
+import { validateFinalPrep } from './lib/final-validation.js';
 import {
     RdsLeadershipPrinciplesRepository, frameworkForCompany,
     type LeadershipPrinciple,
@@ -337,6 +338,55 @@ async function buildBarRaiserInputs(
     }
 }
 
+interface FinalInputs { block: string; }
+
+/** Strength bullet lines for the final-round digest (verified + partial matches). */
+function finalStrengthLines(research: StrategistResearchResult | null): string[] {
+    const strengths = [
+        ...(research?.verifiedMatches ?? []).map(m => `${m.skill} (${m.depth}) — ${m.sourceCitation}`),
+        ...(research?.partialMatches ?? []).map(m => `${m.skill} (partial) — ${m.transferableFoundation}`),
+    ];
+    if (strengths.length === 0) return ['- (none surfaced — frame honestly from the analysis)'];
+    return strengths.map(s => `- ${s}`);
+}
+
+/** Gap bullet lines for the final-round digest (honest, forward-looking framing). */
+function finalGapLines(research: StrategistResearchResult | null): string[] {
+    const gaps = (research?.gaps ?? []).map(g => `${g.skill} (${g.impactSeverity}) — ${g.disqualifyingAssessment}`);
+    if (gaps.length === 0) return ['- (none material)'];
+    return gaps.map(g => `- ${g}`);
+}
+
+/**
+ * Career-arc + role-fit context for the final-round prep stage. Minimal — no DB
+ * load beyond the coach's existing analysis/research context. Assembles a compact
+ * "Career arc + role-fit" digest from the Research result (strengths via verified/
+ * partial matches, gaps) plus the JD/company fields already on `env`. Fail-open:
+ * any error → empty block + generic final-round coaching, never fails the run.
+ */
+function buildFinalInputs(
+    env: ReturnType<typeof parseCoachEnv>,
+    research: StrategistResearchResult | null,
+): FinalInputs {
+    if (!stageUsesFinalPrep(env.interviewStage as InterviewStage)) return { block: '' };
+    try {
+        const lines = [
+            '## Career arc + role-fit context (ground the final-round prep in THIS evidence)',
+            `Target role: ${env.targetRole}`,
+            `Target company: ${env.targetCompany}`,
+            `Overall fit: ${research?.overallFitRating ?? ''} — ${research?.fitSummary ?? ''}`,
+            'Strengths to anchor "why this role" and mutual-fit talking points:',
+            ...finalStrengthLines(research),
+            'Gaps to address with honest, forward-looking framing (never overclaim):',
+            ...finalGapLines(research),
+        ];
+        return { block: lines.join('\n') };
+    } catch (err) {
+        log.warn({ err: String(err) }, 'final.prep.inputs.failed (non-fatal)');
+        return { block: '' };
+    }
+}
+
 async function main(): Promise<void> {
     const env  = parseCoachEnv();
     const pool = getPool(env.pg);
@@ -368,10 +418,16 @@ async function main(): Promise<void> {
         const skillCandidateSets = await buildSkillCandidateSets(pool, env, research);
         const sd = await buildSystemDesignWalkthroughInputs(pool, env, research);
         const br = await buildBarRaiserInputs(pool, env, research);
+        const fin = buildFinalInputs(env, research);
 
-        const coaching = await executeCoachAgent(
-            ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets, sd.block, br.block,
-        );
+        const coaching = await executeCoachAgent(ctx, analysis, {
+            constraintBlock,
+            evidenceBlock,
+            skillCandidateSets,
+            systemDesignBlock: sd.block,
+            barRaiserBlock:    br.block,
+            finalBlock:        fin.block,
+        });
         if (sd.coverage) {
             const raw = (coaching.data.systemDesignWalkthrough ?? []) as SystemDesignWalkthroughCard[];
             (coaching.data as { systemDesignWalkthrough?: unknown }).systemDesignWalkthrough =
@@ -390,6 +446,9 @@ async function main(): Promise<void> {
                 relevantTotal:     relevant.length,
                 relevantAddressed: relevant.filter(d => d.coverage !== 'none').length,
             };
+        }
+        if (stageUsesFinalPrep(env.interviewStage as InterviewStage)) {
+            (coaching.data as { finalPrep?: unknown }).finalPrep = validateFinalPrep(coaching.data.finalPrep);
         }
 
         // Text-level grounding on coach output — runs for EVERY stage. Complements

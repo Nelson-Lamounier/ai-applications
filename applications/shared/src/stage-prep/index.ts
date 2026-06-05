@@ -13,6 +13,7 @@ export * from './skill-transfer-types.js';
 export * from './skill-transfer.js';
 export * from './system-design-concerns-types.js';
 export * from './bar-raiser-types.js';
+export * from './final-types.js';
 export * from './concern-detection.js';
 export * from './system-design-walkthrough.js';
 export * from './project-evidence.js';

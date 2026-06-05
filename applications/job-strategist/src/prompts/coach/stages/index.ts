@@ -7,17 +7,20 @@ import { TECHNICAL_DELTA } from './technical.js';
 import { BEHAVIOURAL_DELTA } from './behavioural.js';
 import { SYSTEM_DESIGN_DELTA } from './system-design.js';
 import { BAR_RAISER_DELTA } from './bar-raiser.js';
+import { FINAL_DELTA } from './final.js';
 
 export type CoachBranch =
-    | 'phone-screen' | 'technical' | 'system-design' | 'behavioural' | 'bar-raiser' | 'general';
+    | 'phone-screen' | 'technical' | 'system-design' | 'behavioural' | 'bar-raiser' | 'final' | 'general';
 
 /**
- * Map a canonical interview stage to its coach branch. `bar-raiser` is a prep
- * stage carried as a string by the dispatch layer (INTERVIEW_PREP_STAGES); it is
- * not in the lifecycle `InterviewStage` union, so it is matched defensively.
+ * Map a canonical interview stage to its coach branch. `bar-raiser` and `final`
+ * are prep stages carried as strings by the dispatch layer (INTERVIEW_PREP_STAGES);
+ * they are not in the lifecycle `InterviewStage` union, so they are matched
+ * defensively on the widened string.
  */
 export function resolveCoachBranch(stage: InterviewStage): CoachBranch {
     if ((stage as string) === 'bar-raiser') return 'bar-raiser';
+    if ((stage as string) === 'final') return 'final';
     switch (stage) {
         case 'phone-screen': return 'phone-screen';
         case 'technical-1':
@@ -48,12 +51,18 @@ export function stageUsesBarRaiserWalkthrough(stage: InterviewStage): boolean {
     return resolveCoachBranch(stage) === 'bar-raiser';
 }
 
+/** Final-round / mutual-fit preparation stage (why-this-role + substantive questions). */
+export function stageUsesFinalPrep(stage: InterviewStage): boolean {
+    return resolveCoachBranch(stage) === 'final';
+}
+
 const DELTA: Record<CoachBranch, string> = {
     'phone-screen': PHONE_SCREEN_DELTA,
     technical: TECHNICAL_DELTA,
     'system-design': SYSTEM_DESIGN_DELTA,
     behavioural: BEHAVIOURAL_DELTA,
     'bar-raiser': BAR_RAISER_DELTA,
+    final: FINAL_DELTA,
     general: '',
 };
 
