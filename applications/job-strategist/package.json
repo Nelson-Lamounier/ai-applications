@@ -25,7 +25,6 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19.2.16"
   }
 }
