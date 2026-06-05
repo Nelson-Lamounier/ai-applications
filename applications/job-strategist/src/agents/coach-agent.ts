@@ -255,23 +255,29 @@ const EvidenceRefsSchema = z.array(z.object({
  */
 export const CoachOutputSchema = z.object({
     stageDescription:     z.string(),
-    technicalQuestions:   z.array(InterviewQuestionSchema),
-    behaviouralQuestions: z.array(InterviewQuestionSchema),
+    // Stage-specific arrays default to [] when a stage doesn't emit them. The coach
+    // produces only the fields its stage needs (behavioural emits behaviouralQuestions,
+    // not technicalQuestions; system-design emits systemDesignWalkthrough). A shared
+    // schema requiring every array made the model's correct per-stage omissions fail
+    // validation — so default rather than require. Keeps afterExecute's `.length`
+    // reads safe (always arrays).
+    technicalQuestions:   z.array(InterviewQuestionSchema).default([]),
+    behaviouralQuestions: z.array(InterviewQuestionSchema).default([]),
     difficultQuestions:   z.array(z.object({
         question:        z.string(),
         answerFramework: z.string(),
         bridgeStrategy:  z.string(),
-    }).strict()),
+    }).strict()).default([]),
     technicalPrepChecklist: z.array(z.object({
         topic:              z.string(),
         priority:           z.enum(['high', 'medium', 'low']),
         rationale:          z.string(),
         suggestedResources: z.array(z.string()),
-    }).strict()),
+    }).strict()).default([]),
     questionsToAsk: z.array(z.object({
         question:  z.string(),
         rationale: z.string(),
-    }).strict()),
+    }).strict()).default([]),
     coachingNotes: z.string(),
     skillTransfer: z.array(z.object({
         jdSkill:     z.string(),
