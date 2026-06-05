@@ -6,11 +6,18 @@ import { PHONE_SCREEN_DELTA } from './phone-screen.js';
 import { TECHNICAL_DELTA } from './technical.js';
 import { BEHAVIOURAL_DELTA } from './behavioural.js';
 import { SYSTEM_DESIGN_DELTA } from './system-design.js';
+import { BAR_RAISER_DELTA } from './bar-raiser.js';
 
-export type CoachBranch = 'phone-screen' | 'technical' | 'system-design' | 'behavioural' | 'general';
+export type CoachBranch =
+    | 'phone-screen' | 'technical' | 'system-design' | 'behavioural' | 'bar-raiser' | 'general';
 
-/** Map a canonical interview stage to its coach branch. */
+/**
+ * Map a canonical interview stage to its coach branch. `bar-raiser` is a prep
+ * stage carried as a string by the dispatch layer (INTERVIEW_PREP_STAGES); it is
+ * not in the lifecycle `InterviewStage` union, so it is matched defensively.
+ */
 export function resolveCoachBranch(stage: InterviewStage): CoachBranch {
+    if ((stage as string) === 'bar-raiser') return 'bar-raiser';
     switch (stage) {
         case 'phone-screen': return 'phone-screen';
         case 'technical-1':
@@ -36,11 +43,17 @@ export function stageUsesSystemDesignWalkthrough(stage: InterviewStage): boolean
     return resolveCoachBranch(stage) === 'system-design';
 }
 
+/** Project-anchored bar-raiser leadership-principle walkthrough stage. */
+export function stageUsesBarRaiserWalkthrough(stage: InterviewStage): boolean {
+    return resolveCoachBranch(stage) === 'bar-raiser';
+}
+
 const DELTA: Record<CoachBranch, string> = {
     'phone-screen': PHONE_SCREEN_DELTA,
     technical: TECHNICAL_DELTA,
     'system-design': SYSTEM_DESIGN_DELTA,
     behavioural: BEHAVIOURAL_DELTA,
+    'bar-raiser': BAR_RAISER_DELTA,
     general: '',
 };
 

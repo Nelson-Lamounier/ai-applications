@@ -3,6 +3,7 @@ import phoneScreen from './fixtures/phone-screen.json';
 import technical from './fixtures/technical.json';
 import systemDesign from './fixtures/system-design.json';
 import behavioural from './fixtures/behavioural.json';
+import barRaiser from './fixtures/bar-raiser.json';
 import { runGraders } from './graders.js';
 import type { EvalInput } from './graders.js';
 import { schemaGrader } from './graders/schema-grader.js';
@@ -10,14 +11,16 @@ import { groundingGrader } from './graders/grounding-grader.js';
 import { stageFocusGrader } from './graders/stage-focus-grader.js';
 import { honestyGrader } from './graders/honesty-grader.js';
 import { systemDesignGrader } from './graders/system-design-grader.js';
+import { barRaiserGrader } from './graders/bar-raiser-grader.js';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
-const GRADERS = [schemaGrader, groundingGrader, stageFocusGrader, honestyGrader, systemDesignGrader];
+const GRADERS = [schemaGrader, groundingGrader, stageFocusGrader, honestyGrader, systemDesignGrader, barRaiserGrader];
 const FIXTURES = [
     { name: 'phone-screen', fx: phoneScreen },
     { name: 'technical', fx: technical },
     { name: 'system-design', fx: systemDesign },
     { name: 'behavioural', fx: behavioural },
+    { name: 'bar-raiser', fx: barRaiser },
 ];
 
 describe('Tier 1 coach evals — gold fixtures pass all graders', () => {

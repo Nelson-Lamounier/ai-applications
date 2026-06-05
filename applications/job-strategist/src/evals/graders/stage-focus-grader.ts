@@ -27,6 +27,12 @@ function systemDesignFailures(o: InterviewCoachResult): string[] {
     return cards && cards.length > 0 ? [] : ['system-design: empty systemDesignWalkthrough'];
 }
 
+/** Bar-raiser stage: the project-anchored leadership-principle walkthrough must be emitted. */
+function barRaiserFailures(o: InterviewCoachResult): string[] {
+    const cards = o.barRaiserWalkthrough;
+    return cards && cards.length > 0 ? [] : ['bar-raiser: empty barRaiserWalkthrough'];
+}
+
 function behaviouralFailures(o: InterviewCoachResult): string[] {
     return o.behaviouralQuestions && o.behaviouralQuestions.length > 0
         ? []
@@ -44,6 +50,9 @@ export const stageFocusGrader: Grader = (input, output) => {
     if (s === 'phone-screen') failures = phoneScreenFailures(output);
     else if (PROJECT_ANCHORED.has(s)) failures = skillTransferFailures(s, input, output);
     else if (s === 'system-design') failures = systemDesignFailures(output);
+    // 'bar-raiser' is a prep stage carried as a string by the dispatch layer; it is
+    // not in the lifecycle InterviewStage union, so it is matched on the widened value.
+    else if ((s as string) === 'bar-raiser') failures = barRaiserFailures(output);
     else if (s === 'behavioural') failures = behaviouralFailures(output);
     return mkResult('stage-focus', failures);
 };
