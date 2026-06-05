@@ -29,6 +29,7 @@ COPY applications/platform-job-watcher/package.json   ./applications/platform-jo
 COPY api/public-api/package.json                 ./api/public-api/
 COPY packages/script-utils/package.json          ./packages/script-utils/
 COPY infra/package.json                          ./infra/
+COPY mcp-servers/tucaken-smoke/package.json     ./mcp-servers/tucaken-smoke/
 RUN yarn install --immutable
 
 COPY applications/shared/tsconfig.json           ./applications/shared/

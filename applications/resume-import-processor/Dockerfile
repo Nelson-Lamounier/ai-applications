@@ -28,6 +28,7 @@ COPY applications/self-healing/package.json              ./applications/self-hea
 COPY applications/platform-job-watcher/package.json     ./applications/platform-job-watcher/
 COPY packages/script-utils/package.json                 ./packages/script-utils/
 COPY infra/package.json                                 ./infra/
+COPY mcp-servers/tucaken-smoke/package.json     ./mcp-servers/tucaken-smoke/
 RUN yarn install --immutable
 
 COPY applications/resume-import-processor/tsconfig.json ./applications/resume-import-processor/

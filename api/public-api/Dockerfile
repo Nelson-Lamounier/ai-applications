@@ -34,6 +34,7 @@ COPY applications/platform-job-watcher/package.json    ./applications/platform-j
 COPY api/public-api/package.json                       ./api/public-api/
 COPY packages/script-utils/package.json                ./packages/script-utils/
 COPY infra/package.json                                ./infra/
+COPY mcp-servers/tucaken-smoke/package.json     ./mcp-servers/tucaken-smoke/
 RUN yarn install --immutable
 
 # Source for the two workspaces we build.
