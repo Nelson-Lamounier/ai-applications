@@ -10,6 +10,15 @@ export interface ResumeUploadTicket {
   s3Key: string;
 }
 
+/** Response of POST /api/admin/applications/:slug/coach. The route returns
+ *  202 { status:'queued', coachPipelineRunId } on dispatch, 200 { status:'skipped' }
+ *  when nothing to do, or 4xx { error } — none of which carry the strategist's
+ *  `pipelineRunId`, so this is parsed separately from postJson. */
+export interface StartCoachResponse {
+  status: string;
+  coachPipelineRunId?: string;
+}
+
 /** Black-box client for the deployed admin-api. Every admin route carries a
  *  Cognito JWT Bearer token; the server derives the user from the JWT `sub`,
  *  so request bodies never carry a userId. The presigned-PUT step talks
@@ -117,9 +126,23 @@ export class AdminApiClient {
     return this.postJson(`${ADMIN_API.routes.resumeComplete}/${importId}/complete`, {});
   }
 
-  /** POST /api/admin/applications/:slug/coach — dispatch a coach run for a stage. */
-  startCoach(slug: string, interviewStage: string): Promise<StartResponse> {
-    return this.postJson(`${ADMIN_API.routes.coach}/${slug}/coach`, { interviewStage });
+  /** POST /api/admin/applications/:slug/coach — dispatch a coach run for a stage.
+   *  Parses the raw JSON itself (NOT via postJson): the coach response carries
+   *  `coachPipelineRunId`, not `pipelineRunId`/`importId`, so postJson's run-id
+   *  assertion would wrongly throw. `:slug` is the application id. */
+  async startCoach(slug: string, interviewStage: string): Promise<StartCoachResponse> {
+    const route = `${ADMIN_API.routes.coach}/${slug}/coach`;
+    const text = await this.send('POST', `${this.baseUrl}${route}`, {
+      headers: { 'content-type': 'application/json', ...bearer(this.idToken) },
+      body: JSON.stringify({ interviewStage }),
+    });
+    let raw: Record<string, unknown>;
+    try { raw = (text ? JSON.parse(text) : {}) as Record<string, unknown>; }
+    catch { throw new SmokeAssertionError(`admin-api ${route} returned non-JSON: ${text}`); }
+    const status = typeof raw.status === 'string' ? raw.status : '';
+    const coachPipelineRunId =
+      typeof raw.coachPipelineRunId === 'string' ? raw.coachPipelineRunId : undefined;
+    return { status, coachPipelineRunId };
   }
 
   /** GET /api/admin/applications/:slug/coaching/:stage?applicationId=… */

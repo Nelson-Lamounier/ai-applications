@@ -37,6 +37,19 @@ async function ensureTunnel(): Promise<void> {
   session.tunnelStop = fwd.stop;
 }
 
+/** Lazily open (and remember) the admin-api port-forward used by admin-api
+ *  calls (smoke_admin_api / run_strategist / run_coach). Mirrors scripts/
+ *  smoke-e2e.ts which forwards svc/admin-api:3002 → 127.0.0.1:13002; without
+ *  this nothing serves ADMIN_API_BASE_URL and every fetch ECONNREFUSEs. */
+async function ensureAdminApiTunnel(): Promise<void> {
+  if (session.adminApiTunnelStop) return;
+  const fwd: PortForward = await startPortForward({
+    namespace: 'admin-api', target: 'svc/admin-api',
+    localPort: ADMIN_API_LOCAL_PORT, remotePort: 3002,
+  });
+  session.adminApiTunnelStop = fwd.stop;
+}
+
 /** Lazily resolve the platform `users.id` (by email) the first time a DB
  *  connection is needed, then cache it on the session. smoke_auth stores the
  *  Cognito sub provisionally; the sub is NOT the platform users.id, so all DB
@@ -103,6 +116,9 @@ async function handleAuth(): Promise<{ authed: true; cognitoSub: string; email: 
   session.testUserId = sub;
   session.platformUserIdResolved = false;
   session.endpoints = endpoints;
+  // Open the admin-api tunnel now so admin-api calls (run_strategist/run_coach/
+  // smoke_admin_api) have something serving ADMIN_API_BASE_URL.
+  await ensureAdminApiTunnel();
   return { authed: true, cognitoSub: sub, email: testEmail, db: rds.database };
 }
 
@@ -110,6 +126,8 @@ async function handleAdminApi(args: {
   method: string; path: string; body?: Record<string, unknown>;
 }): Promise<{ status: number; body: unknown }> {
   const { endpoints, idToken } = requireAuth();
+  // Ensure the admin-api tunnel is up even if no pipeline tool ran first.
+  await ensureAdminApiTunnel();
   const init: RequestInit = {
     method: args.method,
     headers: { Authorization: `Bearer ${idToken}`, 'content-type': 'application/json' },
@@ -183,6 +201,7 @@ async function handleCleanup(): Promise<{ removed: number }> {
   }
   session.cleanup = [];
   if (session.tunnelStop) { session.tunnelStop(); session.tunnelStop = undefined; }
+  if (session.adminApiTunnelStop) { session.adminApiTunnelStop(); session.adminApiTunnelStop = undefined; }
   return { removed };
 }
 
