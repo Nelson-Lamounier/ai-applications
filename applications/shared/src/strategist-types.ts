@@ -16,7 +16,7 @@
 
 import type { AgentResult, AgentInvocationLog } from './types.js';
 import type { SkillTransferEntry } from './stage-prep/skill-transfer-types.js';
-import type { SystemDesignWalkthroughCard, ConcernCoverage } from './stage-prep/index.js';
+import type { SystemDesignWalkthroughCard, ConcernCoverage, BarRaiserPrinciple, BarRaiserCoverage } from './stage-prep/index.js';
 
 // =============================================================================
 // ENUMS & DOMAIN TYPES
@@ -708,6 +708,10 @@ export interface InterviewCoachResult {
     readonly systemDesignWalkthrough?: readonly SystemDesignWalkthroughCard[];
     /** System-design only: deterministic coverage map + alignment (written by run-coach, not the model). */
     readonly systemDesignCoverage?: ConcernCoverage;
+    /** Bar-raiser only: project-anchored leadership-principle walkthrough cards. */
+    readonly barRaiserWalkthrough?: readonly BarRaiserPrinciple[];
+    /** Bar-raiser only: deterministic coverage map + alignment (written by run-coach, not the model). */
+    readonly barRaiserCoverage?: BarRaiserCoverage;
 }
 
 // =============================================================================
