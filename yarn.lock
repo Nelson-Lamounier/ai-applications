@@ -8279,6 +8279,7 @@ __metadata:
     eslint: "npm:^9"
     globals: "npm:^17.6.0"
     tsx: "npm:^4.21.0"
+    typescript: "npm:^5.8.3"
     typescript-eslint: "npm:^8.59.4"
   languageName: unknown
   linkType: soft
