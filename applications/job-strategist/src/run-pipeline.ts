@@ -30,6 +30,8 @@ import {
     updateJobApplicationStatus,
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
+import { S3Client } from '@aws-sdk/client-s3';
+import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -42,6 +44,9 @@ const groundingVerifier = new BedrockGroundingVerifier({
 const semanticCache = PgSemanticCache.fromEnvironment();
 /** Scrubs raw PII out of the JD before it is ever used as a cache key. */
 const piiScrubber = new PiiScrubber();
+
+/** S3 client for canonical resume PDF storage. */
+const s3 = new S3Client({});
 
 // Shared registry across both run-pipeline (analyse) and run-coach so
 // dashboard rollups can be done service-wide.
@@ -295,6 +300,24 @@ export async function main(): Promise<void> {
                 tailoredResume: tailoredResumeData,
               })
             : null;
+
+        // ── ATS render + parse-back QA (fail-open pipeline, fail-closed claim) ─
+        // Renders the AI-authored resume to a text-selectable PDF, proves it
+        // parses, and stores the canonical PDF + check. Delegated to a helper
+        // that never throws (errors → 'unverified', never 'passed').
+        if (persisted && tailoredResumeData) {
+            await renderCheckAndStoreAts({
+                s3, pool,
+                bucket:        process.env['ASSETS_BUCKET'] ?? '',
+                resumeId:      persisted.resumeId,
+                userId:        env.userId,
+                resume:        tailoredResumeData,
+                research:      research.data,
+                log,
+                correlationId: env.pipelineRunId,
+                onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
+            });
+        }
 
         // ── Path-grounding check (advisory, fail-open) ────────────────────
         // Flag file-path citations in the final analysis that don't exist in

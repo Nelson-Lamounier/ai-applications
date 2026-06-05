@@ -12,12 +12,32 @@ export interface BuildAtsCheckArgs {
     readonly groundedTerms: Set<string>;
 }
 
+type Coverage = AtsCheckResult['jdKeywordCoverage'];
+
+/** Human-readable ATS issues derived from the computed check facts. */
+function deriveIssues(facts: {
+    standardSectionsDetected: string[];
+    nameFound: boolean;
+    emailFound: boolean;
+    coverage: Coverage;
+    parseBreakers: string[];
+}): string[] {
+    const issues: string[] = [];
+    const missing = REQUIRED_SECTIONS.filter(s => !facts.standardSectionsDetected.includes(s));
+    if (missing.length) issues.push(`Missing standard sections: ${missing.join(', ')}.`);
+    if (!facts.nameFound) issues.push('Candidate name not found in document body.');
+    if (!facts.emailFound) issues.push('Contact email not found in document body.');
+    for (const k of facts.coverage) {
+        if (!k.present && k.grounded) issues.push(`Grounded JD must-have "${k.term}" missing from resume.`);
+    }
+    if (facts.parseBreakers.length) issues.push(`Parse-breaking elements detected: ${facts.parseBreakers.join(', ')}.`);
+    return issues;
+}
+
 /** Pure ATS assertions over the parsed-back PDF + structured + JD data. */
 export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
-    const machineReadable = a.text.trim().length > 0;
-
     // No usable text → cannot assert anything; fail closed as unverified.
-    if (!machineReadable) {
+    if (a.text.trim().length === 0) {
         return {
             machineReadable: false, standardSectionsDetected: [],
             contactDetected: { name: '', email: '' }, parseBreakers: [],
@@ -30,28 +50,16 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
     const standardSectionsDetected = a.sections.filter(s => (STANDARD_SECTIONS as readonly string[]).includes(s));
     const nameFound = a.profile.name.trim().length > 0 && lower.includes(a.profile.name.toLowerCase());
     const emailFound = a.profile.email.trim().length > 0 && lower.includes(a.profile.email.toLowerCase());
-
-    const jdKeywordCoverage = a.jdMustHaves.map(term => ({
+    const jdKeywordCoverage: Coverage = a.jdMustHaves.map(term => ({
         term,
         present:  lower.includes(term.toLowerCase()),
         grounded: a.groundedTerms.has(term.toLowerCase()),
     }));
-
     // parseBreakers: by construction the layout has none. We still scan for the
     // classic tab-delimited multi-column artifact as a regression guard.
-    const parseBreakers: string[] = [];
-    if (/\t.+\t/.test(a.text)) parseBreakers.push('multi-column-tabs');
+    const parseBreakers = /\t.+\t/.test(a.text) ? ['multi-column-tabs'] : [];
 
-    const issues: string[] = [];
-    const missingSections = REQUIRED_SECTIONS.filter(s => !standardSectionsDetected.includes(s));
-    if (missingSections.length) issues.push(`Missing standard sections: ${missingSections.join(', ')}.`);
-    if (!nameFound) issues.push('Candidate name not found in document body.');
-    if (!emailFound) issues.push('Contact email not found in document body.');
-    for (const k of jdKeywordCoverage) {
-        if (!k.present && k.grounded) issues.push(`Grounded JD must-have "${k.term}" missing from resume.`);
-    }
-    if (parseBreakers.length) issues.push(`Parse-breaking elements detected: ${parseBreakers.join(', ')}.`);
-
+    const issues = deriveIssues({ standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage, parseBreakers });
     const passed = issues.length === 0;
     return {
         machineReadable: true,
