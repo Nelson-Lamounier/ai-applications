@@ -179,9 +179,53 @@ jobs:
             echo "- **Path to chart**: SSM → ArgoCD Image Updater → Helm values → Job re-run (idempotent DDL)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  writeback:
+    name: "[PlatformRdsBootstrap] Writeback tag to kubernetes-bootstrap"
+    needs: [push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read   # writes to ANOTHER repo via the deploy key, not GITHUB_TOKEN
+    steps:
+      - name: Checkout kubernetes-bootstrap (main)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Nelson-Lamounier/kubernetes-bootstrap
+          ref: main
+          ssh-key: ${{ secrets.KUBERNETES_BOOTSTRAP_DEPLOY_KEY }}
+          path: kb
+          persist-credentials: true
+
+      - name: Bump bootstrap.image.tag in values-development.yaml
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          VALUES=kb/charts/platform-rds/chart/values-development.yaml
+          yq -i '.bootstrap.image.tag = strenv(IMAGE_TAG)' "$VALUES"
+          echo "Set bootstrap.image.tag = ${IMAGE_TAG}"
+          yq '.bootstrap.image.tag' "$VALUES"
+
+      - name: Commit + push (idempotent)
+        working-directory: kb
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          git config user.name  "platform-rds-bootstrap-ci[bot]"
+          git config user.email "platform-rds-bootstrap-ci@users.noreply.github.com"
+          if git diff --quiet -- charts/platform-rds/chart/values-development.yaml; then
+            echo "Tag already ${IMAGE_TAG} — nothing to write back."
+            exit 0
+          fi
+          git add charts/platform-rds/chart/values-development.yaml
+          git commit -m "chore(platform-rds): bump bootstrap image to ${IMAGE_TAG} [skip ci]"
+          git push origin main
+          echo "Wrote back bootstrap.image.tag=${IMAGE_TAG} to kubernetes-bootstrap main."
+
   deploy-marker:
     name: Loki deploy marker
-    needs: [build, push]
+    needs: [build, push, writeback]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
