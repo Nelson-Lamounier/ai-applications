@@ -49,6 +49,8 @@ export interface CoachAgentInput {
     readonly systemDesignBlock?: string;
     /** Pre-serialised bar-raiser leadership-principle block (from buildBarRaiserBlock). */
     readonly barRaiserBlock?: string;
+    /** Career-arc + role-fit context for the final-round prep stage (from buildFinalInputs). */
+    readonly finalBlock?: string;
 }
 
 // =============================================================================
@@ -515,14 +517,10 @@ function appendConcernLines(
  * @returns Formatted user message
  */
 function buildCoachMessage(
-    analysis: StrategistAnalysisResult,
+    input: CoachAgentInput,
     ctx: StrategistPipelineContext,
-    constraintBlock?: string,
-    evidenceBlock?: string,
-    skillCandidateBlock?: string,
-    systemDesignBlock?: string,
-    barRaiserBlock?: string,
 ): string {
+    const { analysis } = input;
     const sections: string[] = [
         `## Interview Stage: ${ctx.interviewStage}`,
         `Target Role: ${ctx.targetRole}`,
@@ -536,20 +534,23 @@ function buildCoachMessage(
         '--- END ANALYSIS ---',
         '',
     ];
-    if (evidenceBlock) {
-        sections.push('## Verified Evidence (from Research)', evidenceBlock, '');
+    if (input.evidenceBlock) {
+        sections.push('## Verified Evidence (from Research)', input.evidenceBlock, '');
     }
-    if (constraintBlock) {
-        sections.push(constraintBlock, '');
+    if (input.constraintBlock) {
+        sections.push(input.constraintBlock, '');
     }
-    if (skillCandidateBlock) {
-        sections.push(skillCandidateBlock, '');
+    if (input.skillCandidateBlock) {
+        sections.push(input.skillCandidateBlock, '');
     }
-    if (systemDesignBlock) {
-        sections.push(systemDesignBlock, '');
+    if (input.systemDesignBlock) {
+        sections.push(input.systemDesignBlock, '');
     }
-    if (barRaiserBlock) {
-        sections.push(barRaiserBlock, '');
+    if (input.barRaiserBlock) {
+        sections.push(input.barRaiserBlock, '');
+    }
+    if (input.finalBlock) {
+        sections.push('## Final-round prep context', input.finalBlock, '');
     }
     sections.push(
         `Prepare interview coaching for the "${ctx.interviewStage}" stage. ` +
@@ -644,7 +645,7 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: CoachAgentInput, ctx: StrategistPipelineContext): string {
-        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock, input.systemDesignBlock, input.barRaiserBlock);
+        return buildCoachMessage(input, ctx);
     }
 
     /**
@@ -720,6 +721,21 @@ const coachAgent = new CoachAgent();
 export { coachAgent, CoachAgent };
 
 /**
+ * Pre-serialised, stage-specific prompt blocks passed to {@link executeCoachAgent}.
+ * Each is optional; only the blocks relevant to the current stage are populated.
+ * Collapsed into one object (rather than positional params) to keep the
+ * `executeCoachAgent` signature within the parameter-count budget as stages grow.
+ */
+export interface CoachBlocks {
+    readonly constraintBlock?: string;
+    readonly evidenceBlock?: string;
+    readonly skillCandidateSets?: readonly SkillCandidateSet[];
+    readonly systemDesignBlock?: string;
+    readonly barRaiserBlock?: string;
+    readonly finalBlock?: string;
+}
+
+/**
  * Execute the Interview Coach Agent.
  *
  * Backward-compatible wrapper that delegates to the
@@ -727,19 +743,20 @@ export { coachAgent, CoachAgent };
  *
  * @param ctx - Pipeline context with interview stage
  * @param analysis - Strategist Agent's analysis output
+ * @param blocks - Pre-serialised, stage-specific prompt blocks
  * @returns Interview coaching result with stage-specific preparation
  */
 export async function executeCoachAgent(
     ctx: StrategistPipelineContext,
     analysis: StrategistAnalysisResult,
-    constraintBlock?: string,
-    evidenceBlock?: string,
-    skillCandidateSets?: readonly SkillCandidateSet[],
-    systemDesignBlock?: string,
-    barRaiserBlock?: string,
+    blocks: CoachBlocks = {},
 ): Promise<AgentResult<InterviewCoachResult>> {
+    const {
+        constraintBlock, evidenceBlock, skillCandidateSets,
+        systemDesignBlock, barRaiserBlock, finalBlock,
+    } = blocks;
     const skillCandidateBlock = buildSkillCandidateBlock(skillCandidateSets ?? []);
-    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock, barRaiserBlock }, ctx);
+    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock, barRaiserBlock, finalBlock }, ctx);
     if (skillCandidateSets && skillCandidateSets.length > 0) {
         const raw = (result.data.skillTransfer ?? []) as SkillTransferEntry[];
         (result.data as { skillTransfer?: unknown }).skillTransfer = validateSkillTransfer(raw, skillCandidateSets);
