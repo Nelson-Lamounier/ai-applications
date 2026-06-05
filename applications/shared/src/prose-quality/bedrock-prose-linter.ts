@@ -146,7 +146,11 @@ export class BedrockProseLinter implements IProseLinter {
         }
 
         if (costCtx?.userId) {
-            recordBedrockCost(costCtx.pool, {
+            // Awaited (not fire-and-forget): the INSERT must finish before the caller
+            // returns, else a short-lived pool (run-coach) can close before the dangling
+            // query runs ("Cannot use a pool after calling end on the pool"). Stays
+            // fail-open via .catch.
+            await recordBedrockCost(costCtx.pool, {
                 userId:       costCtx.userId,
                 modelId:      this.modelId,
                 pipeline:     'prose-lint',
