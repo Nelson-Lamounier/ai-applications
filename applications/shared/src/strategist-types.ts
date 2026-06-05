@@ -16,7 +16,7 @@
 
 import type { AgentResult, AgentInvocationLog } from './types.js';
 import type { SkillTransferEntry } from './stage-prep/skill-transfer-types.js';
-import type { SystemDesignWalkthroughCard, ConcernCoverage, BarRaiserPrinciple, BarRaiserCoverage } from './stage-prep/index.js';
+import type { SystemDesignWalkthroughCard, ConcernCoverage, BarRaiserPrinciple, BarRaiserCoverage, FinalPrep } from './stage-prep/index.js';
 
 // =============================================================================
 // ENUMS & DOMAIN TYPES
@@ -712,6 +712,8 @@ export interface InterviewCoachResult {
     readonly barRaiserWalkthrough?: readonly BarRaiserPrinciple[];
     /** Bar-raiser only: deterministic coverage map + alignment (written by run-coach, not the model). */
     readonly barRaiserCoverage?: BarRaiserCoverage;
+    /** Final-round only: why-this-role framing, mutual-fit points, substantive questions, long-term framing. */
+    readonly finalPrep?: FinalPrep;
 }
 
 // =============================================================================

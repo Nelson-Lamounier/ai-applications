@@ -274,6 +274,33 @@ const COACH_TOOL = {
                     additionalProperties: false,
                 },
             },
+            finalPrep: {
+                type: 'object',
+                properties: {
+                    whyThisRole: { type: 'string' },
+                    mutualFitTalkingPoints: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: { point: { type: 'string' }, grounding: { type: 'string' } },
+                            required: ['point', 'grounding'],
+                            additionalProperties: false,
+                        },
+                    },
+                    substantiveQuestions: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: { question: { type: 'string' }, rationale: { type: 'string' } },
+                            required: ['question', 'rationale'],
+                            additionalProperties: false,
+                        },
+                    },
+                    longTermFraming: { type: 'string' },
+                },
+                required: ['whyThisRole', 'mutualFitTalkingPoints', 'substantiveQuestions', 'longTermFraming'],
+                additionalProperties: false,
+            },
         },
         required: [
             'stageDescription', 'technicalQuestions', 'behaviouralQuestions',
@@ -320,6 +347,26 @@ const BarRaiserPrincipleSchema = z.object({
         framing:  z.string(),
     }).strict()),
     gapGuidance: z.string().nullable(),
+}).strict();
+
+/** One mutual-fit talking point within the final-round prep brief. */
+const FinalTalkingPointSchema = z.object({
+    point:     z.string(),
+    grounding: z.string(),
+}).strict();
+
+/** One substantive question to ask within the final-round prep brief. */
+const FinalQuestionSchema = z.object({
+    question:  z.string(),
+    rationale: z.string(),
+}).strict();
+
+/** Final-round preparation brief emitted by the coach (final-round stage). */
+const FinalPrepSchema = z.object({
+    whyThisRole:            z.string(),
+    mutualFitTalkingPoints: z.array(FinalTalkingPointSchema),
+    substantiveQuestions:   z.array(FinalQuestionSchema),
+    longTermFraming:        z.string(),
 }).strict();
 
 /**
@@ -385,6 +432,7 @@ export const CoachOutputSchema = z.object({
         gapGuidance: z.string().nullable(),
     }).strict()).optional(),
     barRaiserWalkthrough: z.array(BarRaiserPrincipleSchema).optional(),
+    finalPrep: FinalPrepSchema.optional(),
 }).strict();
 
 // =============================================================================
@@ -527,11 +575,14 @@ export const SYSTEM_DESIGN_FIELDS = ['systemDesignWalkthrough'] as const;
 
 export const BAR_RAISER_FIELDS = ['barRaiserWalkthrough'] as const;
 
+export const FINAL_FIELDS = ['finalPrep'] as const;
+
 /** Stage → fields promoted to `required` for that stage's tool variant. */
 const STAGE_REQUIRED_FIELDS: Record<string, readonly string[]> = {
     'phone-screen':  PHONE_SCREEN_FIELDS,
     'system-design': SYSTEM_DESIGN_FIELDS,
     'bar-raiser':    BAR_RAISER_FIELDS,
+    'final':         FINAL_FIELDS,
 };
 
 /** Return the coach tool with stage-specific fields promoted to `required`. */
