@@ -27,11 +27,19 @@ import {
     BedrockProseLinter,
     RdsSystemDesignConcernRepository, detectConcernEvidence, validateSystemDesignWalkthrough,
 } from '@bedrock/shared';
-import type { ConcernCoverage, SystemDesignConcern, SystemDesignWalkthroughCard } from '@bedrock/shared';
+import type {
+    ConcernCoverage, SystemDesignConcern, SystemDesignWalkthroughCard,
+    PrincipleCoverage, BarRaiserPrinciple,
+} from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeCoachAgent, buildSkillCandidateBlock, buildConcernWalkthroughBlock } from './agents/coach-agent.js';
-import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough } from './prompts/coach/stages/index.js';
+import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough, stageUsesBarRaiserWalkthrough } from './prompts/coach/stages/index.js';
+import {
+    RdsLeadershipPrinciplesRepository, frameworkForCompany,
+    type LeadershipPrinciple,
+} from './lib/leadership-principles-repository.js';
+import { detectPrincipleEvidence, buildBarRaiserBlock, validateBarRaiserWalkthrough } from './lib/bar-raiser-grounding.js';
 import { buildCoachContextChunks, extractCoachClaims } from './lib/coach-grounding.js';
 import { extractProseSections } from './lib/coach-prose.js';
 import { parseCoachEnv }       from './env-coach.js';
@@ -298,6 +306,37 @@ async function buildSystemDesignWalkthroughInputs(
     }
 }
 
+interface BarRaiserInputs { block: string; coverage: PrincipleCoverage[] | null; principles: LeadershipPrinciple[]; }
+
+/**
+ * Deterministic leadership-principle detection over project evidence + the curated
+ * ontology (framework chosen by target company), rendered into a block for the
+ * coach. Mirrors buildSystemDesignWalkthroughInputs. Fail-open: any error → empty
+ * walkthrough + generic coaching, never fails the run.
+ */
+async function buildBarRaiserInputs(
+    pool: Pool,
+    env: ReturnType<typeof parseCoachEnv>,
+    research: StrategistResearchResult | null,
+): Promise<BarRaiserInputs> {
+    if (!stageUsesBarRaiserWalkthrough(env.interviewStage as InterviewStage)) {
+        return { block: '', coverage: null, principles: [] };
+    }
+    try {
+        const framework = frameworkForCompany(env.targetCompany);
+        const [principles, evidence] = await Promise.all([
+            new RdsLeadershipPrinciplesRepository(pool).load(framework),
+            new RdsProjectEvidenceRepository(pool).load(env.userId),
+        ]);
+        const jdText = `${env.jobDescription} ${(research?.gaps ?? []).map(g => g.skill).join(' ')}`;
+        const coverage = detectPrincipleEvidence(principles, evidence, jdText);
+        return { block: buildBarRaiserBlock(coverage, principles), coverage, principles };
+    } catch (err) {
+        log.warn({ err: String(err) }, 'bar-raiser.walkthrough.detect.failed (non-fatal)');
+        return { block: '', coverage: null, principles: [] };
+    }
+}
+
 async function main(): Promise<void> {
     const env  = parseCoachEnv();
     const pool = getPool(env.pg);
@@ -328,15 +367,29 @@ async function main(): Promise<void> {
         const evidenceBlock = buildEvidenceBlock(research);
         const skillCandidateSets = await buildSkillCandidateSets(pool, env, research);
         const sd = await buildSystemDesignWalkthroughInputs(pool, env, research);
+        const br = await buildBarRaiserInputs(pool, env, research);
 
         const coaching = await executeCoachAgent(
-            ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets, sd.block,
+            ctx, analysis, constraintBlock, evidenceBlock, skillCandidateSets, sd.block, br.block,
         );
         if (sd.coverage) {
             const raw = (coaching.data.systemDesignWalkthrough ?? []) as SystemDesignWalkthroughCard[];
             (coaching.data as { systemDesignWalkthrough?: unknown }).systemDesignWalkthrough =
                 validateSystemDesignWalkthrough(raw, sd.coverage);
             (coaching.data as { systemDesignCoverage?: unknown }).systemDesignCoverage = sd.coverage;
+        }
+        if (br.coverage) {
+            const raw = (coaching.data.barRaiserWalkthrough ?? []) as BarRaiserPrinciple[];
+            (coaching.data as { barRaiserWalkthrough?: unknown }).barRaiserWalkthrough =
+                validateBarRaiserWalkthrough(raw, br.coverage);
+            // Code-authoritative coverage counts (mirrors ConcernCoverage relevantTotal/
+            // relevantAddressed): relevant principles, and those with any grounded evidence.
+            const relevant = br.coverage.filter(d => d.relevantToJd);
+            (coaching.data as { barRaiserCoverage?: unknown }).barRaiserCoverage = {
+                detected:          br.coverage,
+                relevantTotal:     relevant.length,
+                relevantAddressed: relevant.filter(d => d.coverage !== 'none').length,
+            };
         }
 
         // Text-level grounding on coach output — runs for EVERY stage. Complements

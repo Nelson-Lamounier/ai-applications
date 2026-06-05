@@ -47,6 +47,8 @@ export interface CoachAgentInput {
     readonly skillCandidateBlock?: string;
     /** Pre-serialised system-design concern block (from buildConcernWalkthroughBlock). */
     readonly systemDesignBlock?: string;
+    /** Pre-serialised bar-raiser leadership-principle block (from buildBarRaiserBlock). */
+    readonly barRaiserBlock?: string;
 }
 
 // =============================================================================
@@ -227,6 +229,51 @@ const COACH_TOOL = {
                     additionalProperties: false,
                 },
             },
+            barRaiserWalkthrough: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        principleId:    { type: 'string' },
+                        principleName:  { type: 'string' },
+                        interpretation: { type: 'string' },
+                        coverage:       { type: 'string', enum: ['strong', 'partial', 'none'] },
+                        stories: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    title:              { type: 'string' },
+                                    situation:          { type: 'string' },
+                                    task:               { type: 'string' },
+                                    action:             { type: 'string' },
+                                    result:             { type: 'string' },
+                                    evidenceRefs:       EVIDENCE_REFS_SCHEMA,
+                                    honestyCalibration: { type: 'string' },
+                                    seniorityNote:      { type: 'string' },
+                                },
+                                required: ['title', 'situation', 'task', 'action', 'result', 'evidenceRefs', 'honestyCalibration', 'seniorityNote'],
+                                additionalProperties: false,
+                            },
+                        },
+                        probingQuestions: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    question: { type: 'string' },
+                                    framing:  { type: 'string' },
+                                },
+                                required: ['question', 'framing'],
+                                additionalProperties: false,
+                            },
+                        },
+                        gapGuidance: { type: ['string', 'null'] },
+                    },
+                    required: ['principleId', 'principleName', 'interpretation', 'coverage', 'stories', 'probingQuestions', 'gapGuidance'],
+                    additionalProperties: false,
+                },
+            },
         },
         required: [
             'stageDescription', 'technicalQuestions', 'behaviouralQuestions',
@@ -248,6 +295,32 @@ const InterviewQuestionSchema = z.object({
 const EvidenceRefsSchema = z.array(z.object({
     source: z.string(), id: z.string(), label: z.string(), fileLine: z.string().optional(),
 }).strict());
+
+/** One STAR story within a bar-raiser principle card. */
+const BarRaiserStorySchema = z.object({
+    title:              z.string(),
+    situation:          z.string(),
+    task:               z.string(),
+    action:             z.string(),
+    result:             z.string(),
+    evidenceRefs:       EvidenceRefsSchema,
+    honestyCalibration: z.string(),
+    seniorityNote:      z.string(),
+}).strict();
+
+/** One leadership-principle card emitted by the coach (bar-raiser stage). */
+const BarRaiserPrincipleSchema = z.object({
+    principleId:    z.string(),
+    principleName:  z.string(),
+    interpretation: z.string(),
+    coverage:       z.enum(['strong', 'partial', 'none']),
+    stories:        z.array(BarRaiserStorySchema),
+    probingQuestions: z.array(z.object({
+        question: z.string(),
+        framing:  z.string(),
+    }).strict()),
+    gapGuidance: z.string().nullable(),
+}).strict();
 
 /**
  * Runtime safety-net. `stage` is injected from pipeline context (not model
@@ -311,6 +384,7 @@ export const CoachOutputSchema = z.object({
         }).strict()),
         gapGuidance: z.string().nullable(),
     }).strict()).optional(),
+    barRaiserWalkthrough: z.array(BarRaiserPrincipleSchema).optional(),
 }).strict();
 
 // =============================================================================
@@ -399,6 +473,7 @@ function buildCoachMessage(
     evidenceBlock?: string,
     skillCandidateBlock?: string,
     systemDesignBlock?: string,
+    barRaiserBlock?: string,
 ): string {
     const sections: string[] = [
         `## Interview Stage: ${ctx.interviewStage}`,
@@ -425,6 +500,9 @@ function buildCoachMessage(
     if (systemDesignBlock) {
         sections.push(systemDesignBlock, '');
     }
+    if (barRaiserBlock) {
+        sections.push(barRaiserBlock, '');
+    }
     sections.push(
         `Prepare interview coaching for the "${ctx.interviewStage}" stage. ` +
         'Use ONLY verified skills and projects from the analysis. ' +
@@ -447,12 +525,18 @@ export const PHONE_SCREEN_FIELDS = ['careerArcSummary', 'jdTalkingPoints', 'comp
 
 export const SYSTEM_DESIGN_FIELDS = ['systemDesignWalkthrough'] as const;
 
+export const BAR_RAISER_FIELDS = ['barRaiserWalkthrough'] as const;
+
+/** Stage → fields promoted to `required` for that stage's tool variant. */
+const STAGE_REQUIRED_FIELDS: Record<string, readonly string[]> = {
+    'phone-screen':  PHONE_SCREEN_FIELDS,
+    'system-design': SYSTEM_DESIGN_FIELDS,
+    'bar-raiser':    BAR_RAISER_FIELDS,
+};
+
 /** Return the coach tool with stage-specific fields promoted to `required`. */
 export function coachToolForStage(stage: string): typeof COACH_TOOL {
-    const extra =
-        stage === 'phone-screen'  ? PHONE_SCREEN_FIELDS  :
-        stage === 'system-design' ? SYSTEM_DESIGN_FIELDS :
-        null;
+    const extra = STAGE_REQUIRED_FIELDS[stage];
     if (!extra) return COACH_TOOL;
     return {
         ...COACH_TOOL,
@@ -509,7 +593,7 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: CoachAgentInput, ctx: StrategistPipelineContext): string {
-        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock, input.systemDesignBlock);
+        return buildCoachMessage(input.analysis, ctx, input.constraintBlock, input.evidenceBlock, input.skillCandidateBlock, input.systemDesignBlock, input.barRaiserBlock);
     }
 
     /**
@@ -601,9 +685,10 @@ export async function executeCoachAgent(
     evidenceBlock?: string,
     skillCandidateSets?: readonly SkillCandidateSet[],
     systemDesignBlock?: string,
+    barRaiserBlock?: string,
 ): Promise<AgentResult<InterviewCoachResult>> {
     const skillCandidateBlock = buildSkillCandidateBlock(skillCandidateSets ?? []);
-    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock }, ctx);
+    const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock, barRaiserBlock }, ctx);
     if (skillCandidateSets && skillCandidateSets.length > 0) {
         const raw = (result.data.skillTransfer ?? []) as SkillTransferEntry[];
         (result.data as { skillTransfer?: unknown }).skillTransfer = validateSkillTransfer(raw, skillCandidateSets);
