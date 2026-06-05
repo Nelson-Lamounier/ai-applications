@@ -304,6 +304,20 @@ async function main(): Promise<void> {
     const start = process.hrtime.bigint();
     let outcome: 'success' | 'failed' = 'failed';
 
+    // Disruption guard: on SIGTERM (Karpenter eviction / node drain) or SIGINT the
+    // process dies WITHOUT hitting the catch below, leaving the run stuck at
+    // 'coaching' — so the UI spins forever. Mark it 'failed' first; K8s grants a
+    // termination grace period and this UPDATE is sub-second. (The reconciler sweep
+    // is the slower backstop if even this is skipped.)
+    const onSignal = (sig: NodeJS.Signals): void => {
+        log.warn({ coachPipelineRunId: env.coachPipelineRunId, sig }, 'coach_interrupted');
+        void updatePipelineRun(pool, env.coachPipelineRunId, 'failed', `Interrupted by ${sig} before completion`)
+            .catch(() => { /* best-effort — already terminating */ })
+            .finally(() => process.exit(1));
+    };
+    process.once('SIGTERM', () => onSignal('SIGTERM'));
+    process.once('SIGINT',  () => onSignal('SIGINT'));
+
     try {
         const { analysis, research } = await loadAnalysisAndResearch(pool, env.strategistPipelineRunId);
 
