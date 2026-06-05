@@ -179,53 +179,63 @@ jobs:
             echo "- **Path to chart**: SSM → ArgoCD Image Updater → Helm values → Job re-run (idempotent DDL)"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  writeback:
-    name: "[PlatformRdsBootstrap] Writeback tag to kubernetes-bootstrap"
+  apply-migrations:
+    name: "[PlatformRdsBootstrap] Apply migrations (on-demand Job)"
     needs: [push]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
+    environment: ${{ vars.ENVIRONMENT || 'development' }}
     permissions:
-      contents: read   # writes to ANOTHER repo via the deploy key, not GITHUB_TOKEN
+      id-token: write
+      contents: read
+    env:
+      EKS_CLUSTER_NAME: "k8s-eks-development"
     steps:
-      - name: Checkout kubernetes-bootstrap (main)
+      - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS Credentials
+        uses: ./.github/actions/configure-aws
         with:
-          repository: Nelson-Lamounier/kubernetes-bootstrap
-          ref: main
-          ssh-key: ${{ secrets.KUBERNETES_BOOTSTRAP_DEPLOY_KEY }}
-          path: kb
-          persist-credentials: true
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Bump bootstrap.image.tag in values-development.yaml
-        env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+      - name: Apply migrations via on-demand bootstrap Job
         run: |
           set -euo pipefail
-          VALUES=kb/charts/platform-rds/chart/values-development.yaml
-          yq -i '.bootstrap.image.tag = strenv(IMAGE_TAG)' "$VALUES"
-          echo "Set bootstrap.image.tag = ${IMAGE_TAG}"
-          yq '.bootstrap.image.tag' "$VALUES"
+          aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
 
-      - name: Commit + push (idempotent)
-        working-directory: kb
-        env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-        run: |
-          set -euo pipefail
-          git config user.name  "platform-rds-bootstrap-ci[bot]"
-          git config user.email "platform-rds-bootstrap-ci@users.noreply.github.com"
-          if git diff --quiet -- charts/platform-rds/chart/values-development.yaml; then
-            echo "Tag already ${IMAGE_TAG} — nothing to write back."
+          # The image just published by the push job (latest migration bundle).
+          IMAGE=$(aws ssm get-parameter \
+            --name /k8s/development/job-images/platform-rds-bootstrap \
+            --query Parameter.Value --output text)
+          echo "Applying migrations with image: ${IMAGE}"
+
+          # Run the existing break-glass on-demand Job (DDL + every numbered
+          # migration, idempotently) directly — no ArgoCD / cross-repo write.
+          JOB=$(sed "s|\${IMAGE}|${IMAGE}|g" \
+            applications/platform-rds-bootstrap/k8s/bootstrap-job.yaml \
+            | kubectl create -f - -o jsonpath='{.metadata.name}')
+          echo "Created job/${JOB} in platform namespace"
+
+          # Stream logs once the pod is up (best-effort; verdict is the wait below).
+          kubectl wait --for=condition=ready pod \
+            -l "job-name=${JOB}" -n platform --timeout=120s || true
+          kubectl logs -n platform -f "job/${JOB}" --tail=-1 || true
+
+          # Verdict: complete within the Job's activeDeadline, else fail the run.
+          if kubectl wait --for=condition=complete --timeout=300s "job/${JOB}" -n platform; then
+            echo "✅ Migrations applied — job/${JOB} complete."
             exit 0
           fi
-          git add charts/platform-rds/chart/values-development.yaml
-          git commit -m "chore(platform-rds): bump bootstrap image to ${IMAGE_TAG} [skip ci]"
-          git push origin main
-          echo "Wrote back bootstrap.image.tag=${IMAGE_TAG} to kubernetes-bootstrap main."
+          echo "❌ Migration job did not complete — dumping status + logs:"
+          kubectl describe "job/${JOB}" -n platform || true
+          kubectl logs -n platform "job/${JOB}" --tail=200 || true
+          exit 1
 
   deploy-marker:
     name: Loki deploy marker
-    needs: [build, push, writeback]
+    needs: [build, push, apply-migrations]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

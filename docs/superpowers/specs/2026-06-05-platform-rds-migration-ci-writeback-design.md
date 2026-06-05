@@ -1,73 +1,81 @@
-# Platform-RDS migration auto-deploy via CI git-writeback (design)
+# Platform-RDS migration auto-deploy via CI direct-apply (design)
 
-**Date:** 2026-06-05
-**Status:** Design — pending review
-**Repos:** ai-applications (workflow) + kubernetes-bootstrap (revert #109, values comment)
-**Scope:** Make new platform-rds-bootstrap migration images auto-apply to dev — the `deploy-platform-rds-bootstrap` workflow git-writes the new tag into the kubernetes-bootstrap chart, so ArgoCD's PostSync hook applies the migrations. Dev now; prod-ready pattern, prod not auto-enabled.
+**Date:** 2026-06-05 (pivoted same day)
+**Status:** Design — approved (Option A)
+**Repos:** ai-applications (workflow) + kubernetes-bootstrap (revert #109)
+**Scope:** Make new platform-rds-bootstrap migration images auto-apply to dev — the `deploy-platform-rds-bootstrap` workflow runs the migration Job directly via kubectl after pushing the image. Dev now; prod-ready pattern, prod not auto-enabled.
+
+## 0. Pivot note (B → A)
+
+This started as **Option B (CI git-writeback)** — ai-applications CI would commit the new tag into the kubernetes-bootstrap chart, and ArgoCD's PostSync hook would apply it. B was implemented and merged (#138) but **failed at runtime**: the writeback's `git push` to kubernetes-bootstrap returned `403 — Permission denied to github-actions[bot]` because the default `GITHUB_TOKEN` is scoped to ai-applications only (a cross-repo deploy key would have been required). That cross-repo write — ai-applications reaching into kubernetes-bootstrap — was also the wrong coupling: **migrations are imperative, not desired-state**, so wedging them through GitOps (the PostSync-hook + pinned-tag hack) is what created the whole problem. We pivoted to **Option A (CI direct-apply)**: ai-applications CI applies its own migration via kubectl. No cross-repo write, no new secret.
 
 ## 1. Why (root cause recap)
 
-The platform-rds migration runner is an **ArgoCD PostSync hook Job** whose image is the Helm value `bootstrap.image.tag` in `kubernetes-bootstrap/charts/platform-rds/chart/values-development.yaml`. That tag is **manually pinned**; nothing bumps it on a new migration → no git drift → ArgoCD never re-syncs → migrations never reach dev (live tag was `c0e075f0`, ~32 behind).
+The migration runner is an **ArgoCD PostSync hook Job** whose image is the Helm value `bootstrap.image.tag` in kubernetes-bootstrap, manually pinned. Nothing bumps it on a new migration → no git drift → ArgoCD never re-syncs → migrations never reach dev (live tag was `c0e075f0`, ~32 behind). ArgoCD reconciles kubernetes-bootstrap-git→cluster; it has no knowledge of a new ECR image built by ai-applications. Image Updater (PR #109) can't bridge that gap either — it needs a live workload to read the current tag from, and the bootstrap image only ever runs on an ephemeral hook Job (verified live: it silently skips). So the bridge from "ai-applications built an image" to "migration applied" must be explicit.
 
-The first attempt (PR #109, ArgoCD Image Updater) **does not work** for this case: Image Updater determines the "current" image from a **live workload** matching the image, but the bootstrap image only ever runs on an **ephemeral PostSync hook Job** (deleted via `BeforeHookCreation`). With no live workload, Image Updater silently skips it (verified live: `images_considered=4, updated=1` but the bootstrap tag never changed). So Image Updater is removed and replaced by deterministic CI git-writeback.
+## 2. Decision (Option A — direct-apply)
 
-## 2. Decisions (locked in brainstorming)
-
-- **Mechanism:** CI git-writeback — the ai-applications `deploy-platform-rds-bootstrap` workflow commits the new tag into the kubernetes-bootstrap chart on `main`; ArgoCD's existing PostSync hook stays the applier (GitOps-pure).
-- **PostSync hook:** kept (it is the applier). The ineffective **#109 Image Updater annotation is removed**.
-- **Auth:** an **SSH deploy key** with write access on kubernetes-bootstrap, private key stored as the ai-applications Actions secret `KUBERNETES_BOOTSTRAP_DEPLOY_KEY`. Mirrors the existing argocd-image-updater SSH writeback key.
-- **Scope:** dev (`values-development.yaml`) now; the same step extends to `values-production.yaml` deliberately later.
+- **Mechanism:** the `deploy-platform-rds-bootstrap` workflow, after the `push` job, runs the **existing break-glass on-demand Job** (`applications/platform-rds-bootstrap/k8s/bootstrap-job.yaml`) directly via `kubectl create`, using the image it just published to SSM. Waits for completion; **fails the run** if the Job doesn't complete (halts = red CI).
+- **No cross-repo write, no new secret.** Reuses the `aws eks update-kubeconfig` + kubectl pattern already in `_build-push-image.yml` (same `AWS_OIDC_ROLE`).
+- **ArgoCD scope unchanged:** ArgoCD keeps owning everything declarative (pgbouncer, workloads). Migrations stop pretending to be desired-state.
+- **#109 Image Updater annotations removed** (kubernetes-bootstrap PR #110) — they were inert.
+- **PostSync hook:** left in place as a manual/idempotent fallback; not the primary path anymore. (Disabling it is a deliberate later follow-up.)
+- **Scope:** dev now; the same job extends to prod deliberately later.
 
 ## 3. Architecture
 
-Add a `writeback` job to `.github/workflows/deploy-platform-rds-bootstrap.yml` (ai-applications), running **after** the existing `push` job (`needs: [push]`, same dev-only trigger guards). It:
-1. Checks out **kubernetes-bootstrap** `main` using the deploy key (`actions/checkout` with `ssh-key: ${{ secrets.KUBERNETES_BOOTSTRAP_DEPLOY_KEY }}` + `repository: Nelson-Lamounier/kubernetes-bootstrap`).
-2. Sets `bootstrap.image.tag` in `charts/platform-rds/chart/values-development.yaml` to the workflow's `IMAGE_TAG` (`${{ github.sha }}-r${{ github.run_attempt }}` — the exact tag just built/pushed).
-3. If the tag changed, commits + pushes to `main` with message `chore(platform-rds): bump bootstrap image to <tag> [skip ci]`. If unchanged, no-op.
+New `apply-migrations` job in `.github/workflows/deploy-platform-rds-bootstrap.yml` (`needs: [push]`, dev-only trigger guards, `environment: development`, `id-token: write`):
+1. Checkout (for the manifest) + `configure-aws` with `AWS_OIDC_ROLE`.
+2. `aws eks update-kubeconfig --name k8s-eks-development`.
+3. Resolve the image from SSM `/k8s/development/job-images/platform-rds-bootstrap` (what the push job just published).
+4. `sed` `${IMAGE}` into the on-demand manifest → `kubectl create -f -` (generateName, ns `platform`, SA `platform-rds-bootstrap-sa`, connects directly to RDS).
+5. Stream the Job logs; `kubectl wait --for=condition=complete --timeout=300s`. Complete → exit 0; else dump describe + logs → exit 1.
 
-ArgoCD's automated sync (already enabled on `platform-rds-eks-development`) detects the git change → runs the PostSync hook with the new image → idempotent migrations apply.
+`deploy-marker.needs` includes `apply-migrations`.
 
 ## 4. Components
 
 **ai-applications**
-- `.github/workflows/deploy-platform-rds-bootstrap.yml` — new `writeback` job (checkout kubernetes-bootstrap via deploy key → yq/sed the tag → commit+push to main, idempotent, `[skip ci]`). Uses `IMAGE_TAG` (already defined at workflow `env`).
+- `.github/workflows/deploy-platform-rds-bootstrap.yml` — `apply-migrations` job (replaces the reverted writeback job).
+- Reuses `applications/platform-rds-bootstrap/k8s/bootstrap-job.yaml` (the existing on-demand manifest) — no change.
 
-**kubernetes-bootstrap**
-- `argocd-apps/eks/development/platform-rds.yaml` — **remove** the 8 Image Updater annotations added in #109 (revert to just `sync-wave` + `description`).
-- `charts/platform-rds/chart/values-development.yaml` — update the comment: tag is **auto-bumped by the ai-applications `deploy-platform-rds-bootstrap` workflow** (CI git-writeback); do not hand-edit.
+**kubernetes-bootstrap** (PR #110, already open)
+- `argocd-apps/eks/development/platform-rds.yaml` — remove the inert #109 Image Updater annotations.
+- `charts/platform-rds/chart/values-development.yaml` — comment updated.
 
-**Auth (user-provisioned, one-time)**
-- Generate an SSH keypair; add the **public** key as a write-enabled **Deploy Key** on kubernetes-bootstrap; store the **private** key as the ai-applications Actions secret `KUBERNETES_BOOTSTRAP_DEPLOY_KEY`.
+**Auth:** none new. The `AWS_OIDC_ROLE` already does `update-kubeconfig` + kubectl in `_build-push-image.yml`. One thing to verify at first run: the role's k8s RBAC permits `create job` in the `platform` namespace — if denied, that's a small k8s RBAC/access-entry grant in kubernetes-bootstrap (NOT a cross-repo secret), and it surfaces as red CI.
 
 ## 5. Data flow (after this change)
 
 ```
 ai-applications: migration merged to develop
-  → deploy-platform-rds-bootstrap workflow: build → push image (<sha>-r<n>) → publish SSM
-  → writeback job: checkout kubernetes-bootstrap (deploy key) → set bootstrap.image.tag=<sha>-r<n>
-     in values-development.yaml → commit + push main ([skip ci], idempotent)
-  → ArgoCD auto-sync (drift on main) → PostSync hook Job runs new image → migrations apply (idempotent)
+  → deploy-platform-rds-bootstrap: build → push image (<sha>-r<n>) → publish SSM
+  → apply-migrations job: update-kubeconfig → read SSM image
+     → kubectl create on-demand bootstrap Job (platform ns) → it applies DDL + every
+       numbered migration idempotently against RDS → wait complete
+  → green (applied) / red (halt, with logs)
 ```
+
+ArgoCD is not involved in the migration path. No tag bump, no cross-repo push, no secret.
 
 ## 6. Error handling
 
-- **Deploy-key missing / push rejected** → the writeback step fails → **red CI** (visible); image is still in ECR/SSM, so the break-glass on-demand Job (`just db-bootstrap-run`) remains the manual fallback. No silent failure.
-- **Tag unchanged** (re-run) → no commit; idempotent.
-- **Migration hook halts** → ArgoCD app Degraded + retries (existing behavior); break-glass fallback. Fix idempotency in `applications/platform-rds-bootstrap/migrations/`.
-- **Loop safety:** the writeback targets a *different* repo (kubernetes-bootstrap), so no ai-applications CI loop; `[skip ci]` guards any kubernetes-bootstrap CI on values changes.
+- **Migration halts** (non-idempotent SQL / ledger checksum) → the Job doesn't reach `complete` → `kubectl wait` times out → job describe + logs dumped → **red CI**. Fix idempotency in `applications/platform-rds-bootstrap/migrations/` and re-run.
+- **k8s RBAC denies create-job in platform** → red CI on `kubectl create`; grant the role create-job in `platform` (kubernetes-bootstrap access config). One-time.
+- **Idempotent + safe to re-run:** the bootstrap applies `CREATE … IF NOT EXISTS` + a ledger, so re-running (or the PostSync hook also running) is harmless.
+- **No silent staleness:** unlike a missed tag bump, a failed apply is a red deploy, not an invisible lag.
 
 ## 7. Testing / validation
 
-- **Dry-run:** run the writeback step logic locally against a checkout — confirm it computes the correct tag and would change `bootstrap.image.tag` (and is a no-op when unchanged).
-- **Workflow lint:** `actionlint` on the edited workflow (CI already runs Lint Workflows).
-- **End-to-end:** trigger `deploy-platform-rds-bootstrap` (workflow_dispatch or a real migration merge) → confirm `bootstrap.image.tag` bumped on kubernetes-bootstrap `main` → ArgoCD syncs → PostSync hook applies → a new migration's marker exists in dev (e.g. `SELECT count(*) FROM system_design_concerns` = 14, or the next migration's table). The tucaken-smoke MCP `smoke_sql` is the verification tool.
+- **Workflow lint:** actionlint (CI "Lint Workflows").
+- **End-to-end:** trigger `deploy-platform-rds-bootstrap` (workflow_dispatch or a migration merge) → the `apply-migrations` job creates the Job, streams logs, and goes green → confirm a migration marker in dev (`SELECT count(*) FROM system_design_concerns` = 14, or the newest migration's table) via the tucaken-smoke MCP `smoke_sql`.
 
 ## 8. Out of scope / follow-ups
 
-- **Prod** (`values-production.yaml` + `platform-rds-production.yaml`): same writeback step, gated/enabled deliberately later.
-- Fixing any specific non-idempotent migration is ai-applications migrations work, surfaced if the hook halts.
-- The #109 revert is part of this change (kubernetes-bootstrap side).
+- **Prod** (`values-production.yaml` / `platform-rds-production.yaml`): the same `apply-migrations` step against the prod cluster, deliberately enabled later.
+- **Disabling the PostSync hook** (now redundant) — optional later cleanup; harmless to leave (idempotent).
+- Fixing any specific non-idempotent migration is ai-applications migrations work, surfaced by a red apply.
 
 ## 9. Reconciliation with #109
 
-PR #109 (Image Updater annotations) is merged on kubernetes-bootstrap `main` but inert (can't track a hook-only image). This change **removes those annotations** so the only mechanism is CI git-writeback — no two-mechanism ambiguity.
+PR #109 (Image Updater) is merged but inert. kubernetes-bootstrap PR #110 removes those annotations. With Option A, the deploy path doesn't touch kubernetes-bootstrap git at all — the only kubernetes-bootstrap change is the #110 cleanup.

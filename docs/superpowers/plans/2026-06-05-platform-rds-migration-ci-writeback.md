@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-05-platform-rds-migration-ci-writeback-design.md`
 
+> **⚠️ PIVOTED to Option A (direct-apply).** Tasks 1/3 here (CI git-writeback job + deploy-key) are SUPERSEDED — git-writeback failed at runtime (`403` cross-repo push; the deploy-key coupling was wrong). The shipped design: an `apply-migrations` job runs the existing on-demand bootstrap Job via kubectl (no cross-repo write, no secret). See spec §0 pivot note + §2-3. Task 2 (#109 revert, kubernetes-bootstrap PR #110) and Task 4 (e2e validation) still stand.
+
 ---
 
 ## Manual prerequisite (user-provisioned, not a code task)
