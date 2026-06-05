@@ -33,6 +33,11 @@ function barRaiserFailures(o: InterviewCoachResult): string[] {
     return cards && cards.length > 0 ? [] : ['bar-raiser: empty barRaiserWalkthrough'];
 }
 
+/** Final stage: the mutual-fit / why-this-role brief must be emitted. */
+function finalFailures(o: InterviewCoachResult): string[] {
+    return o.finalPrep ? [] : ['final: missing finalPrep'];
+}
+
 function behaviouralFailures(o: InterviewCoachResult): string[] {
     return o.behaviouralQuestions && o.behaviouralQuestions.length > 0
         ? []
@@ -53,6 +58,9 @@ export const stageFocusGrader: Grader = (input, output) => {
     // 'bar-raiser' is a prep stage carried as a string by the dispatch layer; it is
     // not in the lifecycle InterviewStage union, so it is matched on the widened value.
     else if ((s as string) === 'bar-raiser') failures = barRaiserFailures(output);
+    // 'final' is likewise a prep stage carried as a string by the dispatch layer; it is
+    // not in the lifecycle InterviewStage union, so it is matched on the widened value.
+    else if ((s as string) === 'final') failures = finalFailures(output);
     else if (s === 'behavioural') failures = behaviouralFailures(output);
     return mkResult('stage-focus', failures);
 };
