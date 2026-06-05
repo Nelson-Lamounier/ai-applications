@@ -63,12 +63,15 @@ const COACH_MODEL = process.env.COACH_MODEL ?? 'eu.anthropic.claude-haiku-4-5-20
 const EFFECTIVE_MODEL_ID = process.env.INFERENCE_PROFILE_ARN ?? COACH_MODEL;
 
 /**
- * Maximum output tokens. Raised from 8192 → 16384 (env-overridable): the coach
- * now receives a grounded Research evidence digest + career-history constraints,
- * so phone-screen output (career arc, JD talking points, comp script + the
- * question sets) exceeds the old 8192 ceiling and truncates (stopReason=max_tokens).
+ * Maximum output tokens. Raised 8192 → 16384 → 32000 (env-overridable). The
+ * grounded coach (Research evidence digest + career constraints) already pushed
+ * phone-screen past 8192; the project-anchored System Design walkthrough — one
+ * detailed card per JD-relevant concern (articulation, follow-ups, gap guidance),
+ * 10+ cards for a rich project — blows past 16384 and truncates
+ * (stopReason=max_tokens), which fails the whole run. Sonnet 4.6 supports far
+ * more (the strategist runs at 64000), so 32000 gives comfortable headroom.
  */
-const COACH_MAX_TOKENS = parseInt(process.env.COACH_MAX_TOKENS ?? '16384', 10);
+const COACH_MAX_TOKENS = parseInt(process.env.COACH_MAX_TOKENS ?? '32000', 10);
 
 /**
  * Thinking budget. Forced tool_use (constrained decoding) is incompatible
