@@ -15,6 +15,9 @@ export interface SmokeSession {
   platformUserIdResolved?: boolean;
   cleanup: CleanupTarget[];
   tunnelStop?: () => void;
+  /** Stop fn for the admin-api port-forward (svc/admin-api:3002 → 13002),
+   *  opened once per session by ensureAdminApiTunnel(). */
+  adminApiTunnelStop?: () => void;
 }
 export const session: SmokeSession = { cleanup: [] };
 export function requireAuth(): { endpoints: Endpoints; idToken: string; testUserId: string } {

@@ -91,22 +91,24 @@ function adminApi(): AdminApiClient {
 
 /** Look up the application row created by the strategist run, scoped to the
  *  resolved platform user. When applicationId is known we pin to it; otherwise
- *  we take the most recent. Returns the row or null. */
+ *  we take the most recent. Returns `{ id }` or null. The dev job_applications
+ *  table has NO `slug` column — the admin-api resolves `:slug` by id, so the
+ *  application id IS the slug used by run_coach / assert. */
 async function findApplication(
   client: RdsClient, userId: string, applicationId: string | undefined,
-): Promise<unknown> {
+): Promise<{ id: string } | null> {
   const rows = await client.maybeRows(
-    `SELECT id, slug FROM job_applications
+    `SELECT id FROM job_applications
      WHERE user_id = $1 AND ($2::uuid IS NULL OR id = $2)
      ORDER BY created_at DESC LIMIT 1`,
     [userId, applicationId ?? null],
   );
-  return rows[0] ?? null;
+  return (rows[0] as { id: string } | undefined) ?? null;
 }
 
 async function handleRunStrategist(
   args: RunStrategistArgs,
-): Promise<Skipped | { pipelineRunId: string; status: string; application: unknown }> {
+): Promise<Skipped | { pipelineRunId: string; status: string; application: { id: string } | null }> {
   if (args.confirm !== true) return SKIPPED;
   requireAuth();
   const { pipelineRunId, applicationId } = await adminApi().startStrategist({
@@ -127,16 +129,23 @@ async function handleRunStrategist(
 
 async function handleRunCoach(
   args: RunCoachArgs,
-): Promise<Skipped | { pipelineRunId: string; status: string }> {
+): Promise<Skipped | { skipped: true; status: string } | { pipelineRunId: string; status: string }> {
   if (args.confirm !== true) return SKIPPED;
   requireAuth();
-  const { pipelineRunId } = await adminApi().startCoach(args.slug, args.interviewStage);
-  const target: CleanupTarget = { flow: 'job-strategist', pipelineRunId, slug: args.slug, s3Keys: [] };
+  const { status: dispatchStatus, coachPipelineRunId } =
+    await adminApi().startCoach(args.slug, args.interviewStage);
+  // 'skipped'/'gated' dispatches never enqueue a run — nothing to poll or clean up.
+  if (dispatchStatus === 'skipped' || dispatchStatus === 'gated' || !coachPipelineRunId) {
+    return { skipped: true, status: dispatchStatus };
+  }
+  const target: CleanupTarget = {
+    flow: 'job-strategist', pipelineRunId: coachPipelineRunId, slug: args.slug, s3Keys: [],
+  };
   session.cleanup.push(target);
   const client = await connectDev();
   try {
-    const status = await client.waitForPipelineStatus(pipelineRunId, RUN_TIMEOUT_MS, RUN_INTERVAL_MS);
-    return { pipelineRunId, status };
+    const status = await client.waitForPipelineStatus(coachPipelineRunId, RUN_TIMEOUT_MS, RUN_INTERVAL_MS);
+    return { pipelineRunId: coachPipelineRunId, status };
   } finally {
     await client.close();
   }
