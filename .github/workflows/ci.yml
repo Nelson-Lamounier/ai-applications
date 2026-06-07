@@ -362,10 +362,25 @@ jobs:
         # fixtures (PII — intentionally not committed). Everything else,
         # including the dashboard metric-contract + synthetic-monitor tests,
         # runs. The patterns reproduce the config defaults plus the two files.
+        #
+        # Also exclude job-strategist's resume ats/render suites: this catch-all
+        # run resolves modules in the resume-import-processor workspace, which
+        # pins pdf-parse@1 + @types/pdf-parse@1 — those shadow pdf-parse@2's
+        # bundled `PDFParse` types and break job-strategist's ats/render code.
+        # Those suites run in their own workspace context in the next step.
         run: >-
           yarn workspace @bedrock/resume-import-processor test
           --testPathIgnorePatterns "/node_modules/" "/dist/"
           "\.integration\.test\.ts$" "parsers/__tests__/(pdf|docx)\.test\.ts$"
+          "/job-strategist/src/(ats|render)/"
+          "/job-strategist/src/evals/graders/ats-grader\.test\.ts$"
+
+      - name: Run job-strategist resume ats/render tests
+        # pdf-parse@2 + @react-pdf types only resolve in the job-strategist
+        # workspace (see exclusion note above), so these suites run here.
+        run: >-
+          yarn workspace @bedrock/job-strategist test
+          src/ats src/render src/evals/graders/ats-grader.test.ts
 
   # ============================================================================
   # CI Summary (Gate)
