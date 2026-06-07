@@ -44,7 +44,10 @@ export async function reenrichSkippedChunks(
     enricher: IChunkEnricher,
     opts: ReenrichOptions = {},
 ): Promise<ReenrichResult> {
-    const conditions = [`metadata->>'enrichment_status' = 'skipped_quota'`];
+    // Backfill targets: chunks the cap skipped ('skipped_quota') AND chunks that
+    // deferred enrichment to this background pass ('pending', set by the pipeline
+    // when DEFER_ENRICHMENT is on for a fast first scan).
+    const conditions = [`metadata->>'enrichment_status' IN ('skipped_quota', 'pending')`];
     const params: unknown[] = [];
     if (opts.userId) {
         params.push(opts.userId);

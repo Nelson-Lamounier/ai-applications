@@ -36,7 +36,7 @@ describe('reenrichSkippedChunks', () => {
         expect(updates[0]).toEqual({ skills: ['kubernetes networking'], id: 'a' });
         // SELECT scoped to the user, status filter present
         const selectSql = query.mock.calls[0][0] as string;
-        expect(selectSql).toMatch(/enrichment_status' = 'skipped_quota'/);
+        expect(selectSql).toMatch(/enrichment_status' IN \('skipped_quota', 'pending'\)/);
         expect(selectSql).toMatch(/user_id = \$1::uuid/);
         // UPDATE flips status to ok via jsonb_set
         const updateSql = query.mock.calls.find(c => (c[0] as string).includes('UPDATE'))?.[0] as string;

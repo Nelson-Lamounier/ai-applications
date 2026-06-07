@@ -25,7 +25,7 @@
 import type { IngestionReport, RawChunk } from '../../rds/types.js';
 import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
 import type { IFileFilter }   from '../interfaces/IFileFilter.js';
-import type { IRepoAdapter, RepoCommit, RepoPullRequest }  from '../interfaces/IRepoAdapter.js';
+import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoFile }  from '../interfaces/IRepoAdapter.js';
 import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
 import { deriveRepoSignals }  from '../../projects/repo-signals.js';
@@ -158,11 +158,13 @@ export class RepoIngestionOrchestrator {
         userId: string,
         repoFullName: string,
         onFileProgress?: (fetched: number, total: number) => void,
+        prefetchedFiles?: RepoFile[],
     ): Promise<IngestionReport> {
         // -----------------------------------------------------------------
-        // Step 1: List all files in the repo (single API call via tree API)
+        // Step 1: List all files in the repo (reuse the caller's tree when
+        // provided — profile collection already fetched it this run).
         // -----------------------------------------------------------------
-        const allFiles = await this.repoAdapter.listFiles(repoFullName);
+        const allFiles = prefetchedFiles ?? await this.repoAdapter.listFiles(repoFullName);
 
         // Derive + persist archetype signals from the FULL file tree (best-effort).
         await this.persistArchetypeSignals(userId, repoFullName, allFiles);
@@ -398,7 +400,7 @@ export class RepoIngestionOrchestrator {
      * Delete all existing chunks for a repo, then re-ingest from scratch.
      * Use when the chunking strategy has changed significantly.
      */
-    async forceReindex(userId: string, repoFullName: string): Promise<IngestionReport> {
+    async forceReindex(userId: string, repoFullName: string, prefetchedFiles?: RepoFile[]): Promise<IngestionReport> {
         console.info(
             `[RepoIngestionOrchestrator] force re-index: ${repoFullName}`,
         );
@@ -408,7 +410,7 @@ export class RepoIngestionOrchestrator {
         if (this.fileStateStore)  await this.fileStateStore.deleteFileState(userId, repoFullName);
         if (this.watermarkStore)  await this.watermarkStore.setLastSyncedCommitSha(userId, repoFullName, '');
 
-        const allFiles     = await this.repoAdapter.listFiles(repoFullName);
+        const allFiles     = prefetchedFiles ?? await this.repoAdapter.listFiles(repoFullName);
 
         // Derive + persist archetype signals from the FULL file tree (best-effort).
         await this.persistArchetypeSignals(userId, repoFullName, allFiles);

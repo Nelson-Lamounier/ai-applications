@@ -56,6 +56,8 @@ import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
 import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
+import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
+import type { RepoFile } from '@bedrock/shared';
 import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
 import { RepositoryProfileEmbeddingsRepository } from './repositories/RepositoryProfileEmbeddingsRepository.js';
 import type { ExtractedRepoData } from './agents/ProfileExtractor.js';
@@ -102,6 +104,33 @@ const chunksProcessed = new Counter({
 
 // Seed sub-stage series so panels show "0" before the first observation.
 seedIngestionSubStepSeries();
+
+/**
+ * Background skill enrichment for DEFER_ENRICHMENT runs — enrich the 'pending'
+ * chunks in place after the repo is already searchable. No re-embedding;
+ * best-effort, never throws (a failure must not flip the ingestion outcome).
+ */
+async function runDeferredEnrichment(
+    pgPool: Pool,
+    enricher: BedrockChunkEnricher,
+    userId: string,
+    repoFullName: string,
+): Promise<void> {
+    try {
+        const reenriched = await reenrichSkippedChunks(pgPool, enricher, {
+            userId,
+            repoFullName,
+            onProgress: (done, total) => {
+                if (done % 100 === 0 || done === total) {
+                    log.info({ done, total, repoFullName }, 'deferred_enrichment.progress');
+                }
+            },
+        });
+        log.info({ event: 'deferred_enrichment.complete', repoFullName, ...reenriched }, 'deferred enrichment complete');
+    } catch (err) {
+        log.warn({ err: String(err), repoFullName }, 'deferred_enrichment.failed (non-fatal)');
+    }
+}
 
 async function embedProfile(
     userId: string,
@@ -245,8 +274,12 @@ async function main(): Promise<void> {
     const fileFilter   = new FileFilter();
     const chunkerReg   = ChunkerRegistry.withDefaults();
 
-    // Skill-evidence enricher. Disable per ingestion via ENRICHMENT_DISABLED=1.
-    // Cap per-run cost via MAX_ENRICHMENT_PER_INGESTION (default 2000).
+    // Skill-evidence enricher. Disable entirely via ENRICHMENT_DISABLED=1, or
+    // DEFER_ENRICHMENT=1 to take it off the critical path: the pipeline skips
+    // inline enrichment (tags chunks 'pending') and a background pass below
+    // backfills skills after the repo is marked searchable. Cap per-run inline
+    // cost via MAX_ENRICHMENT_PER_INGESTION (default 4000).
+    const deferEnrichment = process.env.DEFER_ENRICHMENT === '1';
     const enricher = process.env.ENRICHMENT_DISABLED === '1'
         ? undefined
         : BedrockChunkEnricher.fromEnvironment({
@@ -257,7 +290,13 @@ async function main(): Promise<void> {
 
     const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);
 
-    const pipeline     = new IngestionPipeline(vectorStore, syncState, embedder, { enricher, retrievalProbe });
+    // In defer mode the pipeline gets no inline enricher; `enricher` above is
+    // reused by the post-completion re-enrich pass.
+    const pipeline = new IngestionPipeline(vectorStore, syncState, embedder, {
+        enricher: deferEnrichment ? undefined : enricher,
+        retrievalProbe,
+        deferEnrichment,
+    });
 
     const repositoryId  = await resolveRepositoryId(pgPool, env.userId, env.repoFullName);
     if (!repositoryId) {
@@ -302,8 +341,18 @@ async function main(): Promise<void> {
         // ── Phase 0: profile extraction ──────────────────────────────────────────
         log.info({ repoFullName: env.repoFullName }, 'profile_extraction.start');
 
+        // Fetch the repo file tree ONCE and share it with profile collection +
+        // the orchestrator (avoids a duplicate GitHub tree API call per run).
+        // Best-effort: on failure each consumer fetches its own tree.
+        let prefetchedFiles: RepoFile[] | undefined;
+        try {
+            prefetchedFiles = await repoAdapter.listFiles(env.repoFullName);
+        } catch {
+            prefetchedFiles = undefined;
+        }
+
         const stopCollect    = profileCollectDurationSeconds().startTimer();
-        const bundle         = await profileCollector.collect(env.repoFullName);
+        const bundle         = await profileCollector.collect(env.repoFullName, prefetchedFiles);
         stopCollect();
         const classification = classifyRepo(bundle);
 
@@ -363,8 +412,8 @@ async function main(): Promise<void> {
         const stopChunkIngest = chunkIngestDurationSeconds().startTimer();
         const report = await context.with(trace.setSpan(obs.parentContext, rootSpan), async () => {
             return env.forceReindex
-                ? await orchestrator.forceReindex(env.userId, env.repoFullName)
-                : await orchestrator.ingestRepo(env.userId, env.repoFullName, onFileProgress);
+                ? await orchestrator.forceReindex(env.userId, env.repoFullName, prefetchedFiles)
+                : await orchestrator.ingestRepo(env.userId, env.repoFullName, onFileProgress, prefetchedFiles);
         });
         stopChunkIngest({ outcome: 'success' });
 
@@ -381,6 +430,12 @@ async function main(): Promise<void> {
 
         await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
         outcome = 'success';
+
+        // The repo is already searchable above. In defer mode, fill `skills` off
+        // the critical path now (in-process, no re-embedding). Best-effort.
+        if (deferEnrichment && enricher) {
+            await runDeferredEnrichment(pgPool, enricher, env.userId, env.repoFullName);
+        }
 
         // ── Profile rollup + synthesis (runs AFTER completion) ───────────────────
         // Must run here, not during profile extraction: the diagnostic's ragDepth

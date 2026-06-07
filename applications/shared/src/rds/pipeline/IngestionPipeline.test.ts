@@ -116,6 +116,18 @@ describe('IngestionPipeline enrichment', () => {
         expect(upserted.metadata).toBeUndefined();
     });
 
+    it('defers enrichment: tags chunks pending and never calls the enricher inline', async () => {
+        const enricher = new FakeEnricher(async () => ({ skills: ['x'], technologies: [] }));
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher, deferEnrichment: true });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)]);
+
+        const upserted = store.upserts[0][0];
+        expect((upserted.metadata as Record<string, unknown>).enrichment_status).toBe('pending');
+        expect(upserted.skills).toEqual([]);       // empty until the background pass backfills
+        expect(enricher.calls).toBe(0);            // no inline Bedrock calls
+    });
+
     it('populates skills + technologies + enrichment_status=ok when enricher succeeds', async () => {
         const enricher = new FakeEnricher(async () => ({
             skills:       ['kubernetes networking'],
