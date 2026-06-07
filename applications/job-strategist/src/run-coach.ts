@@ -241,15 +241,46 @@ async function buildConstraintBlock(
     return buildStagePrepConstraintBlock({ ...constraints, dsaTopics });
 }
 
-/** Verified-evidence digest from the Research result (phone-screen grounding). */
+/** Below this max cosine, the portfolio only weakly matches the JD — flag it. */
+const LOW_CONFIDENCE_COSINE = 0.25;
+
+/**
+ * Verified-evidence digest from the Research result. Score-aware: it tells the
+ * Coach how well the portfolio actually matched this role so it cannot ground
+ * confident coaching in weak/empty retrieval. When nothing cleared the floor we
+ * instruct the Coach to coach from gaps only rather than claim "verified" work.
+ */
 function buildEvidenceBlock(research: StrategistResearchResult | null): string | undefined {
     if (!research) return undefined;
-    return [
+    const stats = research.kbRetrievalStats;
+    const lines = [
         `Overall fit: ${research.overallFitRating ?? ''} — ${research.fitSummary ?? ''}`,
         `Experience signals: ${JSON.stringify(research.experienceSignals ?? {})}`,
+    ];
+
+    if (stats) {
+        lines.push(
+            `Retrieval confidence: ${stats.passageCount} passages above floor ${stats.floor.toFixed(2)}; ` +
+            `cosine max ${stats.maxCosine.toFixed(2)}, median ${stats.medianCosine.toFixed(2)}.`,
+        );
+        if (stats.passageCount === 0) {
+            lines.push(
+                '⚠️ No portfolio evidence cleared the relevance floor for this role. Do NOT present skills as ' +
+                '"verified from your work" — coach honestly from gaps and transferable foundations only.',
+            );
+        } else if (stats.maxCosine < LOW_CONFIDENCE_COSINE) {
+            lines.push(
+                '⚠️ Low retrieval relevance — the portfolio weakly matches this JD. Treat verified skills as ' +
+                'directional; have the candidate confirm specifics before scripting answers.',
+            );
+        }
+    }
+
+    lines.push(
         'Verified matches:',
         ...(research.verifiedMatches ?? []).map(m => `- ${m.skill} (${m.depth}) — ${m.sourceCitation}`),
-    ].join('\n');
+    );
+    return lines.join('\n');
 }
 
 /**

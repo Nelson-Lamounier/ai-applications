@@ -333,6 +333,30 @@ export interface ExperienceSignals {
     readonly scaleIndicators: string;
 }
 
+/** One retrieved source and its absolute cosine relevance. */
+export interface KbRetrievalSource {
+    readonly source: string;
+    readonly cosine: number;
+}
+
+/**
+ * Retrieval-quality snapshot for a single research run. All cosine values are
+ * absolute similarity in [0, 1]; `floor` is the configured minimum a passage
+ * had to clear to enter context. `passageCount === 0` means nothing cleared the
+ * floor (retrieval was effectively empty — the KB does not match this JD).
+ */
+export interface KbRetrievalStats {
+    readonly passageCount: number;
+    readonly maxCosine: number;
+    readonly medianCosine: number;
+    readonly minCosine: number;
+    readonly floor: number;
+    /** Highest-scoring sources (deduped), descending by cosine. */
+    readonly topSources: ReadonlyArray<KbRetrievalSource>;
+    /** Per-repo passage counts in the retrieved context. */
+    readonly repoBreakdown: ReadonlyArray<{ readonly repo: string; readonly count: number }>;
+}
+
 /**
  * Complete output from the Strategist Research Agent.
  */
@@ -386,6 +410,14 @@ export interface StrategistResearchResult {
 
     /** Concatenated KB passages with source citations */
     readonly kbContext: string;
+
+    /**
+     * Retrieval health for this run, derived from the cosine scores of the
+     * passages that entered context. Powers the "Knowledge Base data health"
+     * UI panel and the score-aware coach evidence block. Injected post-validation
+     * (not model-produced). Absent on legacy runs.
+     */
+    readonly kbRetrievalStats?: KbRetrievalStats;
 
     /** Resume domain constraints — rules, gaps, and status thresholds (non-negotiable) */
     readonly resumeConstraints: string;

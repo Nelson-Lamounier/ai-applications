@@ -27,6 +27,7 @@ import {
     log,
 } from '@bedrock/shared';
 import { loadCareerHistory, formatCareerHistory } from './career-history.js';
+import { computeKbStats } from '../lib/kb-stats.js';
 import type { Pool } from 'pg';
 import type {
     AgentConfig,
@@ -101,6 +102,16 @@ const RETRIEVE_OVERFETCH = 4;
 
 const RERANKER_DISABLED = process.env.RERANKER_DISABLED === '1';
 
+/**
+ * Minimum RAW cosine similarity for a retrieved passage to enter the LLM
+ * context. Below this, retrieval is effectively noise (orthogonal vectors sit
+ * near ~0; real portfolio↔JD matches land ~0.2–0.7). Passages under the floor
+ * are dropped so the grounding verifier can honestly emit NOT_GROUNDED instead
+ * of the model fabricating from irrelevant chunks. Threshold the COSINE, never
+ * the rerank score (which is a tight, near-degenerate band). Env-tunable.
+ */
+const MIN_COSINE = Number.parseFloat(process.env.KB_MIN_COSINE ?? '0.20');
+
 // =============================================================================
 // CLIENTS
 // =============================================================================
@@ -153,19 +164,33 @@ async function querySingleRds(
         limit:      overfetch,
     });
 
-    const passages = results.map((r, i) => ({
+    // Floor on RAW cosine (not the hybrid/RRF `similarity`, which is rank-derived).
+    // Drops near-orthogonal noise before it can reach the LLM or the reranker.
+    const relevant = results.filter(r => r.cosine >= MIN_COSINE);
+    if (relevant.length === 0) {
+        const topCosine = results.length > 0 ? Math.max(...results.map(r => r.cosine)) : 0;
+        log('INFO', 'No passages cleared the cosine floor — returning empty context', {
+            agent:     'strategist-research',
+            retrieved: results.length,
+            minCosine: MIN_COSINE,
+            topCosine: Number(topCosine.toFixed(3)),
+        });
+        return [];
+    }
+
+    const passages = relevant.map((r, i) => ({
         id:          String(i),
         source:      `${r.repoFullName}/${r.filePath}`,
-        cosineScore: r.similarity,
+        cosineScore: r.cosine,
         text:        r.content,
     }));
 
-    if (passages.length === 0) return [];
-
     const reranked = await rerankPassages(query, passages);
 
+    // Surface BOTH scores: cosine is authoritative (floor + grounding), rerank
+    // drives ordering. A 0.31-cosine passage must not be mislabelled by a 0.015 rerank.
     return reranked.map(p =>
-        `[Source: ${p.source}, Score: ${p.score.toFixed(3)}]\n${p.text}`,
+        `[Source: ${p.source}, Cosine: ${p.cosineScore.toFixed(3)}, Rerank: ${p.rerankScore.toFixed(3)}]\n${p.text}`,
     );
 }
 
@@ -177,10 +202,12 @@ interface RawPassage {
 }
 
 interface RankedPassage {
-    source: string;
-    /** Cosine score if no rerank, otherwise rerank relevance. */
-    score:  number;
-    text:   string;
+    source:      string;
+    /** Authoritative absolute similarity — used for the floor + grounding. */
+    cosineScore: number;
+    /** Rerank relevance (drives ordering). Equals cosineScore when rerank is off. */
+    rerankScore: number;
+    text:        string;
 }
 
 /**
@@ -194,7 +221,7 @@ async function rerankPassages(
 ): Promise<RankedPassage[]> {
     const cosineTopK: RankedPassage[] = passages
         .slice(0, MAX_KB_PASSAGES)
-        .map(p => ({ source: p.source, score: p.cosineScore, text: p.text }));
+        .map(p => ({ source: p.source, cosineScore: p.cosineScore, rerankScore: p.cosineScore, text: p.text }));
 
     if (!reranker || passages.length <= 1) return cosineTopK;
 
@@ -213,9 +240,10 @@ async function rerankPassages(
             const passage = byId.get(r.id);
             if (!passage) continue;
             out.push({
-                source: passage.source,
-                score:  r.relevanceScore,
-                text:   passage.text,
+                source:      passage.source,
+                cosineScore: passage.cosineScore,
+                rerankScore: r.relevanceScore,
+                text:        passage.text,
             });
         }
         log('INFO', 'Reranked passages', {
@@ -612,6 +640,7 @@ export function validateResearchResult(
     return {
         ...validated.data,
         ...injected,
+        kbRetrievalStats: computeKbStats(injected.kbContext, MIN_COSINE),
     } as StrategistResearchResult;
 }
 

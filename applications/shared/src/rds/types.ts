@@ -110,8 +110,18 @@ export interface SimilarityResult {
     readonly content: string;
     readonly chunkIndex: number;
     readonly tags: string[];
-    /** Cosine similarity: 1 − cosine_distance. Range [0, 1]. */
+    /**
+     * Ranking score. In pure-vector mode this equals cosine similarity; in
+     * hybrid mode this is the RRF fusion score (small, rank-derived — NOT a
+     * cosine). Use {@link cosine} for an absolute similarity comparable across
+     * queries and safe to threshold on.
+     */
     readonly similarity: number;
+    /**
+     * Raw cosine similarity (1 − cosine_distance), range [0, 1], independent of
+     * hybrid RRF ranking. Authoritative for score-floor filtering and grounding.
+     */
+    readonly cosine: number;
 }
 
 export interface QueryParams {

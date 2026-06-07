@@ -15,6 +15,7 @@
 import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, log, validateSkillTransfer } from '@bedrock/shared';
 import { assembleCoachSystemPrompt } from '../prompts/coach/stages/index.js';
+import { deepStripCdata } from '../lib/strip-cdata.js';
 import type {
     AgentConfig,
     AgentResult,
@@ -670,7 +671,12 @@ class CoachAgent extends BaseAgent<CoachAgentInput, InterviewCoachResult, Strate
         // structure-output-checklist §7). `stage` is authoritative from
         // pipeline context, not model output.
         const raw = parseJsonResponse<unknown>(responseText, 'strategist-coach');
-        const validated = CoachOutputSchema.safeParse(raw);
+        // Safety-net: the model occasionally wraps long free-text fields (e.g.
+        // coachingNotes) in an XML `<![CDATA[ … ]]>` envelope echoed from the
+        // prompt's tag structure. Strip it before validation/persistence so it
+        // never reaches the UI as literal markup.
+        const cleaned = deepStripCdata(raw);
+        const validated = CoachOutputSchema.safeParse(cleaned);
         if (!validated.success) {
             throw new Error(
                 `strategist-coach: coaching output failed schema validation: ${validated.error.message}`,

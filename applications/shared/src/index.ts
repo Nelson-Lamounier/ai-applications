@@ -159,6 +159,8 @@ export type {
     TechnologyInventory,
     ExperienceSignals,
     StrategistResearchResult,
+    KbRetrievalStats,
+    KbRetrievalSource,
 
     // Phase 0 Archetype Selection
     ArchetypeId,
