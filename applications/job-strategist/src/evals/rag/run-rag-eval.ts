@@ -32,6 +32,10 @@ const JUDGE_MODEL = process.env.RAG_JUDGE_MODEL_ID ?? 'anthropic.claude-haiku-4-
 const K = Number.parseInt(process.env.RAG_EVAL_K ?? '8', 10);
 const MIN_COSINE = Number.parseFloat(process.env.KB_MIN_COSINE ?? '0.20');
 const SNIPPET_CHARS = 400;
+/** RAG_EVAL_GENERATE=1 → also generate a grounded answer per query, so the JSONL
+ *  carries `answer` for retrieve-AND-generate metrics (faithfulness, correctness,
+ *  citation precision) in DeepEval / RAGAS / Bedrock-Evaluations BYOI. */
+const GENERATE = process.env.RAG_EVAL_GENERATE === '1';
 
 interface ToolUseResponse { content?: Array<{ type: string; input?: unknown }> }
 
@@ -59,6 +63,26 @@ async function judgeRelevance(
 }
 
 const OUT_DIR = process.env.RAG_EVAL_OUT_DIR ?? process.cwd();
+
+/** Grounded answer from the retrieved contexts (citations as [n]) — enables
+ *  retrieve-and-generate metrics. Honesty-constrained: refuse when unsupported. */
+async function generateAnswer(bedrock: BedrockRuntimeClient, query: string, contexts: RetrievedContext[]): Promise<string> {
+    const ctxBlock = contexts.map((c, i) => `[${i}] ${c.source}\n${c.snippet}`).join('\n\n');
+    const prompt = [
+        'Answer the QUERY using ONLY the CONTEXTS. Cite sources inline as [n]. If the',
+        'contexts do not support an answer, say so plainly — do not invent.',
+        '', `QUERY: ${query}`, '', 'CONTEXTS:', ctxBlock || '(none)',
+    ].join('\n');
+    const body = JSON.stringify({
+        anthropic_version: 'bedrock-2023-05-31', max_tokens: 512, temperature: 0,
+        messages: [{ role: 'user', content: prompt }],
+    });
+    const { body: resp } = await bedrock.send(new InvokeModelCommand({
+        modelId: JUDGE_MODEL, contentType: 'application/json', accept: 'application/json', body: Buffer.from(body),
+    }));
+    const parsed = JSON.parse(Buffer.from(resp).toString('utf-8')) as { content?: Array<{ type: string; text?: string }> };
+    return parsed.content?.find(b => b.type === 'text')?.text ?? '';
+}
 
 function loadGolden(): GoldenQuery[] {
     const raw = readFileSync(join(__dirname, 'golden.json'), 'utf-8');
@@ -89,6 +113,7 @@ async function main(): Promise<void> {
             .map(h => ({ source: `${h.repoFullName}/${h.filePath}`, cosine: h.cosine, snippet: h.content.slice(0, SNIPPET_CHARS) }));
 
         const scores = await judgeRelevance(bedrock, g.query, contexts);
+        const answer = GENERATE ? await generateAnswer(bedrock, g.query, contexts) : undefined;
         const maxCosine = contexts.length > 0 ? Math.max(...contexts.map(c => c.cosine)) : 0;
 
         results.push({
@@ -98,7 +123,7 @@ async function main(): Promise<void> {
             retrievedCount: contexts.length,
             maxCosine,
         });
-        jsonl.push(JSON.stringify({ id: g.id, query: g.query, contexts, scores }));
+        jsonl.push(JSON.stringify({ id: g.id, query: g.query, contexts, scores, ...(answer !== undefined ? { answer } : {}) }));
         console.log(`  scored ${g.id} (${contexts.length} ctx, relevance ${meanRelevance(scores).toFixed(2)})`);
     }
 
