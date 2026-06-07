@@ -139,6 +139,20 @@ export const DEFAULT_FILTER_CONFIG: FileFilterConfig = {
         'pnpm-lock.yaml',
         '**/*.min.js',
         '**/*.min.css',
+
+        // AI-tooling / planning scaffolding — NOT portfolio evidence.
+        // These pollute the KB: the Research Agent retrieves them as if they were
+        // demonstrated work, drowning real project code (see ADR / kb-hygiene).
+        '**/docs/superpowers/**',
+        '**/.agents/**',
+        '**/.claude/**',
+        '**/.codex/**',
+        '**/CLAUDE.md',
+        '**/AGENTS.md',
+        '**/.github/**',
+        '**/*.plan.md',
+        '**/specs/**',
+        '**/plans/**',
     ],
     maxSizeBytes: 500_000,
 };

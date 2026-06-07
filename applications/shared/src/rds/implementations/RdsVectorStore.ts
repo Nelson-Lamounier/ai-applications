@@ -49,6 +49,8 @@ interface SimilarityRow  {
     chunk_index: number;
     tags: string[];
     similarity: number;
+    /** Raw cosine (1 − cosine_distance). Present in both query modes. */
+    cosine: number | null;
 }
 interface HashCheckRow   {
     file_path: string;
@@ -230,7 +232,8 @@ export class RdsVectorStore implements IVectorStore {
                 d.content,
                 d.chunk_index,
                 d.tags,
-                1 - (d.embedding <=> $3::vector) AS similarity
+                1 - (d.embedding <=> $3::vector) AS similarity,
+                1 - (d.embedding <=> $3::vector) AS cosine
             FROM document_embeddings d, _
             WHERE d.user_id = $2
               AND ($4::text IS NULL OR d.repo_full_name = $4)
@@ -299,7 +302,8 @@ export class RdsVectorStore implements IVectorStore {
                 d.content,
                 d.chunk_index,
                 d.tags,
-                r.rrf_score AS similarity
+                r.rrf_score AS similarity,
+                1 - (d.embedding <=> $3::vector) AS cosine
             FROM rrf r
             JOIN document_embeddings d ON d.id = r.id
             ORDER BY r.rrf_score DESC
@@ -327,6 +331,7 @@ export class RdsVectorStore implements IVectorStore {
             chunkIndex:   row.chunk_index,
             tags:         row.tags ?? [],
             similarity:   Number(row.similarity),
+            cosine:       Number(row.cosine ?? row.similarity),
         };
     }
 

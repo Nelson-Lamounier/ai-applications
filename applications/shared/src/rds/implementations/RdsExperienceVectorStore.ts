@@ -57,6 +57,7 @@ export class RdsExperienceVectorStore {
             chunkIndex: 0,
             tags: [],
             similarity: Number(row.similarity),
+            cosine: Number(row.similarity),
         }));
     }
 }

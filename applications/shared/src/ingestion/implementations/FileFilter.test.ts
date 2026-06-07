@@ -74,6 +74,41 @@ describe('FileFilter', () => {
     });
 
     // =========================================================================
+    // shouldInclude — AI-tooling / planning scaffolding exclusion (KB hygiene)
+    // =========================================================================
+    describe('shouldInclude — tooling/planning docs excluded from KB', () => {
+        const filter = new FileFilter(DEFAULT_FILTER_CONFIG);
+
+        it('excludes superpowers planning/spec docs at any depth', () => {
+            expect(filter.shouldInclude('docs/superpowers/plans/2026-05-19-distillation-cards.md')).toBe(false);
+            expect(filter.shouldInclude('docs/superpowers/specs/x-design.md')).toBe(false);
+            expect(filter.shouldInclude('applications/ai/docs/superpowers/SKILL.md')).toBe(false);
+        });
+
+        it('excludes agent/tooling scaffolding dirs and files', () => {
+            expect(filter.shouldInclude('.agents/workflows/commit-and-deploy.md')).toBe(false);
+            expect(filter.shouldInclude('.claude/settings.json')).toBe(false);
+            expect(filter.shouldInclude('.codex/config.yaml')).toBe(false);
+            expect(filter.shouldInclude('.github/workflows/ci.yml')).toBe(false);
+            expect(filter.shouldInclude('CLAUDE.md')).toBe(false);
+            expect(filter.shouldInclude('packages/api/AGENTS.md')).toBe(false);
+        });
+
+        it('excludes plan/spec dirs and *.plan.md', () => {
+            expect(filter.shouldInclude('plans/roadmap.md')).toBe(false);
+            expect(filter.shouldInclude('specs/openapi.md')).toBe(false);
+            expect(filter.shouldInclude('docs/feature.plan.md')).toBe(false);
+        });
+
+        it('still includes real portfolio code + docs', () => {
+            expect(filter.shouldInclude('src/index.ts')).toBe(true);
+            expect(filter.shouldInclude('applications/shared/src/rds/RdsVectorStore.ts')).toBe(true);
+            expect(filter.shouldInclude('README.md')).toBe(true);
+            expect(filter.shouldInclude('docs/concepts/architecture.md')).toBe(true);
+        });
+    });
+
+    // =========================================================================
     // shouldInclude — node_modules
     // =========================================================================
     describe('shouldInclude — node_modules exclusion', () => {
