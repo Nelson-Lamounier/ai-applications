@@ -1,0 +1,21 @@
+{
+  "_comment": "RAG retrieval golden set — queries grounded in the user's real repos (ai-applications, cdk-monitoring) + JD requirements. `expectedRepos`/`expectedFiles` drive deterministic recall@k; the LLM judge scores context-relevance per retrieved chunk. `kind:'negative'` queries SHOULD score low relevance (honest-gap signal). Refine freely; versioned so regressions are visible.",
+  "version": 1,
+  "queries": [
+    { "id": "k8s-networking",   "query": "kubernetes networking, ingress controller and network policies", "expectedRepos": ["cdk-monitoring"], "kind": "positive" },
+    { "id": "cdk-iac",          "query": "AWS CDK infrastructure as code stacks and constructs", "expectedRepos": ["cdk-monitoring", "ai-applications"], "kind": "positive" },
+    { "id": "pgvector",         "query": "vector embeddings storage and pgvector similarity retrieval", "expectedRepos": ["ai-applications"], "expectedFiles": ["RdsVectorStore"], "kind": "positive" },
+    { "id": "bedrock-agents",   "query": "Bedrock LLM multi-agent pipeline and ConverseCommand", "expectedRepos": ["ai-applications"], "kind": "positive" },
+    { "id": "cloudwatch-obs",   "query": "CloudWatch metrics, alarms and observability dashboards", "expectedRepos": ["cdk-monitoring"], "kind": "positive" },
+    { "id": "argocd-gitops",    "query": "ArgoCD GitOps continuous deployment and image updater", "expectedRepos": ["cdk-monitoring"], "kind": "positive" },
+    { "id": "step-functions",   "query": "AWS Step Functions state machine orchestration", "expectedRepos": ["cdk-monitoring"], "kind": "positive" },
+    { "id": "grafana",          "query": "Grafana dashboards and Loki log queries", "expectedRepos": ["cdk-monitoring"], "kind": "positive" },
+    { "id": "rds-migrations",   "query": "RDS Postgres schema migrations and row-level security", "expectedRepos": ["ai-applications"], "kind": "positive" },
+    { "id": "zod-validation",   "query": "TypeScript type safety with Zod schema validation", "expectedRepos": ["ai-applications"], "kind": "positive" },
+    { "id": "eks-karpenter",    "query": "EKS cluster autoscaling with Karpenter node provisioning", "expectedRepos": ["cdk-monitoring"], "kind": "positive" },
+    { "id": "ingestion-rag",    "query": "GitHub repository ingestion, chunking and skill enrichment", "expectedRepos": ["ai-applications"], "kind": "positive" },
+    { "id": "stripe-payments",  "query": "Stripe payment processing, idempotency keys and webhook reconciliation", "expectedRepos": [], "kind": "negative" },
+    { "id": "ios-swift",        "query": "native iOS app development in Swift and SwiftUI", "expectedRepos": [], "kind": "negative" },
+    { "id": "ml-training",      "query": "training deep learning models with PyTorch and GPU clusters", "expectedRepos": [], "kind": "negative" }
+  ]
+}
