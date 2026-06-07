@@ -45,8 +45,13 @@ const tracer = trace.getTracer('ingestion-pipeline');
  * run. Above this, remaining chunks are embedded without enrichment and
  * marked `metadata.enrichment_status = 'skipped_quota'`. Override via the
  * `MAX_ENRICHMENT_PER_INGESTION` environment variable.
+ *
+ * Sized to enrich a typical single repo fully in one pass (observed repos run
+ * ~2–2.4k chunks each). Chunks beyond the cap are backfilled cheaply by the
+ * standalone re-enrich Job (run-reenrich) without re-embedding — so the cap
+ * stays a cost guard, not a coverage ceiling.
  */
-const DEFAULT_MAX_ENRICHMENT_PER_INGESTION = 2000;
+const DEFAULT_MAX_ENRICHMENT_PER_INGESTION = 4000;
 
 /** Bounded concurrency for enrichment calls. Bedrock TPS is generous for Haiku. */
 const ENRICHMENT_CONCURRENCY = 10;
