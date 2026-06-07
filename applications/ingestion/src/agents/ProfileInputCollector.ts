@@ -1,4 +1,4 @@
-import type { GitHubAdapter } from '@bedrock/shared';
+import type { GitHubAdapter, RepoFile } from '@bedrock/shared';
 import { PiiScrubber } from '@bedrock/shared';
 import type { FileFetchCache } from '../util/FileFetchCache.js';
 
@@ -37,14 +37,14 @@ export class ProfileInputCollector {
         private readonly cache:   FileFetchCache,
     ) {}
 
-    async collect(repoFullName: string): Promise<ProfileInputBundle> {
+    async collect(repoFullName: string, prefetchedFiles?: RepoFile[]): Promise<ProfileInputBundle> {
         const [meta, commits, readme, manifests, changelog, workflows] = await Promise.all([
             this.adapter.getRepoMeta(repoFullName),
             this.adapter.listCommits(repoFullName, { maxCommits: MAX_COMMITS }),
             this.fetchFirstMatch(repoFullName, README_CANDIDATES),
             this.fetchManifests(repoFullName),
             this.fetchFirstMatch(repoFullName, CHANGELOG_CANDIDATES),
-            this.fetchWorkflows(repoFullName),
+            this.fetchWorkflows(repoFullName, prefetchedFiles),
         ]);
 
         const scrubbedManifests: Record<string, string> = {};
@@ -116,10 +116,12 @@ export class ProfileInputCollector {
         return out;
     }
 
-    private async fetchWorkflows(repoFullName: string): Promise<Record<string, string>> {
+    private async fetchWorkflows(repoFullName: string, prefetchedFiles?: RepoFile[]): Promise<Record<string, string>> {
         const out: Record<string, string> = {};
         try {
-            const files = await this.adapter.listFiles(repoFullName);
+            // Reuse the file tree the orchestrator already fetched when provided —
+            // saves a duplicate GitHub tree API call per ingestion.
+            const files = prefetchedFiles ?? await this.adapter.listFiles(repoFullName);
             const workflows = files
                 .filter(f => f.path.startsWith('.github/workflows/') &&
                              (f.path.endsWith('.yml') || f.path.endsWith('.yaml')))

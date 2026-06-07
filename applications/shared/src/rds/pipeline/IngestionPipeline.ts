@@ -89,6 +89,13 @@ export interface IngestionPipelineOptions {
      * from the report. A probe failure MUST NOT fail ingestion.
      */
     readonly retrievalProbe?: IRetrievalProbe;
+    /**
+     * Fast-scan mode: skip inline enrichment entirely and tag every embedded
+     * chunk `enrichment_status='pending'` so a background re-enrich pass
+     * (reenrichSkippedChunks / run-reenrich) can fill skills off the critical
+     * path. Set via DEFER_ENRICHMENT by run-ingestion. Default false (inline).
+     */
+    readonly deferEnrichment?: boolean;
 }
 
 export class IngestionPipeline {
@@ -98,6 +105,7 @@ export class IngestionPipeline {
     private readonly enricher?: IChunkEnricher;
     private readonly retrievalProbe?: IRetrievalProbe;
     private readonly maxEnrichmentPerRun: number;
+    private readonly deferEnrichment: boolean;
 
     constructor(
         vectorStore: IVectorStore,
@@ -110,6 +118,7 @@ export class IngestionPipeline {
         this.embedder       = embedder;
         this.enricher       = options.enricher;
         this.retrievalProbe = options.retrievalProbe;
+        this.deferEnrichment = options.deferEnrichment ?? false;
         this.maxEnrichmentPerRun =
             options.maxEnrichmentPerRun
             ?? parseEnrichmentCapFromEnv()
@@ -393,6 +402,13 @@ export class IngestionPipeline {
      * `technologies` / `metadata.enrichment_status` populated.
      */
     private async enrichChunks(userId: string, repoFullName: string, chunks: RawChunk[]): Promise<RawChunk[]> {
+        // Fast-scan: defer ALL enrichment to a background pass. Tag chunks
+        // 'pending' (so reenrichSkippedChunks finds them) and return without any
+        // inline Bedrock calls — this is what takes enrichment off the critical
+        // path and makes the first scan ~searchable in minutes.
+        if (this.deferEnrichment) {
+            return chunks.map(chunk => withMetadata(chunk, { enrichment_status: 'pending' }));
+        }
         if (!this.enricher || chunks.length === 0) return chunks;
 
         const out: RawChunk[] = new Array(chunks.length);
