@@ -21,11 +21,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { Pool } from 'pg';
 import { RdsVectorStore, TitanEmbeddingProvider } from '@bedrock/shared';
 import {
     recallAtK, aggregate, meanRelevance, buildRelevanceJudgePrompt,
     RELEVANCE_JUDGE_TOOL, parseRelevanceScores, formatReport,
-    type GoldenQuery, type RetrievedContext, type QueryEvalResult,
+    type GoldenQuery, type RetrievedContext, type QueryEvalResult, type RagEvalReport,
 } from './rag-score.js';
 
 const JUDGE_MODEL = process.env.RAG_JUDGE_MODEL_ID ?? 'anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -36,6 +37,9 @@ const SNIPPET_CHARS = 400;
  *  carries `answer` for retrieve-AND-generate metrics (faithfulness, correctness,
  *  citation precision) in DeepEval / RAGAS / Bedrock-Evaluations BYOI. */
 const GENERATE = process.env.RAG_EVAL_GENERATE === '1';
+/** RAG_EVAL_PERSIST=1 → also write the run + per-query rows to RDS
+ *  (rag_eval_runs / rag_eval_results) so Grafana can chart quality over time. */
+const PERSIST = process.env.RAG_EVAL_PERSIST === '1';
 
 interface ToolUseResponse { content?: Array<{ type: string; input?: unknown }> }
 
@@ -84,9 +88,46 @@ async function generateAnswer(bedrock: BedrockRuntimeClient, query: string, cont
     return parsed.content?.find(b => b.type === 'text')?.text ?? '';
 }
 
-function loadGolden(): GoldenQuery[] {
+function loadGolden(): { version: number | null; queries: GoldenQuery[] } {
     const raw = readFileSync(join(__dirname, 'golden.json'), 'utf-8');
-    return (JSON.parse(raw) as { queries: GoldenQuery[] }).queries;
+    const parsed = JSON.parse(raw) as { version?: number; queries: GoldenQuery[] };
+    return { version: parsed.version ?? null, queries: parsed.queries };
+}
+
+/** Persist the run + per-query rows to RDS for the Grafana eval panels. */
+async function persistEvalRun(report: RagEvalReport, datasetVersion: number | null): Promise<void> {
+    const pool = new Pool({
+        host:     process.env.RDS_HOST,
+        port:     Number.parseInt(process.env.RDS_PORT ?? '5432', 10),
+        database: process.env.RDS_DB_NAME,
+        user:     process.env.RDS_USER,
+        password: process.env.RDS_PASSWORD,
+    });
+    try {
+        const run = await pool.query<{ id: string }>(
+            `INSERT INTO rag_eval_runs
+               (tool, dataset_version, generate_answers, k, min_cosine,
+                query_count, positive_count, negative_count,
+                mean_recall_at_k, mean_relevance_positive, mean_relevance_negative, mean_max_cosine)
+             VALUES ('ts-native', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+            [datasetVersion, GENERATE, K, MIN_COSINE,
+             report.queryCount, report.positiveCount, report.negativeCount,
+             report.meanRecallAtK, report.meanRelevancePositive, report.meanRelevanceNegative, report.meanMaxCosine],
+        );
+        const runId = run.rows[0]?.id;
+        if (!runId) throw new Error('rag_eval_runs insert returned no id');
+        for (const r of report.perQuery) {
+            await pool.query(
+                `INSERT INTO rag_eval_results
+                   (run_id, query_id, kind, recall_at_k, context_relevance, retrieved_count, max_cosine)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [runId, r.id, r.kind, r.recallAtK, r.contextRelevance, r.retrievedCount, r.maxCosine],
+            );
+        }
+        console.log(`==> persisted eval run ${runId} (${report.perQuery.length} queries) to rag_eval_runs`);
+    } finally {
+        await pool.end();
+    }
 }
 
 async function main(): Promise<void> {
@@ -101,7 +142,7 @@ async function main(): Promise<void> {
     const store    = RdsVectorStore.fromEnvironment();
     const bedrock  = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
-    const golden = loadGolden();
+    const { version: datasetVersion, queries: golden } = loadGolden();
     const results: QueryEvalResult[] = [];
     const jsonl: string[] = [];
 
@@ -134,6 +175,10 @@ async function main(): Promise<void> {
     writeFileSync(jsonlPath, jsonl.join('\n'));
     writeFileSync(reportPath, JSON.stringify(report, null, 2));
     console.log(`\n==> wrote ${jsonlPath} (BYOI-ready) + ${reportPath}`);
+
+    if (PERSIST) {
+        await persistEvalRun(report, datasetVersion);
+    }
 }
 
 main()
