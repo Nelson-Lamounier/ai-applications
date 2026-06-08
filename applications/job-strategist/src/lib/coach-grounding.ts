@@ -55,7 +55,15 @@ export function extractCoachClaims(coaching: InterviewCoachResult): string {
 
     pushText(out, c['stageDescription']);
     pushText(out, c['careerArcSummary']);
-    pushText(out, c['coachingNotes']);
+    // coachingNotes is structured: only `positioning` is an experiential claim
+    // about the candidate; tacticalPrep/communication/mindset/etc. are advice and
+    // would only add NOT_GROUNDED noise. Legacy string notes ground whole.
+    const notes = c['coachingNotes'];
+    if (typeof notes === 'string') {
+        pushText(out, notes);
+    } else if (notes !== null && typeof notes === 'object') {
+        pushText(out, (notes as Record<string, unknown>)['positioning']);
+    }
 
     for (const tp of (c['jdTalkingPoints'] as Array<Record<string, unknown>> | undefined) ?? []) {
         pushText(out, tp['point']);

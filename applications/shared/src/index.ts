@@ -178,6 +178,9 @@ export type {
     DifficultQuestion,
     TechnicalPrepItem,
     QuestionToAsk,
+    InterviewFocusItem,
+    FinalCheckpoint,
+    CoachingNotes,
     InterviewCoachResult,
 
     // DynamoDB Entity

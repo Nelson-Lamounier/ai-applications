@@ -162,7 +162,39 @@ const COACH_TOOL = {
                     additionalProperties: false,
                 },
             },
-            coachingNotes: { type: 'string' },
+            coachingNotes: {
+                type: 'object',
+                properties: {
+                    positioning: { type: 'string' },
+                    interviewFocus: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                label:  { type: 'string' },
+                                detail: { type: 'string' },
+                            },
+                            required: ['label', 'detail'],
+                            additionalProperties: false,
+                        },
+                    },
+                    tacticalPrep:    { type: 'string' },
+                    communication:   { type: 'string' },
+                    mindset:         { type: 'string' },
+                    debrief:         { type: 'string' },
+                    finalCheckpoint: {
+                        type: 'object',
+                        properties: {
+                            items: { type: 'array', items: { type: 'string' } },
+                            note:  { type: 'string' },
+                        },
+                        required: ['items'],
+                        additionalProperties: false,
+                    },
+                },
+                required: ['positioning'],
+                additionalProperties: false,
+            },
             skillTransfer: {
                 type: 'array',
                 items: {
@@ -372,6 +404,63 @@ const FinalPrepSchema = z.object({
     longTermFraming:        z.string(),
 }).strict();
 
+/** One "what to expect" item — short bold label + its description. */
+const InterviewFocusItemSchema = z.object({
+    label:  z.string(),
+    detail: z.string(),
+}).strict();
+
+/** Split a legacy markdown checklist into structured items + closing note. */
+function coerceCheckpoint(markdown: string): { items: string[]; note?: string } {
+    const items: string[] = [];
+    const noteLines: string[] = [];
+    for (const raw of markdown.split('\n')) {
+        const line = raw.trim();
+        const match = /^[-*]\s*\[[ xX]?\]\s*(.+)$/.exec(line);
+        if (match) {
+            const label = match[1].trim();
+            if (label.length > 0) items.push(label);
+        } else if (line.length > 0) {
+            noteLines.push(line);
+        }
+    }
+    const note = noteLines.join('\n').trim();
+    return note.length > 0 ? { items, note } : { items };
+}
+
+/** Pre-interview checklist — structured items + optional note. */
+const FinalCheckpointSchema = z.object({
+    items: z.array(z.string()),
+    note:  z.string().optional(),
+}).strict();
+
+/** Accept the structured object, or coerce a legacy markdown string into it. */
+const FinalCheckpointField = z.union([
+    FinalCheckpointSchema,
+    z.string().transform((s): z.infer<typeof FinalCheckpointSchema> => coerceCheckpoint(s)),
+]);
+
+/** Structured stage coaching — mirrors CoachingNotes in @bedrock/shared. */
+const CoachingNotesSchema = z.object({
+    positioning:     z.string(),
+    interviewFocus:  z.array(InterviewFocusItemSchema).optional(),
+    tacticalPrep:    z.string().optional(),
+    communication:   z.string().optional(),
+    mindset:         z.string().optional(),
+    debrief:         z.string().optional(),
+    finalCheckpoint: FinalCheckpointField.optional(),
+}).strict();
+
+/**
+ * Accept the structured object (the contract) or — defensively — a bare string
+ * the model might still emit, coercing it into `{ positioning }`. Keeps the
+ * safety-net from hard-failing on a legacy-shaped tool call.
+ */
+const CoachingNotesField = z.union([
+    CoachingNotesSchema,
+    z.string().transform((s): z.infer<typeof CoachingNotesSchema> => ({ positioning: s })),
+]);
+
 /**
  * Runtime safety-net. `stage` is injected from pipeline context (not model
  * output) so it is omitted here. `.strict()` mirrors additionalProperties:false.
@@ -401,7 +490,7 @@ export const CoachOutputSchema = z.object({
         question:  z.string(),
         rationale: z.string(),
     }).strict()).default([]),
-    coachingNotes: z.string(),
+    coachingNotes: CoachingNotesField,
     skillTransfer: z.array(z.object({
         jdSkill:     z.string(),
         tier:        z.enum(['demonstrated', 'claimed', 'declared', 'gap']),

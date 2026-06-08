@@ -7,6 +7,7 @@
  * are excluded (they assert absence of evidence, not a prose claim).
  */
 import type { InterviewCoachResult, ProseSection, ProseRegister } from '@bedrock/shared';
+import { coachingNotesFragments } from './coaching-notes-text.js';
 
 function push(out: ProseSection[], location: string, register: ProseRegister, v: unknown): void {
     if (typeof v === 'string' && v.trim().length > 0) {
@@ -20,7 +21,10 @@ export function extractProseSections(coaching: InterviewCoachResult): ProseSecti
 
     push(out, 'stageDescription', 'narrative', c['stageDescription']);
     push(out, 'careerArcSummary', 'narrative', c['careerArcSummary']);
-    push(out, 'coachingNotes', 'advice', c['coachingNotes']);
+    // coachingNotes is structured — lint each section as advice.
+    for (const f of coachingNotesFragments(c['coachingNotes'])) {
+        out.push({ location: f.location, register: 'advice', text: f.text });
+    }
 
     const tps = (c['jdTalkingPoints'] as Array<Record<string, unknown>> | undefined) ?? [];
     tps.forEach((tp, i) => push(out, `jdTalkingPoints[${i}].point`, 'resume-prose', tp['point']));

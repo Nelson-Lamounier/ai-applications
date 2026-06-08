@@ -12,14 +12,20 @@
     "difficultQuestions": [],
     "technicalPrepChecklist": [],
     "questionsToAsk": [],
-    "coachingNotes": "Walk each principle from your own evidence; calibrate every story honestly and frame gaps without fabricating.",
+    "coachingNotes": {
+      "positioning": "Walk each principle from your own evidence; calibrate every story honestly and frame gaps without fabricating."
+    },
     "barRaiserCoverage": {
       "detected": [
         {
           "principleId": "amazon.ownership",
           "coverage": "strong",
           "evidenceRefs": [
-            { "source": "decision", "id": "d1", "label": "EKS migration controller" }
+            {
+              "source": "decision",
+              "id": "d1",
+              "label": "EKS migration controller"
+            }
           ],
           "relevantToJd": true
         },
@@ -47,7 +53,11 @@
             "action": "I designed the migration, built the controller, and ran the dual-read window myself.",
             "result": "Deploy time dropped from 40 minutes to under 8 minutes and the manual step was removed.",
             "evidenceRefs": [
-              { "source": "decision", "id": "d1", "label": "EKS migration controller" }
+              {
+                "source": "decision",
+                "id": "d1",
+                "label": "EKS migration controller"
+              }
             ],
             "honestyCalibration": "This was solo work. Frame as 'I designed and drove the migration', NOT 'I led a team through it'. If asked who else was involved, say plainly that you owned it end-to-end — that is a strong ownership signal on its own. The under-8-minutes figure is measured from CI logs, so it holds up.",
             "seniorityNote": "Owning an infra migration end-to-end reads as senior IC. Do not stretch it into 'I set the org's migration strategy' — the evidence is one project, not a mandate."
