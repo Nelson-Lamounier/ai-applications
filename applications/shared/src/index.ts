@@ -181,6 +181,7 @@ export type {
     InterviewFocusItem,
     FinalCheckpoint,
     CoachingNotes,
+    PhoneScreenTalkingPoint,
     InterviewCoachResult,
 
     // DynamoDB Entity

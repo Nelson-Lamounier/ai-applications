@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, log, validateSkillTransfer } from '@bedrock/shared';
 import { assembleCoachSystemPrompt } from '../prompts/coach/stages/index.js';
 import { deepStripCdata } from '../lib/strip-cdata.js';
+import { groundTalkingPoints } from '../lib/ground-talking-points.js';
 import type {
     AgentConfig,
     AgentResult,
@@ -830,6 +831,12 @@ export interface CoachBlocks {
     readonly systemDesignBlock?: string;
     readonly barRaiserBlock?: string;
     readonly finalBlock?: string;
+    /**
+     * Research verified-match skills (`research.verifiedMatches[].skill`). When
+     * present, phone-screen `jdTalkingPoints` are fail-closed grounded against
+     * this allow-list — every cited skill must be a verified match.
+     */
+    readonly verifiedSkills?: readonly string[];
 }
 
 /**
@@ -850,13 +857,20 @@ export async function executeCoachAgent(
 ): Promise<AgentResult<InterviewCoachResult>> {
     const {
         constraintBlock, evidenceBlock, skillCandidateSets,
-        systemDesignBlock, barRaiserBlock, finalBlock,
+        systemDesignBlock, barRaiserBlock, finalBlock, verifiedSkills,
     } = blocks;
     const skillCandidateBlock = buildSkillCandidateBlock(skillCandidateSets ?? []);
     const result = await coachAgent.execute({ analysis, constraintBlock, evidenceBlock, skillCandidateBlock, systemDesignBlock, barRaiserBlock, finalBlock }, ctx);
     if (skillCandidateSets && skillCandidateSets.length > 0) {
         const raw = (result.data.skillTransfer ?? []) as SkillTransferEntry[];
         (result.data as { skillTransfer?: unknown }).skillTransfer = validateSkillTransfer(raw, skillCandidateSets);
+    }
+    // Fail-closed grounding for phone-screen jdTalkingPoints: every matchedSkills
+    // entry must be a research verified-match skill. Mirrors the skillTransfer
+    // citation guard above. Absent on non-phone stages → result unchanged.
+    if (result.data.jdTalkingPoints) {
+        (result.data as { jdTalkingPoints?: unknown }).jdTalkingPoints =
+            groundTalkingPoints(result.data.jdTalkingPoints, verifiedSkills ?? []);
     }
     return result;
 }
