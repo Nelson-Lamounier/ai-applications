@@ -9,16 +9,39 @@
     "stageDescription": "Recruiter phone screen — fit, motivation, comp.",
     "technicalQuestions": [],
     "behaviouralQuestions": [
-      { "question": "Tell me about yourself.", "answerFramework": "Career arc grounded in analysis.", "sourceProject": "AI Applications", "difficulty": "easy", "keyPoints": ["trajectory", "impact"] }
+      {
+        "question": "Tell me about yourself.",
+        "answerFramework": "Career arc grounded in analysis.",
+        "sourceProject": "AI Applications",
+        "difficulty": "easy",
+        "keyPoints": [
+          "trajectory",
+          "impact"
+        ]
+      }
     ],
     "difficultQuestions": [],
     "technicalPrepChecklist": [],
-    "questionsToAsk": [ { "question": "What does success look like in 90 days?", "rationale": "shows ownership" } ],
-    "coachingNotes": "Keep it concise and confident.",
+    "questionsToAsk": [
+      {
+        "question": "What does success look like in 90 days?",
+        "rationale": "shows ownership"
+      }
+    ],
+    "coachingNotes": {
+      "positioning": "Keep it concise and confident."
+    },
     "careerArcSummary": "Cloud/platform engineer moving from IaC into AI-augmented delivery, with verified AWS and Kubernetes work.",
     "jdTalkingPoints": [
-      { "point": "Owns end-to-end AWS delivery", "evidence": "AI Applications pipeline" }
+      {
+        "point": "Owns end-to-end AWS delivery",
+        "evidence": "AI Applications pipeline"
+      }
     ],
-    "compScript": { "targetEcho": "Targeting £X base.", "marketContext": null, "deflectTemplate": "Happy to align once we confirm scope." }
+    "compScript": {
+      "targetEcho": "Targeting £X base.",
+      "marketContext": null,
+      "deflectTemplate": "Happy to align once we confirm scope."
+    }
   }
 }

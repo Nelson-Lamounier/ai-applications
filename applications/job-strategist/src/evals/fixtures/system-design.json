@@ -12,7 +12,9 @@
     "difficultQuestions": [],
     "technicalPrepChecklist": [],
     "questionsToAsk": [],
-    "coachingNotes": "Walk the interviewer through your own architecture, concern by concern; be honest where the project has no evidence.",
+    "coachingNotes": {
+      "positioning": "Walk the interviewer through your own architecture, concern by concern; be honest where the project has no evidence."
+    },
     "systemDesignCoverage": {
       "detected": [
         {
@@ -20,7 +22,11 @@
           "category": "data_isolation",
           "strength": "strong",
           "evidenceRefs": [
-            { "source": "component", "id": "c1", "label": "Tenant RLS policy layer" }
+            {
+              "source": "component",
+              "id": "c1",
+              "label": "Tenant RLS policy layer"
+            }
           ],
           "relevantToJd": true
         },
@@ -41,12 +47,20 @@
         "concernQuestion": "How do you ensure users cannot access other users' data?",
         "whyItMatters": "Multi-tenant data leaks are catastrophic; this role demands airtight isolation.",
         "evidenceRefs": [
-          { "source": "component", "id": "c1", "label": "Tenant RLS policy layer" }
+          {
+            "source": "component",
+            "id": "c1",
+            "label": "Tenant RLS policy layer"
+          }
         ],
         "choiceMade": "Postgres row-level security",
         "articulation": "I enforced isolation at the database with Postgres RLS so a forgotten tenant filter on a new query cannot leak data; the trade-off was policy-evaluation overhead, which I accepted because the failure mode of a cross-tenant leak is unacceptable.",
         "followUps": [
-          { "question": "What if a developer forgets the tenant filter on a new query?", "status": "addressed", "framing": "RLS enforces it at the database, so a missing app-layer filter still cannot leak rows." }
+          {
+            "question": "What if a developer forgets the tenant filter on a new query?",
+            "status": "addressed",
+            "framing": "RLS enforces it at the database, so a missing app-layer filter still cannot leak rows."
+          }
         ],
         "gapGuidance": null
       },
@@ -58,7 +72,11 @@
         "choiceMade": null,
         "articulation": "My project has no evidence for horizontal scaling yet. I would keep request handlers stateless and push session state to a shared store so instances can be added behind the load balancer.",
         "followUps": [
-          { "question": "How do you scale stateless services?", "status": "gap", "framing": "I have not implemented this yet; I would externalise state and autoscale on CPU and queue depth." }
+          {
+            "question": "How do you scale stateless services?",
+            "status": "gap",
+            "framing": "I have not implemented this yet; I would externalise state and autoscale on CPU and queue depth."
+          }
         ],
         "gapGuidance": "Be honest that the project has no scaling evidence; describe the stateless approach you would take and bridge from the isolation work you did ship."
       }

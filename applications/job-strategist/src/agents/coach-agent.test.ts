@@ -110,7 +110,12 @@ const VALID_COACH_INPUT = {
         suggestedResources: ['etcd docs'],
     }],
     questionsToAsk: [{ question: 'Team on-call model?', rationale: 'shows ops maturity' }],
-    coachingNotes: 'Lead with the operator project.',
+    coachingNotes: {
+        positioning: 'Lead with the operator project.',
+        interviewFocus: [{ label: 'Coding', detail: 'A DS&A problem with complexity analysis.' }],
+        tacticalPrep: 'Revise etcd internals.',
+        finalCheckpoint: { items: ['Confirm the format and timing', 'Prepare two questions'], note: 'You are ready.' },
+    },
 };
 
 const ANALYSIS = {
@@ -148,7 +153,10 @@ describe('CoachAgent (forced tool_use)', () => {
 
         expect(result.data.stage).toBe('technical-1');
         expect(result.data.technicalQuestions).toHaveLength(1);
-        expect(result.data.coachingNotes).toContain('operator');
+        expect(result.data.coachingNotes.positioning).toContain('operator');
+        expect(result.data.coachingNotes.interviewFocus?.[0].label).toBe('Coding');
+        expect(result.data.coachingNotes.finalCheckpoint?.items).toHaveLength(2);
+        expect(result.data.coachingNotes.finalCheckpoint?.note).toContain('ready');
     });
 
     it('sends a forced toolConfig and disables extended thinking', async () => {
