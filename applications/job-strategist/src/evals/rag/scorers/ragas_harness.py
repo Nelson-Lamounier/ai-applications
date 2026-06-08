@@ -49,6 +49,14 @@ def main(path: str) -> int:
     result = evaluate(dataset, metrics=metrics)
     print("=== RAGAS summary ===")
     print(result)
+
+    # RAGAS Result is mapping-like; coerce to a plain dict defensively across versions.
+    try:
+        scores = {k: float(v) for k, v in dict(result).items()}
+    except (TypeError, ValueError):
+        scores = {}
+    from persist_eval import persist_run
+    persist_run("ragas", len(rows), scores.get("context_precision"), scores)
     return 0
 
 

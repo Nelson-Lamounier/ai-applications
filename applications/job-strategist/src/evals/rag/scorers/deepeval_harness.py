@@ -61,10 +61,16 @@ def main(path: str) -> int:
             line += f" faithfulness={faithfulness.score:.2f}"
         print(line)
 
+    mean_rel = mean(rel_scores) if rel_scores else None
+    mean_faith = mean(faith_scores) if faith_scores else None
     print("\n=== DeepEval summary ===")
-    print(f"mean contextRelevancy: {mean(rel_scores):.3f}" if rel_scores else "no relevancy scores")
-    if faith_scores:
-        print(f"mean faithfulness:     {mean(faith_scores):.3f}")
+    print(f"mean contextRelevancy: {mean_rel:.3f}" if mean_rel is not None else "no relevancy scores")
+    if mean_faith is not None:
+        print(f"mean faithfulness:     {mean_faith:.3f}")
+
+    from persist_eval import persist_run
+    persist_run("deepeval", len(rows), mean_rel,
+                {"contextual_relevancy": mean_rel, "faithfulness": mean_faith})
     return 0
 
 
