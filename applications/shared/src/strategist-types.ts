@@ -692,6 +692,8 @@ export interface PhoneScreenTalkingPoint {
     readonly point: string;
     /** The verified evidence backing it (project / role / repo) */
     readonly evidence: string;
+    /** Verified-match skills this point draws on. Every entry is a research verifiedMatch skill. */
+    readonly matchedSkills?: readonly string[];
 }
 
 /**

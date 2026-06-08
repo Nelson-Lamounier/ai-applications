@@ -217,10 +217,11 @@ const COACH_TOOL = {
                 items: {
                     type: 'object',
                     properties: {
-                        point:    { type: 'string' },
-                        evidence: { type: 'string' },
+                        point:         { type: 'string' },
+                        evidence:      { type: 'string' },
+                        matchedSkills: { type: 'array', items: { type: 'string' } },
                     },
-                    required: ['point', 'evidence'],
+                    required: ['point', 'evidence', 'matchedSkills'],
                     additionalProperties: false,
                 },
             },
@@ -501,8 +502,9 @@ export const CoachOutputSchema = z.object({
     }).strict()).optional(),
     careerArcSummary: z.string().optional(),
     jdTalkingPoints: z.array(z.object({
-        point:    z.string(),
-        evidence: z.string(),
+        point:         z.string(),
+        evidence:      z.string(),
+        matchedSkills: z.array(z.string()).default([]),
     }).strict()).optional(),
     compScript: z.object({
         targetEcho:      z.string(),
