@@ -84,14 +84,14 @@ const log = obs.logger;
 
 const ingestionRuns = new Counter({
     name:       'ingestion_runs_total',
-    help:       'Repo ingestion Job runs by terminal outcome.',
-    labelNames: ['outcome'] as const,
+    help:       'Repo ingestion Job runs by terminal outcome and sync type.',
+    labelNames: ['outcome', 'sync_type'] as const,   // sync_type: initial | full_reindex | incremental
     registers:  [obs.registry],
 });
 const ingestionDuration = new Histogram({
     name:       'ingestion_duration_seconds',
-    help:       'End-to-end Job duration in seconds.',
-    labelNames: ['outcome'] as const,
+    help:       'End-to-end Job duration in seconds by outcome and sync type.',
+    labelNames: ['outcome', 'sync_type'] as const,
     buckets:    [5, 15, 30, 60, 120, 300, 600, 1800],
     registers:  [obs.registry],
 });
@@ -260,6 +260,19 @@ async function main(): Promise<void> {
         password: env.pg.password,
         max:      3,
     });
+
+    // Classify the run for sync/resync metrics: 'initial' (repo never embedded),
+    // 'full_reindex' (forced re-embed of everything), or 'incremental' (push-based
+    // delta of changed files). Determined from prior embeddings + FORCE_REINDEX.
+    let syncType: 'initial' | 'full_reindex' | 'incremental' =
+        env.forceReindex ? 'full_reindex' : 'incremental';
+    try {
+        const prior = await pgPool.query<{ c: number }>(
+            'SELECT COUNT(*)::int AS c FROM document_embeddings WHERE user_id = $1::uuid AND repo_full_name = $2',
+            [env.userId, env.repoFullName],
+        );
+        if ((prior.rows[0]?.c ?? 0) === 0) syncType = 'initial';
+    } catch { /* keep the FORCE_REINDEX-derived default if the probe fails */ }
 
     const vectorStore  = new RdsVectorStore(rdsConfig);
     const syncState    = new RdsSyncStateRepository(rdsConfig);
@@ -431,6 +444,14 @@ async function main(): Promise<void> {
         await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
         outcome = 'success';
 
+        // Record the sync classification on the (already-upserted) repo_sync_state
+        // row so the dashboard can show which repos were initial vs full-reindex vs
+        // incremental, and when. Best-effort.
+        await pgPool.query(
+            'UPDATE repo_sync_state SET last_sync_type = $3 WHERE user_id = $1::uuid AND repo_full_name = $2',
+            [env.userId, env.repoFullName, syncType],
+        ).catch(() => { /* non-fatal — metric still carries sync_type */ });
+
         // The repo is already searchable above. In defer mode, fill `skills` off
         // the critical path now (in-process, no re-embedding). Best-effort.
         if (deferEnrichment && enricher) {
@@ -472,6 +493,7 @@ async function main(): Promise<void> {
         log.info({
             event:           'ingestion.complete',
             status:          'complete',
+            sync_type:        syncType,
             trace_id:         traceId,
             user_id:          env.userId,
             repo_full_name:   env.repoFullName,
@@ -511,8 +533,8 @@ async function main(): Promise<void> {
     } finally {
         rootSpan.end();
         const duration = Number(process.hrtime.bigint() - start) / 1e9;
-        ingestionRuns.inc({ outcome });
-        ingestionDuration.observe({ outcome }, duration);
+        ingestionRuns.inc({ outcome, sync_type: syncType });
+        ingestionDuration.observe({ outcome, sync_type: syncType }, duration);
         // Teardown is best-effort and time-boxed. The work + sync_status are
         // already persisted; nothing here may keep a one-shot Job alive until
         // K8s activeDeadlineSeconds kills it (which marks an otherwise-SUCCESSFUL
