@@ -15,8 +15,9 @@
  */
 import type { StrategistPipelineContext, StructuredResumeData, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, PgSemanticCache, PiiScrubber, recordInvocationToRds } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, PiiScrubber, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
+import { extractResumeProseSections } from './lib/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
@@ -76,6 +77,56 @@ const ungroundedPaths = new Counter({
     labelNames: ['operation'] as const,
     registers:  [obs.registry],
 });
+
+// Resume prose-quality verdicts (stop-slop). status ∈ PASS|FAIL|error|skipped.
+const resumeProse = new Counter({
+    name:       'job_strategist_resume_prose_total',
+    help:       'Strategist resume/cover prose-quality verdicts by status.',
+    labelNames: ['status'] as const,
+    registers:  [obs.registry],
+});
+// Prose linting runs in 'flag' mode only — telemetry on AI-tell language in the
+// generated resume + cover letter; never alters or blocks the persisted output.
+const resumeProseLinter = new BedrockProseLinter({ mode: 'flag' });
+
+/**
+ * Lint the Strategist's resume + cover-letter prose for AI-tell language and
+ * record the verdict (metric + log). Flag-mode + fail-open: pure observability —
+ * never alters persisted output and never throws into the pipeline.
+ */
+async function lintResumeProse(
+    pool: Pool,
+    env: ReturnType<typeof parseEnv>,
+    resume: StructuredResumeData | null,
+    coverLetter: string | null,
+): Promise<void> {
+    try {
+        const sections = extractResumeProseSections(resume, coverLetter);
+        if (sections.length === 0) {
+            resumeProse.inc({ status: 'skipped' });
+            return;
+        }
+        const q = await resumeProseLinter.lint(
+            { sections, stage: 'applied' },
+            { pool, userId: env.userId },
+        );
+        resumeProse.inc({ status: q.status });
+        if (q.status === 'FAIL') {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                applicationId: env.applicationId,
+                proseScore:    q.score,
+                proseIssues:   q.issues,
+            }, 'resume_prose_below_threshold');
+        }
+    } catch (e) {
+        resumeProse.inc({ status: 'error' });
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            err:           (e as Error).message,
+        }, 'resume_prose_lint_failed (non-fatal)');
+    }
+}
 
 /**
  * Build the semantic-cache kb_tag for a user. Fail-open: on any DB error
@@ -338,6 +389,11 @@ export async function main(): Promise<void> {
                 onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
             });
         }
+
+        // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────
+        // Lint the generated resume + cover-letter prose for AI-tell language.
+        // Pure observability — never alters the persisted resume, never throws.
+        await lintResumeProse(pool, env, tailoredResumeData, analysis.data.coverLetter);
 
         // ── Path-grounding check (advisory, fail-open) ────────────────────
         // Flag file-path citations in the final analysis that don't exist in

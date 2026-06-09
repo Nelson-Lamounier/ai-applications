@@ -113,8 +113,12 @@ export class BedrockProseLinter implements IProseLinter {
 
     constructor(config: BedrockProseLinterConfig) {
         this.mode = config.mode;
+        // Default to Haiku 4.5 — the same model the grounding verifier uses, so it
+        // is already IAM-permitted in the strategist/coach Jobs (their roles are
+        // scoped per-model). A lightweight flag-mode judge doesn't need Sonnet.
+        // Override with PROSE_LINTER_MODEL_ID (and grant the model) for higher tier.
         this.modelId =
-            config.modelId ?? process.env.PROSE_LINTER_MODEL_ID ?? 'eu.anthropic.claude-sonnet-4-6';
+            config.modelId ?? process.env.PROSE_LINTER_MODEL_ID ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
         this.client = config.client ?? new BedrockRuntimeClient({});
     }
 
