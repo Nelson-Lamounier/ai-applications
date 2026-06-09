@@ -89,6 +89,13 @@ export const StructuredResumeDataSchema = z.object({
     certifications: z.array(ResumeCertificationSchema).default([]),
     projects: z.array(ResumeProjectSchema).default([]),
     keyAchievements: z.array(ResumeAchievementSchema).default([]),
+    /**
+     * Render order of resume sections, reflecting the strategist's archetype /
+     * restructure decision. Keys match the UI builder section keys
+     * (summary|experience|projects|education|skills|certifications). Empty by
+     * default — the UI falls back to its canonical order when not provided.
+     */
+    sectionOrder: z.array(z.string()).default([]),
 });
 
 /** Validated StructuredResumeData — inferred from schema */
