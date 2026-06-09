@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { formatCareerHistory, formatEducation } from './career-history.js';
+import { formatCareerHistory, formatEducation, formatExperienceFacts } from './career-history.js';
 import type { CareerEntry, EducationEntry } from './career-history.js';
 
 const ENTRIES: CareerEntry[] = [
@@ -33,5 +33,18 @@ describe('formatEducation', () => {
     });
     it('returns empty string for no entries', () => {
         expect(formatEducation([])).toBe('');
+    });
+});
+
+describe('formatExperienceFacts', () => {
+    it('lists company + title + period verbatim with a no-rename directive', () => {
+        const out = formatExperienceFacts(ENTRIES);
+        expect(out).toContain('VERIFIED EXPERIENCE');
+        expect(out).toContain('VERBATIM');
+        expect(out).toContain('never rename or re-title a role');
+        expect(out).toContain('Senior Platform Engineer — Acme (2021–2024)');
+    });
+    it('returns empty string for no entries', () => {
+        expect(formatExperienceFacts([])).toBe('');
     });
 });

@@ -55,6 +55,8 @@ export interface StrategistAgentInput {
     readonly projectEvidence?: string;
     /** Verbatim education facts from user_career_history (degree + institution). Optional. */
     readonly educationFacts?: string;
+    /** Verbatim experience facts (company + title + period). Optional. */
+    readonly experienceFacts?: string;
 }
 
 // =============================================================================
@@ -103,6 +105,7 @@ function buildStrategistMessage(
     ctx: StrategistPipelineContext,
     projectEvidence = '',
     educationFacts = '',
+    experienceFacts = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -194,6 +197,22 @@ function buildStrategistMessage(
             '--- BEGIN CONSTRAINTS ---',
             research.resumeConstraints,
             '--- END CONSTRAINTS ---',
+        );
+    }
+
+    // Verified experience — exact company + job title + period from the résumé.
+    // The experience section must use these titles verbatim; repositioning is
+    // confined to the profile headline + summary (root cause of re-titled roles).
+    if (experienceFacts) {
+        sections.push(
+            '', '### Verified Experience (FACTUAL — REPRODUCE TITLES VERBATIM)',
+            'Each entry in the "experience" array of <tailored_resume_json> MUST use the exact',
+            'company, job title, and period below. NEVER rename a role (e.g. do not relabel',
+            '"Technical Customer Service Associate" as "Cloud Support Engineer"). Reposition only',
+            'in the profile headline + summary. Bullet highlights may be tailored from grounded evidence.',
+            '--- BEGIN EXPERIENCE ---',
+            experienceFacts,
+            '--- END EXPERIENCE ---',
         );
     }
 
@@ -589,7 +608,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts);
     }
 
     /**
@@ -709,6 +728,7 @@ export async function executeStrategistAgent(
     research: StrategistResearchResult,
     projectEvidence = '',
     educationFacts = '',
+    experienceFacts = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts }, ctx);
 }

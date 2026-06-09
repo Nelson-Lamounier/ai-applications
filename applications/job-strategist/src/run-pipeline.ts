@@ -21,7 +21,7 @@ import { Counter, Histogram } from 'prom-client';
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
-import { loadEducation, formatEducation } from './agents/career-history.js';
+import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -257,10 +257,16 @@ export async function main(): Promise<void> {
             await loadEducation(pool, ctx.userId).catch(() => []),
         );
 
+        // Verbatim experience identity (company + title + period) so the resume's
+        // experience section keeps the real job titles instead of repositioned ones.
+        const experienceFactsBlock = formatExperienceFacts(
+            await loadCareerHistory(pool, ctx.userId).catch(() => []),
+        );
+
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
-        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock);
+        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 

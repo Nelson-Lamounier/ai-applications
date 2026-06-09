@@ -45,6 +45,26 @@ export function formatCareerHistory(entries: CareerEntry[]): string {
     return lines.join('\n');
 }
 
+/**
+ * Render experience entries as a strict factual block for the resume generator.
+ * Company, job title, and period are exact strings from the user's résumé — the
+ * generator MUST reproduce them verbatim in the experience section and never
+ * rename a role (e.g. never relabel "Technical Customer Service Associate" as
+ * "Cloud Support Engineer"). Only bullet highlights may be tailored.
+ */
+export function formatExperienceFacts(entries: CareerEntry[]): string {
+    if (entries.length === 0) return '';
+    const lines = [
+        'VERIFIED EXPERIENCE (FACTUAL — reproduce company, job title, and period VERBATIM;',
+        'never rename or re-title a role. Repositioning belongs only in the profile headline +',
+        'summary, never in an experience entry. Only the bullet highlights may be tailored):',
+    ];
+    for (const e of entries) {
+        lines.push(`- ${e.title} — ${e.company} (${e.period})`);
+    }
+    return lines.join('\n');
+}
+
 export interface EducationEntry {
     readonly degree: string;
     readonly institution: string;
@@ -86,7 +106,8 @@ export function formatEducation(entries: EducationEntry[]): string {
     ];
     for (const e of entries) {
         const parts = [e.degree, e.institution].filter(Boolean).join(' — ');
-        lines.push(`- ${parts}${e.period ? ` (${e.period})` : ''}`);
+        const suffix = e.period ? ` (${e.period})` : '';
+        lines.push(`- ${parts}${suffix}`);
     }
     return lines.join('\n');
 }
