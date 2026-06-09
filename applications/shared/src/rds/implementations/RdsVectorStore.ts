@@ -33,6 +33,12 @@ export interface RdsClientConfig {
     readonly database: string;
     readonly user: string;
     readonly password: string;
+    /**
+     * Defaults to false (the in-cluster path connects to PgBouncer with
+     * client_tls_sslmode=disable). Set to a require-SSL object for the
+     * local-over-tunnel path, which hits RDS directly (RDS enforces SSL).
+     */
+    readonly ssl?: boolean | { rejectUnauthorized: boolean };
 }
 
 // =============================================================================
@@ -130,7 +136,8 @@ export class RdsVectorStore implements IVectorStore {
             idleTimeoutMillis:  30_000,
             // PgBouncer runs with client_tls_sslmode=disable — no SSL on the
             // client→PgBouncer leg. PgBouncer handles the PgBouncer→RDS leg.
-            ssl:                false,
+            // Overridable for the local-over-tunnel path (direct RDS, SSL enforced).
+            ssl:                config.ssl ?? false,
         });
     }
 
@@ -153,7 +160,14 @@ export class RdsVectorStore implements IVectorStore {
             );
         }
 
-        return new RdsVectorStore({ host, port: parseInt(port, 10), database, user, password });
+        // RDS_SSL=require → encrypt the leg (RDS enforces force_ssl). Used ONLY by the
+        // local eval, which reaches RDS through a 127.0.0.1 SSM port-forward tunnel:
+        // the cert CN is the RDS endpoint, so hostname verification can't pass over the
+        // tunnel → rejectUnauthorized:false. This is not a security downgrade — the SSM
+        // tunnel (AWS mutual-TLS + IAM) is the MITM boundary; the in-cluster path is
+        // unaffected (ssl:false to PgBouncer). Never set RDS_SSL in production.
+        const ssl = process.env.RDS_SSL === 'require' ? { rejectUnauthorized: false } : false;
+        return new RdsVectorStore({ host, port: parseInt(port, 10), database, user, password, ssl });
     }
 
     /** Release all pool connections. Call on graceful shutdown if needed. */

@@ -29,7 +29,9 @@ import {
     type GoldenQuery, type RetrievedContext, type QueryEvalResult, type RagEvalReport,
 } from './rag-score.js';
 
-const JUDGE_MODEL = process.env.RAG_JUDGE_MODEL_ID ?? 'anthropic.claude-haiku-4-5-20251001-v1:0';
+// eu-west-1 rejects on-demand bare model ids — must use the EU cross-region
+// inference profile (eu.* prefix), same constraint as the chunk enricher.
+const JUDGE_MODEL = process.env.RAG_JUDGE_MODEL_ID ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 const K = Number.parseInt(process.env.RAG_EVAL_K ?? '8', 10);
 const MIN_COSINE = Number.parseFloat(process.env.KB_MIN_COSINE ?? '0.20');
 const SNIPPET_CHARS = 400;
@@ -57,13 +59,26 @@ async function judgeRelevance(
         tool_choice:       { type: 'tool', name: RELEVANCE_JUDGE_TOOL.name },
         messages:          [{ role: 'user', content: buildRelevanceJudgePrompt(query, contexts) }],
     });
-    const { body: resp } = await bedrock.send(new InvokeModelCommand({
-        modelId: JUDGE_MODEL, contentType: 'application/json', accept: 'application/json',
-        body: Buffer.from(body),
-    }));
-    const parsed = JSON.parse(Buffer.from(resp).toString('utf-8')) as ToolUseResponse;
-    const toolUse = parsed.content?.find(b => b.type === 'tool_use');
-    return parseRelevanceScores(toolUse?.input, contexts.length);
+    // Tolerate transient Bedrock 500s: retry with backoff, then degrade to 0s for
+    // this query rather than aborting the whole run.
+    for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+            const { body: resp } = await bedrock.send(new InvokeModelCommand({
+                modelId: JUDGE_MODEL, contentType: 'application/json', accept: 'application/json',
+                body: Buffer.from(body),
+            }));
+            const parsed = JSON.parse(Buffer.from(resp).toString('utf-8')) as ToolUseResponse;
+            const toolUse = parsed.content?.find(b => b.type === 'tool_use');
+            return parseRelevanceScores(toolUse?.input, contexts.length);
+        } catch (err) {
+            if (attempt === 4) {
+                console.warn(`  judge failed after ${attempt} attempts (${String(err)}) — scoring 0 for this query`);
+                return contexts.map(() => 0);
+            }
+            await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+    }
+    return contexts.map(() => 0);
 }
 
 const OUT_DIR = process.env.RAG_EVAL_OUT_DIR ?? process.cwd();
@@ -102,6 +117,8 @@ async function persistEvalRun(report: RagEvalReport, datasetVersion: number | nu
         database: process.env.RDS_DB_NAME,
         user:     process.env.RDS_USER,
         password: process.env.RDS_PASSWORD,
+        // Match RdsVectorStore: SSL over the SSM tunnel for the local eval (RDS_SSL=require).
+        ssl:      process.env.RDS_SSL === 'require' ? { rejectUnauthorized: false } : false,
     });
     try {
         const run = await pool.query<{ id: string }>(
