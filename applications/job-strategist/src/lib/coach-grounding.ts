@@ -42,6 +42,28 @@ function pushText(out: string[], v: unknown): void {
     if (typeof v === 'string' && v.trim().length > 0) out.push(v.trim());
 }
 
+/** Section keys whose body is an experiential claim worth grounding. */
+const GROUNDED_NOTE_KEYS = new Set(['stage-positioning', 'positioning', 'top-priorities', 'priorities']);
+
+/**
+ * coachingNotes is an array of { key, title, body } sections — ground the
+ * experiential framing only (positioning / priorities), not advice sections
+ * (pronunciation, logistics, checklist) which would add NOT_GROUNDED noise.
+ * Legacy string notes ground whole.
+ */
+function pushCoachingNotesClaims(out: string[], notes: unknown): void {
+    if (typeof notes === 'string') {
+        pushText(out, notes);
+        return;
+    }
+    if (!Array.isArray(notes)) return;
+    for (const section of notes) {
+        if (section === null || typeof section !== 'object') continue;
+        const s = section as Record<string, unknown>;
+        if (typeof s['key'] === 'string' && GROUNDED_NOTE_KEYS.has(s['key'])) pushText(out, s['body']);
+    }
+}
+
 /**
  * Concatenate the coach output's *experiential* claim surfaces — the text that
  * asserts something about the candidate's real experience and could therefore
@@ -55,15 +77,7 @@ export function extractCoachClaims(coaching: InterviewCoachResult): string {
 
     pushText(out, c['stageDescription']);
     pushText(out, c['careerArcSummary']);
-    // coachingNotes is structured: only `positioning` is an experiential claim
-    // about the candidate; tacticalPrep/communication/mindset/etc. are advice and
-    // would only add NOT_GROUNDED noise. Legacy string notes ground whole.
-    const notes = c['coachingNotes'];
-    if (typeof notes === 'string') {
-        pushText(out, notes);
-    } else if (notes !== null && typeof notes === 'object') {
-        pushText(out, (notes as Record<string, unknown>)['positioning']);
-    }
+    pushCoachingNotesClaims(out, c['coachingNotes']);
 
     for (const tp of (c['jdTalkingPoints'] as Array<Record<string, unknown>> | undefined) ?? []) {
         pushText(out, tp['point']);

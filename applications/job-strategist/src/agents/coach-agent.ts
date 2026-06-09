@@ -164,37 +164,18 @@ const COACH_TOOL = {
                 },
             },
             coachingNotes: {
-                type: 'object',
-                properties: {
-                    positioning: { type: 'string' },
-                    interviewFocus: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                label:  { type: 'string' },
-                                detail: { type: 'string' },
-                            },
-                            required: ['label', 'detail'],
-                            additionalProperties: false,
-                        },
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        key:       { type: 'string' },
+                        title:     { type: 'string' },
+                        body:      { type: 'string' },
+                        checklist: { type: 'array', items: { type: 'string' } },
                     },
-                    tacticalPrep:    { type: 'string' },
-                    communication:   { type: 'string' },
-                    mindset:         { type: 'string' },
-                    debrief:         { type: 'string' },
-                    finalCheckpoint: {
-                        type: 'object',
-                        properties: {
-                            items: { type: 'array', items: { type: 'string' } },
-                            note:  { type: 'string' },
-                        },
-                        required: ['items'],
-                        additionalProperties: false,
-                    },
+                    required: ['key', 'title', 'body'],
+                    additionalProperties: false,
                 },
-                required: ['positioning'],
-                additionalProperties: false,
             },
             skillTransfer: {
                 type: 'array',
@@ -406,61 +387,24 @@ const FinalPrepSchema = z.object({
     longTermFraming:        z.string(),
 }).strict();
 
-/** One "what to expect" item — short bold label + its description. */
-const InterviewFocusItemSchema = z.object({
-    label:  z.string(),
-    detail: z.string(),
-}).strict();
-
-/** Split a legacy markdown checklist into structured items + closing note. */
-function coerceCheckpoint(markdown: string): { items: string[]; note?: string } {
-    const items: string[] = [];
-    const noteLines: string[] = [];
-    for (const raw of markdown.split('\n')) {
-        const line = raw.trim();
-        const match = /^[-*]\s*\[[ xX]?\]\s*(.+)$/.exec(line);
-        if (match) {
-            const label = match[1].trim();
-            if (label.length > 0) items.push(label);
-        } else if (line.length > 0) {
-            noteLines.push(line);
-        }
-    }
-    const note = noteLines.join('\n').trim();
-    return note.length > 0 ? { items, note } : { items };
-}
-
-/** Pre-interview checklist — structured items + optional note. */
-const FinalCheckpointSchema = z.object({
-    items: z.array(z.string()),
-    note:  z.string().optional(),
-}).strict();
-
-/** Accept the structured object, or coerce a legacy markdown string into it. */
-const FinalCheckpointField = z.union([
-    FinalCheckpointSchema,
-    z.string().transform((s): z.infer<typeof FinalCheckpointSchema> => coerceCheckpoint(s)),
-]);
-
-/** Structured stage coaching — mirrors CoachingNotes in @bedrock/shared. */
-const CoachingNotesSchema = z.object({
-    positioning:     z.string(),
-    interviewFocus:  z.array(InterviewFocusItemSchema).optional(),
-    tacticalPrep:    z.string().optional(),
-    communication:   z.string().optional(),
-    mindset:         z.string().optional(),
-    debrief:         z.string().optional(),
-    finalCheckpoint: FinalCheckpointField.optional(),
+/** One composable coaching section — mirrors CoachingSection in @bedrock/shared. */
+const CoachingSectionSchema = z.object({
+    key:       z.string(),
+    title:     z.string(),
+    body:      z.string(),
+    checklist: z.array(z.string()).optional(),
 }).strict();
 
 /**
- * Accept the structured object (the contract) or — defensively — a bare string
- * the model might still emit, coercing it into `{ positioning }`. Keeps the
- * safety-net from hard-failing on a legacy-shaped tool call.
+ * Accept the sections array (the contract) or — defensively — a bare string the
+ * model might still emit, wrapping it as a single "coaching-notes" section. Keeps
+ * the safety-net from hard-failing on a legacy-shaped tool call.
  */
 const CoachingNotesField = z.union([
-    CoachingNotesSchema,
-    z.string().transform((s): z.infer<typeof CoachingNotesSchema> => ({ positioning: s })),
+    z.array(CoachingSectionSchema),
+    z.string().transform((s): z.infer<typeof CoachingSectionSchema>[] => [
+        { key: 'coaching-notes', title: 'Coaching notes', body: s },
+    ]),
 ]);
 
 /**

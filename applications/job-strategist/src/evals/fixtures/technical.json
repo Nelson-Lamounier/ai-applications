@@ -61,9 +61,13 @@
         "rationale": "ops maturity"
       }
     ],
-    "coachingNotes": {
-      "positioning": "Lead with the operator project."
-    },
+    "coachingNotes": [
+      {
+        "key": "stage-positioning",
+        "title": "Stage positioning",
+        "body": "Lead with the operator project."
+      }
+    ],
     "skillTransfer": [
       {
         "jdSkill": "Kubernetes",

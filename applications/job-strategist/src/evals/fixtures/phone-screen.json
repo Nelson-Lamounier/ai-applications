@@ -28,9 +28,13 @@
         "rationale": "shows ownership"
       }
     ],
-    "coachingNotes": {
-      "positioning": "Keep it concise and confident."
-    },
+    "coachingNotes": [
+      {
+        "key": "stage-positioning",
+        "title": "Stage positioning",
+        "body": "Keep it concise and confident."
+      }
+    ],
     "careerArcSummary": "Cloud/platform engineer moving from IaC into AI-augmented delivery, with verified AWS and Kubernetes work.",
     "jdTalkingPoints": [
       {
