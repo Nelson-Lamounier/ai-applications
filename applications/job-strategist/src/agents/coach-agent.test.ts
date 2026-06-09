@@ -47,7 +47,7 @@ describe('CoachAgent.parseResponse', () => {
         };
         const r = new TestableCoach().parse(JSON.stringify(payload), PARSE_CTX);
         expect(r.careerArcSummary).toBe('Career arc...');
-        expect(r.jdTalkingPoints?.[0]).toEqual({ point: 'p', evidence: 'e' });
+        expect(r.jdTalkingPoints?.[0]).toEqual({ point: 'p', evidence: 'e', matchedSkills: [] });
         expect(r.compScript?.marketContext).toBeNull();
     });
 });

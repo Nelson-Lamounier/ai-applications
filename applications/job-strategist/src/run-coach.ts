@@ -458,6 +458,7 @@ async function main(): Promise<void> {
             systemDesignBlock: sd.block,
             barRaiserBlock:    br.block,
             finalBlock:        fin.block,
+            verifiedSkills:    (research?.verifiedMatches ?? []).map(m => m.skill),
         });
         if (sd.coverage) {
             const raw = (coaching.data.systemDesignWalkthrough ?? []) as SystemDesignWalkthroughCard[];

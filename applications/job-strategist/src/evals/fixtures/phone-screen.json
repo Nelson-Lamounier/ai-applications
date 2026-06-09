@@ -35,7 +35,10 @@
     "jdTalkingPoints": [
       {
         "point": "Owns end-to-end AWS delivery",
-        "evidence": "AI Applications pipeline"
+        "evidence": "AI Applications pipeline",
+        "matchedSkills": [
+          "AWS"
+        ]
       }
     ],
     "compScript": {
