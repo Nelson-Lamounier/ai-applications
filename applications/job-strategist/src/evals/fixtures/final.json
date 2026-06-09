@@ -12,9 +12,13 @@
     "difficultQuestions": [],
     "technicalPrepChecklist": [],
     "questionsToAsk": [],
-    "coachingNotes": {
-      "positioning": "Anchor why-this-role in your real career arc; ground every talking point; ask questions that prove you researched this company."
-    },
+    "coachingNotes": [
+      {
+        "key": "stage-positioning",
+        "title": "Stage positioning",
+        "body": "Anchor why-this-role in your real career arc; ground every talking point; ask questions that prove you researched this company."
+      }
+    ],
     "finalPrep": {
       "whyThisRole": "You've shipped two infra migrations end-to-end as a solo IC — the EKS migration controller and the sessions-to-JWT auth cutover. This role's platform-team mandate is the natural next step: it takes the migration ownership you've already demonstrated and adds the scope of doing it for many service teams. That trajectory fit — not a manufactured mission story — is why this role, why now.",
       "mutualFitTalkingPoints": [

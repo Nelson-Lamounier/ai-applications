@@ -178,9 +178,7 @@ export type {
     DifficultQuestion,
     TechnicalPrepItem,
     QuestionToAsk,
-    InterviewFocusItem,
-    FinalCheckpoint,
-    CoachingNotes,
+    CoachingSection,
     PhoneScreenTalkingPoint,
     InterviewCoachResult,
 

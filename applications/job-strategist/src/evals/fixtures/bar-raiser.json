@@ -12,9 +12,13 @@
     "difficultQuestions": [],
     "technicalPrepChecklist": [],
     "questionsToAsk": [],
-    "coachingNotes": {
-      "positioning": "Walk each principle from your own evidence; calibrate every story honestly and frame gaps without fabricating."
-    },
+    "coachingNotes": [
+      {
+        "key": "stage-positioning",
+        "title": "Stage positioning",
+        "body": "Walk each principle from your own evidence; calibrate every story honestly and frame gaps without fabricating."
+      }
+    ],
     "barRaiserCoverage": {
       "detected": [
         {

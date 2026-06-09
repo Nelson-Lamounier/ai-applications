@@ -710,41 +710,22 @@ export interface CompScript {
 }
 
 /** One "what to expect" item — a short bold label and its description. */
-export interface InterviewFocusItem {
-    /** Short label, e.g. "Coding problems" */
-    readonly label: string;
-    /** What that part of the round involves */
-    readonly detail: string;
-}
-
-/** Pre-interview checklist — actionable items plus an optional closing note. */
-export interface FinalCheckpoint {
-    /** One line per checklist item (no `- [ ]` prefix). */
-    readonly items: readonly string[];
-    /** Brief closing encouragement / context. */
-    readonly note?: string;
-}
-
 /**
- * Structured stage coaching. Replaces the former single markdown blob: each
- * section is its own field so the UI can place them across the page without
- * parsing prose. All string fields are markdown; only `positioning` is required.
+ * One composable coaching block. The coach emits an ordered list of these; the
+ * UI distributes them to build a per-stage narrative. Open-ended: new section
+ * types (esl-coaching, top-priorities, pronunciation, logistics, …) need no
+ * schema change. `checklist` present → the section renders as an interactive,
+ * persisted checklist.
  */
-export interface CoachingNotes {
-    /** Opening read on where the candidate stands for this round (markdown). */
-    readonly positioning: string;
-    /** "The interview will focus on…" items — drives the What-to-expect panel. */
-    readonly interviewFocus?: readonly InterviewFocusItem[];
-    /** The prep plan for the round (markdown). */
-    readonly tacticalPrep?: string;
-    /** How to communicate in the room (markdown). */
-    readonly communication?: string;
-    /** What the candidate is really being assessed on (markdown). */
-    readonly mindset?: string;
-    /** Post-interview debrief guidance (markdown). */
-    readonly debrief?: string;
-    /** Final pre-interview checklist — structured items + optional closing note. */
-    readonly finalCheckpoint?: FinalCheckpoint;
+export interface CoachingSection {
+    /** Stable kebab-case id, e.g. "esl-coaching" — lets the UI place a section. */
+    readonly key: string;
+    /** Human heading, e.g. "ESL coaching note". */
+    readonly title: string;
+    /** Narrative content (markdown). */
+    readonly body: string;
+    /** When present, this section is an actionable checklist (one item per line). */
+    readonly checklist?: readonly string[];
 }
 
 /**
@@ -767,7 +748,7 @@ export interface InterviewCoachResult {
     /** Questions to ask the interviewer */
     readonly questionsToAsk: QuestionToAsk[];
     /** Stage-specific coaching, split into structured sections. */
-    readonly coachingNotes: CoachingNotes;
+    readonly coachingNotes: readonly CoachingSection[];
     /** Phone-screen only: 2-3 sentence career-arc narrative */
     readonly careerArcSummary?: string;
     /** Phone-screen only: JD-cross-referenced verified talking points */

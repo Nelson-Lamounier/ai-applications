@@ -34,8 +34,12 @@
         "rationale": "culture read"
       }
     ],
-    "coachingNotes": {
-      "positioning": "Anchor every story in a real, documented experience."
-    }
+    "coachingNotes": [
+      {
+        "key": "stage-positioning",
+        "title": "Stage positioning",
+        "body": "Anchor every story in a real, documented experience."
+      }
+    ]
   }
 }

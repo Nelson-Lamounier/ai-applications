@@ -12,9 +12,13 @@
     "difficultQuestions": [],
     "technicalPrepChecklist": [],
     "questionsToAsk": [],
-    "coachingNotes": {
-      "positioning": "Walk the interviewer through your own architecture, concern by concern; be honest where the project has no evidence."
-    },
+    "coachingNotes": [
+      {
+        "key": "stage-positioning",
+        "title": "Stage positioning",
+        "body": "Walk the interviewer through your own architecture, concern by concern; be honest where the project has no evidence."
+      }
+    ],
     "systemDesignCoverage": {
       "detected": [
         {
