@@ -20,6 +20,7 @@ import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
+import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -243,10 +244,15 @@ export async function main(): Promise<void> {
             return;
         }
 
-        const research = await executeResearchAgent(ctx, pool);
+        // Documented project case studies — citeable evidence shared by the
+        // Research (analysis grounding) and Strategist (resume bullets) agents.
+        // Fail-open: '' when the user has no projects, so the flow is unchanged.
+        const projectEvidenceBlock = await loadProjectEvidenceBlock(pool, ctx.userId);
+
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
-        const analysis = await executeStrategistAgent(ctx, research.data);
+        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 

@@ -309,6 +309,7 @@ function buildResearchMessage(
     resumeData: StructuredResumeData | null,
     careerHistorySection = '',
     dsaCatalog = '',
+    projectEvidenceSection = '',
 ): string {
     const sections: string[] = [
         '## Job Description',
@@ -363,6 +364,18 @@ function buildResearchMessage(
             'KB constraint passages (containing "NEVER", "ABSENT", "PROHIBITED") are absolute overrides.',
             '',
             kbContext,
+            '',
+        );
+    }
+
+    if (projectEvidenceSection) {
+        sections.push(
+            '## Project Case Studies — Documented Portfolio Projects (factual, citeable evidence)',
+            'These are the candidate\'s own documented projects (curated from their real work). Treat as',
+            'factual evidence ALONGSIDE the KB passages above — a JD skill demonstrated by a project\'s',
+            'stack or decisions is STRONG evidence, and you may name the project as its source citation.',
+            '',
+            projectEvidenceSection,
             '',
         );
     }
@@ -677,6 +690,7 @@ const RESEARCH_CONFIG: AgentConfig = {
 export async function executeResearchAgent(
     ctx: StrategistPipelineContext,
     pool?: Pool,
+    projectEvidenceBlock = '',
 ): Promise<AgentResult<StrategistResearchResult>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -765,7 +779,7 @@ export async function executeResearchAgent(
     }
 
     // 6. Build user message
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog);
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog, projectEvidenceBlock);
 
     // 7. Run agent
     const result = await runAgent<StrategistResearchResult>({

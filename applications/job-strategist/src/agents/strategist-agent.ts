@@ -51,6 +51,8 @@ import type {
 export interface StrategistAgentInput {
     /** Research Agent's structured output */
     readonly research: StrategistResearchResult;
+    /** Formatted documented project case studies (citeable evidence). Optional. */
+    readonly projectEvidence?: string;
 }
 
 // =============================================================================
@@ -97,6 +99,7 @@ const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? 
 function buildStrategistMessage(
     research: StrategistResearchResult,
     ctx: StrategistPipelineContext,
+    projectEvidence = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -188,6 +191,19 @@ function buildStrategistMessage(
             '--- BEGIN CONSTRAINTS ---',
             research.resumeConstraints,
             '--- END CONSTRAINTS ---',
+        );
+    }
+
+    // Documented project case studies — citeable evidence for grounding bullets.
+    if (projectEvidence) {
+        sections.push(
+            '', '### Documented Project Case Studies (CITEABLE EVIDENCE)',
+            'These are the candidate\'s own documented projects. When a JD skill or achievement is',
+            'demonstrated by a project\'s stack or decisions, you MAY ground the bullet in it and name',
+            'the project (e.g. "… in <Project>"). Do NOT invent project facts beyond what is listed.',
+            '--- BEGIN PROJECT CASE STUDIES ---',
+            projectEvidence,
+            '--- END PROJECT CASE STUDIES ---',
         );
     }
 
@@ -555,7 +571,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence);
     }
 
     /**
@@ -673,6 +689,7 @@ export { strategistAgent, StrategistAgent };
 export async function executeStrategistAgent(
     ctx: StrategistPipelineContext,
     research: StrategistResearchResult,
+    projectEvidence = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research }, ctx);
+    return strategistAgent.execute({ research, projectEvidence }, ctx);
 }

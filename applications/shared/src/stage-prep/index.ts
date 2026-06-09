@@ -17,3 +17,4 @@ export * from './final-types.js';
 export * from './concern-detection.js';
 export * from './system-design-walkthrough.js';
 export * from './project-evidence.js';
+export * from './format-project-evidence.js';
