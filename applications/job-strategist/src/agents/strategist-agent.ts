@@ -53,6 +53,8 @@ export interface StrategistAgentInput {
     readonly research: StrategistResearchResult;
     /** Formatted documented project case studies (citeable evidence). Optional. */
     readonly projectEvidence?: string;
+    /** Verbatim education facts from user_career_history (degree + institution). Optional. */
+    readonly educationFacts?: string;
 }
 
 // =============================================================================
@@ -100,6 +102,7 @@ function buildStrategistMessage(
     research: StrategistResearchResult,
     ctx: StrategistPipelineContext,
     projectEvidence = '',
+    educationFacts = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -191,6 +194,21 @@ function buildStrategistMessage(
             '--- BEGIN CONSTRAINTS ---',
             research.resumeConstraints,
             '--- END CONSTRAINTS ---',
+        );
+    }
+
+    // Verified education — exact degree + institution from the user's résumé.
+    // Overrides any conflicting education in the constraints KB; the model must
+    // NOT invent or substitute an institution (root cause of hallucinated schools).
+    if (educationFacts) {
+        sections.push(
+            '', '### Verified Education (FACTUAL — REPRODUCE VERBATIM)',
+            'The "education" array of <tailored_resume_json> MUST use these exact degree names and',
+            'institutions. Never invent, abbreviate, or substitute an institution. If a fact below',
+            'conflicts with any constraint or template, THESE FACTS WIN.',
+            '--- BEGIN EDUCATION ---',
+            educationFacts,
+            '--- END EDUCATION ---',
         );
     }
 
@@ -571,7 +589,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts);
     }
 
     /**
@@ -690,6 +708,7 @@ export async function executeStrategistAgent(
     ctx: StrategistPipelineContext,
     research: StrategistResearchResult,
     projectEvidence = '',
+    educationFacts = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts }, ctx);
 }

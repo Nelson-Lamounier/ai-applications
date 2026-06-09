@@ -21,6 +21,7 @@ import { Counter, Histogram } from 'prom-client';
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
+import { loadEducation, formatEducation } from './agents/career-history.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -249,10 +250,17 @@ export async function main(): Promise<void> {
         // Fail-open: '' when the user has no projects, so the flow is unchanged.
         const projectEvidenceBlock = await loadProjectEvidenceBlock(pool, ctx.userId);
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock);
+        // Verbatim education facts (degree + institution) from user_career_history —
+        // shared by Research + Strategist so the generated resume reproduces them
+        // exactly instead of hallucinating an institution. Fail-open.
+        const educationBlock = formatEducation(
+            await loadEducation(pool, ctx.userId).catch(() => []),
+        );
+
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
-        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock);
+        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 

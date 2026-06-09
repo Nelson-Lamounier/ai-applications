@@ -44,3 +44,49 @@ export function formatCareerHistory(entries: CareerEntry[]): string {
     }
     return lines.join('\n');
 }
+
+export interface EducationEntry {
+    readonly degree: string;
+    readonly institution: string;
+    readonly period: string;
+}
+
+interface EducationRow { raw_data: { degree?: string; institution?: string; period?: string } | null }
+
+/**
+ * Load the user's education entries from user_career_history (extracted verbatim
+ * from their résumé). These are FACTUAL — the generator must reproduce the degree
+ * name and institution exactly, never invent them.
+ */
+export async function loadEducation(pool: Pool, userId: string, limit = 8): Promise<EducationEntry[]> {
+    const r = await pool.query<EducationRow>(
+        `SELECT raw_data FROM user_career_history
+          WHERE user_id = $1::uuid AND entry_type = 'education'
+          ORDER BY display_order ASC
+          LIMIT $2`,
+        [userId, limit],
+    );
+    return r.rows.map(row => ({
+        degree:      row.raw_data?.degree ?? '',
+        institution: row.raw_data?.institution ?? '',
+        period:      row.raw_data?.period ?? '',
+    })).filter(e => e.degree || e.institution);
+}
+
+/**
+ * Render education as a strict, verbatim factual block. The degree name and
+ * institution are exact strings from the user's résumé — the generator MUST NOT
+ * alter, abbreviate, or substitute them (prevents hallucinated institutions).
+ */
+export function formatEducation(entries: EducationEntry[]): string {
+    if (entries.length === 0) return '';
+    const lines = [
+        'VERIFIED EDUCATION (FACTUAL — reproduce the degree name and institution VERBATIM;',
+        'never invent, abbreviate, or substitute an institution):',
+    ];
+    for (const e of entries) {
+        const parts = [e.degree, e.institution].filter(Boolean).join(' — ');
+        lines.push(`- ${parts}${e.period ? ` (${e.period})` : ''}`);
+    }
+    return lines.join('\n');
+}
