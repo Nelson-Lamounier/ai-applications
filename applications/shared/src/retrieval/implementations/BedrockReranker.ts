@@ -32,7 +32,13 @@ import type {
     RerankResult,
 } from '../interfaces/IReranker.js';
 
-const DEFAULT_MODEL_ID = 'amazon.rerank-v1:0';
+// Bedrock rerank models are region-limited. amazon.rerank-v1:0 is NOT offered in
+// eu-west-1 (the cluster region) — only cohere.rerank-v3-5:0 in us-east-1 — so the
+// reranker calls us-east-1 cross-region by default. The job role's bedrock grant is
+// region-wildcarded so this is permitted. Override via RERANKER_MODEL_ID /
+// RERANKER_REGION if a rerank model lands in-region (avoids cross-region data transfer).
+const DEFAULT_MODEL_ID = 'cohere.rerank-v3-5:0';
+const DEFAULT_REGION   = 'us-east-1';
 
 /** Conservative per-candidate length cap. The API max is higher but cutting
  *  earlier saves bandwidth without hurting rerank quality. */
@@ -53,7 +59,9 @@ export class BedrockReranker implements IReranker {
     private readonly modelArn: string;
 
     constructor(config: BedrockRerankerConfig = {}) {
-        const region   = config.region ?? process.env.AWS_REGION ?? 'us-east-1';
+        // RERANKER_REGION (NOT AWS_REGION) — the rerank model lives in a specific
+        // region independent of where the pod runs. Falls back to us-east-1.
+        const region   = config.region ?? process.env.RERANKER_REGION ?? DEFAULT_REGION;
         const modelId  = config.modelId ?? process.env.RERANKER_MODEL_ID ?? DEFAULT_MODEL_ID;
         this.client    = new BedrockAgentRuntimeClient({ region });
         this.modelArn  = modelId.startsWith('arn:')
@@ -64,7 +72,7 @@ export class BedrockReranker implements IReranker {
     static fromEnvironment(): BedrockReranker {
         return new BedrockReranker({
             modelId: process.env.RERANKER_MODEL_ID,
-            region:  process.env.AWS_REGION,
+            region:  process.env.RERANKER_REGION,
         });
     }
 
