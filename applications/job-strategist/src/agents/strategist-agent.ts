@@ -478,10 +478,17 @@ function extractArchetypeSelection(xml: string): RoleArchetypeSelection | null {
  * @returns Parsed StructuredResumeData, or null
  */
 /**
- * Strict safety-net for the embedded tailored-resume JSON. Strategist
- * keeps extended thinking so forced tool_use is unavailable; this Zod
- * schema is the constrained-decoding substitute. `.strict()` rejects
- * invented fields.
+ * Safety-net schema for the embedded tailored-resume JSON. Strategist keeps
+ * extended thinking, so forced tool_use is unavailable and this Zod schema is the
+ * constrained-decoding substitute: it validates that every REQUIRED field is
+ * present and well-typed, failing fast on truly malformed output.
+ *
+ * It deliberately does NOT use `.strict()`. Extra/unknown keys are STRIPPED, not
+ * rejected. Rejecting unknown keys turned any additive drift (a new persona field
+ * such as `sectionOrder`, or a model emitting one extra key) into a FATAL failure
+ * AFTER the ~6-min Sonnet writer call — wasting the whole expensive generation and
+ * (with Job retries) re-spending it. Stripping keeps the run successful on additive
+ * drift while still failing on missing/wrong-type required data.
  */
 const TailoredResumeSchema = z.object({
     profile: z.object({
@@ -492,41 +499,40 @@ const TailoredResumeSchema = z.object({
         linkedin: z.string().optional(),
         github:   z.string().optional(),
         website:  z.string().optional(),
-    }).strict(),
+    }),
     summary: z.string(),
     experience: z.array(z.object({
         company:    z.string(),
         title:      z.string(),
         period:     z.string(),
         highlights: z.array(z.string()),
-    }).strict()),
+    })),
     skills: z.array(z.object({
         category: z.string(),
         skills:   z.array(z.string()),
-    }).strict()),
+    })),
     education: z.array(z.object({
         degree:      z.string(),
         institution: z.string(),
         period:      z.string(),
-    }).strict()),
+    })),
     certifications: z.array(z.object({
         name:   z.string(),
         year:   z.string(),
         issuer: z.string(),
-    }).strict()),
+    })),
     projects: z.array(z.object({
         name:        z.string(),
         description: z.string(),
         github:      z.string().optional(),
-    }).strict()),
+    })),
     keyAchievements: z.array(z.object({
         achievement: z.string(),
-    }).strict()),
-    // Section render order (archetype/restructure decision). Optional — older
-    // prompts omit it; the persona now emits it. Must be allowed here or the
-    // top-level .strict() rejects the whole resume and fails the run.
+    })),
+    // Section render order (archetype/restructure decision). Kept (not stripped)
+    // because the UI consumes it; other unknown keys are dropped harmlessly.
     sectionOrder: z.array(z.string()).optional(),
-}).strict();
+});
 
 /**
  * Extract the embedded tailored-resume JSON.

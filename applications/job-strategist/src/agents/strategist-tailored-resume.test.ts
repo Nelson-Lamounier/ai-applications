@@ -56,4 +56,18 @@ describe('extractTailoredResumeJson', () => {
         const r = extractTailoredResumeJson(wrap(JSON.stringify(withOrder)));
         expect(r?.sectionOrder).toEqual(['summary', 'experience', 'skills', 'education']);
     });
+
+    it('TOLERATES unknown/additive keys (strips them) rather than failing the whole run', () => {
+        // Additive drift — a new top-level key + a new nested key — must NOT throw
+        // (would waste the ~6-min Sonnet writer call). Unknown keys are dropped.
+        const drifted = {
+            ...VALID_RESUME,
+            someNewTopLevelField: 'whatever',
+            experience: [{ ...VALID_RESUME.experience[0], newNestedField: 'x' }],
+        };
+        const r = extractTailoredResumeJson(wrap(JSON.stringify(drifted)));
+        expect(r?.profile.name).toBe('Nelson');
+        expect((r as unknown as Record<string, unknown>)['someNewTopLevelField']).toBeUndefined();
+        expect((r?.experience[0] as unknown as Record<string, unknown>)['newNestedField']).toBeUndefined();
+    });
 });
