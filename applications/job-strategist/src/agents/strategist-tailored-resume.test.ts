@@ -50,4 +50,10 @@ describe('extractTailoredResumeJson', () => {
         expect(() => extractTailoredResumeJson(wrap(JSON.stringify(broken))))
             .toThrow(/schema validation/i);
     });
+
+    it('accepts the sectionOrder field the persona now emits (regression: strict schema must allow it)', () => {
+        const withOrder = { ...VALID_RESUME, sectionOrder: ['summary', 'experience', 'skills', 'education'] };
+        const r = extractTailoredResumeJson(wrap(JSON.stringify(withOrder)));
+        expect(r?.sectionOrder).toEqual(['summary', 'experience', 'skills', 'education']);
+    });
 });

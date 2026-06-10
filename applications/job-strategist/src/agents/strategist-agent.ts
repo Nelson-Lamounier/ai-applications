@@ -522,6 +522,10 @@ const TailoredResumeSchema = z.object({
     keyAchievements: z.array(z.object({
         achievement: z.string(),
     }).strict()),
+    // Section render order (archetype/restructure decision). Optional — older
+    // prompts omit it; the persona now emits it. Must be allowed here or the
+    // top-level .strict() rejects the whole resume and fails the run.
+    sectionOrder: z.array(z.string()).optional(),
 }).strict();
 
 /**
