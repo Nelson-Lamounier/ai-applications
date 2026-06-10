@@ -15,7 +15,7 @@
  */
 import type { StrategistPipelineContext, StructuredResumeData, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, PiiScrubber, recordInvocationToRds } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, PiiScrubber, OutputSanitiser, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
@@ -48,6 +48,8 @@ const groundingVerifier = new BedrockGroundingVerifier({
 const semanticCache = PgSemanticCache.fromEnvironment();
 /** Scrubs raw PII out of the JD before it is ever used as a cache key. */
 const piiScrubber = new PiiScrubber();
+/** Redacts infra identifiers from the failure message before it reaches the client. */
+const outputSanitiser = new OutputSanitiser();
 
 /** S3 client for canonical resume PDF storage. */
 const s3 = new S3Client({});
@@ -447,7 +449,13 @@ export async function main(): Promise<void> {
         }, 'strategist_pipeline_complete');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        await updatePipelineRun(pool, env.pipelineRunId, 'failed', message)
+        // error_message surfaces to the client via GET /runs/:id, so redact infra
+        // identifiers (hosts/ARNs/file paths/etc.) before persisting — a raw DB /
+        // AWS SDK / Zod message would leak internals (security). The FULL detail is
+        // kept in the structured log below (operator-only) and referenced by the
+        // SNS failure alert via pipelineRunId.
+        const clientMessage = outputSanitiser.sanitise(message).slice(0, 500);
+        await updatePipelineRun(pool, env.pipelineRunId, 'failed', clientMessage)
             .catch(() => { /* swallow — already failing */ });
         await updateJobApplicationStatus(pool, env.applicationId, 'failed')
             .catch(() => { /* swallow — already failing */ });

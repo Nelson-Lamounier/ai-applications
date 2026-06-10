@@ -25,6 +25,7 @@ import {
     RdsProjectEvidenceRepository, joinSkillCandidates,
     BedrockGroundingVerifier,
     BedrockProseLinter,
+    OutputSanitiser,
     RdsSystemDesignConcernRepository, detectConcernEvidence, validateSystemDesignWalkthrough,
 } from '@bedrock/shared';
 import type {
@@ -110,6 +111,8 @@ const coachProse = new Counter({
 // Prose linting runs in 'flag' mode only: telemetry on AI-tell language, never
 // alters persisted coach output, never throws into the pipeline.
 const coachProseLinter = new BedrockProseLinter({ mode: 'flag' });
+/** Redacts infra identifiers from the failure message before it reaches the client. */
+const outputSanitiser = new OutputSanitiser();
 
 /**
  * Verify the coach's experiential claims against its grounding sources and record
@@ -515,7 +518,10 @@ async function main(): Promise<void> {
         }, 'coach_pipeline_complete');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        await updatePipelineRun(pool, env.coachPipelineRunId, 'failed', message)
+        // Redact infra identifiers before persisting — error_message surfaces to the
+        // client via GET /runs/:id. Full detail stays in the log below.
+        const clientMessage = outputSanitiser.sanitise(message).slice(0, 500);
+        await updatePipelineRun(pool, env.coachPipelineRunId, 'failed', clientMessage)
             .catch(() => { /* swallow — already failing */ });
         log.error({
             coachPipelineRunId: env.coachPipelineRunId,
