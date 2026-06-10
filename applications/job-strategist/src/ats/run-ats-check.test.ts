@@ -29,7 +29,9 @@ describe('renderCheckAndStoreAts', () => {
         const put = jest.fn().mockResolvedValue({});
         const s3 = { send: put } as unknown as S3Client;
         const query = jest.fn().mockResolvedValue({ rowCount: 1 });
-        const pool = { query } as unknown as Pool;
+        const release = jest.fn();
+        const connect = jest.fn().mockResolvedValue({ query, release });
+        const pool = { connect } as unknown as Pool;
         const outcomes: string[] = [];
 
         const check = await renderCheckAndStoreAts({
@@ -41,7 +43,8 @@ describe('renderCheckAndStoreAts', () => {
         expect(check.passed).toBe(true);
         expect(check.status).toBe('passed');
         expect(put).toHaveBeenCalledTimes(1);          // PDF uploaded
-        expect(query).toHaveBeenCalledTimes(1);         // resumes row updated
+        expect(connect).toHaveBeenCalledTimes(1);      // resumes row updated in RLS txn
+        expect(query.mock.calls.some((c) => /UPDATE resumes/i.test(c[0] as string))).toBe(true);
         expect(outcomes).toEqual(['passed']);
     });
 

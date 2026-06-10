@@ -7,7 +7,7 @@ import type { AtsCheckResult } from './ats-check.schema.js';
 import { buildAtsCheck } from './checks.js';
 import { collectGroundedTerms, collectJdMustHaves } from './jd-keywords.js';
 import { parsePdfBack } from './parse-back.js';
-import { storeAtsArtifacts } from './store-ats-artifacts.js';
+import { storeAtsArtifacts, withUserRls } from './store-ats-artifacts.js';
 import { renderResumePdf } from '../render/render-resume-pdf.js';
 
 /** Minimal structured logger surface (pino-compatible). */
@@ -70,9 +70,11 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
             { correlationId: a.correlationId, resumeId: a.resumeId, error: (e as Error).message },
             'ATS render/check failed — recording unverified',
         );
-        await a.pool
-            .query(`UPDATE resumes SET ats_check_json = $1 WHERE id = $2`, [JSON.stringify(UNVERIFIED), a.resumeId])
-            .catch(() => undefined);
+        // RLS-scoped write (same context requirement as storeAtsArtifacts), so the
+        // 'unverified' claim actually persists instead of being silently dropped.
+        await withUserRls(a.pool, a.userId, (client) =>
+            client.query(`UPDATE resumes SET ats_check_json = $1 WHERE id = $2`, [JSON.stringify(UNVERIFIED), a.resumeId]),
+        ).catch(() => undefined);
         a.onOutcome('error');
         return UNVERIFIED;
     }
