@@ -113,6 +113,11 @@ export class BedrockProseLinter implements IProseLinter {
 
     constructor(config: BedrockProseLinterConfig) {
         this.mode = config.mode;
+        // Sonnet 4.6 for nuanced AI-tell prose judgement. The job-strategist Pod
+        // Identity role grants bedrock:InvokeModel on inference-profile/* +
+        // foundation-model/* (verified), so this is permitted. Set
+        // PROSE_LINTER_MODEL_ID=eu.anthropic.claude-haiku-4-5-20251001-v1:0 to
+        // trade some judgement quality for lower cost.
         this.modelId =
             config.modelId ?? process.env.PROSE_LINTER_MODEL_ID ?? 'eu.anthropic.claude-sonnet-4-6';
         this.client = config.client ?? new BedrockRuntimeClient({});

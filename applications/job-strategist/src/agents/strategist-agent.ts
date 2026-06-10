@@ -51,6 +51,12 @@ import type {
 export interface StrategistAgentInput {
     /** Research Agent's structured output */
     readonly research: StrategistResearchResult;
+    /** Formatted documented project case studies (citeable evidence). Optional. */
+    readonly projectEvidence?: string;
+    /** Verbatim education facts from user_career_history (degree + institution). Optional. */
+    readonly educationFacts?: string;
+    /** Verbatim experience facts (company + title + period). Optional. */
+    readonly experienceFacts?: string;
 }
 
 // =============================================================================
@@ -97,6 +103,9 @@ const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? 
 function buildStrategistMessage(
     research: StrategistResearchResult,
     ctx: StrategistPipelineContext,
+    projectEvidence = '',
+    educationFacts = '',
+    experienceFacts = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -188,6 +197,50 @@ function buildStrategistMessage(
             '--- BEGIN CONSTRAINTS ---',
             research.resumeConstraints,
             '--- END CONSTRAINTS ---',
+        );
+    }
+
+    // Verified experience — exact company + job title + period from the résumé.
+    // The experience section must use these titles verbatim; repositioning is
+    // confined to the profile headline + summary (root cause of re-titled roles).
+    if (experienceFacts) {
+        sections.push(
+            '', '### Verified Experience (FACTUAL — REPRODUCE TITLES VERBATIM)',
+            'Each entry in the "experience" array of <tailored_resume_json> MUST use the exact',
+            'company, job title, and period below. NEVER rename a role (e.g. do not relabel',
+            '"Technical Customer Service Associate" as "Cloud Support Engineer"). Reposition only',
+            'in the profile headline + summary. Bullet highlights may be tailored from grounded evidence.',
+            '--- BEGIN EXPERIENCE ---',
+            experienceFacts,
+            '--- END EXPERIENCE ---',
+        );
+    }
+
+    // Verified education — exact degree + institution from the user's résumé.
+    // Overrides any conflicting education in the constraints KB; the model must
+    // NOT invent or substitute an institution (root cause of hallucinated schools).
+    if (educationFacts) {
+        sections.push(
+            '', '### Verified Education (FACTUAL — REPRODUCE VERBATIM)',
+            'The "education" array of <tailored_resume_json> MUST use these exact degree names and',
+            'institutions. Never invent, abbreviate, or substitute an institution. If a fact below',
+            'conflicts with any constraint or template, THESE FACTS WIN.',
+            '--- BEGIN EDUCATION ---',
+            educationFacts,
+            '--- END EDUCATION ---',
+        );
+    }
+
+    // Documented project case studies — citeable evidence for grounding bullets.
+    if (projectEvidence) {
+        sections.push(
+            '', '### Documented Project Case Studies (CITEABLE EVIDENCE)',
+            'These are the candidate\'s own documented projects. When a JD skill or achievement is',
+            'demonstrated by a project\'s stack or decisions, you MAY ground the bullet in it and name',
+            'the project (e.g. "… in <Project>"). Do NOT invent project facts beyond what is listed.',
+            '--- BEGIN PROJECT CASE STUDIES ---',
+            projectEvidence,
+            '--- END PROJECT CASE STUDIES ---',
         );
     }
 
@@ -555,7 +608,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts);
     }
 
     /**
@@ -673,6 +726,9 @@ export { strategistAgent, StrategistAgent };
 export async function executeStrategistAgent(
     ctx: StrategistPipelineContext,
     research: StrategistResearchResult,
+    projectEvidence = '',
+    educationFacts = '',
+    experienceFacts = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts }, ctx);
 }

@@ -13,7 +13,7 @@ export class RdsProjectEvidenceRepository {
 
   async load(userId: string): Promise<ProjectEvidenceInput> {
     const [projects, components, decisions, stackItems, tags, repoEvidence] = await Promise.all([
-      this.pool.query(`SELECT id, name FROM projects WHERE user_id = $1`, [userId]),
+      this.pool.query(`SELECT id, name, tagline, pitch FROM projects WHERE user_id = $1`, [userId]),
       this.pool.query(`SELECT id, project_id, name, kind FROM project_components WHERE user_id = $1`, [userId]),
       this.pool.query(`SELECT id, project_id, title, decision FROM project_decisions WHERE user_id = $1`, [userId]),
       this.pool.query(`SELECT id, project_id, name, category FROM project_stack_items WHERE user_id = $1`, [userId]),
@@ -41,7 +41,7 @@ export class RdsProjectEvidenceRepository {
     ]);
     return {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      projects:   projects.rows.map((r: any) => ({ id: r.id, name: r.name })),
+      projects:   projects.rows.map((r: any) => ({ id: r.id, name: r.name, tagline: r.tagline ?? null, pitch: r.pitch ?? null })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       components: components.rows.map((r: any) => ({ id: r.id, projectId: r.project_id, name: r.name, kind: r.kind })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

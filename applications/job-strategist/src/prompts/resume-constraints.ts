@@ -576,7 +576,7 @@ Canonical achievement statements grounded in implementation evidence. Preserve s
 | Internal wiki documentation (3 years, multi-team) | STRONG |
 | Case distribution automation — design + business case | IN_PROGRESS |
 | AWS Certified DevOps Engineer – Professional (2025) | STRONG |
-| Higher Diploma in Computer Science (2025) | STRONG |
+| Higher Diploma in Science in Computing (Web & Cloud Technologies) — Dublin Business School (2024) | STRONG |
 | Year-end performance rating: Meets High Bar | STRONG |
 
 ## Resume Bullet Templates by Role

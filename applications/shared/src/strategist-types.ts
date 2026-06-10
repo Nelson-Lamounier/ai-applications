@@ -178,6 +178,12 @@ export interface StructuredResumeData {
     readonly certifications: ResumeCertification[];
     readonly projects: ResumeProject[];
     readonly keyAchievements: ResumeAchievement[];
+    /**
+     * Render order of resume sections (archetype / restructure decision). Keys
+     * match the UI builder section keys. May be empty — consumers fall back to
+     * the canonical order.
+     */
+    readonly sectionOrder?: string[];
 }
 
 // =============================================================================
