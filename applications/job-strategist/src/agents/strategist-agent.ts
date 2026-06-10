@@ -80,11 +80,17 @@ const EFFECTIVE_MODEL_ID = process.env.INFERENCE_PROFILE_ARN ?? STRATEGIST_MODEL
 const STRATEGIST_MAX_TOKENS = Number(process.env.MAX_TOKENS ?? '64000');
 
 /**
- * Extended thinking budget — read from CDK-injected env var (THINKING_BUDGET_TOKENS).
+ * Extended thinking budget — read from env var (THINKING_BUDGET_TOKENS).
  * Must be < STRATEGIST_MAX_TOKENS. Bedrock carves this from the maxTokens ceiling.
- * Fallback: 16,384 (leaves ~47k tokens for text output).
+ *
+ * Fallback 8,192 (was 16,384). Extended-thinking tokens are generated serially
+ * before the output, so they dominate writer latency — halving the budget cut the
+ * writer (~80% of pipeline wall-clock) by ~2 min with no measured quality drop
+ * (matches the CDK dev allocation). The env var is NOT currently injected into the
+ * K8s Job, so this default is the live value; raise it per-env via the Job env when
+ * a higher-reasoning tier is wanted.
  */
-const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? '16384');
+const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? '8192');
 
 // =============================================================================
 // USER MESSAGE BUILDER
