@@ -27,6 +27,7 @@ import {
     log,
 } from '@bedrock/shared';
 import { loadCareerHistory, formatCareerHistory } from './career-history.js';
+import { jdRetrievalQueries, formatJdExtraction, type JdExtraction } from './jd-extractor.js';
 import { computeKbStats } from '../lib/kb-stats.js';
 import type { Pool } from 'pg';
 import type {
@@ -311,6 +312,7 @@ function buildResearchMessage(
     dsaCatalog = '',
     projectEvidenceSection = '',
     educationSection = '',
+    jdExtractionSummary = '',
 ): string {
     const sections: string[] = [
         '## Job Description',
@@ -319,6 +321,10 @@ function buildResearchMessage(
         '--- END JOB DESCRIPTION ---',
         '',
     ];
+
+    if (jdExtractionSummary) {
+        sections.push(jdExtractionSummary, '');
+    }
 
     if (resumeData) {
         sections.push(
@@ -698,6 +704,7 @@ export async function executeResearchAgent(
     pool?: Pool,
     projectEvidenceBlock = '',
     educationBlock = '',
+    jdExtraction: JdExtraction | null = null,
 ): Promise<AgentResult<StrategistResearchResult>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -725,14 +732,18 @@ export async function executeResearchAgent(
     const half = Math.min(500, Math.floor(jd.length / 2));
     const full = Math.min(1000, jd.length);
 
+    // Prefer extraction-driven queries (clean skills/tools/concepts) over raw JD
+    // substrings — boilerplate-free vectors sharpen retrieval. Fall back to the
+    // legacy substring queries when extraction is absent (fail-open).
+    const q = jdExtraction ? jdRetrievalQueries(jdExtraction) : null;
     const [factual1, factual2, factual3, factual4] = await Promise.all([
-        // Query 1 — full JD text: surfaces skill/tech matches from across the user's docs
-        querySingleRds(jd.substring(0, full), userId, store),
-        // Query 2 — JD tail + experience signal: surfaces role-relevant work history
-        querySingleRds(`professional experience skills qualifications ${jd.substring(half)}`, userId, store),
-        // Query 3 — JD-aware project query: surfaces project templates matching this role
-        querySingleRds(`portfolio project implementation achievements ${jd.substring(0, half)}`, userId, store),
-        // Query 4 — DORA metrics and outcome measurements
+        // Query 1 — skills/tech matches across the user's docs
+        querySingleRds(q ? q.skill : jd.substring(0, full), userId, store),
+        // Query 2 — experience / work-history signal
+        querySingleRds(q ? q.experience : `professional experience skills qualifications ${jd.substring(half)}`, userId, store),
+        // Query 3 — JD-aware project/portfolio query
+        querySingleRds(q ? q.project : `portfolio project implementation achievements ${jd.substring(0, half)}`, userId, store),
+        // Query 4 — DORA metrics and outcome measurements (static)
         querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
     ]);
 
@@ -786,7 +797,8 @@ export async function executeResearchAgent(
     }
 
     // 6. Build user message
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog, projectEvidenceBlock, educationBlock);
+    const jdExtractionSummary = jdExtraction ? formatJdExtraction(jdExtraction) : '';
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog, projectEvidenceBlock, educationBlock, jdExtractionSummary);
 
     // 7. Run agent
     const result = await runAgent<StrategistResearchResult>({

@@ -23,6 +23,7 @@ import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-ag
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
+import { extractJobDescription } from './agents/jd-extractor.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -314,7 +315,12 @@ export async function main(): Promise<void> {
             await loadCareerHistory(pool, ctx.userId).catch(() => []),
         );
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock);
+        // Phase 0 — extract structured signal from the JD (fail-open → null).
+        // Sharpens the Research KB queries (skills/keywords vs raw substrings) and
+        // is persisted for reuse + UI ("what we understood from your JD").
+        const jdExtraction = await extractJobDescription(ctx.jobDescription);
+
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
         const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock);
@@ -409,8 +415,9 @@ export async function main(): Promise<void> {
         // analysisXml is replaced by finalAnalysis (grounded or original on fail-open).
         // pathGrounding.ungrounded lets the UI warn on hallucinated source paths.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:  { ...analysis.data, analysisXml: finalAnalysis, pathGrounding },
-            research:  research.data,
+            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding },
+            research:     research.data,
+            jdExtraction,
         });
 
         // Store in the semantic cache (fire-and-forget, fail-open). Skip only
