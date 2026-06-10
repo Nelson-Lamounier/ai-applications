@@ -26,7 +26,7 @@ import {
     RdsDsaTopicRepository,
     log,
 } from '@bedrock/shared';
-import { loadCareerHistory, formatCareerHistory } from './career-history.js';
+import { loadCareerHistory, formatCareerHistory, type CareerEntry } from './career-history.js';
 import { jdRetrievalQueries, formatJdExtraction, type JdExtraction } from './jd-extractor.js';
 import { computeKbStats } from '../lib/kb-stats.js';
 import type { Pool } from 'pg';
@@ -68,6 +68,19 @@ const inputSanitiser = new InputSanitiser({
 
 /** Module-scoped PII scrubber — always-on redaction before retrieval, Bedrock, and logs */
 const piiScrubber = new PiiScrubber();
+
+/**
+ * Single authoritative JD sanitisation: injection-strip (InputSanitiser) then
+ * PII-scrub. Call ONCE at pipeline entry so every consumer (JD-extractor,
+ * Research, semantic cache) inherits the neutralised value — previously only
+ * Research sanitised, leaving the extractor + cache on raw input.
+ */
+export function sanitiseJobDescription(raw: string): {
+    clean: string; warnings: string[]; injectionDetected: boolean;
+} {
+    const { sanitised, warnings, injectionDetected } = inputSanitiser.sanitiseWithWarnings(raw);
+    return { clean: piiScrubber.scrub(sanitised).redacted, warnings, injectionDetected };
+}
 
 // =============================================================================
 // CONFIGURATION
@@ -705,6 +718,7 @@ export async function executeResearchAgent(
     projectEvidenceBlock = '',
     educationBlock = '',
     jdExtraction: JdExtraction | null = null,
+    careerEntries: CareerEntry[] | null = null,
 ): Promise<AgentResult<StrategistResearchResult>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -772,12 +786,16 @@ export async function executeResearchAgent(
         log('INFO', 'Resume loaded from context', { agent: 'strategist-research', profileName: resumeData.profile.name });
     }
 
-    // 4. Load structured career history (citeable evidence — distinct from resume formatting ref)
+    // 4. Structured career history (citeable evidence). Prefer entries the caller
+    //    already loaded (run-pipeline shares one load with the experience-facts
+    //    block); fall back to loading here for standalone callers.
     let careerHistorySection = '';
-    if (pool) {
+    if (careerEntries) {
+        careerHistorySection = formatCareerHistory(careerEntries);
+    } else if (pool) {
         try {
-            const careerEntries = await loadCareerHistory(pool, userId);
-            careerHistorySection = formatCareerHistory(careerEntries);
+            const loaded = await loadCareerHistory(pool, userId);
+            careerHistorySection = formatCareerHistory(loaded);
         } catch (e) {
             log('WARN', 'career history load failed (non-fatal)', { error: (e as Error).message });
         }

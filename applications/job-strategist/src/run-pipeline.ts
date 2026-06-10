@@ -15,11 +15,11 @@
  */
 import type { StrategistPipelineContext, StructuredResumeData, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, PiiScrubber, OutputSanitiser, recordInvocationToRds } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
-import { executeResearchAgent, KB_CONTEXT_SEPARATOR } from './agents/research-agent.js';
+import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
@@ -46,8 +46,6 @@ const groundingVerifier = new BedrockGroundingVerifier({
 
 /** Shared Postgres+pgvector semantic response cache (fail-open). */
 const semanticCache = PgSemanticCache.fromEnvironment();
-/** Scrubs raw PII out of the JD before it is ever used as a cache key. */
-const piiScrubber = new PiiScrubber();
 /** Redacts infra identifiers from the failure message before it reaches the client. */
 const outputSanitiser = new OutputSanitiser();
 
@@ -216,11 +214,24 @@ export async function main(): Promise<void> {
     //  - operation: hard-coded to 'analyse' — the coach pipeline is a separate
     //    Job entrypoint.
     //  - interviewStage: defaults to 'applied' for the analyse path.
+    // Single authoritative JD sanitisation (injection-strip + PII-scrub) at
+    // pipeline entry. Every consumer — JD-extractor, Research, semantic cache —
+    // inherits this neutralised value via ctx.jobDescription, instead of each
+    // re-deriving it (and the extractor/cache previously skipping injection-strip).
+    const { clean: cleanJobDescription, warnings: jdWarnings, injectionDetected } =
+        sanitiseJobDescription(env.jobDescription);
+    if (injectionDetected) {
+        log.warn({ pipelineRunId: env.pipelineRunId }, 'JD injection attempt detected — proceeding with sanitised input');
+    }
+    for (const w of jdWarnings) {
+        log.warn({ pipelineRunId: env.pipelineRunId, warning: w }, 'jd_sanitise_warning');
+    }
+
     const ctx: StrategistPipelineContext = {
         pipelineId:        env.pipelineId,
         operation:         'analyse',
         applicationSlug:   env.applicationSlug,
-        jobDescription:    env.jobDescription,
+        jobDescription:    cleanJobDescription,
         targetCompany:     env.targetCompany,
         targetRole:        env.targetRole,
         resumeId:          env.resumeId,
@@ -249,7 +260,7 @@ export async function main(): Promise<void> {
         // the cache still partitions by model and the run never hard-fails.
         let cacheTag = `:${process.env['STRATEGIST_MODEL'] ?? 'default'}`;
         try { cacheTag = await cacheTagFor(pool, env.userId); } catch { /* fail-open: model-only tag */ }
-        const jdForCache = piiScrubber.scrub(env.jobDescription).redacted;
+        const jdForCache = ctx.jobDescription; // already sanitised once at entry
         let cached: { hit: boolean; response?: unknown } = { hit: false };
         try {
             cached = (await semanticCache.get({ scope: cacheScope, kbTag: cacheTag, queryText: jdForCache })) ?? { hit: false };
@@ -299,30 +310,23 @@ export async function main(): Promise<void> {
             return;
         }
 
-        // Documented project case studies — citeable evidence shared by the
-        // Research (analysis grounding) and Strategist (resume bullets) agents.
-        // Fail-open: '' when the user has no projects, so the flow is unchanged.
-        const projectEvidenceBlock = await loadProjectEvidenceBlock(pool, ctx.userId);
+        // Independent pre-research inputs, loaded CONCURRENTLY (were sequential):
+        //  - project case studies (citeable evidence for grounding + resume bullets)
+        //  - education facts (verbatim degree/institution — no hallucinated schools)
+        //  - careerEntries: loaded ONCE here and shared by the experience-facts block
+        //    AND the Research agent's career history (was loaded twice)
+        //  - JD-extractor: structured JD signal that sharpens KB retrieval
+        // All fail-open.
+        const [projectEvidenceBlock, educationEntries, careerEntries, jdExtraction] = await Promise.all([
+            loadProjectEvidenceBlock(pool, ctx.userId),
+            loadEducation(pool, ctx.userId).catch(() => []),
+            loadCareerHistory(pool, ctx.userId).catch(() => []),
+            extractJobDescription(ctx.jobDescription),
+        ]);
+        const educationBlock      = formatEducation(educationEntries);
+        const experienceFactsBlock = formatExperienceFacts(careerEntries);
 
-        // Verbatim education facts (degree + institution) from user_career_history —
-        // shared by Research + Strategist so the generated resume reproduces them
-        // exactly instead of hallucinating an institution. Fail-open.
-        const educationBlock = formatEducation(
-            await loadEducation(pool, ctx.userId).catch(() => []),
-        );
-
-        // Verbatim experience identity (company + title + period) so the resume's
-        // experience section keeps the real job titles instead of repositioned ones.
-        const experienceFactsBlock = formatExperienceFacts(
-            await loadCareerHistory(pool, ctx.userId).catch(() => []),
-        );
-
-        // Phase 0 — extract structured signal from the JD (fail-open → null).
-        // Sharpens the Research KB queries (skills/keywords vs raw substrings) and
-        // is persisted for reuse + UI ("what we understood from your JD").
-        const jdExtraction = await extractJobDescription(ctx.jobDescription);
-
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction);
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
         const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock);
