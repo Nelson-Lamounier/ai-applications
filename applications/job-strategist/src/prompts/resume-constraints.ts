@@ -114,8 +114,8 @@ The Professional Summary must only contain concepts that either:
 | "troubleshoot", "customer", "solutions engineer", "escalation", "TSE", "technical support" | Customer-facing infrastructure narrative |
 | "internal tools", "automated frameworks", "operational excellence", "playbooks", "data center", "server operations", "workflow execution", "supply chain software", "process standardisation" | Operations engineering narrative — lead with Python/Bash automation |
 
-**Customer-facing infrastructure opener pattern (TSE / Solutions Engineer / Support roles):**
-> "Cloud infrastructure engineer with [N] years triaging enterprise [domain] escalations at AWS — debugging across [layers] for production customer environments. [Cert]. [Portfolio differentiator]."
+**Customer-facing support/TSE/Customer Engineering opener rule:**
+The professional summary's FIRST sentence MUST echo the SELECTED ARCHETYPE's lead identity (the same positioning the headline + cover letter share). For a support / customer-engineering archetype, lead with the support-and-AI differentiator (e.g. "Support engineer who builds production AI…"), NEVER an infrastructure-first identity ("Cloud infrastructure engineer…"). Then the strongest number, then the AI/portfolio hook, then the cert. When a YEARS GAP FRAMING line is provided, the opener reflects it; never state a single-role tenure that undersells.
 Rules: NEVER open with the certification name. Action-first, not title-first.
 
 **kubeadm differentiator for TSE / Kubernetes roles — MUST articulate the WHY:**
@@ -137,6 +137,9 @@ Rules: NEVER open with the certification name. Action-first, not title-first.
 
 **Every bullet describing a technical implementation MUST close with an outcome.**
 Format: "[Strong verb] [specific technology + implementation detail], [concrete outcome]"
+
+**LEAD BULLET rule — highest-impact first:**
+Within each role, after archetype-category ordering is applied, the FIRST bullet MUST be the strongest number-led / highest-impact bullet — only bullets 1–2 are read, so the quantified win leads. Never bury a metric in bullet 3 or later when a stronger number exists earlier.
 
 **Achievement bullet ordering rule — role-type driven:**
 
@@ -189,6 +192,9 @@ Technical Support / Customer Engineering roles:
 
 ## Step-by-Step: Key Projects
 
+**PROJECTS COLLAPSE rule:**
+When the selected archetype deprioritises standalone projects (support / customer-engineering archetypes — Archetype 7), DO NOT emit a standalone Projects block — instead emit ONE compact "Selected work:" line of curated, deduplicated GitHub links placed under the most relevant role. Builder/engineering archetypes (Platform, SRE, Full-Stack, AI/ML, DevOps) keep the full Projects block.
+
 1. Maximum 2 projects per resume. Select the 2 most relevant to the JD.
 2. Apply deduplication — each concept, tool, or number appears in full only once across the entire resume.
 3. Never frame a project as "addressing a lack of X" — frame as a deliberate architectural decision.
@@ -206,6 +212,7 @@ Before drafting the second project, list every concept, tool, and number already
 ## Step-by-Step: Technical Skills
 
 1. Order subsections to mirror JD priority — not alphabetically.
+   (a) The FIRST skill group MUST be the archetype's matched-domain group — for a support/customer archetype, a "Support & Troubleshooting" group (escalation management, root-cause analysis, SaaS & cloud troubleshooting, SLA / resolution-time ownership) leads. (b) Within EVERY group, list JD-matched / required terms first; infra jargon last.
 2. Each tool appears in one subsection only.
 3. Scripting/tooling subsection mandatory for TSE, SRE, Support, Solutions Engineer roles.
 4. GKE onboarding signal: when JD targets GCP and direct GCP experience is absent, add "GKE (actively onboarding)" — do not claim full GKE experience.
@@ -222,6 +229,11 @@ Output format: plain prose only. No markdown headings in the output.
 
 **"portfolio-scale" / "solo-operated" ban in cover letters:**
 Use "self-managed", "independently built and operated", or "built without a managed service abstraction" instead.
+
+## Step-by-Step: Education
+
+**EDUCATION ORDER rule:**
+Order education entries by relevance-then-recency; do NOT give an older / less-relevant degree its own emphasis line; keep every degree name VERBATIM (never rename or abbreviate).
 
 ## ATS Optimization Rules
 
