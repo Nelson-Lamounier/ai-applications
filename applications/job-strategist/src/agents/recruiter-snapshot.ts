@@ -57,7 +57,7 @@ export function computeBaselineScore(
 // Haiku forced-tool agent
 // ---------------------------------------------------------------------------
 
-const MODEL_ID = process.env['JD_EXTRACTOR_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+const MODEL_ID = process.env['RECRUITER_SNAPSHOT_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 /** Haiku tool output: a bounded score nudge + grounded selections. */
 const NudgeSchema = z.object({
@@ -148,7 +148,8 @@ export async function buildRecruiterSnapshot(
         log('INFO', 'Recruiter snapshot built', { agent: 'recruiter-snapshot', score: snapshot.score, baseline });
         return snapshot;
     } catch (e) {
-        log('WARN', 'Recruiter snapshot failed (non-fatal)', { agent: 'recruiter-snapshot', error: (e as Error).message });
+        const msg = e instanceof Error ? e.message : String(e);
+        log('WARN', 'Recruiter snapshot failed (non-fatal)', { agent: 'recruiter-snapshot', error: msg });
         return null;
     }
 }

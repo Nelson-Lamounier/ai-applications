@@ -1,6 +1,6 @@
 /** @format */
 import type { AtsCheckResult } from '../ats/ats-check.schema.js';
-import type { StrategistResearchResult } from '@bedrock/shared';
+import type { StrategistResearchResult, BasePipelineContext } from '@bedrock/shared';
 
 // ---------------------------------------------------------------------------
 // Module-scope helpers (used by both describe blocks)
@@ -66,12 +66,12 @@ describe('computeBaselineScore', () => {
 });
 
 describe('buildRecruiterSnapshot', () => {
-    const CTX = {
+    const CTX: BasePipelineContext = {
         pipelineId: 'p',
         environment: 'dev',
         cumulativeTokens: { input: 0, output: 0, thinking: 0 },
         cumulativeCostUsd: 0,
-    } as never;
+    };
 
     it('applies the LLM delta to the baseline (clamped) and passes through keywords/flags', async () => {
         mockRunAgent.mockResolvedValue({
@@ -94,6 +94,13 @@ describe('buildRecruiterSnapshot', () => {
         mockRunAgent.mockResolvedValue({ data: { scoreDelta: 10, scoreRationale: 'x', missingKeywords: [], redFlags: [] } });
         const snap = await buildRecruiterSnapshot(CTX, research(['a'], [], []), ats(4, 4)); // baseline 100
         expect(snap?.score).toBe(100);
+    });
+
+    it('clamps to 0', async () => {
+        // baseline 0 (no verified, ats 0/5), delta -10 → clamp to 0
+        mockRunAgent.mockResolvedValue({ data: { scoreDelta: -10, scoreRationale: 'x', missingKeywords: [], redFlags: [] } });
+        const snap = await buildRecruiterSnapshot(CTX, research([], ['g1'], ['AWS']), ats(0, 5));
+        expect(snap?.score).toBe(0);
     });
 
     it('returns null when atsCheck is null (fail-open)', async () => {
