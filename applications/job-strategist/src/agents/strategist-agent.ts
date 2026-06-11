@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
+import type { YearsGap } from './years-gap.js';
 
 /** Module-scoped output sanitiser (default patterns — superset of all redaction rules) */
 const outputSanitiser = new OutputSanitiser();
@@ -57,6 +58,8 @@ export interface StrategistAgentInput {
     readonly educationFacts?: string;
     /** Verbatim experience facts (company + title + period). Optional. */
     readonly experienceFacts?: string;
+    /** Non-apologetic framing line from the years-gap agent (relevant-years vs JD bar). Optional. */
+    readonly yearsGapFraming?: string;
 }
 
 // =============================================================================
@@ -112,6 +115,7 @@ function buildStrategistMessage(
     projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
+    yearsGapFraming = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -220,6 +224,11 @@ function buildStrategistMessage(
             experienceFacts,
             '--- END EXPERIENCE ---',
         );
+    }
+
+    // Years-gap framing — lead the professional summary with this true relevant-experience line.
+    if (yearsGapFraming) {
+        sections.push('', `YEARS GAP FRAMING (lead the summary with this true relevant-experience framing): ${yearsGapFraming}`);
     }
 
     // Verified education — exact degree + institution from the user's résumé.
@@ -624,7 +633,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.yearsGapFraming);
     }
 
     /**
@@ -745,6 +754,7 @@ export async function executeStrategistAgent(
     projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
+    yearsGap: YearsGap | null = null,
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, yearsGapFraming: yearsGap?.framingLine }, ctx);
 }
