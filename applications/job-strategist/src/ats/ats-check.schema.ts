@@ -5,6 +5,7 @@ export const AtsKeywordCoverageSchema = z.object({
     term:     z.string(),
     present:  z.boolean(),
     grounded: z.boolean(),
+    tier:     z.enum(['literal', 'normalized', 'ontology', 'embedding', 'none']).default('none'),
 });
 
 export const AtsCheckResultSchema = z.object({

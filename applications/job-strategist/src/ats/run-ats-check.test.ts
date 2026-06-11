@@ -2,25 +2,43 @@
 import type { S3Client } from '@aws-sdk/client-s3';
 import type { StrategistResearchResult, StructuredResumeData } from '@bedrock/shared';
 import type { Pool } from 'pg';
+import type { JdExtraction } from '../agents/jd-extractor.js';
 
 import { renderCheckAndStoreAts, type AtsLogger } from './run-ats-check.js';
 
 const RESUME: StructuredResumeData = {
     profile: { name: 'Jane Doe', title: 'Platform Engineer', email: 'jane@example.com', location: 'Berlin' },
     summary: 'Platform engineer.',
-    experience: [{ company: 'Acme', title: 'SRE', period: '2022–2026', highlights: ['Ran Kubernetes on AWS.'] }],
+    // "root-cause analysis" → after normalization → "root cause analysis" which matches
+    // the tokens of the JD phrase "root cause analysis". The resume also contains
+    // "critical thinking" to make the full-phrase normalized match work.
+    experience: [{ company: 'Acme', title: 'SRE', period: '2022–2026', highlights: ['Ran Kubernetes on AWS. Critical thinking and root-cause analysis of failures.'] }],
     skills: [{ category: 'Infra', skills: ['Kubernetes', 'AWS'] }],
     education: [{ degree: 'BSc CS', institution: 'TU Berlin', period: '2014–2018' }],
     certifications: [], projects: [], keyAchievements: [],
 };
 
-// Only the fields collectJdMustHaves/collectGroundedTerms read are needed.
+// Only the fields collectJdMustHavesV2/collectGroundedTerms read are needed.
 const RESEARCH = {
     hardRequirements: [{ skill: 'Kubernetes', context: '' }],
     technologyInventory: { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
     verifiedMatches: [{ skill: 'Kubernetes', sourceCitation: '', depth: 'deep', recency: '' }],
     partialMatches: [],
 } as unknown as StrategistResearchResult;
+
+// JD extraction with an atomic phrase that needs normalized matching
+// ("Critical thinking and root cause analysis" -> resume has "root-cause analysis")
+// and a genuine gap ("ChatGPT").
+const JD_EXTRACTION: JdExtraction = {
+    requiredSkills:    ['Kubernetes'],
+    preferredSkills:   [],
+    tools:             ['ChatGPT'],
+    concepts:          ['Critical thinking and root cause analysis'],
+    responsibilities:  [],
+    domain:            '',
+    seniority:         '',
+    retrievalKeywords: [],
+};
 
 const silentLog: AtsLogger = { info: () => undefined, warn: () => undefined };
 
@@ -61,5 +79,39 @@ describe('renderCheckAndStoreAts', () => {
 
         expect(check.machineReadable).toBe(true);
         expect(put).not.toHaveBeenCalled();
+    });
+
+    it('matches a normalized phrase and marks a genuine gap as absent (tier none) — null embedder', async () => {
+        const put = jest.fn().mockResolvedValue({});
+        const s3 = { send: put } as unknown as S3Client;
+        const query = jest.fn().mockResolvedValue({ rowCount: 1 });
+        const release = jest.fn();
+        const connect = jest.fn().mockResolvedValue({ query, release });
+        const pool = { connect } as unknown as Pool;
+
+        const check = await renderCheckAndStoreAts({
+            s3, pool, bucket: 'assets-bucket', resumeId: 'r-2', userId: 'u-1',
+            resume: RESUME, research: RESEARCH, log: silentLog, correlationId: 'p-2',
+            onOutcome: () => undefined,
+            jdExtraction: JD_EXTRACTION,
+            familyVocab:  [],
+            embedder:     null,
+        });
+
+        // "Critical thinking and root cause analysis" → resume has "root-cause analysis"
+        // After normalization the phrase reduces to tokens that should match.
+        const rootCause = check.jdKeywordCoverage.find(
+            (c) => c.term === 'Critical thinking and root cause analysis',
+        );
+        expect(rootCause).toBeDefined();
+        // normalized or literal tier — either counts as present
+        expect(rootCause?.present).toBe(true);
+        expect(rootCause?.tier).not.toBe('none');
+
+        // "ChatGPT" is not in the resume → absent, tier none (no embedder).
+        const chatGpt = check.jdKeywordCoverage.find((c) => c.term === 'ChatGPT');
+        expect(chatGpt).toBeDefined();
+        expect(chatGpt?.present).toBe(false);
+        expect(chatGpt?.tier).toBe('none');
     });
 });
