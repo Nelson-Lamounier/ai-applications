@@ -30,4 +30,19 @@ describe('matchTier1', () => {
         expect(matchTier1('ChatGPT', resume)).toBe(false);
         expect(matchTier1('OpenAI API', resume)).toBe(false);
     });
+
+    it('honesty: short atomic term is word-bounded (Go does NOT match "going")', () => {
+        expect(matchTier1('Go', 'ongoing background work in a good team')).toBe(false);
+        expect(matchTier1('Go', 'wrote services in Go and Python')).toBe(true);
+        expect(matchTier1('API', 'rapid deployment pipeline')).toBe(false);
+    });
+
+    it('honesty: 2-char atomic skill matches its own word (ML)', () => {
+        expect(matchTier1('ML', 'built ML inference pipelines')).toBe(true);
+    });
+
+    it('honesty: soft-skill content word is required, not stripped (project management)', () => {
+        expect(matchTier1('project management', 'shipped a side project last year')).toBe(false);
+        expect(matchTier1('project management', 'project management of a 5-person team')).toBe(true);
+    });
 });
