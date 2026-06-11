@@ -1,4 +1,5 @@
 /** @format */
+import type { CompanyType } from '@bedrock/shared';
 import type { ResolvedRole } from './resolve-role-families.js';
 
 const HEADER = [
@@ -9,7 +10,7 @@ const HEADER = [
 ].join('\n');
 
 /** Format matched role families into a grounding block (sibling of projectEvidenceBlock). */
-export function formatRoleEvidence(resolved: ResolvedRole[]): string {
+export function formatRoleEvidence(resolved: ResolvedRole[], companyFraming: Map<CompanyType, string> = new Map()): string {
     const matched = resolved.filter((r) => r.family !== null);
     if (matched.length === 0) return '';
     const lines: string[] = [HEADER];
@@ -21,7 +22,8 @@ export function formatRoleEvidence(resolved: ResolvedRole[]): string {
             `  transferable: ${f.transferableSkills.join(', ')}`,
             `  vocabulary: ${f.vocabulary.join(', ')}`,
         );
-        if (f.industryNotes) lines.push(`  note: ${f.industryNotes}`);
+        const note = (r.companyType && companyFraming.get(r.companyType)) ?? f.industryNotes;
+        if (note) lines.push(`  note: ${note}`);
     }
     return lines.join('\n');
 }

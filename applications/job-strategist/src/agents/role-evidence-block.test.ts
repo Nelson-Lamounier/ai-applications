@@ -1,5 +1,6 @@
 /** @format */
 import { formatRoleEvidence } from './role-evidence-block.js';
+import type { CompanyType } from '@bedrock/shared';
 import type { ResolvedRole } from './resolve-role-families.js';
 
 const resolved: ResolvedRole[] = [
@@ -21,5 +22,21 @@ describe('formatRoleEvidence', () => {
     it('skips entries with no family and returns "" when none matched', () => {
         expect(formatRoleEvidence([{ title: 'X', company: 'Y', matchVia: 'none', family: null }])).toBe('');
         expect(formatRoleEvidence(resolved)).not.toContain('Mystery Role');
+    });
+    it('company-type framing overrides familiy industryNotes when a matching framing entry exists', () => {
+        const infraRole: ResolvedRole = {
+            title: 'Cloud Support Engineer', company: 'AWS', matchVia: 'classifier',
+            companyType: 'infra_provider' as CompanyType,
+            family: { familyKey: 'technical-support', displayName: 'Technical Support', roleClass: 'customer_facing',
+                      canonicalResponsibilities: ['Triage'], vocabulary: ['SLA'], transferableSkills: ['empathy'], industryNotes: 'old note' },
+        };
+        const framing = new Map<CompanyType, string>([['infra_provider', 'like SaaS']]);
+        const block = formatRoleEvidence([infraRole], framing);
+        expect(block).toContain('note: like SaaS');
+        expect(block).not.toContain('old note');
+    });
+    it('falls back to industryNotes when companyType is not in the framing map', () => {
+        const block = formatRoleEvidence(resolved, new Map());
+        expect(block).toContain('AWS support ≈ SaaS support.');
     });
 });
