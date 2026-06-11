@@ -22,6 +22,11 @@ const W_COVERAGE = 0.5;
 const W_VERIFIED = 0.3;
 const W_HARDREQ  = 0.2;
 
+// Weights must sum to 1 or the score can leave [0,100].
+if (W_COVERAGE + W_VERIFIED + W_HARDREQ !== 1) {
+    throw new Error('recruiter-snapshot: baseline score weights must sum to 1');
+}
+
 /**
  * Deterministic 0–100 baseline from real signals: ATS keyword coverage, the
  * verified-vs-gap ratio, and how many hard requirements are evidenced.

@@ -12,10 +12,10 @@ function ats(present: number, total: number): AtsCheckResult {
 }
 function research(verified: string[], gaps: string[], hardReqs: string[]): Pick<StrategistResearchResult, 'verifiedMatches' | 'gaps' | 'hardRequirements'> {
     return {
-        verifiedMatches: verified.map((skill) => ({ skill, sourceCitation: '', depth: 'deep', recency: '' })),
-        gaps:            gaps.map((skill) => ({ skill, gapType: 'missing', impactSeverity: 'high', disqualifyingAssessment: '' })),
+        verifiedMatches: verified.map((skill) => ({ skill, sourceCitation: '', depth: 'working' as const, recency: '' })),
+        gaps:            gaps.map((skill) => ({ skill, gapType: 'hard' as const, impactSeverity: 'significant' as const, disqualifyingAssessment: '' })),
         hardRequirements: hardReqs.map((skill) => ({ skill, context: '' })),
-    } as unknown as Pick<StrategistResearchResult, 'verifiedMatches' | 'gaps' | 'hardRequirements'>;
+    };
 }
 
 describe('computeBaselineScore', () => {
@@ -35,5 +35,12 @@ describe('computeBaselineScore', () => {
     it('returns 0 when nothing matches', () => {
         const r = research([], ['g1'], ['AWS']);
         expect(computeBaselineScore(r, ats(0, 5))).toBe(0);
+    });
+
+    it('treats empty keyword coverage list as 0% coverage', () => {
+        const r = research(['AWS'], [], []);
+        // cov.length===0 → keywordCoverage=0 ; verified 1/1=1 ; hardReqHit 1
+        // 100*(0.5*0 + 0.3*1 + 0.2*1) = 50
+        expect(computeBaselineScore(r, ats(0, 0))).toBe(50);
     });
 });
