@@ -9,6 +9,7 @@ import type { Pool } from 'pg';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
 import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
+import { withUserRls } from './rls.js';
 
 /**
  * Update a pipeline_runs row's status (and optional error message).
@@ -135,14 +136,24 @@ export async function persistTailoredResume(
     const resumeId = args.pipelineId || randomUUID();
     const label    = `Tailored — ${args.targetRole}${args.archetype ? ` (${args.archetype})` : ''}`;
 
-    await pool.query(
-        `INSERT INTO resumes (id, user_id, job_application_id, content_json, label, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (id) DO UPDATE SET
-             content_json = EXCLUDED.content_json,
-             label        = EXCLUDED.label,
-             generated_at = NOW()`,
-        [resumeId, args.userId, args.applicationId, JSON.stringify(validated.data), label, false],
-    );
+    // resumes is RLS-protected (resumes_isolation). Run the upsert inside the
+    // user's RLS context — see withUserRls. The INSERT previously worked only
+    // because a pooled connection happened to carry the right context; making it
+    // explicit removes that fragility (and the dependence that left the ATS
+    // UPDATE failing on a stale/mismatched context).
+    await withUserRls(pool, args.userId, async (client) => {
+        const res = await client.query(
+            `INSERT INTO resumes (id, user_id, job_application_id, content_json, label, is_active)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (id) DO UPDATE SET
+                 content_json = EXCLUDED.content_json,
+                 label        = EXCLUDED.label,
+                 generated_at = NOW()`,
+            [resumeId, args.userId, args.applicationId, JSON.stringify(validated.data), label, false],
+        );
+        if (res.rowCount === 0) {
+            throw new Error(`persistTailoredResume: upsert affected 0 rows for resume ${resumeId}`);
+        }
+    });
     return { resumeId };
 }

@@ -36,6 +36,7 @@ import {
 } from './lib/pipeline-runs.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
+import type { AtsCheckResult } from './ats/ats-check.schema.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -388,8 +389,9 @@ export async function main(): Promise<void> {
         // Renders the AI-authored resume to a text-selectable PDF, proves it
         // parses, and stores the canonical PDF + check. Delegated to a helper
         // that never throws (errors → 'unverified', never 'passed').
+        let atsCheck: AtsCheckResult | null = null;
         if (persisted && tailoredResumeData) {
-            await renderCheckAndStoreAts({
+            atsCheck = await renderCheckAndStoreAts({
                 s3, pool,
                 bucket:        process.env['ASSETS_BUCKET'] ?? '',
                 resumeId:      persisted.resumeId,
@@ -420,8 +422,11 @@ export async function main(): Promise<void> {
         // and a downstream coach K8s Job can re-hydrate without re-running.
         // analysisXml is replaced by finalAnalysis (grounded or original on fail-open).
         // pathGrounding.ungrounded lets the UI warn on hallucinated source paths.
+        // atsCheck is stashed here as well as on resumes.ats_check_json so the
+        // value is never lost if the RLS-scoped resumes write fails — admin-api
+        // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding },
+            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding, atsCheck },
             research:     research.data,
             jdExtraction,
         });

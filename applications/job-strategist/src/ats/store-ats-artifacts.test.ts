@@ -11,12 +11,21 @@ const CHECK: AtsCheckResult = {
     jdKeywordCoverage: [], status: 'passed', passed: true, issues: [],
 };
 
+/** Mock pool whose connect() returns a client; the UPDATE resolves rowCount. */
+function mockPool(updateRowCount = 1) {
+    const release = jest.fn();
+    const query = jest.fn().mockImplementation((sql: string) =>
+        Promise.resolve(/UPDATE resumes/i.test(sql) ? { rowCount: updateRowCount } : { rowCount: 0 }),
+    );
+    const connect = jest.fn().mockResolvedValue({ query, release });
+    return { pool: { connect } as unknown as Pool, connect, query, release };
+}
+
 describe('storeAtsArtifacts', () => {
-    it('uploads the PDF and updates the resumes row idempotently', async () => {
+    it('uploads the PDF and updates the resumes row inside the RLS context', async () => {
         const put = jest.fn().mockResolvedValue({});
         const s3 = { send: put } as unknown as S3Client;
-        const query = jest.fn().mockResolvedValue({ rowCount: 1 });
-        const pool = { query } as unknown as Pool;
+        const { pool, connect, query, release } = mockPool(1);
 
         const key = await storeAtsArtifacts({
             s3, pool, bucket: 'assets-bucket', resumeId: 'r-1', userId: 'u-1',
@@ -25,9 +34,31 @@ describe('storeAtsArtifacts', () => {
 
         expect(key).toBe('resumes/u-1/r-1.pdf');
         expect(put).toHaveBeenCalledTimes(1);
-        expect(query).toHaveBeenCalledTimes(1);
-        const sql = query.mock.calls[0][0] as string;
-        expect(sql).toMatch(/UPDATE resumes/i);
-        expect(query.mock.calls[0][1]).toEqual(['resumes/u-1/r-1.pdf', JSON.stringify(CHECK), 'r-1']);
+        expect(connect).toHaveBeenCalledTimes(1);
+        // RLS context is set in the SAME transaction as the UPDATE.
+        expect(query.mock.calls.map((c) => c[0])).toEqual(
+            expect.arrayContaining([
+                'BEGIN',
+                expect.stringMatching(/set_config\('app\.current_user_id'/),
+                expect.stringMatching(/UPDATE resumes/i),
+                'COMMIT',
+            ]),
+        );
+        const updateCall = query.mock.calls.find((c) => /UPDATE resumes/i.test(c[0] as string));
+        expect(updateCall?.[1]).toEqual(['resumes/u-1/r-1.pdf', JSON.stringify(CHECK), 'r-1']);
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws (not silently) when the UPDATE matches 0 rows — RLS/id mismatch', async () => {
+        const s3 = { send: jest.fn().mockResolvedValue({}) } as unknown as S3Client;
+        const { pool, release } = mockPool(0);
+
+        await expect(
+            storeAtsArtifacts({
+                s3, pool, bucket: 'assets-bucket', resumeId: 'r-1', userId: 'u-1',
+                pdf: Buffer.from('%PDF-1.7 test'), check: CHECK,
+            }),
+        ).rejects.toThrow(/0 rows/i);
+        expect(release).toHaveBeenCalledTimes(1); // connection returned even on failure
     });
 });
