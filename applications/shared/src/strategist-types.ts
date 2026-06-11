@@ -446,9 +446,9 @@ export interface StrategistResearchResult {
 // =============================================================================
 
 /**
- * Valid archetype IDs — maps to the 6 archetypes in the wiki role-archetypes page.
+ * Valid archetype IDs — maps to the 7 archetypes in the wiki role-archetypes page.
  */
-export type ArchetypeId = 1 | 2 | 3 | 4 | 5 | 6;
+export type ArchetypeId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /**
  * Explicit archetype selection output from Strategist Phase 0.
@@ -564,6 +564,28 @@ export interface ResumeSuggestions {
 }
 
 // =============================================================================
+// COVER LETTER
+// =============================================================================
+
+/** Signoff block of a structured cover letter. */
+export interface CoverLetterSignoff {
+    readonly name: string;
+    readonly email: string;
+    readonly linkedin: string;
+    readonly github: string;
+}
+
+/**
+ * Structured cover letter emitted by the Strategist persona.
+ * Plain text only — the UI and PDF renderer own all formatting.
+ */
+export interface CoverLetter {
+    readonly greeting: string;
+    readonly paragraphs: readonly string[];
+    readonly signoff: CoverLetterSignoff;
+}
+
+// =============================================================================
 // STRATEGIST AGENT OUTPUT
 // =============================================================================
 
@@ -587,8 +609,8 @@ export interface StrategistAnalysisResult {
         readonly applicationRecommendation: ApplicationRecommendation;
     };
 
-    /** Generated cover letter (extracted from XML, null when not requested) */
-    readonly coverLetter: string | null;
+    /** Generated cover letter (structured object, null when not requested) */
+    readonly coverLetter: CoverLetter | null;
 
     /**
      * Explicit archetype selection from Phase 0.

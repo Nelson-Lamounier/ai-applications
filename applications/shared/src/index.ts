@@ -166,6 +166,10 @@ export type {
     ArchetypeId,
     RoleArchetypeSelection,
 
+    // Cover letter
+    CoverLetterSignoff,
+    CoverLetter,
+
     // Strategist Agent
     ResumeAdditionSuggestion,
     ResumeReframeSuggestion,
@@ -524,3 +528,7 @@ export type {
 export * from './stage-prep/index.js';
 export { RdsStagePrepOntologyRepository } from './rds/implementations/RdsStagePrepOntologyRepository.js';
 export { RdsSystemDesignConcernRepository } from './rds/implementations/RdsSystemDesignConcernRepository.js';
+
+// ─── Role Ontology ────────────────────────────────────────────────────────────
+export { RoleOntologyRepository } from './rds/implementations/RoleOntologyRepository.js';
+export type { RoleFamily, RoleClass, RoleCandidateType, RoleLearningCandidate, NewFamily, CompanyType } from './rds/types/role-ontology.js';

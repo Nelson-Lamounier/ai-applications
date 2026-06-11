@@ -27,6 +27,7 @@ import {
 import type {
     AgentConfig,
     AgentResult,
+    CoverLetter,
     ResumeAdditionSuggestion,
     ResumeReframeSuggestion,
     ResumeEslCorrection,
@@ -58,6 +59,8 @@ export interface StrategistAgentInput {
     readonly educationFacts?: string;
     /** Verbatim experience facts (company + title + period). Optional. */
     readonly experienceFacts?: string;
+    /** Role-ontology grounding block (target-role vocabulary). Optional. */
+    readonly roleEvidence?: string;
     /** Non-apologetic framing line from the years-gap agent (relevant-years vs JD bar). Optional. */
     readonly yearsGapFraming?: string;
 }
@@ -115,6 +118,7 @@ function buildStrategistMessage(
     projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
+    roleEvidence = '',
     yearsGapFraming = '',
 ): string {
     const sections: string[] = [
@@ -259,6 +263,10 @@ function buildStrategistMessage(
         );
     }
 
+    if (roleEvidence) {
+        sections.push('', roleEvidence);
+    }
+
     // Interview stage context and closing instruction
     const shouldIncludeCoverLetter = ctx.includeCoverLetter ?? true;
     const coverLetterDirective = shouldIncludeCoverLetter
@@ -309,16 +317,28 @@ function extractMetadataFromXml(xml: string): StrategistAnalysisResult['metadata
     };
 }
 
+const CoverLetterSchema = z.object({
+    greeting:   z.string(),
+    paragraphs: z.array(z.string()),
+    signoff:    z.object({ name: z.string(), email: z.string(), linkedin: z.string(), github: z.string() }),
+});
+
 /**
- * Extract the cover letter from the XML analysis.
+ * Extract + parse the cover letter JSON from the CDATA block.
+ * Returns null on absent or invalid payload (fail-open).
  *
  * @param xml - Raw XML analysis output
- * @returns Cover letter text
+ * @returns Parsed CoverLetter object, or null
  */
-function extractCoverLetter(xml: string): string {
-    const coverLetterRegex = /<cover_letter><!\[CDATA\[(.*?)\]\]><\/cover_letter>/s;
-    const result = coverLetterRegex.exec(xml);
-    return result?.[1]?.trim() ?? '';
+export function extractCoverLetter(xml: string): CoverLetter | null {
+    const m = /<cover_letter><!\[CDATA\[([\s\S]*?)\]\]><\/cover_letter>/.exec(xml);
+    if (!m) return null;
+    try {
+        const parsed = CoverLetterSchema.safeParse(JSON.parse(m[1].trim()));
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -445,7 +465,7 @@ function extractCdataValue(content: string, tag: string): string {
  * @param xml - Raw XML analysis output
  * @returns Parsed archetype selection, or null
  */
-function extractArchetypeSelection(xml: string): RoleArchetypeSelection | null {
+export function extractArchetypeSelection(xml: string): RoleArchetypeSelection | null {
     const sectionPattern = /<phase_0_archetype_selection>([\s\S]*?)<\/phase_0_archetype_selection>/;
     const sectionMatch = xml.match(sectionPattern);
     if (!sectionMatch) return null;
@@ -456,7 +476,7 @@ function extractArchetypeSelection(xml: string): RoleArchetypeSelection | null {
     const excludedBlock = content.match(/<excluded_content_categories>([\s\S]*?)<\/excluded_content_categories>/)?.[1] ?? '';
 
     const archetypeIdRaw = parseInt(extractTagValue(content, 'archetype_id'), 10);
-    const archetypeId: ArchetypeId = ([1, 2, 3, 4, 5, 6].includes(archetypeIdRaw)
+    const archetypeId: ArchetypeId = ([1, 2, 3, 4, 5, 6, 7].includes(archetypeIdRaw)
         ? archetypeIdRaw
         : 1) as ArchetypeId;
 
@@ -633,7 +653,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.yearsGapFraming);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming);
     }
 
     /**
@@ -754,7 +774,8 @@ export async function executeStrategistAgent(
     projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
+    roleEvidenceBlock = '',
     yearsGap: YearsGap | null = null,
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, yearsGapFraming: yearsGap?.framingLine }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine }, ctx);
 }
