@@ -326,6 +326,7 @@ function buildResearchMessage(
     projectEvidenceSection = '',
     educationSection = '',
     jdExtractionSummary = '',
+    roleEvidenceSection = '',
 ): string {
     const sections: string[] = [
         '## Job Description',
@@ -398,6 +399,10 @@ function buildResearchMessage(
             projectEvidenceSection,
             '',
         );
+    }
+
+    if (roleEvidenceSection) {
+        sections.push(roleEvidenceSection, '');
     }
 
     if (careerHistorySection) {
@@ -719,6 +724,7 @@ export async function executeResearchAgent(
     educationBlock = '',
     jdExtraction: JdExtraction | null = null,
     careerEntries: CareerEntry[] | null = null,
+    roleEvidenceBlock = '',
 ): Promise<AgentResult<StrategistResearchResult>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -816,7 +822,7 @@ export async function executeResearchAgent(
 
     // 6. Build user message
     const jdExtractionSummary = jdExtraction ? formatJdExtraction(jdExtraction) : '';
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog, projectEvidenceBlock, educationBlock, jdExtractionSummary);
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog, projectEvidenceBlock, educationBlock, jdExtractionSummary, roleEvidenceBlock);
 
     // 7. Run agent
     const result = await runAgent<StrategistResearchResult>({

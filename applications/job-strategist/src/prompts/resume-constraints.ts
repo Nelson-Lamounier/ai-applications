@@ -166,6 +166,14 @@ Operations Engineering / Internal Tooling roles:
 5. Serverless, frontend, full-stack bullets EXCLUDED ENTIRELY
 6. CDK bullets de-prioritised — supporting context only
 
+Technical Support / Customer Engineering roles:
+1. Customer-impact and reliability bullets first (escalation handling, knowledge-base documentation, resolution timelines)
+2. Production systems proof second (Kubernetes operational depth, self-healing, distributed tracing)
+3. AI and automation third — demonstrates engineering depth beyond ticket-closing
+4. IaC and CI/CD fourth — supporting context
+5. Frontend, React, eCommerce bullets EXCLUDED ENTIRELY
+6. TRANSLATE transferable skills from ROLE EVIDENCE into support vocabulary when present
+
 **Key Achievements section hard constraints:**
 - Maximum 4 bullets. Select the 4 most relevant to JD.
 - Maximum 100 words total across all 4 bullets. Count before outputting.
@@ -488,6 +496,32 @@ Example opener:
 
 **Gaps to acknowledge:** solo-operated, automation system pending security approval.
 
+## Archetype 7: Technical Support / Customer Engineering
+
+**Triggered when JD contains:** "support", "customer service", "SLA", "on-call", "escalations", "queue", "ticketing", "customer success", "technical account", "education on the use of our platforms"
+
+This archetype takes priority over SRE and Operations when the role is customer-facing support or technical account work.
+
+**Lead identity:** Support engineer who ships production systems — applies the same root-cause methodology to customer escalations as to internal incidents, backed by real Kubernetes and AWS production depth.
+
+**Lead with (priority order):**
+1. Customer-impact and reliability bullets — incident resolution, escalation handling, knowledge-base documentation
+2. Kubernetes operational depth — demonstrates the production systems credibility behind customer-facing work
+3. AI and automation proof — self-healing reactive agent, observability pipelines, prompt caching
+4. Work history beneath the above — production depth validates the support framing
+
+**sectionOrder:** summary, experience, projects, education, skills, certifications
+(experience leads; projects surface production credibility before skills)
+
+**Exclude entirely:** Detailed CDK assertions counts, Terraform references, frontend/React bullets, eCommerce metrics
+**Skills lead:** Customer-facing: AWS troubleshooting, Kubernetes, distributed tracing, incident triage
+**Summary framing:** Lead with customer-impact and reliability; close with a production-systems metric that demonstrates the engineering depth behind the support role.
+
+Example opener:
+> "Platform support engineer with 3+ years resolving AWS production escalations across IAM, compute, and networking — systematically debugging distributed systems, authoring operational runbooks adopted team-wide, and building self-healing Kubernetes automation. AWS Certified DevOps Engineer – Professional."
+
+**Gaps to acknowledge:** solo-operated, no formal SLA environment, portfolio-scale traffic.
+
 ## Archetype Selector
 
 | JD Signal | Archetype |
@@ -498,6 +532,7 @@ Example opener:
 | "LLM", "AI", "ML", "Bedrock", "RAG", "agent" | AI / ML |
 | "CI/CD", "DevOps", "pipeline", "cloud native" | DevOps / Cloud |
 | "internal tools", "automated frameworks", "operational excellence", "playbooks", "data center", "server operations", "workflow execution", "supply chain software", "process standardisation" | Operations Engineering / Internal Tooling |
+| "support", "customer service", "SLA", "on-call", "escalations", "queue", "ticketing", "customer success", "technical account", "education on the use of our platforms" | Technical Support / Customer Engineering |
 | "staff", "principal", "architect" | Mix archetypes equally — show breadth |
 
 **Google-affiliated disambiguation:**
@@ -505,6 +540,7 @@ Example opener:
 - "SRE", "Production Engineer", "reliability" → Archetype 2
 - "Software Engineer, Cloud AI", "LLM", "Gemini" → Archetype 4
 - "Software Engineer, Full Stack" with React/TypeScript → Archetype 3
+- "Technical Solutions Engineer", "Customer Engineer", "Support Engineer", "Technical Account Manager" → Archetype 7
 
 
 ================================================================================

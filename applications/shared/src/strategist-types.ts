@@ -446,9 +446,9 @@ export interface StrategistResearchResult {
 // =============================================================================
 
 /**
- * Valid archetype IDs — maps to the 6 archetypes in the wiki role-archetypes page.
+ * Valid archetype IDs — maps to the 7 archetypes in the wiki role-archetypes page.
  */
-export type ArchetypeId = 1 | 2 | 3 | 4 | 5 | 6;
+export type ArchetypeId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /**
  * Explicit archetype selection output from Strategist Phase 0.
