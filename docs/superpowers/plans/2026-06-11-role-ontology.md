@@ -880,8 +880,262 @@ PR `feat/role-ontology` → `develop`, title `feat(strategist): self-improving r
 
 ---
 
+## Task 8: Migration 073 — scalability schema (A+C) + seed expansion (B)
+
+**Files:** Create `applications/platform-rds-bootstrap/migrations/073_role_ontology_scale.sql`
+
+- [ ] **Step 1: Write the migration** (idempotent, no BEGIN/COMMIT, like 072):
+
+```sql
+-- =============================================================================
+-- Migration 073 — role_ontology scalability: new-family votes, company-type
+-- overlay, and curated-seed expansion (to ~20 families). Idempotent.
+-- =============================================================================
+
+-- A: allow 'family' learning votes (extend the CHECK; DROP+ADD is idempotent)
+ALTER TABLE role_learning_candidates
+  DROP CONSTRAINT IF EXISTS role_learning_candidates_candidate_type_check,
+  ADD  CONSTRAINT role_learning_candidates_candidate_type_check
+       CHECK (candidate_type IN ('alias','vocabulary','transferable_skill','family'));
+
+-- C: company-type enum + framing overlay
+DO $$ BEGIN
+  CREATE TYPE company_type_enum AS ENUM ('saas','infra_provider','fintech','hardware','agency','enterprise','marketplace','other');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS company_type_framing (
+  company_type company_type_enum PRIMARY KEY,
+  framing_note TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO company_type_framing (company_type, framing_note) VALUES
+('saas',           'Subscription product — frame work around customers, subscriptions, churn/expansion, and a customer-success motion.'),
+('infra_provider', 'Operates like SaaS — paying customers, subscriptions, account health; frame infrastructure-provider work as customer-facing SaaS.'),
+('fintech',        'Regulated financial product — frame work around compliance, reliability, security, and customer trust.'),
+('hardware',       'Hardware/device company — frame support around RMA, firmware, supply chain, and field reliability.'),
+('agency',         'Services/agency — frame work around client delivery, multiple accounts, and billable outcomes.'),
+('enterprise',     'Large enterprise — frame work around scale, governance, stakeholder management, and process.'),
+('marketplace',    'Two-sided marketplace — frame work around supply/demand, trust & safety, and growth loops.'),
+('other',          '')
+ON CONFLICT (company_type) DO NOTHING;
+
+-- C: move the AWS-specific note out of the family (now company-type-driven)
+UPDATE role_ontology SET industry_notes = '' WHERE family_key = 'technical-support';
+
+-- B: expand the curated seed (~15 more families)
+INSERT INTO role_ontology (family_key, display_name, role_class, canonical_responsibilities, vocabulary, transferable_skills, industry_notes, source) VALUES
+('product-management','Product Manager','hybrid',
+ ARRAY['Define product strategy and roadmap','Prioritise based on user + business value','Coordinate engineering, design, and GTM','Measure outcomes with metrics'],
+ ARRAY['roadmap','prioritisation','user research','metrics','stakeholder','OKRs','discovery','go-to-market'],
+ ARRAY['prioritisation','communication','data-driven decisions','cross-functional leadership'],'', 'seed-073'),
+('data-science','Data Scientist','builder',
+ ARRAY['Frame business problems as data problems','Build models and run experiments','Communicate insights to stakeholders'],
+ ARRAY['statistics','machine learning','experimentation','A/B testing','Python','SQL','modelling','inference'],
+ ARRAY['analytical thinking','experimentation','communication','statistical rigour'],'', 'seed-073'),
+('ml-engineering','Machine Learning Engineer','builder',
+ ARRAY['Productionise ML models and pipelines','Serve and monitor models at scale','Build training/inference infrastructure'],
+ ARRAY['MLOps','model serving','feature store','training pipeline','inference','GPU','LLM','RAG','vector'],
+ ARRAY['systems design','ML fundamentals','automation','debugging'],'', 'seed-073'),
+('data-engineering','Data Engineer','builder',
+ ARRAY['Build and operate data pipelines','Model warehouses and own data quality','Enable analytics and ML on reliable data'],
+ ARRAY['ETL','ELT','warehouse','pipeline','dbt','Airflow','streaming','data quality','SQL'],
+ ARRAY['data modelling','pipeline reliability','SQL','systems thinking'],'', 'seed-073'),
+('security-engineering','Security Engineer','ops',
+ ARRAY['Identify and remediate security risks','Run incident response and threat detection','Build security tooling and guardrails'],
+ ARRAY['threat detection','incident response','IAM','vulnerability','SIEM','zero trust','compliance','encryption'],
+ ARRAY['risk analysis','incident response','attention to detail','systems thinking'],'', 'seed-073'),
+('solutions-engineering','Solutions / Sales Engineer','customer_facing',
+ ARRAY['Partner with sales on technical wins','Run demos, POCs, and architecture sessions','Translate customer needs to product + back'],
+ ARRAY['POC','demo','pre-sales','architecture','customer requirements','technical win','cross-functional','enablement'],
+ ARRAY['technical communication','customer empathy','stakeholder management','problem framing'],'', 'seed-073'),
+('ux-design','Product / UX Designer','hybrid',
+ ARRAY['Design user flows and interfaces','Run user research and usability testing','Partner with product + engineering'],
+ ARRAY['user research','wireframe','prototype','usability','design system','accessibility','Figma'],
+ ARRAY['user empathy','visual communication','research','cross-functional collaboration'],'', 'seed-073'),
+('devrel','Developer Relations / Advocate','customer_facing',
+ ARRAY['Educate and grow a developer community','Build samples, docs, and talks','Feed developer feedback to product'],
+ ARRAY['community','documentation','developer experience','content','enablement','advocacy','API'],
+ ARRAY['technical communication','community building','empathy','content creation'],'', 'seed-073'),
+('engineering-management','Engineering Manager','hybrid',
+ ARRAY['Lead and grow an engineering team','Own delivery and technical direction','Coach, hire, and manage performance'],
+ ARRAY['people management','delivery','hiring','coaching','roadmap','1:1s','team health'],
+ ARRAY['leadership','communication','coaching','prioritisation'],'', 'seed-073'),
+('program-management','Technical Program Manager','hybrid',
+ ARRAY['Drive cross-team programs to delivery','Manage dependencies, risks, and timelines','Communicate status to stakeholders'],
+ ARRAY['program management','dependencies','risk','timeline','stakeholder','cross-functional','delivery'],
+ ARRAY['organisation','cross-functional leadership','risk management','communication'],'', 'seed-073'),
+('customer-success','Customer Success Manager','customer_facing',
+ ARRAY['Own customer outcomes and renewals','Drive adoption and reduce churn','Advocate for customers internally'],
+ ARRAY['adoption','renewal','churn','onboarding','QBR','account health','expansion','customer outcomes'],
+ ARRAY['relationship management','customer empathy','data-driven','communication'],'', 'seed-073'),
+('technical-writing','Technical Writer','customer_facing',
+ ARRAY['Write and maintain product documentation','Make complex systems understandable','Partner with engineering + support'],
+ ARRAY['documentation','API docs','tutorials','information architecture','content','enablement'],
+ ARRAY['clear writing','technical communication','empathy','attention to detail'],'', 'seed-073'),
+('mobile-engineering','Mobile Engineer','builder',
+ ARRAY['Build and ship mobile apps','Optimise performance and UX on device','Integrate with backend services'],
+ ARRAY['iOS','Android','Swift','Kotlin','React Native','mobile','app store','performance'],
+ ARRAY['product sense','debugging','UX awareness','collaboration'],'', 'seed-073'),
+('marketing','Marketing','hybrid',
+ ARRAY['Drive awareness and demand','Run campaigns and measure funnel','Position the product to the market'],
+ ARRAY['campaign','funnel','positioning','content','SEO','demand gen','brand','analytics'],
+ ARRAY['communication','data-driven','creativity','positioning'],'', 'seed-073'),
+('business-analyst','Business / Data Analyst','hybrid',
+ ARRAY['Turn data into business decisions','Build dashboards and reports','Partner with stakeholders on requirements'],
+ ARRAY['SQL','dashboards','reporting','requirements','KPIs','analytics','stakeholder'],
+ ARRAY['analytical thinking','communication','requirements gathering','data fluency'],'', 'seed-073')
+ON CONFLICT (family_key) DO NOTHING;
+
+INSERT INTO role_aliases (alias, family_key) VALUES
+('product manager','product-management'),('product owner','product-management'),
+('data scientist','data-science'),('machine learning scientist','data-science'),
+('machine learning engineer','ml-engineering'),('ml engineer','ml-engineering'),('ai engineer','ml-engineering'),
+('data engineer','data-engineering'),
+('security engineer','security-engineering'),('security analyst','security-engineering'),
+('solutions engineer','solutions-engineering'),('sales engineer','solutions-engineering'),('solutions architect','solutions-engineering'),
+('product designer','ux-design'),('ux designer','ux-design'),('ui designer','ux-design'),
+('developer advocate','devrel'),('developer relations','devrel'),
+('engineering manager','engineering-management'),('team lead','engineering-management'),
+('technical program manager','program-management'),('program manager','program-management'),('project manager','program-management'),
+('customer success manager','customer-success'),('account manager','customer-success'),
+('technical writer','technical-writing'),
+('mobile engineer','mobile-engineering'),('ios engineer','mobile-engineering'),('android engineer','mobile-engineering'),
+('marketing manager','marketing'),('growth marketer','marketing'),
+('business analyst','business-analyst'),('data analyst','business-analyst')
+ON CONFLICT (alias) DO NOTHING;
+
+-- Verification: SELECT count(*) FROM role_ontology;  SELECT * FROM company_type_framing;
+```
+
+- [ ] **Step 2: Validate structure** (vs 072), **Step 3: Commit**
+```bash
+git add applications/platform-rds-bootstrap/migrations/073_role_ontology_scale.sql
+git commit -m "feat(rds): migration 073 — family votes, company-type overlay, seed expansion"
+```
+
+---
+
+## Task 9: Repository extensions (candidate families, company framing, family promote)
+
+**Files:** Modify `applications/shared/src/rds/types/role-ontology.ts`, `applications/shared/src/rds/implementations/RoleOntologyRepository.ts` + its `.test.ts`.
+
+- [ ] **Step 1: Extend the types.** In `role-ontology.ts`:
+  - Add `'family'` to `RoleCandidateType`: `export type RoleCandidateType = 'alias' | 'vocabulary' | 'transferable_skill' | 'family';`
+  - Add: `export type CompanyType = 'saas'|'infra_provider'|'fintech'|'hardware'|'agency'|'enterprise'|'marketplace'|'other';`
+  - Add: `export interface NewFamily { familyKey: string; displayName: string; roleClass: RoleClass; canonicalResponsibilities: string[]; vocabulary: string[]; transferableSkills: string[]; }`
+
+- [ ] **Step 2: Failing tests** (append to `RoleOntologyRepository.test.ts`, same `mockPool` helper): 
+  - `loadAllFamilyKeys` → `SELECT family_key FROM role_ontology WHERE is_active = TRUE` (no curation filter) → returns the keys.
+  - `insertCandidateFamily(f)` → `INSERT INTO role_ontology (...) VALUES (...,'candidate','seed-learned') ON CONFLICT (family_key) DO NOTHING` with the family fields as params.
+  - `loadCompanyFraming` → `SELECT company_type, framing_note FROM company_type_framing` → `Map`.
+  - `promote(3, 5)` runs a THIRD query promoting candidate families (`UPDATE role_ontology SET curation='auto_imported' ... candidate_type='family' ... HAVING COUNT(DISTINCT contributing_user_id) >= $1` with param `5`).
+  Run → FAIL.
+
+- [ ] **Step 3: Implement.** Add to `RoleOntologyRepository`:
+```ts
+import type { RoleFamily, RoleLearningCandidate, NewFamily, CompanyType } from '../types/role-ontology.js';
+
+    /** ALL family keys (curated+auto_imported+candidate) — feeds the classifier for convergence. */
+    async loadAllFamilyKeys(): Promise<string[]> {
+        const { rows } = await this.pool.query<{ family_key: string }>(
+            `SELECT family_key FROM role_ontology WHERE is_active = TRUE`,
+        );
+        return rows.map((r) => r.family_key);
+    }
+
+    /** Insert a classifier-proposed novel family as a 'candidate' (not grounded until promoted). */
+    async insertCandidateFamily(f: NewFamily): Promise<void> {
+        await this.pool.query(
+            `INSERT INTO role_ontology (family_key, display_name, role_class, canonical_responsibilities, vocabulary, transferable_skills, curation, source)
+             VALUES ($1,$2,$3,$4,$5,$6,'candidate','classifier-learned')
+             ON CONFLICT (family_key) DO NOTHING`,
+            [f.familyKey, f.displayName, f.roleClass, f.canonicalResponsibilities, f.vocabulary, f.transferableSkills],
+        );
+    }
+
+    /** company_type → framing note. */
+    async loadCompanyFraming(): Promise<Map<CompanyType, string>> {
+        const { rows } = await this.pool.query<{ company_type: CompanyType; framing_note: string }>(
+            `SELECT company_type, framing_note FROM company_type_framing`,
+        );
+        const m = new Map<CompanyType, string>();
+        for (const r of rows) m.set(r.company_type, r.framing_note);
+        return m;
+    }
+```
+Change `promote` signature to `promote(aliasQuorum: number, familyQuorum: number): Promise<void>` (use `aliasQuorum` for the existing two queries) and append a third query:
+```ts
+        // promote candidate FAMILIES to auto_imported on >= familyQuorum distinct users
+        await this.pool.query(
+            `UPDATE role_ontology SET curation = 'auto_imported', updated_at = now()
+              WHERE curation = 'candidate' AND family_key IN (
+                SELECT value FROM role_learning_candidates
+                 WHERE candidate_type = 'family'
+                 GROUP BY value
+                HAVING COUNT(DISTINCT contributing_user_id) >= $1)`,
+            [familyQuorum],
+        );
+```
+
+- [ ] **Step 4:** `cd applications/shared && npx jest RoleOntologyRepository` → all pass; `npx tsc --build` clean. Commit:
+```bash
+git add applications/shared/src/rds/types/role-ontology.ts applications/shared/src/rds/implementations/RoleOntologyRepository.ts applications/shared/src/rds/implementations/RoleOntologyRepository.test.ts
+git commit -m "feat(rds): candidate families, company framing, family promotion"
+```
+(Export `NewFamily`, `CompanyType` from `applications/shared/src/index.ts` alongside the existing role-ontology type exports.)
+
+---
+
+## Task 10: Classifier extensions (company type + novel family payload + candidate convergence)
+
+**Files:** Modify `applications/job-strategist/src/agents/role-classifier.ts` + `.test.ts`.
+
+- [ ] **Step 1: Failing tests** (append): the classifier now returns `companyType` and an optional `newFamily`; a model that returns a family NOT in knownFamilies is allowed ONLY if it includes a `newFamily` payload (else null). Cases: known family + companyType; novel family with payload → returned; novel family WITHOUT payload → null; error → null. Run → FAIL.
+
+- [ ] **Step 2: Implement.** Extend `RoleClassification`:
+```ts
+export interface RoleClassification {
+    familyKey: string;
+    confidence: number;
+    companyType: CompanyType;           // NEW
+    suggestedVocabulary: string[];
+    suggestedTransferableSkills: string[];
+    newFamily?: NewFamily;              // NEW — present only when proposing a novel family
+}
+```
+Import `CompanyType, NewFamily` from `@bedrock/shared`. Extend `ResultSchema` (zod): `companyType: z.enum(['saas','infra_provider','fintech','hardware','agency','enterprise','marketplace','other'])`, `newFamily: z.object({ familyKey: z.string(), displayName: z.string(), roleClass: z.enum(['customer_facing','builder','ops','hybrid']), canonicalResponsibilities: z.array(z.string()).default([]), vocabulary: z.array(z.string()).default([]), transferableSkills: z.array(z.string()).default([]) }).optional()`. Add both to the tool `input_schema.properties` (companyType required; newFamily optional, with `additionalProperties:false`). Update the system prompt: "infer companyType from the company; pick an existing family (incl. candidate) if one fits; only when NONE fits, return a new family in `newFamily` with a kebab-case `familyKey`." 
+Change the post-call guard so a novel family is accepted when accompanied by a payload:
+```ts
+        const d = result.data;
+        if (!knownFamilies.includes(d.familyKey) && !d.newFamily) return null;
+        return d;
+```
+
+- [ ] **Step 3:** `yarn test role-classifier` → pass; `npx tsc --noEmit` clean. Commit `feat(strategist): classifier infers company type + proposes novel families`.
+
+---
+
+## Task 11: Cascade + grounding overlay + pipeline (the integration)
+
+**Files:** Modify `resolve-role-families.ts` + `.test.ts`, `role-evidence-block.ts` + `.test.ts`, `run-pipeline.ts`.
+
+- [ ] **Step 1: resolve cascade.** `ResolvedRole` gains `companyType?: CompanyType`. In `resolveRoleFamilies`:
+  - load `knownKeys = await repo.loadAllFamilyKeys()` (NOT just grounded families) for the classifier; keep `byKey` from `loadFamilies()` (grounded only) for grounding.
+  - classifier hit in `byKey` (grounded) → ground + stage alias/vocab/skill candidates (as today) + set `companyType`.
+  - classifier hit NOT in `byKey` but in `knownKeys` (a candidate family) → `stageCandidate({candidateType:'family', value: familyKey, ...})` (a vote); family stays null (not grounded yet); set companyType.
+  - classifier returns `newFamily` (novel) → `repo.insertCandidateFamily(newFamily)` + `stageCandidate({candidateType:'family', value: newFamily.familyKey, ...})`; family null; companyType set.
+  - `promote(ALIAS_QUORUM, FAMILY_QUORUM)` at the end (`ROLE_LEARNING_QUORUM` default 3, `ROLE_FAMILY_QUORUM` default 5).
+  Tests: candidate-family path stages a 'family' vote (not grounded); novel path calls `insertCandidateFamily` + stages vote; companyType threaded.
+
+- [ ] **Step 2: grounding overlay.** `formatRoleEvidence(resolved, companyFraming: Map<CompanyType,string>)` — for each matched role, after the family lines, append `  note: ${companyFraming.get(r.companyType) || family.industryNotes}` when non-empty (company-type framing replaces/supplements the family note). Test: an `infra_provider` role emits the SaaS framing note.
+
+- [ ] **Step 3: run-pipeline.** Load the framing map once and pass it: build a `RoleOntologyRepository` (or reuse), `const companyFraming = await repo.loadCompanyFraming().catch(() => new Map())`, pass the same `repo` into `resolveRoleFamilies(pool, userId, exps, repo)`, then `formatRoleEvidence(resolved, companyFraming)`. Keep fail-open.
+
+- [ ] **Step 4:** `cd applications/shared && npx tsc --build && cd ../job-strategist && npx tsc --noEmit && yarn test` → all green. Commit `feat(strategist): wire candidate-family discovery + company-type grounding overlay`, then `git push origin feat/role-ontology` (updates PR #179).
+
+---
+
 ## Deploy + verify
 
-1. Migration 072 applies at platform-rds bootstrap (verify the verification SELECTs).
+1. Migrations 072 + 073 apply at platform-rds bootstrap (verify the verification SELECTs).
 2. ai-applications PR → `develop` → build → SSM → job-strategist.
 3. Re-run a JB for the test user → the `roleEvidenceBlock` supplies the `technical-support` family (alias hit on "Technical Customer Service Associate") → the resume should now surface SLA/on-call/customer-relationship/cross-functional vocabulary and frame AWS support as SaaS-like; Phase 0 may route to archetype 7.

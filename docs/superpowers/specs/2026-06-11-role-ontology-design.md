@@ -237,6 +237,56 @@ archetype set:
 - seed migration: `technical-support` family + aliases exist with the SLA/on-call/
   customer-education vocabulary.
 
+## Scalability extension (A/B/C — IN SCOPE, folded into this feature)
+
+The base design covers the seeded families only. To make it general across **any
+role + any company**, three additive pieces (same tables, same promotion gate):
+
+### A — New-family discovery (self-bootstrapping coverage)
+- A novel role no longer drops to `null`. Candidate **families** are
+  `role_ontology` rows at `curation='candidate'` (NOT grounded). Family-level
+  corroboration is tracked as `role_learning_candidates` rows of a new
+  `candidate_type='family'` (value = `family_key`, one vote per user) — requires
+  adding `'family'` to that column's CHECK.
+- **Convergence:** the classifier is shown **curated + auto_imported + candidate**
+  family keys (a new `loadAllFamilyKeys()`), and instructed to *reuse* an existing
+  candidate if one fits, so title variants ("Data Scientist" / "ML Scientist" /
+  "Machine Learning Engineer") land on the **same** candidate rather than
+  fragmenting. Only when nothing fits does it return a **new family payload**
+  (`display_name, role_class, responsibilities, vocabulary, transferable_skills`).
+- **Cascade:** classifier→known(curated/auto) → ground (as today);
+  classifier→candidate → stage a family vote, no grounding yet;
+  classifier→novel → `insertCandidateFamily()` (`curation='candidate'`,
+  `ON CONFLICT (family_key) DO NOTHING`) + a family vote.
+- **Promotion:** `promote()` also promotes candidate families to `auto_imported`
+  when `COUNT(DISTINCT contributing_user_id) ≥ FAMILY_QUORUM` (env
+  `ROLE_FAMILY_QUORUM`, default **5** — higher than the alias quorum 3, since a
+  family is a bigger commitment). Once promoted, `loadFamilies` (curated+auto)
+  includes it → grounded for future runs. Fully self-bootstrapping; safely gated.
+
+### B — Seed expansion (day-1 breadth)
+Expand the curated seed from 6 to ~20 families so most users hit a family
+immediately: add `product-management`, `data-science`, `ml-engineering`,
+`data-engineering`, `security-engineering`, `solutions-engineering`,
+`ux-design`, `devrel`, `engineering-management`, `program-management`,
+`customer-success`, `technical-writing`, `mobile-engineering`, `marketing`,
+`business-analyst` (+ aliases), each with responsibilities/vocabulary/
+transferable-skills/role_class.
+
+### C — Company-type overlay
+- New `company_type` enum (`saas, infra_provider, fintech, hardware, agency,
+  enterprise, marketplace, other`). The classifier infers it per experience (it
+  already receives the company).
+- A `company_type_framing` lookup (small seeded table: `company_type` →
+  `framing_note`) applied at grounding. e.g. `infra_provider → "operates like SaaS:
+  customers, subscriptions, account health."` This **generalises** the hard-coded
+  "AWS ≈ SaaS" note — it moves OUT of the `technical-support` family
+  `industry_notes` and INTO the `infra_provider` company-type framing, so it is
+  company-driven, not AWS-specific. The `roleEvidenceBlock` appends the
+  company-type framing line per experience.
+
+These keep `curated > auto_imported > candidate` and fail-open throughout.
+
 ## Out of scope (sequenced follow-ups)
 
 1. **Candidate-class detection + structural playbooks** — detect career-changer /
