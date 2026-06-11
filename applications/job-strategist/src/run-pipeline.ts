@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StructuredResumeData, GroundingMode } from '@bedrock/shared';
+import type { StrategistPipelineContext, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -101,7 +101,7 @@ async function lintResumeProse(
     pool: Pool,
     env: ReturnType<typeof parseEnv>,
     resume: StructuredResumeData | null,
-    coverLetter: string | null,
+    coverLetter: CoverLetter | null,
 ): Promise<void> {
     try {
         const sections = extractResumeProseSections(resume, coverLetter);

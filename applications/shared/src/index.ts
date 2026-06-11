@@ -166,6 +166,10 @@ export type {
     ArchetypeId,
     RoleArchetypeSelection,
 
+    // Cover letter
+    CoverLetterSignoff,
+    CoverLetter,
+
     // Strategist Agent
     ResumeAdditionSuggestion,
     ResumeReframeSuggestion,

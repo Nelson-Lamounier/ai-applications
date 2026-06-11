@@ -6,7 +6,7 @@
  * achievements, project descriptions, cover letter). Short structural fields
  * (titles, dates, names) are skipped — they aren't prose.
  */
-import type { StructuredResumeData, ProseSection, ProseRegister } from '@bedrock/shared';
+import type { StructuredResumeData, CoverLetter, ProseSection, ProseRegister } from '@bedrock/shared';
 
 function push(out: ProseSection[], location: string, register: ProseRegister, v: unknown): void {
     if (typeof v === 'string' && v.trim().length > 0) {
@@ -16,11 +16,17 @@ function push(out: ProseSection[], location: string, register: ProseRegister, v:
 
 export function extractResumeProseSections(
     resume: StructuredResumeData | null,
-    coverLetter: string | null,
+    // TODO(Task 5): update prose-linter integration to accept CoverLetter directly
+    coverLetter: CoverLetter | null,
 ): ProseSection[] {
     const out: ProseSection[] = [];
 
-    push(out, 'coverLetter', 'narrative', coverLetter);
+    // Flatten paragraphs to prose for linting; greeting/signoff are structural
+    if (coverLetter) {
+        coverLetter.paragraphs.forEach((p, i) =>
+            push(out, `coverLetter.paragraphs[${i}]`, 'narrative', p),
+        );
+    }
 
     if (resume) {
         push(out, 'resume.summary', 'resume-prose', resume.summary);

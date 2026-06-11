@@ -2,17 +2,12 @@
 
 import { z } from 'zod';
 import { runAgent, log } from '@bedrock/shared';
-import type { AgentConfig, BasePipelineContext } from '@bedrock/shared';
+import type { AgentConfig, BasePipelineContext, CoverLetter, CoverLetterSignoff } from '@bedrock/shared';
+
+export type { CoverLetter } from '@bedrock/shared';
+export type { CoverLetterSignoff } from '@bedrock/shared';
 
 export interface CoverLetterViolation { code: string; detail: string; }
-
-/** Structured cover letter — plain text, NO markdown. The UI + PDF own all formatting. */
-export interface CoverLetterSignoff { name: string; email: string; linkedin: string; github: string; }
-export interface CoverLetter {
-    greeting:   string;
-    paragraphs: string[];
-    signoff:    CoverLetterSignoff;
-}
 
 const GAP_PATTERNS: ReadonlyArray<RegExp> = [
     /falls?\s+short/i,
