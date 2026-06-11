@@ -6,8 +6,12 @@ const QUALIFIERS = new Set([
     'proficiency', 'proficient', 'ability', 'hands', 'on', 'handson', 'similar', 'etc',
     'implied', 'eg', 'ie',
     'and', 'or', 'the', 'a', 'an', 'of', 'in', 'with', 'for', 'to',
-    'scripting', 'systems', 'system', 'tools', 'tooling', 'management', 'collaboration',
-    'communication',
+    // Generic tech-suffix noise — strip so a multi-word skill reduces to its distinctive
+    // core ("Python scripting" -> "python", "ticketing systems" -> "ticketing"). Soft-skill
+    // CONTENT words (management / communication / collaboration) are NOT stripped — they
+    // carry the requirement, and stripping them over-credits ("project management" -> any
+    // resume that says "project").
+    'scripting', 'systems', 'system', 'tools', 'tooling',
 ]);
 
 export function normalizeTerm(t: string): string {
@@ -28,7 +32,9 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
     const normTerm = normalizeTerm(term);
     if (normTerm.length === 0) return false;
     const resume = normalizeResume(resumeLowerText);
-    if (resume.includes(normTerm)) return true;
+    // Word-boundary substring (space-padded) — so "go" does NOT match "going" and a
+    // 2-char atomic skill ("ML", "QA") matches its own word, not a substring of another.
+    if (resume.includes(` ${normTerm} `)) return true;
     const tokens = normTerm.split(' ').filter((t) => t.length >= 3);
     if (tokens.length === 0) return false;
     return tokens.every((tok) => resume.includes(` ${tok} `));
