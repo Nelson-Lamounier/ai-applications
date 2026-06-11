@@ -50,4 +50,14 @@ describe('resolveRoleFamilies', () => {
         await resolveRoleFamilies(pool, 'u-1', [{ title: 'Technical Customer Service Associate', company: 'AWS', highlights: [] }], repo);
         expect(repo.promote).toHaveBeenCalled();
     });
+
+    it('alias substring match respects word boundaries (no over-match on short aliases)', async () => {
+        const repo = repoStub({ loadAliasMap: jest.fn().mockResolvedValue(new Map([['sre', 'technical-support']])) });
+        // 'sre' must NOT match inside 'Deserves Recognition Lead'
+        const over = await resolveRoleFamilies(pool, 'u-1', [{ title: 'Deserves Recognition Lead', company: 'X', highlights: [] }], repo);
+        expect(over[0].matchVia).not.toBe('alias');
+        // but a word-bounded 'sre' in the title DOES match
+        const hit = await resolveRoleFamilies(pool, 'u-1', [{ title: 'Senior SRE Lead', company: 'X', highlights: [] }], repo);
+        expect(hit[0].family?.familyKey).toBe('technical-support');
+    });
 });

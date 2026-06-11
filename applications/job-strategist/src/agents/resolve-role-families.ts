@@ -15,11 +15,14 @@ export interface ResolvedRole {
 
 function normaliseTitle(t: string): string { return t.toLowerCase().trim(); }
 
-/** Match a title against the alias map by exact + substring containment. */
+/** Match a title against the alias map by exact + word-bounded containment. */
 function aliasLookup(title: string, aliasMap: Map<string, string>): string | null {
     const n = normaliseTitle(title);
     if (aliasMap.has(n)) return aliasMap.get(n) ?? null;
-    for (const [alias, family] of aliasMap) if (n.includes(alias)) return family;
+    const padded = ` ${n} `;
+    for (const [alias, family] of aliasMap) {
+        if (padded.includes(` ${alias} `)) return family;
+    }
     return null;
 }
 
