@@ -24,6 +24,7 @@ import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { extractJobDescription } from './agents/jd-extractor.js';
+import { buildYearsGap } from './agents/years-gap.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -330,7 +331,17 @@ export async function main(): Promise<void> {
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
-        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock);
+
+        // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line. Fail-open.
+        const hardYearsBar = research.data.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
+        const yearsGap = await buildYearsGap(
+            (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, period: c.period, family: null, roleClass: null })),
+            research.data.experienceSignals.yearsExpected,
+            hardYearsBar,
+            new Date().getFullYear(),
+        ).catch(() => null);
+
+        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock, yearsGap);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -426,7 +437,7 @@ export async function main(): Promise<void> {
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding, atsCheck },
+            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding, atsCheck, yearsGap },
             research:     research.data,
             jdExtraction,
         });
