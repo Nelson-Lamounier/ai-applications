@@ -107,15 +107,22 @@ jobs:
           load: false
           tags: ${{ inputs.app-name }}:${{ github.sha }}-r${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ inputs.app-name }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.app-name }}
+          cache-to: type=gha,mode=min,scope=${{ inputs.app-name }}
           provenance: false
           outputs: type=docker,dest=/tmp/${{ inputs.app-name }}-image.tar
 
-      - name: Cache Image
-        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      # Hand the built image to the push job via an ARTIFACT, not actions/cache.
+      # actions/cache is subject to the 10GB repo cache LRU eviction — under cache
+      # pressure (BuildKit layer blobs accumulate) the just-built image tar can be
+      # evicted before the push job restores it, failing the deploy on a cache miss.
+      # Artifacts have a separate quota and are not LRU-evicted mid-run.
+      - name: Upload Image Artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: ${{ inputs.app-name }}-image-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/${{ inputs.app-name }}-image.tar
-          key: ${{ inputs.app-name }}-image-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Build Summary
         run: |
@@ -153,12 +160,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Restore Image from Cache
-        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
         with:
-          path: /tmp/${{ inputs.app-name }}-image.tar
-          key: ${{ inputs.app-name }}-image-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
-          fail-on-cache-miss: true
+          name: ${{ inputs.app-name }}-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp
 
       - name: Load Docker Image
         run: docker load -i "/tmp/${APP_NAME}-image.tar"
