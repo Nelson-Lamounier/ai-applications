@@ -37,6 +37,7 @@ import {
 import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
+import { buildRecruiterSnapshot } from './agents/recruiter-snapshot.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -404,6 +405,10 @@ export async function main(): Promise<void> {
             });
         }
 
+        // Recruiter snapshot — hybrid score + grounded missing-keywords/red-flags.
+        // Fail-open (null on any error); needs the ATS keyword coverage, so it runs here.
+        const recruiterSnapshot = await buildRecruiterSnapshot(ctx, research.data, atsCheck).catch(() => null);
+
         // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────
         // Lint the generated resume + cover-letter prose for AI-tell language.
         // Pure observability — never alters the persisted resume, never throws.
@@ -426,7 +431,7 @@ export async function main(): Promise<void> {
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding, atsCheck },
+            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding, atsCheck, recruiterSnapshot },
             research:     research.data,
             jdExtraction,
         });
