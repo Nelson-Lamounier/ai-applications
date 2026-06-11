@@ -57,6 +57,8 @@ export interface StrategistAgentInput {
     readonly educationFacts?: string;
     /** Verbatim experience facts (company + title + period). Optional. */
     readonly experienceFacts?: string;
+    /** Role-ontology grounding block (target-role vocabulary). Optional. */
+    readonly roleEvidence?: string;
 }
 
 // =============================================================================
@@ -112,6 +114,7 @@ function buildStrategistMessage(
     projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
+    roleEvidence = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -248,6 +251,10 @@ function buildStrategistMessage(
             projectEvidence,
             '--- END PROJECT CASE STUDIES ---',
         );
+    }
+
+    if (roleEvidence) {
+        sections.push('', roleEvidence);
     }
 
     // Interview stage context and closing instruction
@@ -624,7 +631,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence);
     }
 
     /**
@@ -745,6 +752,7 @@ export async function executeStrategistAgent(
     projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
+    roleEvidenceBlock = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock }, ctx);
 }

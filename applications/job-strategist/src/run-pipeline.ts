@@ -21,6 +21,8 @@ import { extractResumeProseSections } from './lib/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
+import { resolveRoleFamilies } from './agents/resolve-role-families.js';
+import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { extractJobDescription } from './agents/jd-extractor.js';
@@ -327,10 +329,18 @@ export async function main(): Promise<void> {
         const educationBlock      = formatEducation(educationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries);
+        // Role-ontology grounding — translate experience into target-role vocabulary. Fail-open.
+        const roleEvidenceBlock = formatRoleEvidence(
+            await resolveRoleFamilies(
+                pool, ctx.userId,
+                (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, highlights: c.highlights })),
+            ).catch(() => []),
+        );
+
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
-        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock);
+        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
