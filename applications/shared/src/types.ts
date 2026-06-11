@@ -150,7 +150,9 @@ export type AgentName =
     // years-gap pipeline.
     | 'years-relevance'
     // cover-letter guard pipeline.
-    | 'cover-letter-rewrite';
+    | 'cover-letter-rewrite'
+    // resume guard pipeline.
+    | 'resume-rewrite';
 
 /**
  * Model-agnostic configuration for a single agent.

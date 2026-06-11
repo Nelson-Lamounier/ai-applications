@@ -28,6 +28,7 @@ import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFact
 import { extractJobDescription } from './agents/jd-extractor.js';
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
+import { guardResume } from './agents/resume-guard.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -94,6 +95,12 @@ const resumeProse = new Counter({
 const coverLetterViolations = new Counter({
     name:      'job_strategist_cover_letter_violations_total',
     help:      'Cover-letter guard violations caught (and rewritten) by code.',
+    labelNames: ['code'] as const,
+    registers:  [obs.registry],
+});
+const resumeViolationsMetric = new Counter({
+    name:       'job_strategist_resume_violations_total',
+    help:       'Resume guard violations caught (and rewritten) by code.',
     labelNames: ['code'] as const,
     registers:  [obs.registry],
 });
@@ -402,39 +409,9 @@ export async function main(): Promise<void> {
             strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_skipped_no_context' });
         }
 
-        // Resume-builder persist (Option A): the Strategist already produced
-        // the full tailored StructuredResumeData. Validate and persist to PG.
+        // Raw tailored resume from the Strategist (guard reads this as input).
         const tailoredResumeData = analysis.data.tailoredResumeData ?? null;
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
-        const persisted = tailoredResumeData
-            ? await persistTailoredResume(pool, {
-                applicationId:  env.applicationId,
-                userId:         env.userId,
-                pipelineId:     env.pipelineId,
-                targetRole:     env.targetRole,
-                archetype,
-                tailoredResume: tailoredResumeData,
-              })
-            : null;
-
-        // ── ATS render + parse-back QA (fail-open pipeline, fail-closed claim) ─
-        // Renders the AI-authored resume to a text-selectable PDF, proves it
-        // parses, and stores the canonical PDF + check. Delegated to a helper
-        // that never throws (errors → 'unverified', never 'passed').
-        let atsCheck: AtsCheckResult | null = null;
-        if (persisted && tailoredResumeData) {
-            atsCheck = await renderCheckAndStoreAts({
-                s3, pool,
-                bucket:        process.env['ASSETS_BUCKET'] ?? '',
-                resumeId:      persisted.resumeId,
-                userId:        env.userId,
-                resume:        tailoredResumeData,
-                research:      research.data,
-                log,
-                correlationId: env.pipelineRunId,
-                onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
-            });
-        }
 
         // ── Cover-letter guard (rule-based, fail-open, rewrite-on-violation) ──
         // Validates the AI-authored cover letter against code-enforced rules
@@ -448,10 +425,59 @@ export async function main(): Promise<void> {
         );
         for (const v of coverViolations) coverLetterViolations.inc({ code: v.code });
 
+        // ── Resume guard — F-pattern content checks (fail-open, rewrite-on-violation) ──
+        // Validates the AI-authored resume against code-enforced rules (headline
+        // positioning, summary cluster, education accuracy, skills lead). Violations
+        // are rewritten in-place by Haiku and counted for observability — never throws.
+        const archetypeId = analysis.data.archetypeSelection?.archetypeId ?? 0;
+        const archetypeSkillLead = archetypeId === 7 ? 'Support & Troubleshooting' : '';
+        let finalResume = tailoredResumeData;
+        if (tailoredResumeData) {
+            const guarded = await guardResume(tailoredResumeData, {
+                targetRole:        research.data.targetRole,
+                leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
+                verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
+                archetypeSkillLead,
+            });
+            finalResume = guarded.resume;
+            for (const v of guarded.violations) resumeViolationsMetric.inc({ code: v.code });
+        }
+
+        // Resume-builder persist (Option A): persist the guarded resume to PG.
+        const persisted = finalResume
+            ? await persistTailoredResume(pool, {
+                applicationId:  env.applicationId,
+                userId:         env.userId,
+                pipelineId:     env.pipelineId,
+                targetRole:     env.targetRole,
+                archetype,
+                tailoredResume: finalResume,
+              })
+            : null;
+
+        // ── ATS render + parse-back QA (fail-open pipeline, fail-closed claim) ─
+        // Renders the AI-authored resume to a text-selectable PDF, proves it
+        // parses, and stores the canonical PDF + check. Delegated to a helper
+        // that never throws (errors → 'unverified', never 'passed').
+        let atsCheck: AtsCheckResult | null = null;
+        if (persisted && finalResume) {
+            atsCheck = await renderCheckAndStoreAts({
+                s3, pool,
+                bucket:        process.env['ASSETS_BUCKET'] ?? '',
+                resumeId:      persisted.resumeId,
+                userId:        env.userId,
+                resume:        finalResume,
+                research:      research.data,
+                log,
+                correlationId: env.pipelineRunId,
+                onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
+            });
+        }
+
         // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────
         // Lint the generated resume + cover-letter prose for AI-tell language.
         // Pure observability — never alters the persisted resume, never throws.
-        await lintResumeProse(pool, env, tailoredResumeData, finalCoverLetter);
+        await lintResumeProse(pool, env, finalResume, finalCoverLetter);
 
         // ── Path-grounding check (advisory, fail-open) ────────────────────
         // Flag file-path citations in the final analysis that don't exist in
@@ -470,7 +496,7 @@ export async function main(): Promise<void> {
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck, yearsGap },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck, yearsGap },
             research:     research.data,
             jdExtraction,
         });
