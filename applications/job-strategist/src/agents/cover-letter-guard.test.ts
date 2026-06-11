@@ -1,8 +1,14 @@
 /** @format */
-import { validateCoverLetter } from './cover-letter-guard.js';
+import { validateCoverLetter, type CoverLetter } from './cover-letter-guard.js';
 
-const codes = (l: string, target = 'AI Support Engineer', lead = 'User Operations Engineer') =>
-    validateCoverLetter(l, target, lead).map((v) => v.code);
+/** Wrap a body string in a structured CoverLetter for the content checks. */
+const cl = (body: string): CoverLetter => ({
+    greeting:   'Dear Hiring Manager',
+    paragraphs: [body],
+    signoff:    { name: 'Nelson', email: 'n@x.com', linkedin: 'l', github: 'g' },
+});
+const codes = (body: string, target = 'AI Support Engineer', lead = 'User Operations Engineer') =>
+    validateCoverLetter(cl(body), target, lead).map((v) => v.code);
 
 describe('validateCoverLetter', () => {
     it('flags missing JD title', () => {
@@ -16,14 +22,14 @@ describe('validateCoverLetter', () => {
         expect(codes('I do not yet have direct hands-on experience with the API (AI Support Engineer).')).toContain('names_gap');
         expect(codes('I would be surprised if many candidates match this. AI Support Engineer.')).toContain('names_gap');
     });
-    it('flags too much bold', () => {
-        const many = '**a** **b** **c** **d** **e** AI Support Engineer';
-        expect(codes(many)).toContain('too_bold');
+    it('flags markdown formatting (formatting belongs to the UI/PDF, not the agent)', () => {
+        expect(codes('I am a strong **fit** for the AI Support Engineer role.')).toContain('has_markdown');
+        expect(codes('## Opening\nThe AI Support Engineer role suits me.')).toContain('has_markdown');
     });
     it('flags unrealised impact', () => {
         expect(codes('The system is pending security review. AI Support Engineer.')).toContain('unrealised_impact');
     });
-    it('clean letter → no violations', () => {
-        expect(codes('I build production AI support systems. The AI Support Engineer role at OpenAI fits exactly. **OpenAI**.')).toEqual([]);
+    it('clean structured letter → no violations', () => {
+        expect(codes('I build production AI support systems. The AI Support Engineer role at OpenAI fits exactly.')).toEqual([]);
     });
 });

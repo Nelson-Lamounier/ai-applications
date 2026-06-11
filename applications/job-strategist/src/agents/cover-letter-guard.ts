@@ -2,20 +2,35 @@
 
 export interface CoverLetterViolation { code: string; detail: string; }
 
-const GAP_PATTERNS: ReadonlyArray<{ code: string; re: RegExp }> = [
-    { code: 'names_gap', re: /falls?\s+short/i },
-    { code: 'names_gap', re: /do(?:es)?\s*n['']?t\s+yet\s+have|do not yet have|have not yet|lack(?:ing)?\s+(?:direct\s+|hands-on\s+)?experience/i },
-    { code: 'names_gap', re: /\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)/i },
-    { code: 'names_gap', re: /I would be surprised/i },
-    { code: 'names_gap', re: /while I (?:do\s*n['']?t|do not|have\s*n['']?t|lack)/i },
+/** Structured cover letter — plain text, NO markdown. The UI + PDF own all formatting. */
+export interface CoverLetterSignoff { name: string; email: string; linkedin: string; github: string; }
+export interface CoverLetter {
+    greeting:   string;
+    paragraphs: string[];
+    signoff:    CoverLetterSignoff;
+}
+
+const GAP_PATTERNS: ReadonlyArray<RegExp> = [
+    /falls?\s+short/i,
+    /(?:do not|does not|have not|don['’]t|doesn['’]t|haven['’]t)\s+yet\s+have/i,
+    /lack(?:ing)?\s+(?:direct\s+|hands-on\s+)?experience/i,
+    /\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)/i,
+    /I would be surprised/i,
+    /while I (?:do not|have not|don['’]t|haven['’]t|lack)\b/i,
 ];
 const UNREALISED = /pending (?:security )?review|not yet (?:shipped|deployed|in production)|once (?:approved|shipped)/i;
-const MAX_BOLD = 4;
+/** Any markdown the agent should NOT emit (formatting belongs to the UI/PDF). */
+const MARKDOWN = /\*\*|__|##|^\s*[-*+]\s+/m;
 
-/** Deterministic cover-letter checks. */
-export function validateCoverLetter(letter: string, targetRole: string, leadIdentity: string): CoverLetterViolation[] {
+/**
+ * Deterministic checks on the STRUCTURED cover letter. Content rules (title,
+ * self-rejection, unrealised impact) run on the joined text; `has_markdown`
+ * ensures the agent emitted clean prose — formatting is the renderer's job.
+ */
+export function validateCoverLetter(letter: CoverLetter, targetRole: string, leadIdentity: string): CoverLetterViolation[] {
     const out: CoverLetterViolation[] = [];
-    const lower = letter.toLowerCase();
+    const text  = [letter.greeting, ...letter.paragraphs].join('\n');
+    const lower = text.toLowerCase();
 
     if (targetRole && !lower.includes(targetRole.toLowerCase())) {
         out.push({ code: 'missing_title', detail: `Body never names the target role "${targetRole}".` });
@@ -26,12 +41,11 @@ export function validateCoverLetter(letter: string, targetRole: string, leadIden
             out.push({ code: 'wrong_title', detail: `Body uses the positioning identity "${leadIdentity}" as the role name.` });
         }
     }
-    for (const { code, re } of GAP_PATTERNS) {
-        if (re.test(letter)) { out.push({ code, detail: `Matched self-rejection/arguing pattern: ${re}` }); break; }
+    for (const re of GAP_PATTERNS) {
+        if (re.test(text)) { out.push({ code: 'names_gap', detail: `Matched self-rejection/arguing pattern: ${re}` }); break; }
     }
-    const boldCount = (letter.match(/\*\*[^*]+\*\*/g) ?? []).length;
-    if (boldCount > MAX_BOLD) out.push({ code: 'too_bold', detail: `${boldCount} bold spans (max ${MAX_BOLD}).` });
-    if (UNREALISED.test(letter)) out.push({ code: 'unrealised_impact', detail: 'Claims not-yet-realised impact.' });
+    if (UNREALISED.test(text)) out.push({ code: 'unrealised_impact', detail: 'Claims not-yet-realised impact.' });
+    if (MARKDOWN.test(text))   out.push({ code: 'has_markdown', detail: 'Agent emitted markdown formatting — the UI/PDF owns formatting; output must be plain text.' });
 
     return out;
 }
