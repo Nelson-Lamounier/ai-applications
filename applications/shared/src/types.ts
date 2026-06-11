@@ -146,7 +146,11 @@ export type AgentName =
     | 'profile-mirror' | 'profile-direction' | 'profile-reconciliation'
     | 'profile-diagnostic' | 'profile-extract' | 'retrieval-probe'
     // resume-import-processor agents.
-    | 'resume-extract' | 'resume-enrich' | 'resume-gap';
+    | 'resume-extract' | 'resume-enrich' | 'resume-gap'
+    // years-gap pipeline.
+    | 'years-relevance'
+    // cover-letter guard pipeline.
+    | 'cover-letter-rewrite';
 
 /**
  * Model-agnostic configuration for a single agent.

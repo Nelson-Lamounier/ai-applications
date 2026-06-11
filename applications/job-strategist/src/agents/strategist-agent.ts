@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
+import type { YearsGap } from './years-gap.js';
 
 /** Module-scoped output sanitiser (default patterns — superset of all redaction rules) */
 const outputSanitiser = new OutputSanitiser();
@@ -26,6 +27,7 @@ import {
 import type {
     AgentConfig,
     AgentResult,
+    CoverLetter,
     ResumeAdditionSuggestion,
     ResumeReframeSuggestion,
     ResumeEslCorrection,
@@ -59,6 +61,8 @@ export interface StrategistAgentInput {
     readonly experienceFacts?: string;
     /** Role-ontology grounding block (target-role vocabulary). Optional. */
     readonly roleEvidence?: string;
+    /** Non-apologetic framing line from the years-gap agent (relevant-years vs JD bar). Optional. */
+    readonly yearsGapFraming?: string;
 }
 
 // =============================================================================
@@ -115,6 +119,7 @@ function buildStrategistMessage(
     educationFacts = '',
     experienceFacts = '',
     roleEvidence = '',
+    yearsGapFraming = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -225,6 +230,11 @@ function buildStrategistMessage(
         );
     }
 
+    // Years-gap framing — lead the professional summary with this true relevant-experience line.
+    if (yearsGapFraming) {
+        sections.push('', `YEARS GAP FRAMING (lead the summary with this true relevant-experience framing): ${yearsGapFraming}`);
+    }
+
     // Verified education — exact degree + institution from the user's résumé.
     // Overrides any conflicting education in the constraints KB; the model must
     // NOT invent or substitute an institution (root cause of hallucinated schools).
@@ -307,16 +317,28 @@ function extractMetadataFromXml(xml: string): StrategistAnalysisResult['metadata
     };
 }
 
+const CoverLetterSchema = z.object({
+    greeting:   z.string(),
+    paragraphs: z.array(z.string()),
+    signoff:    z.object({ name: z.string(), email: z.string(), linkedin: z.string(), github: z.string() }),
+});
+
 /**
- * Extract the cover letter from the XML analysis.
+ * Extract + parse the cover letter JSON from the CDATA block.
+ * Returns null on absent or invalid payload (fail-open).
  *
  * @param xml - Raw XML analysis output
- * @returns Cover letter text
+ * @returns Parsed CoverLetter object, or null
  */
-function extractCoverLetter(xml: string): string {
-    const coverLetterRegex = /<cover_letter><!\[CDATA\[(.*?)\]\]><\/cover_letter>/s;
-    const result = coverLetterRegex.exec(xml);
-    return result?.[1]?.trim() ?? '';
+export function extractCoverLetter(xml: string): CoverLetter | null {
+    const m = /<cover_letter><!\[CDATA\[([\s\S]*?)\]\]><\/cover_letter>/.exec(xml);
+    if (!m) return null;
+    try {
+        const parsed = CoverLetterSchema.safeParse(JSON.parse(m[1].trim()));
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -631,7 +653,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming);
     }
 
     /**
@@ -753,6 +775,7 @@ export async function executeStrategistAgent(
     educationFacts = '',
     experienceFacts = '',
     roleEvidenceBlock = '',
+    yearsGap: YearsGap | null = null,
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine }, ctx);
 }

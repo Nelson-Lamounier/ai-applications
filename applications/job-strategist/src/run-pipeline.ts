@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StructuredResumeData, GroundingMode } from '@bedrock/shared';
+import type { StrategistPipelineContext, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -26,6 +26,8 @@ import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { extractJobDescription } from './agents/jd-extractor.js';
+import { buildYearsGap } from './agents/years-gap.js';
+import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import { parseEnv }               from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -89,6 +91,12 @@ const resumeProse = new Counter({
     labelNames: ['status'] as const,
     registers:  [obs.registry],
 });
+const coverLetterViolations = new Counter({
+    name:      'job_strategist_cover_letter_violations_total',
+    help:      'Cover-letter guard violations caught (and rewritten) by code.',
+    labelNames: ['code'] as const,
+    registers:  [obs.registry],
+});
 // Prose linting runs in 'flag' mode only — telemetry on AI-tell language in the
 // generated resume + cover letter; never alters or blocks the persisted output.
 const resumeProseLinter = new BedrockProseLinter({ mode: 'flag' });
@@ -102,7 +110,7 @@ async function lintResumeProse(
     pool: Pool,
     env: ReturnType<typeof parseEnv>,
     resume: StructuredResumeData | null,
-    coverLetter: string | null,
+    coverLetter: CoverLetter | null,
 ): Promise<void> {
     try {
         const sections = extractResumeProseSections(resume, coverLetter);
@@ -344,7 +352,17 @@ export async function main(): Promise<void> {
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
-        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock);
+
+        // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line. Fail-open.
+        const hardYearsBar = research.data.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
+        const yearsGap = await buildYearsGap(
+            (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, period: c.period, family: null, roleClass: null })),
+            research.data.experienceSignals.yearsExpected,
+            hardYearsBar,
+            new Date().getFullYear(),
+        ).catch(() => null);
+
+        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -418,10 +436,22 @@ export async function main(): Promise<void> {
             });
         }
 
+        // ── Cover-letter guard (rule-based, fail-open, rewrite-on-violation) ──
+        // Validates the AI-authored cover letter against code-enforced rules
+        // (e.g. leadIdentity coherence, years-gap framing). Violations are
+        // rewritten in-place and counted for observability — never throws.
+        const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
+            analysis.data.coverLetter,
+            research.data.targetRole,
+            analysis.data.archetypeSelection?.leadIdentity ?? '',
+            yearsGap?.framingLine ?? '',
+        );
+        for (const v of coverViolations) coverLetterViolations.inc({ code: v.code });
+
         // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────
         // Lint the generated resume + cover-letter prose for AI-tell language.
         // Pure observability — never alters the persisted resume, never throws.
-        await lintResumeProse(pool, env, tailoredResumeData, analysis.data.coverLetter);
+        await lintResumeProse(pool, env, tailoredResumeData, finalCoverLetter);
 
         // ── Path-grounding check (advisory, fail-open) ────────────────────
         // Flag file-path citations in the final analysis that don't exist in
@@ -440,7 +470,7 @@ export async function main(): Promise<void> {
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, analysisXml: finalAnalysis, pathGrounding, atsCheck },
+            analysis:     { ...analysis.data, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck, yearsGap },
             research:     research.data,
             jdExtraction,
         });
