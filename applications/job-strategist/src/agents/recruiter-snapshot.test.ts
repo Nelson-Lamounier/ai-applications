@@ -1,7 +1,10 @@
 /** @format */
 import type { AtsCheckResult } from '../ats/ats-check.schema.js';
 import type { StrategistResearchResult } from '@bedrock/shared';
-import { computeBaselineScore } from './recruiter-snapshot.js';
+
+// ---------------------------------------------------------------------------
+// Module-scope helpers (used by both describe blocks)
+// ---------------------------------------------------------------------------
 
 function ats(present: number, total: number): AtsCheckResult {
     const cov = Array.from({ length: total }, (_, i) => ({ term: `k${i}`, present: i < present, grounded: false }));
@@ -17,6 +20,23 @@ function research(verified: string[], gaps: string[], hardReqs: string[]): Pick<
         hardRequirements: hardReqs.map((skill) => ({ skill, context: '' })),
     };
 }
+
+// ---------------------------------------------------------------------------
+// Mock @bedrock/shared before importing the module under test
+// ---------------------------------------------------------------------------
+
+const mockRunAgent = jest.fn();
+
+jest.mock('@bedrock/shared', () => ({
+    runAgent: mockRunAgent,
+    log: () => undefined,
+}));
+
+import { computeBaselineScore, buildRecruiterSnapshot } from './recruiter-snapshot.js';
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 describe('computeBaselineScore', () => {
     it('weights coverage 0.5, verified-ratio 0.3, hard-req-hit 0.2', () => {
@@ -42,5 +62,46 @@ describe('computeBaselineScore', () => {
         // cov.length===0 → keywordCoverage=0 ; verified 1/1=1 ; hardReqHit 1
         // 100*(0.5*0 + 0.3*1 + 0.2*1) = 50
         expect(computeBaselineScore(r, ats(0, 0))).toBe(50);
+    });
+});
+
+describe('buildRecruiterSnapshot', () => {
+    const CTX = {
+        pipelineId: 'p',
+        environment: 'dev',
+        cumulativeTokens: { input: 0, output: 0, thinking: 0 },
+        cumulativeCostUsd: 0,
+    } as never;
+
+    it('applies the LLM delta to the baseline (clamped) and passes through keywords/flags', async () => {
+        mockRunAgent.mockResolvedValue({
+            data: {
+                scoreDelta: 8,
+                scoreRationale: 'strong infra fit',
+                missingKeywords: ['Kafka', 'gRPC'],
+                redFlags: [{ flag: 'No streaming', why: 'JD centres on Kafka' }],
+            },
+        });
+        // baseline for research(['AWS'],['Kafka'],['AWS']) + ats(2,4):
+        // cov .5, verified 1/2=.5, hardReqHit 1 → 100*(0.5*0.5 + 0.3*0.5 + 0.2*1) = 100*(0.25+0.15+0.20) = 60
+        const snap = await buildRecruiterSnapshot(CTX, research(['AWS'], ['Kafka'], ['AWS']), ats(2, 4));
+        expect(snap?.score).toBe(68);
+        expect(snap?.missingKeywords).toEqual(['Kafka', 'gRPC']);
+        expect(snap?.redFlags[0].flag).toBe('No streaming');
+    });
+
+    it('clamps to 100', async () => {
+        mockRunAgent.mockResolvedValue({ data: { scoreDelta: 10, scoreRationale: 'x', missingKeywords: [], redFlags: [] } });
+        const snap = await buildRecruiterSnapshot(CTX, research(['a'], [], []), ats(4, 4)); // baseline 100
+        expect(snap?.score).toBe(100);
+    });
+
+    it('returns null when atsCheck is null (fail-open)', async () => {
+        expect(await buildRecruiterSnapshot(CTX, research(['AWS'], ['Kafka'], ['AWS']), null)).toBeNull();
+    });
+
+    it('returns null when the agent throws (fail-open)', async () => {
+        mockRunAgent.mockRejectedValue(new Error('bedrock down'));
+        expect(await buildRecruiterSnapshot(CTX, research(['AWS'], ['Kafka'], ['AWS']), ats(2, 4))).toBeNull();
     });
 });
