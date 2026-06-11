@@ -137,6 +137,7 @@ export type AgentName =
     | 'research' | 'writer' | 'qa'
     | 'strategist-research' | 'strategist-writer' | 'strategist-coach'
     | 'jd-extractor'
+    | 'role-classifier'
     | 'resume-builder'
     | 'project-clustering'
     | 'project-case-study'
