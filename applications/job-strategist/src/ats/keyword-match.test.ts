@@ -1,5 +1,5 @@
 /** @format */
-import { normalizeTerm, matchTier1 } from './keyword-match.js';
+import { normalizeTerm, matchTier1, matchTerm } from './keyword-match.js';
 
 describe('normalizeTerm', () => {
     it('strips qualifiers + generic suffixes, collapses punctuation', () => {
@@ -44,5 +44,46 @@ describe('matchTier1', () => {
     it('honesty: soft-skill content word is required, not stripped (project management)', () => {
         expect(matchTier1('project management', 'shipped a side project last year')).toBe(false);
         expect(matchTier1('project management', 'project management of a 5-person team')).toBe(true);
+    });
+});
+
+const r2 = 'support engineer; escalation management and sla ownership; python automation; aws iam';
+const familyVocab = [['escalation', 'sla', 'on-call', 'incident response', 'root cause analysis']];
+
+describe('matchTerm (3 tiers)', () => {
+    it('tier literal — raw term present', async () => {
+        const res = await matchTerm('python', r2, { familyVocab, embedder: null, threshold: 0.55 });
+        expect(res.present).toBe(true); expect(res.tier).toBe('literal');
+    });
+    it('tier normalized — Tier 1 normalized/token', async () => {
+        const res = await matchTerm('SLA ownership skills', r2, { familyVocab: [], embedder: null, threshold: 0.55 });
+        expect(res.present).toBe(true); expect(res.tier).toBe('normalized');
+    });
+    it('tier ontology — JD term in a family vocab group + resume has another vocab term from that group', async () => {
+        // "incident response" not literally in resume, but "escalation"/"sla" are (same family group)
+        const res = await matchTerm('incident response', r2, { familyVocab, embedder: null, threshold: 0.55 });
+        expect(res.present).toBe(true); expect(res.tier).toBe('ontology');
+    });
+    it('tier embedding — conservative semantic match when literal+ontology miss', async () => {
+        const embedder = { embed: jest.fn()
+            .mockResolvedValueOnce([1, 0, 0])     // resume vector (first embed call)
+            .mockResolvedValueOnce([0.9, 0.1, 0]) // term vector (cosine ~0.99 >= 0.55)
+        };
+        const res = await matchTerm('customer ticket triage', r2, { familyVocab: [], embedder, threshold: 0.55 });
+        expect(res.present).toBe(true); expect(res.tier).toBe('embedding');
+    });
+    it('none — genuine gap, below embedding threshold', async () => {
+        const embedder = { embed: jest.fn().mockResolvedValueOnce([1, 0, 0]).mockResolvedValueOnce([0, 1, 0]) }; // cosine 0
+        const res = await matchTerm('ChatGPT', r2, { familyVocab: [], embedder, threshold: 0.55 });
+        expect(res.present).toBe(false); expect(res.tier).toBe('none');
+    });
+    it('embedder error → fail-open, no false credit', async () => {
+        const embedder = { embed: jest.fn().mockRejectedValue(new Error('down')) };
+        const res = await matchTerm('ChatGPT', r2, { familyVocab: [], embedder, threshold: 0.55 });
+        expect(res.present).toBe(false); expect(res.tier).toBe('none');
+    });
+    it('no embedder → tiers 1-2 only', async () => {
+        const res = await matchTerm('ChatGPT', r2, { familyVocab: [], embedder: null, threshold: 0.55 });
+        expect(res.present).toBe(false); expect(res.tier).toBe('none');
     });
 });

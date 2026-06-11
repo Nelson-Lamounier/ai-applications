@@ -39,3 +39,51 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
     if (tokens.length === 0) return false;
     return tokens.every((tok) => resume.includes(` ${tok} `));
 }
+
+export type MatchTier = 'literal' | 'normalized' | 'ontology' | 'embedding' | 'none';
+export interface Embedder { embed(text: string): Promise<number[]>; }
+export interface MatchCtx { familyVocab: string[][]; embedder: Embedder | null; threshold: number; resumeVector?: number[]; }
+
+function cosine(a: number[], b: number[]): number {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+    if (na === 0 || nb === 0) return 0;
+    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+/** Tier 2 — the JD term is in a resolved family's vocab group AND the resume contains another vocab term from that group. */
+function matchOntology(term: string, resumeLowerText: string, familyVocab: string[][]): boolean {
+    const nt = normalizeTerm(term);
+    if (!nt) return false;
+    const resume = ' ' + resumeLowerText.toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
+    for (const group of familyVocab) {
+        const normGroup = group.map(normalizeTerm).filter((g) => g.length > 0);
+        if (!normGroup.includes(nt)) continue;
+        if (normGroup.some((v) => v !== nt && resume.includes(` ${v} `))) return true;
+    }
+    return false;
+}
+
+/**
+ * 3-tier keyword match. literal -> normalized (Tier 1) -> ontology (Tier 2) -> embedding (Tier 3).
+ * Tier 3 only runs on tier1+2 misses (cost). FAIL-OPEN: embedder error -> no false credit.
+ */
+export async function matchTerm(
+    term: string,
+    resumeLowerText: string,
+    ctx: MatchCtx,
+): Promise<{ present: boolean; tier: MatchTier }> {
+    const raw = term.toLowerCase().trim();
+    const resume = ' ' + resumeLowerText.toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
+    if (raw && resume.includes(` ${raw} `)) return { present: true, tier: 'literal' };
+    if (matchTier1(term, resumeLowerText)) return { present: true, tier: 'normalized' };
+    if (matchOntology(term, resumeLowerText, ctx.familyVocab)) return { present: true, tier: 'ontology' };
+    if (ctx.embedder) {
+        try {
+            const rv = ctx.resumeVector ?? (await ctx.embedder.embed(resumeLowerText.slice(0, 8000)));
+            const tv = await ctx.embedder.embed(term);
+            if (cosine(rv, tv) >= ctx.threshold) return { present: true, tier: 'embedding' };
+        } catch { /* fail-open — no false credit */ }
+    }
+    return { present: false, tier: 'none' };
+}
