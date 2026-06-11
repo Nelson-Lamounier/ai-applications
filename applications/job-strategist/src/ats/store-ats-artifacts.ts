@@ -1,8 +1,9 @@
 /** @format */
 import { PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 
 import type { AtsCheckResult } from './ats-check.schema.js';
+import { withUserRls } from '../lib/rls.js';
 
 export interface StoreAtsArtifactsArgs {
     readonly s3:       S3Client;
@@ -12,39 +13,6 @@ export interface StoreAtsArtifactsArgs {
     readonly userId:   string;
     readonly pdf:      Buffer;
     readonly check:    AtsCheckResult;
-}
-
-/**
- * Run a write against an RLS-protected table inside a transaction that sets the
- * row-isolation context (`app.current_user_id`).
- *
- * `resumes` has RLS policy `resumes_isolation`
- * (`user_id = current_setting('app.current_user_id', true)::uuid`). The pipeline
- * connects as a non-owner role, so the policy is enforced. pgbouncer runs in
- * transaction-pooling mode, which drops any connection-level `SET` between
- * transactions — so the context MUST be set with `is_local = true` in the SAME
- * transaction as the write. Without it the row is invisible to the policy and the
- * write silently affects 0 rows (no error). Mirrors system-tour-persistence /
- * dsa-evidence.
- */
-export async function withUserRls<T>(
-    pool: Pool,
-    userId: string,
-    fn: (client: PoolClient) => Promise<T>,
-): Promise<T> {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-        const result = await fn(client);
-        await client.query('COMMIT');
-        return result;
-    } catch (err) {
-        await client.query('ROLLBACK').catch(() => undefined);
-        throw err;
-    } finally {
-        client.release();
-    }
 }
 
 /**

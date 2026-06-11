@@ -7,7 +7,8 @@ import type { AtsCheckResult } from './ats-check.schema.js';
 import { buildAtsCheck } from './checks.js';
 import { collectGroundedTerms, collectJdMustHaves } from './jd-keywords.js';
 import { parsePdfBack } from './parse-back.js';
-import { storeAtsArtifacts, withUserRls } from './store-ats-artifacts.js';
+import { storeAtsArtifacts } from './store-ats-artifacts.js';
+import { withUserRls } from '../lib/rls.js';
 import { renderResumePdf } from '../render/render-resume-pdf.js';
 
 /** Minimal structured logger surface (pino-compatible). */
