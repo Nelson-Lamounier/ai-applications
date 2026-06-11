@@ -5,6 +5,7 @@ import type { RoleFamily } from '@bedrock/shared';
 import { classifyRole } from './role-classifier.js';
 
 const QUORUM = Number(process.env['ROLE_LEARNING_QUORUM'] ?? '3');
+const FAMILY_QUORUM = Number(process.env['ROLE_FAMILY_QUORUM'] ?? '5');
 
 export interface ResolvedRole {
     title:    string;
@@ -73,6 +74,6 @@ export async function resolveRoleFamilies(
             out.push({ title: x.title, company: x.company, family: null, matchVia: 'none' });
         }
     }
-    await repo.promote(QUORUM).catch(() => undefined);
+    await repo.promote(QUORUM, FAMILY_QUORUM).catch(() => undefined);
     return out;
 }
