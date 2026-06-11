@@ -22,7 +22,9 @@ export function formatRoleEvidence(resolved: ResolvedRole[], companyFraming: Map
             `  transferable: ${f.transferableSkills.join(', ')}`,
             `  vocabulary: ${f.vocabulary.join(', ')}`,
         );
-        const note = (r.companyType && companyFraming.get(r.companyType)) ?? f.industryNotes;
+        // Prefer the company-type framing; fall back to the family note on an empty/absent
+        // framing (|| not ?? — an empty '' framing, e.g. company_type 'other', must fall through).
+        const note = (r.companyType && companyFraming.get(r.companyType)) || f.industryNotes;
         if (note) lines.push(`  note: ${note}`);
     }
     return lines.join('\n');

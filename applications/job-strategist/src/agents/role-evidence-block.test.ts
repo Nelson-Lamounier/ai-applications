@@ -39,4 +39,14 @@ describe('formatRoleEvidence', () => {
         const block = formatRoleEvidence(resolved, new Map());
         expect(block).toContain('AWS support ≈ SaaS support.');
     });
+    it('falls back to industryNotes when the matched framing is empty (e.g. company_type "other")', () => {
+        const otherRole: ResolvedRole = {
+            title: 'Support Rep', company: 'SomeCo', matchVia: 'classifier', companyType: 'other' as CompanyType,
+            family: { familyKey: 'technical-support', displayName: 'Technical Support', roleClass: 'customer_facing',
+                      canonicalResponsibilities: ['Triage'], vocabulary: ['SLA'], transferableSkills: ['empathy'], industryNotes: 'family fallback note' },
+        };
+        const framing = new Map<CompanyType, string>([['other', '']]); // empty framing must NOT suppress the family note
+        const block = formatRoleEvidence([otherRole], framing);
+        expect(block).toContain('note: family fallback note');
+    });
 });
