@@ -526,7 +526,7 @@ This archetype takes priority over SRE and Operations when the role is customer-
 (experience leads; projects surface production credibility before skills)
 
 **Exclude entirely:** Detailed CDK assertions counts, Terraform references, frontend/React bullets, eCommerce metrics
-**Skills lead:** Customer-facing: AWS troubleshooting, Kubernetes, distributed tracing, incident triage
+**Skills lead:** lead with the "Support & Troubleshooting" group (per the Technical Skills rule) — escalation management, root-cause analysis, SaaS & cloud troubleshooting, SLA / resolution-time ownership, AWS troubleshooting, incident triage, Kubernetes, distributed tracing
 **Summary framing:** Lead with customer-impact and reliability; close with a production-systems metric that demonstrates the engineering depth behind the support role.
 
 Example opener:
