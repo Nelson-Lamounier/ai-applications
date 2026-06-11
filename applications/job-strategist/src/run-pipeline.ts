@@ -15,7 +15,7 @@
  */
 import type { StrategistPipelineContext, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
@@ -347,14 +347,16 @@ export async function main(): Promise<void> {
         // Role-ontology grounding — translate experience into target-role vocabulary. Fail-open.
         const roleRepo = new RoleOntologyRepository(pool);
         const companyFraming = await roleRepo.loadCompanyFraming().catch(() => new Map());
-        const roleEvidenceBlock = formatRoleEvidence(
-            await resolveRoleFamilies(
-                pool, ctx.userId,
-                (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, highlights: c.highlights })),
-                roleRepo,
-            ).catch(() => []),
-            companyFraming,
-        );
+        const resolved = await resolveRoleFamilies(
+            pool, ctx.userId,
+            (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, highlights: c.highlights })),
+            roleRepo,
+        ).catch(() => []);
+        const roleEvidenceBlock = formatRoleEvidence(resolved, companyFraming);
+        // Flatten vocabulary groups from resolved role families for ontology-tier ATS matching.
+        const familyVocab = resolved
+            .map((rr) => rr.family?.vocabulary ?? [])
+            .filter((v) => v.length > 0);
 
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock);
 
@@ -461,6 +463,8 @@ export async function main(): Promise<void> {
         // that never throws (errors → 'unverified', never 'passed').
         let atsCheck: AtsCheckResult | null = null;
         if (persisted && finalResume) {
+            // Build a shared embedder for 3-tier ATS keyword matching (Titan, fail-open).
+            const atsEmbedder = TitanEmbeddingProvider.fromEnvironment();
             atsCheck = await renderCheckAndStoreAts({
                 s3, pool,
                 bucket:        process.env['ASSETS_BUCKET'] ?? '',
@@ -471,6 +475,9 @@ export async function main(): Promise<void> {
                 log,
                 correlationId: env.pipelineRunId,
                 onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
+                jdExtraction,
+                familyVocab,
+                embedder:      atsEmbedder,
             });
         }
 

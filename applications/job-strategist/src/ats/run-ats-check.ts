@@ -4,12 +4,15 @@ import type { StructuredResumeData, StrategistResearchResult } from '@bedrock/sh
 import type { Pool } from 'pg';
 
 import type { AtsCheckResult } from './ats-check.schema.js';
+import type { CoverageRow } from './checks.js';
 import { buildAtsCheck } from './checks.js';
-import { collectGroundedTerms, collectJdMustHaves } from './jd-keywords.js';
+import { collectJdMustHavesV2, collectGroundedTerms } from './jd-keywords.js';
+import { matchTerm, type Embedder } from './keyword-match.js';
 import { parsePdfBack } from './parse-back.js';
 import { storeAtsArtifacts } from './store-ats-artifacts.js';
 import { withUserRls } from '../lib/rls.js';
 import { renderResumePdf } from '../render/render-resume-pdf.js';
+import type { JdExtraction } from '../agents/jd-extractor.js';
 
 /** Minimal structured logger surface (pino-compatible). */
 export interface AtsLogger {
@@ -29,6 +32,12 @@ export interface RunAtsCheckArgs {
     readonly correlationId: string;
     /** Reports the terminal ATS status for metrics (e.g. `ats_passed`). */
     readonly onOutcome: (status: AtsCheckResult['status'] | 'error') => void;
+    /** Structured JD extraction (v2 atomic must-haves). Pass null to fall back to research. */
+    readonly jdExtraction?: JdExtraction | null;
+    /** Role-family vocabulary groups for ontology-tier matching. */
+    readonly familyVocab?: string[][];
+    /** Embedder for semantic (Tier 3) matching. Pass null to skip. */
+    readonly embedder?: Embedder | null;
 }
 
 const UNVERIFIED: AtsCheckResult = {
@@ -48,11 +57,37 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
     try {
         const pdf = await renderResumePdf(a.resume);
         const { text, sections } = await parsePdfBack(pdf);
+
+        // Build must-haves via v2 atomic source (JD-extractor preferred, fallback to research).
+        const mustHaves = collectJdMustHavesV2(a.jdExtraction ?? null, a.research);
+        const groundedTerms = collectGroundedTerms(a.research);
+        const familyVocab = a.familyVocab ?? [];
+        const embedder = a.embedder ?? null;
+        const threshold = Number(process.env['ATS_KEYWORD_EMBED_THRESHOLD'] ?? '0.55');
+
+        // Embed the resume text once (fail-open: undefined on error).
+        const resumeTextLower = text.toLowerCase();
+        let resumeVector: number[] | undefined;
+        if (embedder) {
+            resumeVector = await embedder.embed(text.slice(0, 8000)).catch(() => undefined);
+        }
+
+        // Build coverage async — 3-tier matchTerm per term.
+        const coverage: CoverageRow[] = [];
+        for (const term of mustHaves) {
+            const m = await matchTerm(term, resumeTextLower, { familyVocab, embedder, threshold, resumeVector });
+            coverage.push({
+                term,
+                present:  m.present,
+                grounded: groundedTerms.has(term.toLowerCase()),
+                tier:     m.tier,
+            });
+        }
+
         const check = buildAtsCheck({
             text, sections,
             profile: { name: a.resume.profile.name, email: a.resume.profile.email },
-            jdMustHaves:   collectJdMustHaves(a.research),
-            groundedTerms: collectGroundedTerms(a.research),
+            coverage,
         });
         if (a.bucket) {
             await storeAtsArtifacts({
