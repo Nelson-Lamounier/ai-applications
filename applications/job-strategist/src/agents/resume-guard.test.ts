@@ -1,6 +1,11 @@
 /** @format */
+jest.mock('@bedrock/shared', () => ({ runAgent: jest.fn(), log: () => undefined }));
+import { runAgent } from '@bedrock/shared';
+import { guardResume } from './resume-guard.js';
 import { validateResume } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
+
+const mockRun = runAgent as jest.Mock;
 
 const base = (over: Partial<StructuredResumeData> = {}): StructuredResumeData => ({
     profile: { name: 'Nelson', title: 'Technical Support Engineer · Cloud & AI Operations', email: 'e', location: 'Dublin' },
@@ -32,5 +37,31 @@ describe('validateResume', () => {
     });
     it('skills_lead_mismatch — first skill group is not the archetype lead', () => {
         expect(codes(base({ skills: [{ category: 'Cloud', skills: ['AWS'] }, { category: 'Support & Troubleshooting', skills: ['SLA'] }] }))).toContain('skills_lead_mismatch');
+    });
+});
+
+describe('guardResume', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('clean resume → unchanged, no rewrite call', async () => {
+        const r = base();
+        const res = await guardResume(r, ctx);
+        expect(res.resume).toBe(r);
+        expect(res.violations).toEqual([]);
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+    it('violations → calls rewrite, returns fixed + original violations', async () => {
+        const fixed = base();
+        mockRun.mockResolvedValue({ data: fixed });
+        const bad = base({ summary: 'Cloud infrastructure engineer with 3 years that falls short of the 8-year bar.' });
+        const res = await guardResume(bad, ctx);
+        expect(res.resume).toBe(fixed);
+        expect(res.violations.map((v) => v.code)).toEqual(expect.arrayContaining(['summary_wrong_cluster', 'summary_names_gap']));
+    });
+    it('rewrite throws → returns ORIGINAL (fail-open)', async () => {
+        mockRun.mockRejectedValue(new Error('down'));
+        const bad = base({ summary: 'Cloud infrastructure engineer, 3 years, falls short.' });
+        const res = await guardResume(bad, ctx);
+        expect(res.resume).toBe(bad);
     });
 });
