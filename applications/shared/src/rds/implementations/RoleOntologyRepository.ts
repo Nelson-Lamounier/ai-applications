@@ -1,6 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
-import type { RoleFamily, RoleLearningCandidate } from '../types/role-ontology.js';
+import type { CompanyType, NewFamily, RoleFamily, RoleLearningCandidate } from '../types/role-ontology.js';
 
 interface FamilyRow {
     family_key: string; display_name: string; role_class: RoleFamily['roleClass'];
@@ -51,7 +51,7 @@ export class RoleOntologyRepository {
     }
 
     /** Promote candidates corroborated by >= quorum distinct users to auto_imported. Idempotent. */
-    async promote(quorum: number): Promise<void> {
+    async promote(aliasQuorum: number, familyQuorum: number): Promise<void> {
         await this.pool.query(
             `INSERT INTO role_aliases (alias, family_key, curation, source)
              SELECT value, family_key, 'auto_imported', 'learned'
@@ -60,7 +60,7 @@ export class RoleOntologyRepository {
               GROUP BY value, family_key
              HAVING COUNT(DISTINCT contributing_user_id) >= $1
              ON CONFLICT (alias) DO NOTHING`,
-            [quorum],
+            [aliasQuorum],
         );
         await this.pool.query(
             `UPDATE role_ontology o SET
@@ -77,7 +77,44 @@ export class RoleOntologyRepository {
                  HAVING COUNT(DISTINCT contributing_user_id) >= $1
                ) c
               WHERE o.family_key = c.family_key`,
-            [quorum],
+            [aliasQuorum],
         );
+        await this.pool.query(
+            `UPDATE role_ontology SET curation = 'auto_imported', updated_at = now()
+              WHERE curation = 'candidate' AND family_key IN (
+                SELECT value FROM role_learning_candidates
+                 WHERE candidate_type = 'family'
+                 GROUP BY value
+                HAVING COUNT(DISTINCT contributing_user_id) >= $1)`,
+            [familyQuorum],
+        );
+    }
+
+    /** ALL family keys (curated+auto_imported+candidate) — feeds the classifier for convergence. */
+    async loadAllFamilyKeys(): Promise<string[]> {
+        const { rows } = await this.pool.query<{ family_key: string }>(
+            `SELECT family_key FROM role_ontology WHERE is_active = TRUE`,
+        );
+        return rows.map((r) => r.family_key);
+    }
+
+    /** Insert a classifier-proposed novel family as a 'candidate' (not grounded until promoted). */
+    async insertCandidateFamily(f: NewFamily): Promise<void> {
+        await this.pool.query(
+            `INSERT INTO role_ontology (family_key, display_name, role_class, canonical_responsibilities, vocabulary, transferable_skills, curation, source)
+             VALUES ($1,$2,$3,$4,$5,$6,'candidate','classifier-learned')
+             ON CONFLICT (family_key) DO NOTHING`,
+            [f.familyKey, f.displayName, f.roleClass, f.canonicalResponsibilities, f.vocabulary, f.transferableSkills],
+        );
+    }
+
+    /** company_type → framing note. */
+    async loadCompanyFraming(): Promise<Map<CompanyType, string>> {
+        const { rows } = await this.pool.query<{ company_type: CompanyType; framing_note: string }>(
+            `SELECT company_type, framing_note FROM company_type_framing`,
+        );
+        const m = new Map<CompanyType, string>();
+        for (const r of rows) m.set(r.company_type, r.framing_note);
+        return m;
     }
 }

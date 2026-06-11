@@ -11,7 +11,18 @@ export interface RoleFamily {
     industryNotes:             string;
 }
 
-export type RoleCandidateType = 'alias' | 'vocabulary' | 'transferable_skill';
+export type RoleCandidateType = 'alias' | 'vocabulary' | 'transferable_skill' | 'family';
+
+export type CompanyType = 'saas' | 'infra_provider' | 'fintech' | 'hardware' | 'agency' | 'enterprise' | 'marketplace' | 'other';
+
+export interface NewFamily {
+    familyKey:                 string;
+    displayName:               string;
+    roleClass:                 RoleClass;
+    canonicalResponsibilities: string[];
+    vocabulary:                string[];
+    transferableSkills:        string[];
+}
 
 export interface RoleLearningCandidate {
     familyKey:          string;
