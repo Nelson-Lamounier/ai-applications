@@ -27,6 +27,7 @@ import {
 import type {
     AgentConfig,
     AgentResult,
+    CoverLetter,
     ResumeAdditionSuggestion,
     ResumeReframeSuggestion,
     ResumeEslCorrection,
@@ -309,16 +310,28 @@ function extractMetadataFromXml(xml: string): StrategistAnalysisResult['metadata
     };
 }
 
+const CoverLetterSchema = z.object({
+    greeting:   z.string(),
+    paragraphs: z.array(z.string()),
+    signoff:    z.object({ name: z.string(), email: z.string(), linkedin: z.string(), github: z.string() }),
+});
+
 /**
- * Extract the cover letter from the XML analysis.
+ * Extract + parse the cover letter JSON from the CDATA block.
+ * Returns null on absent or invalid payload (fail-open).
  *
  * @param xml - Raw XML analysis output
- * @returns Cover letter text
+ * @returns Parsed CoverLetter object, or null
  */
-function extractCoverLetter(xml: string): string {
-    const coverLetterRegex = /<cover_letter><!\[CDATA\[(.*?)\]\]><\/cover_letter>/s;
-    const result = coverLetterRegex.exec(xml);
-    return result?.[1]?.trim() ?? '';
+export function extractCoverLetter(xml: string): CoverLetter | null {
+    const m = /<cover_letter><!\[CDATA\[([\s\S]*?)\]\]><\/cover_letter>/.exec(xml);
+    if (!m) return null;
+    try {
+        const parsed = CoverLetterSchema.safeParse(JSON.parse(m[1].trim()));
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
 }
 
 /**

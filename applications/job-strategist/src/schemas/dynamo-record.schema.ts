@@ -105,8 +105,12 @@ export const AnalysisRecordSchema = z.object({
     /** Extracted metadata for quick queries */
     metadata: AnalysisMetadataSchema,
 
-    /** Generated cover letter */
-    coverLetter: z.string().default(''),
+    /** Generated cover letter (structured object, null when not requested) */
+    coverLetter: z.object({
+        greeting:   z.string(),
+        paragraphs: z.array(z.string()),
+        signoff:    z.object({ name: z.string(), email: z.string(), linkedin: z.string(), github: z.string() }),
+    }).nullable().default(null),
 
     /** Structured per-item resume suggestions */
     resumeSuggestions: ResumeSuggestionsSchema.default({
