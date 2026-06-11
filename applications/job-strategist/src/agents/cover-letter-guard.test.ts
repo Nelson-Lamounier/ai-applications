@@ -1,5 +1,7 @@
 /** @format */
-import { validateCoverLetter, type CoverLetter } from './cover-letter-guard.js';
+jest.mock('@bedrock/shared', () => ({ runAgent: jest.fn(), log: () => undefined }));
+import { runAgent } from '@bedrock/shared';
+import { validateCoverLetter, guardCoverLetter, type CoverLetter } from './cover-letter-guard.js';
 
 /** Wrap a body string in a structured CoverLetter for the content checks. */
 const cl = (body: string): CoverLetter => ({
@@ -31,5 +33,41 @@ describe('validateCoverLetter', () => {
     });
     it('clean structured letter → no violations', () => {
         expect(codes('I build production AI support systems. The AI Support Engineer role at OpenAI fits exactly.')).toEqual([]);
+    });
+});
+
+const mockRun = runAgent as jest.Mock;
+
+const SIGNOFF = { name: 'Nelson', email: 'n@x.com', linkedin: 'l', github: 'g' };
+const clObj = (paras: string[]): CoverLetter => ({ greeting: 'Dear Hiring Manager', paragraphs: paras, signoff: SIGNOFF });
+
+describe('guardCoverLetter', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('null letter → passthrough, no rewrite call', async () => {
+        const r = await guardCoverLetter(null, 'AI Support Engineer', 'User Operations Engineer', '');
+        expect(r.letter).toBeNull();
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+    it('clean letter → unchanged, no rewrite call', async () => {
+        const clean = clObj(['I build production AI support. The AI Support Engineer role at OpenAI fits.']);
+        const r = await guardCoverLetter(clean, 'AI Support Engineer', 'User Operations Engineer', '');
+        expect(r.letter).toBe(clean);
+        expect(r.violations).toEqual([]);
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+    it('violations → calls rewrite, returns rewritten letter + original violations', async () => {
+        const fixed = clObj(['I build production AI support systems for the AI Support Engineer role.']);
+        mockRun.mockResolvedValue({ data: fixed });
+        const bad = clObj(['My 3 years falls short of the 8-year threshold.']);  // missing_title + names_gap
+        const r = await guardCoverLetter(bad, 'AI Support Engineer', 'User Operations Engineer', '5 years across support');
+        expect(r.letter).toBe(fixed);
+        expect(r.violations.map((v) => v.code)).toEqual(expect.arrayContaining(['missing_title', 'names_gap']));
+    });
+    it('rewrite throws → returns ORIGINAL letter (fail-open)', async () => {
+        mockRun.mockRejectedValue(new Error('bedrock down'));
+        const bad = clObj(['My 3 years falls short of the threshold.']);
+        const r = await guardCoverLetter(bad, 'AI Support Engineer', 'User Operations Engineer', '');
+        expect(r.letter).toBe(bad);
     });
 });

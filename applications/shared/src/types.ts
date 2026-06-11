@@ -147,7 +147,9 @@ export type AgentName =
     // resume-import-processor agents.
     | 'resume-extract' | 'resume-enrich' | 'resume-gap'
     // years-gap pipeline.
-    | 'years-relevance';
+    | 'years-relevance'
+    // cover-letter guard pipeline.
+    | 'cover-letter-rewrite';
 
 /**
  * Model-agnostic configuration for a single agent.
