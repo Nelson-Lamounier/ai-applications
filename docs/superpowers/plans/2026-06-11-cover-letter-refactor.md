@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript (NodeNext ESM, `.js`), Zod, Bedrock Haiku (`runAgent`), Jest (ts-jest CJS).
 
+> **⚠️ REVISION (locked):** cover letter is STRUCTURED JSON `{ greeting, paragraphs[], signoff }`, plain text, NO markdown — formatting is the UI/PDF's job. `coverLetter` type `string→CoverLetter` everywhere; the writer emits a JSON CDATA block (extracted + Zod-validated); persona drops formatting rules; guard's `too_bold`→`has_markdown`; UI+PDF render structured. Revised task set: T1 validator (structured) ✅ · T2 rewrite+guard (CoverLetter) · T3 persona JSON output + positioning headline · T4 extraction+type+dynamo · T5 pipeline wiring · T6 tucaken admin-api+UI+PDF. See spec REVISION block.
+
 **Spec:** `docs/superpowers/specs/2026-06-11-cover-letter-refactor-design.md`. Branch `feat/cover-letter-refactor` (off `feat/years-gap`). Build shared with `cd applications/shared && npx tsc --build`.
 
 ---
