@@ -43,6 +43,8 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
+import { enrichLedgerWithEvidence } from './ats/tool-evidence-retrieval.js';
+import { RdsVectorStore } from '@bedrock/shared';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -369,7 +371,16 @@ export async function main(): Promise<void> {
             ...jdExtraction.technologyInventory.languages,
             ...jdExtraction.requiredSkills,
         ];
-        const skillEvidenceLedger = buildSkillEvidenceLedger(ledgerTools, research.data);
+        const baseLedger = buildSkillEvidenceLedger(ledgerTools, research.data);
+
+        // Enrich verified/transferable entries with per-tool targeted pgvector queries.
+        // GAP entries are never touched (honesty invariant). Fail-open: any error → baseLedger.
+        const ledgerEmbedder = TitanEmbeddingProvider.fromEnvironment();
+        const ledgerStore = RdsVectorStore.fromEnvironment();
+        const skillEvidenceLedger = await enrichLedgerWithEvidence(
+            baseLedger,
+            { store: ledgerStore, embedder: ledgerEmbedder, userId: env.userId },
+        ).catch(() => baseLedger);
 
         const researchData: StrategistResearchResult = {
             ...jdExtraction,
