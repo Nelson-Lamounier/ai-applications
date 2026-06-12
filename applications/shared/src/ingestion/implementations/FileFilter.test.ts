@@ -218,7 +218,18 @@ describe('FileFilter', () => {
             expect(filter.shouldInclude('src/index.ts')).toBe(true);
             expect(filter.shouldInclude('src/component.tsx')).toBe(true);
             expect(filter.shouldInclude('config.yaml')).toBe(true);
-            expect(filter.shouldInclude('package.json')).toBe(true);
+        });
+
+        it('excludes JSON (config/manifest noise — tech signal comes from the ProfileExtractor)', () => {
+            expect(filter.shouldInclude('package.json')).toBe(false);
+            expect(filter.shouldInclude('tsconfig.json')).toBe(false);
+            expect(filter.shouldInclude('src/data/fixtures.json')).toBe(false);
+        });
+
+        it('excludes LLM prompt scaffolding (not demonstrated work; pollutes skill queries)', () => {
+            expect(filter.shouldInclude('applications/article-pipeline/src/prompts/blog-persona.ts')).toBe(false);
+            expect(filter.shouldInclude('applications/job-strategist/src/prompts/resume-constraints.ts')).toBe(false);
+            expect(filter.shouldInclude('src/prompts/strategist-persona.ts')).toBe(false);
         });
 
         it('excludes build and test artifacts', () => {

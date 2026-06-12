@@ -107,7 +107,10 @@ export const DEFAULT_FILTER_CONFIG: FileFilterConfig = {
         '**/*.py',
         '**/*.yaml',
         '**/*.yml',
-        '**/*.json',
+        // NOTE: *.json is deliberately NOT embedded — config/manifest JSON is
+        // structured noise for prose retrieval (tsconfig, package, eslint). The
+        // tech-stack signal from manifests is read directly by the ProfileExtractor,
+        // not via embedded chunks. Embedding it pollutes skill/experience queries.
     ],
     exclude: [
         // Dependencies (match at any depth — monorepos nest node_modules under packages/)
@@ -153,6 +156,14 @@ export const DEFAULT_FILTER_CONFIG: FileFilterConfig = {
         '**/*.plan.md',
         '**/specs/**',
         '**/plans/**',
+
+        // LLM prompt scaffolding — the system's own personas/constraints, NOT
+        // demonstrated portfolio work. These describe how to write content, so
+        // they spuriously match resume/skills retrieval queries (e.g.
+        // resume-constraints.ts surfaced as candidate "evidence" at cosine 0.398).
+        '**/prompts/**',
+        '**/*persona*.ts',
+        '**/*-constraints.ts',
     ],
     maxSizeBytes: 500_000,
 };
