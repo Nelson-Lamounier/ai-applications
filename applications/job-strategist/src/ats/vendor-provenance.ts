@@ -28,7 +28,7 @@
  */
 
 import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
-import { buildReverseAliasMap } from './keyword-match.js';
+import { buildReverseAliasMap, mentionsCanonical } from './keyword-match.js';
 
 /** Directory names that mark a doc as ILLUSTRATIVE (a pattern reference), not authored evidence. */
 const REFERENCE_DIR_TOKENS = new Set([
@@ -76,12 +76,8 @@ export function vendorGroupForSkill(
     for (const group of techGroups) {
         if (group.length < 2) continue;
         for (const member of group) {
-            const surfaceForms = new Set([member.replaceAll('_', ' '), ...(reverse.get(member) ?? [])]);
-            for (const form of surfaceForms) {
-                const norm = padded(form).trim();
-                if (norm.length >= 3 && hay.includes(` ${norm} `)) {
-                    return { matched: member, siblings: group.filter((g) => g !== member) };
-                }
+            if (mentionsCanonical(member, hay, reverse)) {
+                return { matched: member, siblings: group.filter((g) => g !== member) };
             }
         }
     }

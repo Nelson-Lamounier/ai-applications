@@ -75,36 +75,15 @@ describe('demoteMisattributedVendors', () => {
         ]);
     });
 
-    it('KEEPS a non-vendor skill cited from the same reference doc (Python stays verified)', () => {
+    // Each of these must stay VERIFIED — the demotion must NOT fire.
+    it.each([
+        ['non-vendor skill cited from the same reference doc (Python stays verified)', 'Python scripting and automation', [CHECKLIST]],
+        ['vendor match backed by an AUTHORED source file', 'OpenAI API', [AUTHORED]],
+        ['vendor match with mixed evidence (one authored file present)', 'OpenAI API', [CHECKLIST, AUTHORED]],
+        ['vendor match with NO evidence files (career evidence, never demoted)', 'OpenAI API', []],
+    ])('KEEPS a %s', (_label, skill, files) => {
         const r = demoteMisattributedVendors(
-            matching([verified('Python scripting and automation', [CHECKLIST])]),
-            { techGroups: GROUPS, techAliasMap: ALIAS },
-        );
-        expect(r.matching.verifiedMatches).toHaveLength(1);
-        expect(r.demotions).toHaveLength(0);
-    });
-
-    it('KEEPS a vendor match backed by an AUTHORED source file', () => {
-        const r = demoteMisattributedVendors(
-            matching([verified('OpenAI API', [AUTHORED])]),
-            { techGroups: GROUPS, techAliasMap: ALIAS },
-        );
-        expect(r.matching.verifiedMatches).toHaveLength(1);
-        expect(r.demotions).toHaveLength(0);
-    });
-
-    it('KEEPS a vendor match with mixed evidence (one authored file present)', () => {
-        const r = demoteMisattributedVendors(
-            matching([verified('OpenAI API', [CHECKLIST, AUTHORED])]),
-            { techGroups: GROUPS, techAliasMap: ALIAS },
-        );
-        expect(r.matching.verifiedMatches).toHaveLength(1);
-        expect(r.demotions).toHaveLength(0);
-    });
-
-    it('KEEPS a vendor match with NO evidence files (career evidence, never demoted)', () => {
-        const r = demoteMisattributedVendors(
-            matching([verified('OpenAI API', [])]),
+            matching([verified(skill, files)]),
             { techGroups: GROUPS, techAliasMap: ALIAS },
         );
         expect(r.matching.verifiedMatches).toHaveLength(1);
