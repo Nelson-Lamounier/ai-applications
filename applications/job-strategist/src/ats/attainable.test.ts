@@ -47,62 +47,42 @@ describe('splitAttainable', () => {
         expect(r.attainablePassed).toBe(true);
     });
 
-    it('verified missing BLOCKS the pass even when a transferable is also missing', () => {
+    // Verified Python drives the pass; transferable OpenAI is bonus-only (never blocks).
+    // A Kubernetes gap (when present) must stay excluded from the pass universe.
+    it.each([
+        { name: 'verified present, transferable absent → pass', py: true, oai: false, total: 1, covered: 1, passed: true },
+        { name: 'verified absent → blocks even though transferable also absent', py: false, oai: false, total: 1, covered: 0, passed: false },
+        { name: 'verified + transferable both present → pass (gap still excluded)', py: true, oai: true, total: 1, covered: 1, passed: true },
+    ])('verified-only pass bar: $name', ({ py, oai, total, covered, passed }) => {
         const coverage = [
-            { term: 'Python', present: false },     // verified, absent → blocks
-            { term: 'OpenAI API', present: false }, // transferable, absent → bonus only
+            { term: 'Python', present: py },
+            { term: 'OpenAI API', present: oai },
+            { term: 'Kubernetes', present: false },
         ];
-        const ledger = [
-            entry('Python', 'verified'),
-            entry('OpenAI API', 'transferable'),
-        ];
+        const ledger = [entry('Python', 'verified'), entry('OpenAI API', 'transferable'), entry('Kubernetes', 'gap')];
         const r = splitAttainable(coverage, ledger);
-        expect(r.attainableMissing.map((e) => e.tool).sort((a, b) => a.localeCompare(b))).toEqual(['OpenAI API', 'Python']);
-        expect(r.attainableTotal).toBe(1);    // only the verified Python
-        expect(r.attainableCovered).toBe(0);
-        expect(r.attainablePassed).toBe(false);
+        expect(r.attainableTotal).toBe(total);
+        expect(r.attainableCovered).toBe(covered);
+        expect(r.attainablePassed).toBe(passed);
     });
 
-    it('transferable missing alone → passes; verified all present', () => {
+    it('when verified + transferable are both missing, BOTH are surfaced (gap excluded)', () => {
         const coverage = [
-            { term: 'Python', present: true },      // verified, present
-            { term: 'OpenAI API', present: false }, // transferable, absent → does not block
+            { term: 'Python', present: false },
+            { term: 'OpenAI API', present: false },
+            { term: 'Kubernetes', present: false },
         ];
-        const ledger = [
-            entry('Python', 'verified'),
-            entry('OpenAI API', 'transferable'),
-        ];
-        const r = splitAttainable(coverage, ledger);
-        expect(r.attainableTotal).toBe(1);
-        expect(r.attainableCovered).toBe(1);
-        expect(r.attainablePassed).toBe(true);
+        const ledger = [entry('Python', 'verified'), entry('OpenAI API', 'transferable'), entry('Kubernetes', 'gap')];
+        const missing = splitAttainable(coverage, ledger).attainableMissing.map((e) => e.tool);
+        expect(missing.toSorted((a, b) => a.localeCompare(b))).toEqual(['OpenAI API', 'Python']);
     });
 
     it('gap tool absent → NEVER attainable (excluded entirely, honesty invariant)', () => {
-        const coverage = [{ term: 'Kubernetes', present: false }];
-        const ledger = [entry('Kubernetes', 'gap')];
-        const r = splitAttainable(coverage, ledger);
+        const r = splitAttainable([{ term: 'Kubernetes', present: false }], [entry('Kubernetes', 'gap')]);
         expect(r.attainableTotal).toBe(0);
         expect(r.attainableCovered).toBe(0);
         expect(r.attainableMissing).toHaveLength(0);
-        expect(r.attainablePassed).toBe(true); // no attainable missing
-    });
-
-    it('attainablePassed true when no verified missing (transferable counts as bonus only)', () => {
-        const coverage = [
-            { term: 'Python', present: true },
-            { term: 'OpenAI API', present: true },
-            { term: 'Kubernetes', present: false },
-        ];
-        const ledger = [
-            entry('Python', 'verified'),
-            entry('OpenAI API', 'transferable'),
-            entry('Kubernetes', 'gap'),
-        ];
-        const r = splitAttainable(coverage, ledger);
-        expect(r.attainableTotal).toBe(1);   // only the verified Python is the pass universe
-        expect(r.attainableCovered).toBe(1);
-        expect(r.attainablePassed).toBe(true);
+        expect(r.attainablePassed).toBe(true); // no verified missing
     });
 
     it('matches coverage term to tool case-insensitively / bidirectionally', () => {
