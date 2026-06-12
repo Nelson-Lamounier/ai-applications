@@ -65,37 +65,16 @@ describe('demoteCodeContradictedMatches', () => {
         expect(r.contradictions[0]).toMatchObject({ repo: 'Nelson-Lamounier/cdk-monitoring', docTech: 'self_hosted_kubernetes', codeSuccessors: ['aws_eks'] });
     });
 
-    it('KEEPS the claim when the predecessor IS still in the code (no migration)', () => {
-        const code = new Map([['Nelson-Lamounier/cdk-monitoring', new Set(['self_hosted_kubernetes', 'kubernetes'])]]);
-        const r = demoteCodeContradictedMatches(
-            matching([verified('Self-hosted Kubernetes', [CDK_DOC])]),
-            { ...DEPS, codeTechByRepo: code },
-        );
-        expect(r.matching.verifiedMatches).toHaveLength(1);
-        expect(r.contradictions).toHaveLength(0);
-    });
-
-    it('KEEPS the claim when no successor is present in the code', () => {
-        const code = new Map([['Nelson-Lamounier/cdk-monitoring', new Set(['kubernetes', 'argocd'])]]);
-        const r = demoteCodeContradictedMatches(
-            matching([verified('Self-hosted Kubernetes', [CDK_DOC])]),
-            { ...DEPS, codeTechByRepo: code },
-        );
-        expect(r.matching.verifiedMatches).toHaveLength(1);
-        expect(r.contradictions).toHaveLength(0);
-    });
-
-    it('KEEPS a claim with no evidence files (career evidence, not repo-scoped)', () => {
-        const r = demoteCodeContradictedMatches(matching([verified('Self-hosted Kubernetes', [])]), DEPS);
-        expect(r.matching.verifiedMatches).toHaveLength(1);
-        expect(r.contradictions).toHaveLength(0);
-    });
-
-    it('KEEPS a claim evidenced from a repo with no code truth', () => {
-        const r = demoteCodeContradictedMatches(
-            matching([verified('Self-hosted Kubernetes', ['Other/unknown-repo/docs/x.md'])]),
-            DEPS,
-        );
+    // Each must stay VERIFIED — the contradiction must NOT fire.
+    it.each([
+        ['predecessor still in code (no migration)', verified('Self-hosted Kubernetes', [CDK_DOC]),
+            { ...DEPS, codeTechByRepo: new Map([['Nelson-Lamounier/cdk-monitoring', new Set(['self_hosted_kubernetes', 'kubernetes'])]]) }],
+        ['no successor present in code', verified('Self-hosted Kubernetes', [CDK_DOC]),
+            { ...DEPS, codeTechByRepo: new Map([['Nelson-Lamounier/cdk-monitoring', new Set(['kubernetes', 'argocd'])]]) }],
+        ['no evidence files (career evidence, not repo-scoped)', verified('Self-hosted Kubernetes', []), DEPS],
+        ['repo with no code truth', verified('Self-hosted Kubernetes', ['Other/unknown-repo/docs/x.md']), DEPS],
+    ])('KEEPS the claim: %s', (_label, match, deps) => {
+        const r = demoteCodeContradictedMatches(matching([match]), deps);
         expect(r.matching.verifiedMatches).toHaveLength(1);
         expect(r.contradictions).toHaveLength(0);
     });
