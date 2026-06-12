@@ -379,6 +379,8 @@ interface ResearchMessageOptions {
     jdSignalBlock?: string;
     /** Grounded technology transferability context (A5). Injected as its own section when non-empty. */
     techTransferContext?: string;
+    /** Current code-stack truth per repo (doc-vs-code drift). Injected as its own section when non-empty. */
+    codeStackContext?: string;
 }
 
 /**
@@ -408,6 +410,7 @@ function buildResearchMessage(
         roleEvidenceSection = '',
         jdSignalBlock = '',
         techTransferContext = '',
+        codeStackContext = '',
     } = opts;
 
     const sections: string[] = [
@@ -491,6 +494,10 @@ function buildResearchMessage(
 
     if (techTransferContext) {
         sections.push(techTransferContext, '');
+    }
+
+    if (codeStackContext) {
+        sections.push(codeStackContext, '');
     }
 
     if (careerHistorySection) {
@@ -770,6 +777,7 @@ export async function executeResearchAgent(
     careerEntries: CareerEntry[] | null = null,
     roleEvidenceBlock = '',
     techTransferContext = '',
+    codeStackContext = '',
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -903,6 +911,7 @@ export async function executeResearchAgent(
         roleEvidenceSection: roleEvidenceBlock,
         jdSignalBlock,
         techTransferContext,
+        codeStackContext,
     });
 
     // 7. Run agent

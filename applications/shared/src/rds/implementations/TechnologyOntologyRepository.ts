@@ -19,6 +19,23 @@ export class TechnologyOntologyRepository {
     }
 
     /**
+     * Load alias -> canonical_name (both lowercased) by joining aliases to the
+     * ontology. Unlike `loadAliasMap` (alias -> technology_id UUID), this resolves
+     * a free-text technology phrase straight to its canonical name — what the
+     * doc-vs-code drift guard needs to recognise a documented technology.
+     */
+    async loadAliasToCanonicalMap(): Promise<Map<string, string>> {
+        const { rows } = await this.pool.query<{ alias: string; canonical_name: string }>(
+            `SELECT a.alias, o.canonical_name
+               FROM technology_aliases a
+               JOIN technology_ontology o ON o.id = a.technology_id`,
+        );
+        const map = new Map<string, string>();
+        for (const r of rows) map.set(r.alias.toLowerCase(), r.canonical_name.toLowerCase());
+        return map;
+    }
+
+    /**
      * Load the lowercase prose-safe alias set — the strings the ReadmeParser v2
      * prose scanner is allowed to match against free-form English. Caller-side
      * mitigation 1 from the 2026-05-26 ReadmeParser-v2 design: only aliases
@@ -37,6 +54,75 @@ export class TechnologyOntologyRepository {
         const set = new Set<string>();
         for (const r of rows) set.add(r.alias.toLowerCase());
         return set;
+    }
+
+    /**
+     * Load each repo's CURRENT code-derived technology set for a user — the
+     * deterministic-from-code evidence (Syft SBOM, TreeSitter AST, IaC manifests,
+     * Dockerfiles) at the LATEST extracted commit per repo, resolved to ontology
+     * canonical names. README/code-prose layers are EXCLUDED: prose mentions can be
+     * as stale as the docs being checked, so they are not code ground-truth.
+     *
+     * Returns repoFullName -> Set of lowercased canonical names. This is the truth a
+     * doc claim is reconciled against: if a `.md` says "self-hosted Kubernetes" but a
+     * repo's code set contains `aws_eks` (and not the self-hosted entity), the doc is
+     * stale. Empty map when no evidence exists (fail-safe — callers skip reconciliation).
+     */
+    async loadRepoCodeTech(userId: string): Promise<Map<string, Set<string>>> {
+        const { rows } = await this.pool.query<{ repo_full_name: string; canonical: string }>(
+            `WITH latest_commit AS (
+                 SELECT DISTINCT ON (repo_full_name) repo_full_name, commit_sha
+                   FROM technology_evidence
+                  WHERE user_id = $1
+                  ORDER BY repo_full_name, created_at DESC
+             )
+             SELECT te.repo_full_name, lower(o.canonical_name) AS canonical
+               FROM technology_evidence te
+               JOIN latest_commit lc
+                 ON lc.repo_full_name = te.repo_full_name AND lc.commit_sha = te.commit_sha
+               JOIN technology_ontology o ON o.id = te.technology_id
+              WHERE te.user_id = $1
+                AND te.source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')`,
+            [userId],
+        );
+        const byRepo = new Map<string, Set<string>>();
+        for (const r of rows) {
+            let set = byRepo.get(r.repo_full_name);
+            if (set === undefined) {
+                set = new Set();
+                byRepo.set(r.repo_full_name, set);
+            }
+            set.add(r.canonical);
+        }
+        return byRepo;
+    }
+
+    /**
+     * Load `succeeds` relationships as a predecessor -> successors map.
+     * A row `(from=aws_eks, to=self_hosted_kubernetes, kind='succeeds')` means
+     * "aws_eks SUCCEEDS self_hosted_kubernetes" (the newer tech replaces the older).
+     * The map keys the OLDER (predecessor) canonical to its newer successors, so a
+     * doc claim about the predecessor can be flagged stale when a successor is the
+     * code truth. Empty map when none seeded.
+     */
+    async loadSucceedsEdges(): Promise<Map<string, Set<string>>> {
+        const { rows } = await this.pool.query<{ predecessor: string; successor: string }>(
+            `SELECT lower(t.canonical_name) AS predecessor, lower(f.canonical_name) AS successor
+               FROM technology_relationships r
+               JOIN technology_ontology f ON f.id = r.from_id
+               JOIN technology_ontology t ON t.id = r.to_id
+              WHERE r.kind = 'succeeds'`,
+        );
+        const map = new Map<string, Set<string>>();
+        for (const r of rows) {
+            let set = map.get(r.predecessor);
+            if (set === undefined) {
+                set = new Set();
+                map.set(r.predecessor, set);
+            }
+            set.add(r.successor);
+        }
+        return map;
     }
 
     /** Current ontology version (for tagging evidence rows). */
