@@ -45,6 +45,18 @@ describe('matchTier1', () => {
         expect(matchTier1('project management', 'shipped a side project last year')).toBe(false);
         expect(matchTier1('project management', 'project management of a 5-person team')).toBe(true);
     });
+
+    it('skill-category: generic language/scripting terms credited when the resume lists a concrete language', () => {
+        const r = 'Support engineer; Python and Bash automation; AWS CLI';
+        expect(matchTier1('scripting languages', r)).toBe(true);          // → "languages" + resume has Python
+        expect(matchTier1('Programming languages', r)).toBe(true);
+        expect(matchTier1('Scripting or code automation', r)).toBe(true); // 'scripting' cue + Python
+    });
+    it('skill-category honesty: a real gap with no language cue stays a miss', () => {
+        const r = 'Support engineer; Python and Bash automation';
+        expect(matchTier1('AI-driven customer support automation', r)).toBe(false); // no language/scripting cue
+        expect(matchTier1('scripting languages', 'recruiter with no technical skills')).toBe(false); // no language in resume
+    });
 });
 
 const r2 = 'support engineer; escalation management and sla ownership; python automation; aws iam';

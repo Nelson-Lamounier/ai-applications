@@ -32,13 +32,16 @@ import type {
     RerankResult,
 } from '../interfaces/IReranker.js';
 
-// Bedrock rerank models are region-limited. amazon.rerank-v1:0 is NOT offered in
-// eu-west-1 (the cluster region) — only cohere.rerank-v3-5:0 in us-east-1 — so the
-// reranker calls us-east-1 cross-region by default. The job role's bedrock grant is
-// region-wildcarded so this is permitted. Override via RERANKER_MODEL_ID /
-// RERANKER_REGION if a rerank model lands in-region (avoids cross-region data transfer).
-const DEFAULT_MODEL_ID = 'cohere.rerank-v3-5:0';
-const DEFAULT_REGION   = 'us-east-1';
+// Bedrock rerank models aren't offered in eu-west-1 (the cluster region), so the
+// reranker invokes a US region cross-region. Default = the FIRST-PARTY
+// amazon.rerank-v1:0 in us-west-2 — verified in this account as ACTIVE + AUTHORIZED with
+// the Marketplace agreement AVAILABLE (no subscription needed) and live-tested via the
+// Rerank API. The prior default (cohere.rerank-v3-5:0, us-east-1) returns a 403 because
+// its Marketplace agreement is NOT_AVAILABLE here (it requires an AWS Marketplace
+// subscription). The job role's bedrock grant is region-wildcarded, so cross-region
+// invoke is permitted. Override via RERANKER_MODEL_ID / RERANKER_REGION.
+const DEFAULT_MODEL_ID = 'amazon.rerank-v1:0';
+const DEFAULT_REGION   = 'us-west-2';
 
 /** Conservative per-candidate length cap. The API max is higher but cutting
  *  earlier saves bandwidth without hurting rerank quality. */
