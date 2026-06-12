@@ -149,6 +149,13 @@ describe('ProfileExtractor', () => {
         expect(result.description).toHaveLength(800);
     });
 
+    it('truncates a 7-element highlights array to 5 instead of failing (regression: a few extra bullets must not kill the whole repo ingestion)', async () => {
+        const seven = Array.from({ length: 7 }, (_, i) => `Built feature ${i} achieving a measurable outcome across the system.`);
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, highlights: seven });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.highlights).toHaveLength(5);
+    });
+
     it('still rejects a too-short one_liner (min quality floor preserved)', async () => {
         mockBedrockResponse({ ...VALID_TOOL_INPUT, one_liner: 'short' });
         await expect(extractor.extract('user-123', makeBundle()))

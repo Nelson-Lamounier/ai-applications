@@ -17,7 +17,10 @@ export const ExtractedRepoDataSchema = z.object({
     tech_stack:    z.array(z.string()).transform(arr => arr.slice(0, 40)),
     role_inferred: z.enum(['creator','maintainer','contributor']),
     complexity:    z.enum(['simple','moderate','complex']),
-    highlights:    z.array(z.string().transform(s => s.slice(0, 280))).max(5),
+    // Truncate to 5 (NOT .max(5), which REJECTS a 6+ array and hard-fails the whole
+    // ingestion). Mirrors the tech_stack/one_liner slice transforms — tolerate the
+    // model returning a few extra, keep the first 5.
+    highlights:    z.array(z.string().transform(s => s.slice(0, 280))).transform(arr => arr.slice(0, 5)),
     signals: z.object({
         has_readme:       z.boolean(),
         has_tests:        z.boolean(),
