@@ -1,8 +1,7 @@
 /** @format */
 jest.mock('@bedrock/shared', () => ({ runAgent: jest.fn(), log: () => undefined }));
 import { runAgent } from '@bedrock/shared';
-import { parsePeriod, unionYears, parseRequiredYears } from './years-gap.js';
-import { buildYearsGap } from './years-gap.js';
+import { parsePeriod, unionYears, parseRequiredYears, reconcileFramingYears, buildYearsGap } from './years-gap.js';
 
 describe('parsePeriod', () => {
     it('parses year ranges, month-year, Present, and suffixes', () => {
@@ -39,6 +38,29 @@ describe('parseRequiredYears', () => {
     });
 });
 
+describe('reconcileFramingYears (anti-undersell)', () => {
+    it('replaces an undersold number with the true union', () => {
+        expect(reconcileFramingYears('approximately 3 years across user operations and support', 5))
+            .toBe('approximately 5 years across user operations and support');
+    });
+    it('leaves the line unchanged when it already states the true union', () => {
+        expect(reconcileFramingYears('5 years across X', 5)).toBe('5 years across X');
+    });
+    it('leaves the line unchanged when it states MORE than the union', () => {
+        expect(reconcileFramingYears('7 years across X', 5)).toBe('7 years across X');
+    });
+    it('handles a "N+ years" form, preserving the plus', () => {
+        expect(reconcileFramingYears('3+ years of relevant work', 5)).toBe('5+ years of relevant work');
+    });
+    it('prefixes the true count when the line has no number', () => {
+        expect(reconcileFramingYears('relevant breadth across support and QA', 5))
+            .toBe('5 years — relevant breadth across support and QA');
+    });
+    it('returns empty for an empty line', () => {
+        expect(reconcileFramingYears('', 5)).toBe('');
+    });
+});
+
 const mockRun = runAgent as jest.Mock;
 const ROLES = [
     { title: 'Technical Customer Service Associate', company: 'AWS', period: '2022 - Present', family: 'technical-support', roleClass: 'customer_facing' },
@@ -55,6 +77,17 @@ describe('buildYearsGap', () => {
         expect(yg?.gapYears).toBe(3);
         expect(yg?.framingLine).toMatch(/5 years/);
         expect(yg?.relevantRoleTitles).toEqual(['Technical Customer Service Associate', 'Quality Assurance Analyst']);
+    });
+    it('corrects an undersold framing line up to the deterministic union', async () => {
+        mockRun.mockResolvedValue({ data: { relevantTitles: ['Technical Customer Service Associate', 'Quality Assurance Analyst'], framingLine: 'approximately 3 years across support and QA' } });
+        const yg = await buildYearsGap(ROLES, '8+', false, 2026);
+        expect(yg?.relevantYears).toBe(5);
+        expect(yg?.framingLine).toBe('approximately 5 years across support and QA');
+    });
+    it('leaves a framing line that already states the union untouched', async () => {
+        mockRun.mockResolvedValue({ data: { relevantTitles: ['Technical Customer Service Associate', 'Quality Assurance Analyst'], framingLine: '5 years across support and QA' } });
+        const yg = await buildYearsGap(ROLES, '8+', false, 2026);
+        expect(yg?.framingLine).toBe('5 years across support and QA');
     });
     it('disqualifying only when the JD years bar is flagged AND still short', async () => {
         mockRun.mockResolvedValue({ data: { relevantTitles: ['Technical Customer Service Associate'], framingLine: '4 years in support' } });

@@ -11,8 +11,8 @@ import type { StructuredResumeData } from '@bedrock/shared';
 const mockRun = runAgent as jest.Mock;
 
 const base = (over: Partial<StructuredResumeData> = {}): StructuredResumeData => ({
-    profile: { name: 'Nelson', title: 'Technical Support Engineer · Cloud & AI Operations', email: 'e', location: 'Dublin' },
-    summary: 'Support engineer who ships production AI. 5 years across support and operations.',
+    profile: { name: 'Nelson', title: 'Cloud & AI Operations · Python Automation', email: 'e', location: 'Dublin' },
+    summary: 'Ships production AI and applies root-cause methodology to support escalations. 5 years across support and operations.',
     experience: [{ company: 'AWS', title: 'Technical Customer Service Associate', period: '2022 - Present', highlights: ['Removed 10-20 hrs/week toil via automation'] }],
     skills: [{ category: 'Support & Troubleshooting', skills: ['root-cause analysis', 'SLA'] }, { category: 'Cloud', skills: ['AWS'] }],
     education: [{ degree: 'Higher Diploma in Computing', institution: 'DBS', period: '2022-2024' }],
@@ -28,6 +28,20 @@ describe('validateResume', () => {
     it('clean resume → no violations', () => { expect(codes(base())).toEqual([]); });
     it('headline_is_title — title is a verbatim employment title / no positioning separator', () => {
         expect(codes(base({ profile: { name: 'N', title: 'Technical Customer Service Associate', email: 'e', location: 'D' } }))).toContain('headline_is_title');
+    });
+    it('headline_is_title — lead segment contains a job-title noun even with a separator', () => {
+        expect(codes(base({ profile: { name: 'N', title: 'Support Engineer · Cloud & AI Operations', email: 'e', location: 'D' } }))).toContain('headline_is_title');
+    });
+    it('no headline_is_title — descriptive domain/capability headline with no job-title noun', () => {
+        expect(codes(base({ profile: { name: 'N', title: 'Cloud & AI Operations · Python Automation', email: 'e', location: 'D' } }))).not.toContain('headline_is_title');
+    });
+    it('selected_work_misplaced — Selected-work/GitHub line under a support/customer role', () => {
+        const r = base({ experience: [{ company: 'AWS', title: 'Technical Customer Service Associate', period: '2022 - Present', highlights: ['Resolved escalations', 'Selected work: github.com/Nelson-Lamounier/x'] }] });
+        expect(codes(r)).toContain('selected_work_misplaced');
+    });
+    it('no selected_work_misplaced — same Selected-work line under a builder/engineering role', () => {
+        const r = base({ experience: [{ company: 'Freelance', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: ['Built CDK pipelines', 'Selected work: github.com/Nelson-Lamounier/x'] }] });
+        expect(codes(r)).not.toContain('selected_work_misplaced');
     });
     it('summary_wrong_cluster — first sentence lacks the leadIdentity head noun', () => {
         expect(codes(base({ summary: 'Cloud infrastructure engineer with 3+ years triaging AWS escalations.' }))).toContain('summary_wrong_cluster');

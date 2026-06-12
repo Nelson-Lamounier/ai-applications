@@ -50,6 +50,11 @@ describe('resume-constraints F-pattern rules', () => {
                 text.includes('Selected work:');
             expect(hasCollapse).toBe(true);
         });
+
+        it('places the Selected-work line under the BUILDER/engineering role, never support/customer/QA', () => {
+            expect(text).toContain('BUILDER/engineering role');
+            expect(text).toContain('NEVER under a customer-facing / support / QA role');
+        });
     });
 
     describe('Step 5 — education ordering rule', () => {
