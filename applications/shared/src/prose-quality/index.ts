@@ -5,6 +5,7 @@
  * same pipeline slot as the grounding verifier; never mutates persisted output.
  */
 export { BedrockProseLinter } from './bedrock-prose-linter.js';
+export { normalizeProse } from './normalize-prose.js';
 export type {
     BedrockProseLinterConfig,
     ProseLinterCostContext,

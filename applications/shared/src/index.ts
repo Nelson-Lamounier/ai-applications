@@ -397,6 +397,7 @@ export type {
 export {
     BedrockProseLinter,
     PROSE_PASS_THRESHOLD,
+    normalizeProse,
 } from './prose-quality/index.js';
 export type {
     BedrockProseLinterConfig,

@@ -1,8 +1,7 @@
 /** @format */
 import { z } from 'zod';
-import { runAgent, log } from '@bedrock/shared';
-import type { AgentConfig, BasePipelineContext } from '@bedrock/shared';
-import type { StructuredResumeData } from '@bedrock/shared';
+import { runAgent, log, normalizeProse } from '@bedrock/shared';
+import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 
 export interface ResumeViolation { code: string; detail: string; }
 export interface ResumeGuardCtx {
@@ -68,6 +67,25 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
     }
 
     return out;
+}
+
+/** Normalize em-dashes in all prose fields of a StructuredResumeData. Defensive +
+ *  shape-preserving: only transforms fields that are actually present (the guard is
+ *  fail-open infra — never throw on a resume missing an optional array). */
+export function stripEmDashes(resume: StructuredResumeData): StructuredResumeData {
+    return {
+        ...resume,
+        ...(typeof resume.summary === 'string' ? { summary: normalizeProse(resume.summary) } : {}),
+        ...(Array.isArray(resume.experience)
+            ? { experience: resume.experience.map((e) => ({ ...e, highlights: Array.isArray(e.highlights) ? e.highlights.map((h) => normalizeProse(h)) : e.highlights })) }
+            : {}),
+        ...(Array.isArray(resume.projects)
+            ? { projects: resume.projects.map((p) => ({ ...p, description: typeof p.description === 'string' ? normalizeProse(p.description) : p.description })) }
+            : {}),
+        ...(Array.isArray(resume.keyAchievements)
+            ? { keyAchievements: resume.keyAchievements.map((k) => ({ ...k, achievement: typeof k.achievement === 'string' ? normalizeProse(k.achievement) : k.achievement })) }
+            : {}),
+    } as StructuredResumeData;
 }
 
 // =============================================================================
@@ -227,7 +245,7 @@ export async function guardResume(
     ctx: ResumeGuardCtx,
 ): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
     const violations = validateResume(resume, ctx);
-    if (violations.length === 0) return { resume, violations };
+    if (violations.length === 0) return { resume: stripEmDashes(resume), violations };
     const fixed = await rewriteResume(resume, violations, ctx);
-    return { resume: fixed, violations };
+    return { resume: stripEmDashes(fixed), violations };
 }
