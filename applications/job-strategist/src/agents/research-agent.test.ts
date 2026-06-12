@@ -114,22 +114,14 @@ describe('parseJsonResponse', () => {
  * Minimal stub for the AgentResult shape returned by runAgent.
  * Only the fields used by executeResearchAgent's parseResponse are present.
  */
+// ResearchMatching shape — JD fields are no longer produced by this agent.
 const STUB_AGENT_RESULT = {
     data: {
-        targetRole: 'Senior Engineer',
-        targetCompany: 'Acme Corp',
-        seniority: 'senior',
-        domain: 'cloud',
-        overallFitRating: 'STRONG' as const,
+        overallFitRating: 'STRONG FIT' as const,
         fitSummary: 'Good fit.',
-        hardRequirements: [],
-        softRequirements: [],
-        implicitRequirements: [],
         verifiedMatches: [],
         partialMatches: [],
         gaps: [],
-        technologyInventory: { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
-        experienceSignals: { yearsExpected: '5+', domainExperience: 'cloud', leadershipExpectation: 'none', scaleIndicators: 'mid' },
         resumeData: null,
         kbContext: '',
         resumeConstraints: '',
@@ -170,23 +162,14 @@ async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
     const mockRunAgent = jest.fn().mockImplementation(
         async (opts: { userMessage: string; parseResponse?: (text: string) => any }) => {
             capturedUserMessage = opts.userMessage;
-            // Invoke the parseResponse with a minimal JSON so the agent's
-            // defensive defaults are exercised without needing real Bedrock.
+            // Invoke the parseResponse with a ResearchMatching-shaped JSON.
+            // JD fields are no longer produced by the research model (Task 4).
             const parsed = opts.parseResponse?.(JSON.stringify({
-                targetRole: 'Senior Engineer',
-                targetCompany: 'Acme Corp',
-                seniority: 'senior',
-                domain: 'cloud',
                 overallFitRating: 'STRONG FIT',
                 fitSummary: 'Good fit.',
-                hardRequirements: [],
-                softRequirements: [],
-                implicitRequirements: [],
                 verifiedMatches: [],
                 partialMatches: [],
                 gaps: [],
-                technologyInventory: { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
-                experienceSignals: { yearsExpected: '5+', domainExperience: 'cloud', leadershipExpectation: 'none', scaleIndicators: 'mid' },
             }));
             return { ...STUB_AGENT_RESULT, data: parsed ?? STUB_AGENT_RESULT.data };
         },
@@ -213,6 +196,9 @@ async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
                     fromEnvironment: jest.fn().mockReturnValue(null),
                 },
                 RdsVectorStore: {
+                    fromEnvironment: jest.fn().mockReturnValue({ querySimilar: mockQuerySimilar }),
+                },
+                RdsExperienceVectorStore: {
                     fromEnvironment: jest.fn().mockReturnValue({ querySimilar: mockQuerySimilar }),
                 },
             };

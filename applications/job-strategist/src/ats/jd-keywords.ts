@@ -1,31 +1,29 @@
 /** @format */
-import type { StrategistResearchResult } from '@bedrock/shared';
-import type { JdExtraction } from '../agents/jd-extractor.js';
+import type { JdSignal, StrategistResearchResult } from '@bedrock/shared';
 
-/** JD must-have terms = hard-requirement skills + infrastructure + tools. */
-export function collectJdMustHaves(r: StrategistResearchResult): string[] {
+/**
+ * JD must-have ATS terms = the technology inventory (all categories) of the single
+ * JdSignal — atomic, deduped (case-insensitive), capped 18. This is the SAME signal
+ * the writer targets and the "What we understood from your JD" UI shows, so the ATS
+ * grades the resume against exactly what the JD agent extracted.
+ *
+ * Uses ONLY the (atomic) technologyInventory — never hardRequirements, whose `.skill`
+ * is a requirement PHRASE ("8+ years…") that cannot keyword-match. Accepts any object
+ * carrying a technologyInventory (JdSignal or the assembled StrategistResearchResult).
+ */
+export function collectJdMustHaves(jd: Pick<JdSignal, 'technologyInventory'>): string[] {
     const out = new Set<string>();
-    for (const req of r.hardRequirements) if (req.skill.trim()) out.add(req.skill.trim());
-    for (const t of r.technologyInventory.infrastructure) if (t.trim()) out.add(t.trim());
-    for (const t of r.technologyInventory.tools) if (t.trim()) out.add(t.trim());
-    return [...out];
-}
-
-/** v2 atomic must-haves: prefer the JD-extractor's atomic terms; fallback to research. Cap 18. */
-export function collectJdMustHavesV2(jd: JdExtraction | null, r: StrategistResearchResult): string[] {
-    const out = new Set<string>();
-    const add = (arr: string[]) => {
+    const seen = new Set<string>();
+    const ti = jd.technologyInventory;
+    for (const arr of [ti.tools, ti.languages, ti.methodologies, ti.frameworks, ti.infrastructure]) {
         for (const t of arr) {
             const s = t.trim();
-            if (s) out.add(s);
+            const key = s.toLowerCase();
+            if (s && !seen.has(key)) {
+                seen.add(key);
+                out.add(s);
+            }
         }
-    };
-    if (jd !== null && (jd.requiredSkills.length + jd.tools.length + jd.concepts.length) > 0) {
-        add(jd.requiredSkills);
-        add(jd.tools);
-        add(jd.concepts);
-    } else {
-        add(collectJdMustHaves(r));
     }
     return [...out].slice(0, 18);
 }

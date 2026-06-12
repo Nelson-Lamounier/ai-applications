@@ -158,9 +158,15 @@ export type {
     JobRequirement,
     TechnologyInventory,
     ExperienceSignals,
+    JdSignal,
+    ResearchMatching,
     StrategistResearchResult,
     KbRetrievalStats,
     KbRetrievalSource,
+
+    // Skill Evidence Ledger
+    EvidenceStatus,
+    SkillEvidenceEntry,
 
     // Phase 0 Archetype Selection
     ArchetypeId,

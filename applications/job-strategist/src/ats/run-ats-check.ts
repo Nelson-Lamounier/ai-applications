@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
 import type { AtsCheckResult } from './ats-check.schema.js';
 import type { CoverageRow } from './checks.js';
 import { buildAtsCheck } from './checks.js';
-import { collectJdMustHavesV2, collectGroundedTerms } from './jd-keywords.js';
+import { collectJdMustHaves, collectGroundedTerms } from './jd-keywords.js';
 import { matchTerm, type Embedder } from './keyword-match.js';
 import { parsePdfBack } from './parse-back.js';
 import { storeAtsArtifacts } from './store-ats-artifacts.js';
@@ -58,8 +58,9 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
         const pdf = await renderResumePdf(a.resume);
         const { text, sections } = await parsePdfBack(pdf);
 
-        // Build must-haves via v2 atomic source (JD-extractor preferred, fallback to research).
-        const mustHaves = collectJdMustHavesV2(a.jdExtraction ?? null, a.research);
+        // Must-haves = the single JD signal's technology inventory (atomic, the same list
+        // the writer targets). a.research is the assembled brief carrying technologyInventory.
+        const mustHaves = collectJdMustHaves(a.research);
         const groundedTerms = collectGroundedTerms(a.research);
         const familyVocab = a.familyVocab ?? [];
         const embedder = a.embedder ?? null;

@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -42,6 +42,9 @@ import {
 import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
+import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
+import { enrichLedgerWithEvidence } from './ats/tool-evidence-retrieval.js';
+import { RdsVectorStore } from '@bedrock/shared';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -360,18 +363,44 @@ export async function main(): Promise<void> {
 
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock);
 
+        // Assemble StrategistResearchResult from jdExtraction (JdSignal) + research.data (ResearchMatching).
+        // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
+        // JD tool list and the matching result, so it belongs in the pipeline orchestrator, not the agent.
+        const ledgerTools = [
+            ...jdExtraction.technologyInventory.tools,
+            ...jdExtraction.technologyInventory.languages,
+            ...jdExtraction.requiredSkills,
+        ];
+        const baseLedger = buildSkillEvidenceLedger(ledgerTools, research.data);
+
+        // Enrich verified/transferable entries with per-tool targeted pgvector queries.
+        // GAP entries are never touched (honesty invariant). Fail-open: any error → baseLedger.
+        const ledgerEmbedder = TitanEmbeddingProvider.fromEnvironment();
+        const ledgerStore = RdsVectorStore.fromEnvironment();
+        const skillEvidenceLedger = await enrichLedgerWithEvidence(
+            baseLedger,
+            { store: ledgerStore, embedder: ledgerEmbedder, userId: env.userId },
+        ).catch(() => baseLedger);
+
+        const researchData: StrategistResearchResult = {
+            ...jdExtraction,
+            targetCompany: ctx.targetCompany,
+            ...research.data,
+            skillEvidenceLedger,
+        };
+
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
         // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line. Fail-open.
-        const hardYearsBar = research.data.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
+        const hardYearsBar = jdExtraction.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
         const yearsGap = await buildYearsGap(
             (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, period: c.period, family: null, roleClass: null })),
-            research.data.experienceSignals.yearsExpected,
+            jdExtraction.experienceSignals.yearsExpected,
             hardYearsBar,
             new Date().getFullYear(),
         ).catch(() => null);
 
-        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap);
+        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -421,7 +450,7 @@ export async function main(): Promise<void> {
         // rewritten in-place and counted for observability — never throws.
         const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
             analysis.data.coverLetter,
-            research.data.targetRole,
+            researchData.targetRole,
             analysis.data.archetypeSelection?.leadIdentity ?? '',
             yearsGap?.framingLine ?? '',
         );
@@ -436,7 +465,7 @@ export async function main(): Promise<void> {
         let finalResume = tailoredResumeData;
         if (tailoredResumeData) {
             const guarded = await guardResume(tailoredResumeData, {
-                targetRole:        research.data.targetRole,
+                targetRole:        researchData.targetRole,
                 leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
                 verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
                 archetypeSkillLead,
@@ -471,7 +500,7 @@ export async function main(): Promise<void> {
                 resumeId:      persisted.resumeId,
                 userId:        env.userId,
                 resume:        finalResume,
-                research:      research.data,
+                research:      researchData,
                 log,
                 correlationId: env.pipelineRunId,
                 onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
@@ -504,7 +533,7 @@ export async function main(): Promise<void> {
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
             analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck, yearsGap },
-            research:     research.data,
+            research:     researchData,
             jdExtraction,
         });
 
@@ -519,7 +548,7 @@ export async function main(): Promise<void> {
                 queryText: jdForCache,
                 response:  {
                     analysis: { ...analysis.data, analysisXml: finalAnalysis },
-                    research: research.data,
+                    research: researchData,
                 },
             }).catch(() => { /* fail-open — cache write must never break the run */ });
         }

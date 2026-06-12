@@ -272,6 +272,8 @@ export interface VerifiedMatch {
     readonly depth: SkillDepth;
     /** How recently the skill was used */
     readonly recency: string;
+    /** KB file paths that back this match (empty array when evidence is career-history only) */
+    readonly evidenceFiles: string[];
 }
 
 /**
@@ -286,6 +288,32 @@ export interface PartialMatch {
     readonly transferableFoundation: string;
     /** Suggested framing for applications */
     readonly framingSuggestion: string;
+    /** KB file paths that back this match (empty array when evidence is career-history only) */
+    readonly evidenceFiles: string[];
+}
+
+/**
+ * Evidence status for the Skill Evidence Ledger.
+ */
+export type EvidenceStatus = 'verified' | 'transferable' | 'gap';
+
+/**
+ * A single row in the Skill Evidence Ledger — per-tool, file-cited evidence.
+ *
+ * Built deterministically by `buildSkillEvidenceLedger` from JD tools + matching.
+ * `evidenceFiles` contains the actual KB file paths that back the claim; empty for gap.
+ */
+export interface SkillEvidenceEntry {
+    /** The JD-required tool or skill */
+    readonly tool: string;
+    /** Evidence classification: verified (files present), transferable (bridge), or gap (honest empty) */
+    readonly status: EvidenceStatus;
+    /** KB file paths that prove this skill ([] for gap) */
+    readonly evidenceFiles: string[];
+    /** Implementation description (sourceCitation for verified; gapDescription for transferable; '' for gap) */
+    readonly evidence: string;
+    /** How the transferable skill bridges the gap (status='transferable'), else '' */
+    readonly transferableBridge: string;
 }
 
 /**
@@ -364,8 +392,71 @@ export interface KbRetrievalStats {
 }
 
 /**
- * Complete output from the Strategist Research Agent.
+ * The complete JD signal — everything understood FROM the job description.
+ * Produced by the JD agent (the extended jd-extractor). The single source of
+ * JD understanding for the whole pipeline (writer target, ATS bar, UI "What we understood").
  */
+export interface JdSignal {
+    readonly targetRole: string;
+    readonly seniority: string;
+    readonly domain: string;
+    /**
+     * The underlying problem the company is trying to solve with this role — a 1-3
+     * sentence synthesis of WHY the role exists (not the requirements list). Lets the
+     * writer position the candidate as the solution to the actual problem, not just a
+     * keyword match. '' when the JD gives no signal.
+     */
+    readonly companyProblem: string;
+    readonly hardRequirements: JobRequirement[];
+    readonly softRequirements: JobRequirement[];
+    readonly implicitRequirements: string[];
+    readonly technologyInventory: TechnologyInventory;
+    readonly experienceSignals: ExperienceSignals;
+    readonly requiredSkills: string[];
+    readonly preferredSkills: string[];
+    readonly tools: string[];
+    readonly concepts: string[];
+    readonly responsibilities: string[];
+    readonly retrievalKeywords: string[];
+}
+
+/**
+ * The candidate↔JD match — everything the research agent derives by matching the
+ * candidate's KB + career evidence against a (given) JdSignal. Does NOT include any
+ * JD-derived fields (those live in JdSignal).
+ */
+export interface ResearchMatching {
+    readonly verifiedMatches: VerifiedMatch[];
+    readonly partialMatches: PartialMatch[];
+    readonly gaps: SkillGap[];
+    readonly overallFitRating: FitRating;
+    readonly fitSummary: string;
+    readonly pillarClassification?: {
+        readonly primaryPillar: 'swe-general' | 'swe-dsa' | 'devops-sre-platform' | 'ai-engineering';
+        readonly secondaryPillars: ReadonlyArray<'swe-general' | 'swe-dsa' | 'devops-sre-platform' | 'ai-engineering'>;
+        readonly confidence: number;
+        readonly jdEvidenceTokens: string[];
+        readonly classificationNote: string;
+    };
+    readonly resumeData: StructuredResumeData | null;
+    readonly kbContext: string;
+    readonly kbRetrievalStats?: KbRetrievalStats;
+    readonly resumeConstraints: string;
+    readonly dsaTopicCalibration?: {
+        readonly likelyTopics: ReadonlyArray<{
+            readonly canonicalName: string;
+            readonly displayName: string;
+            readonly confidence: number;
+            readonly rationale: string;
+            readonly jdEvidenceQuote: string;
+        }>;
+        readonly honestyNote: string;
+    };
+    /** Per-tool evidence ledger — built deterministically by run-pipeline; [] default from matcher. */
+    readonly skillEvidenceLedger: SkillEvidenceEntry[];
+}
+
+/** Assembled in run-pipeline as { ...JdSignal, ...ResearchMatching }. Members unchanged for back-compat. */
 export interface StrategistResearchResult {
     /** Extracted target role title */
     readonly targetRole: string;
@@ -375,6 +466,8 @@ export interface StrategistResearchResult {
     readonly seniority: string;
     /** Role domain classification */
     readonly domain: string;
+    /** The underlying problem the role exists to solve (from the JD agent). Provided by the assembly. */
+    readonly companyProblem: string;
 
     /** Requirements extracted from the JD */
     readonly hardRequirements: JobRequirement[];
@@ -439,6 +532,9 @@ export interface StrategistResearchResult {
         }>;
         readonly honestyNote: string;
     };
+
+    /** Per-tool evidence ledger — built deterministically in run-pipeline; never model-produced. */
+    readonly skillEvidenceLedger: SkillEvidenceEntry[];
 }
 
 // =============================================================================
