@@ -19,18 +19,9 @@ const verified = (skill: string, evidenceFiles: string[]): VerifiedMatch => ({
     skill, sourceCitation: 'KB', depth: 'working', recency: '2025', evidenceFiles,
 });
 
-const matching = (verifiedMatches: VerifiedMatch[]): ResearchMatching => ({
-    verifiedMatches,
-    partialMatches: [],
-    gaps: [],
-    overallFitRating: 'REASONABLE FIT',
-    fitSummary: '',
-    resumeData: null,
-    kbContext: '',
-    resumeConstraints: '',
-    kbRetrievalStats: { passages: 0, aboveCosineFloor: 0, maxCosine: 0, maxRerank: 0 },
-    skillEvidenceLedger: [],
-} as unknown as ResearchMatching);
+// Only verifiedMatches/partialMatches are read by the guard — keep the fixture minimal.
+const matching = (verifiedMatches: VerifiedMatch[]): ResearchMatching =>
+    ({ verifiedMatches, partialMatches: [] } as unknown as ResearchMatching);
 
 describe('isReferenceDoc', () => {
     it('flags reference/example paths', () => {
