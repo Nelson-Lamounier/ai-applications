@@ -55,8 +55,13 @@ export function formatProjectEvidence(
     const stack = (stackByProject.get(p.id) ?? []).map((s) => s.name).filter(Boolean).slice(0, maxStack);
     if (stack.length > 0) lines.push(`   Stack: ${stack.join(', ')}`);
 
-    const decisions = (decisionsByProject.get(p.id) ?? []).map((d) => d.title).filter(Boolean).slice(0, maxDecisions);
-    if (decisions.length > 0) lines.push(`   Key decisions: ${decisions.join('; ')}`);
+    const decisionEntries = (decisionsByProject.get(p.id) ?? []).filter((d) => Boolean(d.title)).slice(0, maxDecisions);
+    if (decisionEntries.length > 0) {
+      lines.push('   Key design decisions:');
+      for (const d of decisionEntries) {
+        lines.push(d.decision ? `   - ${d.title}: ${d.decision}` : `   - ${d.title}`);
+      }
+    }
 
     const tags = (tagsByProject.get(p.id) ?? []).map((t) => t.tag).filter(Boolean).slice(0, 8);
     if (tags.length > 0) lines.push(`   Tags: ${tags.join(', ')}`);

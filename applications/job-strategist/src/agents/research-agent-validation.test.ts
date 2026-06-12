@@ -160,6 +160,7 @@ describe('executeResearchAgent KB-matcher contract', () => {
             seniority: 'senior',
             domain: 'devops-sre-platform',
             companyProblem: 'Keep production reliable at scale.',
+            dimensionMix: { customerFacing: 0, technical: 50, aiMl: 0, supportOps: 30, monitoring: 20 },
             hardRequirements: [{ skill: 'Kubernetes', context: '5y prod', disqualifying: true }],
             softRequirements: [{ skill: 'Mentoring', context: 'team lead' }],
             implicitRequirements: ['on-call'],

@@ -141,6 +141,16 @@ function buildStrategistMessage(
         );
     }
 
+    const dm = research.dimensionMix;
+    if (dm && (dm.customerFacing > 0 || dm.technical > 0 || dm.aiMl > 0 || dm.supportOps > 0 || dm.monitoring > 0)) {
+        sections.push(
+            '### Role Emphasis (balance the resume to this mix)',
+            `customer-facing ${dm.customerFacing}% · technical ${dm.technical}% · AI/ML ${dm.aiMl}% · support/ops ${dm.supportOps}% · monitoring ${dm.monitoring}%`,
+            'Lead and weight the summary + experience emphasis to the DOMINANT dimension(s); do not over-index on a low-weight dimension. Never fabricate to fit — use only verified evidence.',
+            '',
+        );
+    }
+
     // Hard requirements
     sections.push('### Hard Requirements');
     for (const req of research.hardRequirements) {

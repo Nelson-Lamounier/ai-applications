@@ -70,6 +70,7 @@ describe('JdExtractionSchema', () => {
             // New JdSignal fields
             targetRole:           '',
             companyProblem:       '',
+            dimensionMix:         { customerFacing: 0, technical: 0, aiMl: 0, supportOps: 0, monitoring: 0 },
             hardRequirements:     [],
             softRequirements:     [],
             implicitRequirements: [],
@@ -91,6 +92,7 @@ const FULL_JD_SIGNAL: JdSignal = {
     seniority:            'senior',
     domain:               'Cloud/DevOps',
     companyProblem:       'Scale reliable platform delivery as the team grows.',
+    dimensionMix:         { customerFacing: 0, technical: 70, aiMl: 0, supportOps: 20, monitoring: 10 },
     hardRequirements:     [{ skill: 'Kubernetes', context: '5+ years production', disqualifying: true }],
     softRequirements:     [{ skill: 'ArgoCD', context: 'nice-to-have' }],
     implicitRequirements: ['incident-response mindset'],
@@ -152,6 +154,9 @@ describe('extractJdSignal', () => {
         expect(result!.experienceSignals.yearsExpected).toBe('5+');
         expect(result!.experienceSignals.leadershipExpectation).toBe('tech lead');
 
+        // dimensionMix
+        expect(result!.dimensionMix).toEqual({ customerFacing: 0, technical: 70, aiMl: 0, supportOps: 20, monitoring: 10 });
+
         // existing atomic fields preserved
         expect(result!.requiredSkills).toContain('Kubernetes');
         expect(result!.tools).toContain('AWS');
@@ -166,6 +171,7 @@ describe('extractJdSignal', () => {
 
         // All new fields must be present and empty/default
         expect(result!.targetRole).toBe('');
+        expect(result!.dimensionMix).toEqual({ customerFacing: 0, technical: 0, aiMl: 0, supportOps: 0, monitoring: 0 });
         expect(result!.hardRequirements).toEqual([]);
         expect(result!.softRequirements).toEqual([]);
         expect(result!.implicitRequirements).toEqual([]);
