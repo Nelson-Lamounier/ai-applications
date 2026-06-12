@@ -272,6 +272,8 @@ export interface VerifiedMatch {
     readonly depth: SkillDepth;
     /** How recently the skill was used */
     readonly recency: string;
+    /** KB file paths that back this match (empty array when evidence is career-history only) */
+    readonly evidenceFiles: string[];
 }
 
 /**
@@ -286,6 +288,32 @@ export interface PartialMatch {
     readonly transferableFoundation: string;
     /** Suggested framing for applications */
     readonly framingSuggestion: string;
+    /** KB file paths that back this match (empty array when evidence is career-history only) */
+    readonly evidenceFiles: string[];
+}
+
+/**
+ * Evidence status for the Skill Evidence Ledger.
+ */
+export type EvidenceStatus = 'verified' | 'transferable' | 'gap';
+
+/**
+ * A single row in the Skill Evidence Ledger — per-tool, file-cited evidence.
+ *
+ * Built deterministically by `buildSkillEvidenceLedger` from JD tools + matching.
+ * `evidenceFiles` contains the actual KB file paths that back the claim; empty for gap.
+ */
+export interface SkillEvidenceEntry {
+    /** The JD-required tool or skill */
+    readonly tool: string;
+    /** Evidence classification: verified (files present), transferable (bridge), or gap (honest empty) */
+    readonly status: EvidenceStatus;
+    /** KB file paths that prove this skill ([] for gap) */
+    readonly evidenceFiles: string[];
+    /** Implementation description (sourceCitation for verified; gapDescription for transferable; '' for gap) */
+    readonly evidence: string;
+    /** How the transferable skill bridges the gap (status='transferable'), else '' */
+    readonly transferableBridge: string;
 }
 
 /**
@@ -424,6 +452,8 @@ export interface ResearchMatching {
         }>;
         readonly honestyNote: string;
     };
+    /** Per-tool evidence ledger — built deterministically by run-pipeline; [] default from matcher. */
+    readonly skillEvidenceLedger: SkillEvidenceEntry[];
 }
 
 /** Assembled in run-pipeline as { ...JdSignal, ...ResearchMatching }. Members unchanged for back-compat. */
@@ -502,6 +532,9 @@ export interface StrategistResearchResult {
         }>;
         readonly honestyNote: string;
     };
+
+    /** Per-tool evidence ledger — built deterministically in run-pipeline; never model-produced. */
+    readonly skillEvidenceLedger: SkillEvidenceEntry[];
 }
 
 // =============================================================================

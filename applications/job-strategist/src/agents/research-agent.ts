@@ -502,10 +502,11 @@ const RESEARCH_TOOL = {
                 items: {
                     type: 'object',
                     properties: {
-                        skill:         { type: 'string' },
+                        skill:          { type: 'string' },
                         sourceCitation: { type: 'string' },
-                        depth:         { type: 'string', enum: ['surface', 'working', 'expert'] },
-                        recency:       { type: 'string' },
+                        depth:          { type: 'string', enum: ['surface', 'working', 'expert'] },
+                        recency:        { type: 'string' },
+                        evidenceFiles:  { type: 'array', items: { type: 'string' } },
                     },
                     required: ['skill', 'sourceCitation', 'depth', 'recency'],
                     additionalProperties: false,
@@ -516,10 +517,11 @@ const RESEARCH_TOOL = {
                 items: {
                     type: 'object',
                     properties: {
-                        skill:                 { type: 'string' },
-                        gapDescription:        { type: 'string' },
+                        skill:                  { type: 'string' },
+                        gapDescription:         { type: 'string' },
                         transferableFoundation: { type: 'string' },
-                        framingSuggestion:     { type: 'string' },
+                        framingSuggestion:      { type: 'string' },
+                        evidenceFiles:          { type: 'array', items: { type: 'string' } },
                     },
                     required: ['skill', 'gapDescription', 'transferableFoundation', 'framingSuggestion'],
                     additionalProperties: false,
@@ -593,13 +595,15 @@ const ResearchModelSchema = z.object({
         sourceCitation: z.string(),
         depth: z.enum(['surface', 'working', 'expert']),
         recency: z.string(),
-    }).strict()),
+        evidenceFiles: z.array(z.string()).default([]),
+    })),
     partialMatches: z.array(z.object({
         skill: z.string(),
         gapDescription: z.string(),
         transferableFoundation: z.string(),
         framingSuggestion: z.string(),
-    }).strict()),
+        evidenceFiles: z.array(z.string()).default([]),
+    })),
     gaps: z.array(z.object({
         skill: z.string(),
         gapType: z.enum(['hard', 'soft']),
@@ -654,6 +658,9 @@ export function validateResearchResult(
         ...validated.data,
         ...injected,
         kbRetrievalStats: computeKbStats(injected.kbContext, MIN_COSINE),
+        // Default empty ledger — run-pipeline builds the real ledger deterministically
+        // from the assembled JdSignal + this matching result and overwrites this field.
+        skillEvidenceLedger: [],
     };
 }
 

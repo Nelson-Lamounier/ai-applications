@@ -164,6 +164,10 @@ export type {
     KbRetrievalStats,
     KbRetrievalSource,
 
+    // Skill Evidence Ledger
+    EvidenceStatus,
+    SkillEvidenceEntry,
+
     // Phase 0 Archetype Selection
     ArchetypeId,
     RoleArchetypeSelection,

@@ -42,6 +42,7 @@ import {
 import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
+import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -360,13 +361,22 @@ export async function main(): Promise<void> {
 
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock);
 
-        // TODO(Task 5): assemble StrategistResearchResult from jdExtraction + research.data.
-        // research.data is now ResearchMatching; JD fields come from jdExtraction (JdSignal).
+        // Assemble StrategistResearchResult from jdExtraction (JdSignal) + research.data (ResearchMatching).
+        // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
+        // JD tool list and the matching result, so it belongs in the pipeline orchestrator, not the agent.
+        const ledgerTools = [
+            ...jdExtraction.technologyInventory.tools,
+            ...jdExtraction.technologyInventory.languages,
+            ...jdExtraction.requiredSkills,
+        ];
+        const skillEvidenceLedger = buildSkillEvidenceLedger(ledgerTools, research.data);
+
         const researchData: StrategistResearchResult = {
             ...jdExtraction,
             targetCompany: ctx.targetCompany,
             ...research.data,
-        } as StrategistResearchResult;
+            skillEvidenceLedger,
+        };
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
