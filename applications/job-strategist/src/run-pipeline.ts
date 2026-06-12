@@ -44,6 +44,7 @@ import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
 import { splitAttainable } from './ats/attainable.js';
+import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { enrichLedgerWithEvidence } from './ats/tool-evidence-retrieval.js';
@@ -554,7 +555,20 @@ export async function main(): Promise<void> {
             if (split.attainableMissing.length > 0) {
                 atsFeedback.inc({ outcome: 'fired' });
                 const baseResume = finalResume; // non-null inside this guard; narrows fail-open return
-                const surfaced = await surfaceKeywords(baseResume, split.attainableMissing).catch(() => baseResume);
+                // Red flags: no structured red-flag source exists in this scope today
+                // (StrategistResearchResult has no `redFlags`, no recruiter snapshot here) → [].
+                const redFlags: string[] = [];
+                // Grounding facts = verbatim career facts + project evidence + verified-match citations.
+                const groundingFacts = [
+                    experienceFactsBlock,
+                    projectEvidenceBlock,
+                    researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
+                ].filter(Boolean).join('\n\n');
+                // Allowed numbers = original resume + grounding facts. Any number the
+                // rewrite introduces outside this set is stripped deterministically.
+                const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
+                const refined = await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume);
+                const surfaced = refined !== baseResume ? stripUngroundedNumbers(refined, allowed) : baseResume;
                 if (surfaced !== baseResume) {
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
