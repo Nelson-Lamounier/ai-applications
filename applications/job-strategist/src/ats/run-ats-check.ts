@@ -38,6 +38,10 @@ export interface RunAtsCheckArgs {
     readonly familyVocab?: string[][];
     /** Embedder for semantic (Tier 3) matching. Pass null to skip. */
     readonly embedder?: Embedder | null;
+    /** Tech transfer/category groups for tech-transfer-tier matching. */
+    readonly techGroups?: string[][];
+    /** Alias → canonical map (lowercased keys) for tech-transfer-tier matching. */
+    readonly techAliasMap?: Map<string, string>;
 }
 
 const UNVERIFIED: AtsCheckResult = {
@@ -65,6 +69,8 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
         const familyVocab = a.familyVocab ?? [];
         const embedder = a.embedder ?? null;
         const threshold = Number(process.env['ATS_KEYWORD_EMBED_THRESHOLD'] ?? '0.55');
+        const techGroups = a.techGroups ?? [];
+        const techAliasMap = a.techAliasMap;
 
         // Embed the resume text once (fail-open: undefined on error).
         const resumeTextLower = text.toLowerCase();
@@ -73,10 +79,10 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
             resumeVector = await embedder.embed(text.slice(0, 8000)).catch(() => undefined);
         }
 
-        // Build coverage async — 3-tier matchTerm per term.
+        // Build coverage async — 4-tier matchTerm per term.
         const coverage: CoverageRow[] = [];
         for (const term of mustHaves) {
-            const m = await matchTerm(term, resumeTextLower, { familyVocab, embedder, threshold, resumeVector });
+            const m = await matchTerm(term, resumeTextLower, { familyVocab, embedder, threshold, resumeVector, techGroups: techGroups.length > 0 ? techGroups : undefined, techAliasMap });
             coverage.push({
                 term,
                 present:  m.present,
