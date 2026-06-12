@@ -152,7 +152,9 @@ export type AgentName =
     // cover-letter guard pipeline.
     | 'cover-letter-rewrite'
     // resume guard pipeline.
-    | 'resume-rewrite';
+    | 'resume-rewrite'
+    // ATS feedback loop — surface attainable-but-missing keywords.
+    | 'surface-keywords';
 
 /**
  * Model-agnostic configuration for a single agent.
