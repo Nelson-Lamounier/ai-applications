@@ -115,7 +115,7 @@ The Professional Summary must only contain concepts that either:
 | "internal tools", "automated frameworks", "operational excellence", "playbooks", "data center", "server operations", "workflow execution", "supply chain software", "process standardisation" | Operations engineering narrative, lead with Python/Bash automation |
 
 **Customer-facing support/TSE/Customer Engineering opener rule:**
-The professional summary's FIRST sentence MUST echo the SELECTED ARCHETYPE's lead identity (the same positioning the headline + cover letter share). For a support / customer-engineering archetype, lead with the support-and-AI differentiator (e.g. "Support engineer who builds production AI…"), NEVER an infrastructure-first identity ("Cloud infrastructure engineer…"). Then the strongest number, then the AI/portfolio hook, then the cert. When a YEARS GAP FRAMING line is provided, the opener reflects it; never state a single-role tenure that undersells.
+The professional summary's FIRST sentence MUST echo the SELECTED ARCHETYPE's lead identity (the same positioning the headline + cover letter share) and lead with the candidate's strongest CAPABILITY / differentiator — NEVER a claimed job title. For a support / customer-engineering archetype, lead with the support-and-AI differentiator (e.g. "Builds production AI systems and applies the same root-cause methodology to customer escalations…"), NEVER an infrastructure-first identity ("Cloud infrastructure engineer…") and NEVER a title-first opener ("Support engineer with…"). Then the strongest number, then the AI/portfolio hook, then the cert. When a YEARS GAP FRAMING line is provided, the opener uses its (corrected) year count; never state a single-role tenure that undersells.
 Rules: NEVER open with the certification name. Action-first, not title-first.
 
 **kubeadm differentiator for TSE / Kubernetes roles, MUST articulate the WHY:**
@@ -193,7 +193,7 @@ Technical Support / Customer Engineering roles:
 ## Step-by-Step: Key Projects
 
 **PROJECTS COLLAPSE rule:**
-When the selected archetype deprioritises standalone projects (support / customer-engineering archetypes, Archetype 7), DO NOT emit a standalone Projects block, instead emit ONE compact "Selected work:" line of curated, deduplicated GitHub links placed under the most relevant role. Builder/engineering archetypes (Platform, SRE, Full-Stack, AI/ML, DevOps) keep the full Projects block.
+When the selected archetype deprioritises standalone projects (support / customer-engineering archetypes, Archetype 7), DO NOT emit a standalone Projects block, instead emit ONE compact "Selected work:" line of curated, deduplicated GitHub links placed under the candidate's BUILDER/engineering role (e.g. Freelance, Cloud & DevOps), NEVER under a customer-facing / support / QA role — the GitHub work is engineering evidence. Builder/engineering archetypes (Platform, SRE, Full-Stack, AI/ML, DevOps) keep the full Projects block.
 
 1. Maximum 2 projects per resume. Select the 2 most relevant to the JD.
 2. Apply deduplication, each concept, tool, or number appears in full only once across the entire resume.
@@ -514,7 +514,7 @@ Example opener:
 
 This archetype takes priority over SRE and Operations when the role is customer-facing support or technical account work.
 
-**Lead identity:** Support engineer who ships production systems, applies the same root-cause methodology to customer escalations as to internal incidents, backed by real Kubernetes and AWS production depth.
+**Lead identity:** Ships production AI systems and applies the same root-cause methodology to customer escalations as to internal infrastructure incidents — backed by real Kubernetes and AWS Bedrock depth. (Capability-led: NEVER open with a job-title noun such as "Support engineer".)
 
 **Lead with (priority order):**
 1. Customer-impact and reliability bullets, incident resolution, escalation handling, knowledge-base documentation

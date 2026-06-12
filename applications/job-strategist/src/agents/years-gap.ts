@@ -48,6 +48,31 @@ export function parseRequiredYears(yearsExpected: string): number | null {
     return m ? Number.parseInt(m[1], 10) : null;
 }
 
+/**
+ * Deterministic anti-undersell reconciliation. The Haiku framing line may state a
+ * SMALLER year count than the deterministic union (`relevantYears`). If the first
+ * "<n> years" number in the line is LESS than the true union, replace it with the
+ * union. If the line has no number, prefix the true count. Guarantee: the framing
+ * never states fewer years than the deterministic union.
+ */
+export function reconcileFramingYears(framingLine: string, relevantYears: number): string {
+    const line = framingLine.trim();
+    if (!line) return line;
+    const m = /\b(\d{1,2})\s*(?:\+)?\s*years?\b/.exec(line);
+    if (m) {
+        return reconcileMatchedYears(line, m, relevantYears);
+    }
+    return `${relevantYears} years — ${line}`;
+}
+
+function reconcileMatchedYears(line: string, m: RegExpExecArray, relevantYears: number): string {
+    const stated = Number.parseInt(m[1], 10);
+    if (stated >= relevantYears) return line;
+    // Replace only the matched number, preserving surrounding text (and any "+"/"years").
+    const replaced = m[0].replace(/\d{1,2}/, String(relevantYears));
+    return line.slice(0, m.index) + replaced + line.slice(m.index + m[0].length);
+}
+
 // =============================================================================
 // YEARS-RELEVANCE AGENT + buildYearsGap ORCHESTRATOR
 // =============================================================================
@@ -94,7 +119,7 @@ async function selectRelevant(roles: YearsGapRole[], yearsExpected: string): Pro
         'You decide which of a candidate\'s past roles legitimately count toward a job\'s experience requirement, and write ONE true framing line.',
         'Call emit_years_relevance. Rules:',
         '- Include a role when its function relates to the requirement (use its family/role-class, not just an exact title match).',
-        '- framingLine: a true re-description aggregating the relevant breadth + the relevant-years number. Never claim the required number; never invent; never apologise.',
+        '- framingLine: a true re-description aggregating the relevant breadth + the relevant-years number. Use the union of ALL relevant role spans (overlapping roles count once across the combined calendar range), never a single role\'s tenure. Never claim the required number; never invent; never apologise.',
     ].join('\n');
     const config: AgentConfig = {
         agentName: 'years-relevance', modelId: MODEL_ID, maxTokens: 512, thinkingBudget: 0,
@@ -144,7 +169,11 @@ export async function buildYearsGap(
 
     const relevantIvs = parsed.filter((p) => relevantTitles.includes(p.role.title)).map((p) => p.iv);
     const relevantYears = unionYears(relevantIvs.length > 0 ? relevantIvs : parsed.map((p) => p.iv));
-    if (!framingLine) framingLine = `${relevantYears} years of relevant experience`;
+    if (!framingLine) {
+        framingLine = `${relevantYears} years of relevant experience`;
+    } else {
+        framingLine = reconcileFramingYears(framingLine, relevantYears);
+    }
 
     const requiredYears = parseRequiredYears(yearsExpected);
     const gapYears = requiredYears === null ? 0 : Math.max(0, Math.round((requiredYears - relevantYears) * 10) / 10);

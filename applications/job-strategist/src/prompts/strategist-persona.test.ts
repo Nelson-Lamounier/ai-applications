@@ -30,6 +30,18 @@ describe('strategist-persona cover-letter JSON schema rules', () => {
         expect(hasNoMarkdown).toBe(true);
     });
 
+    it('headline rule forbids a job-title noun in profile.title', () => {
+        const lower = joined.toLowerCase();
+        expect(lower).toContain('must not contain a job-title noun');
+        expect(lower).toContain('capability/domain headline');
+    });
+
+    it('summary opener rule leads with capability, never a claimed job title', () => {
+        const lower = joined.toLowerCase();
+        expect(lower).toContain('summary opener');
+        expect(lower).toContain('never a claimed job title');
+    });
+
     it('preserves the fixed sign-off identity', () => {
         expect(joined).toContain('Nelson Lamounier');
         expect(joined).toContain('lamounierleao@outlook.com');
