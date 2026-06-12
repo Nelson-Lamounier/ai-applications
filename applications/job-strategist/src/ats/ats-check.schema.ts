@@ -17,6 +17,14 @@ export const AtsCheckResultSchema = z.object({
     status:                   z.enum(['passed', 'issues', 'unverified']),
     passed:                   z.boolean(),
     issues:                   z.array(z.string()),
+    // ── ATS feedback loop pass-mark (additive, optional for back-compat) ──
+    // Attainable = ledger entries the candidate has (verified) or can transfer
+    // (transferable); gaps are excluded. `surfacedKeywords` are the tools fed to
+    // the one bounded honest re-write before the final render.
+    attainableTotal:          z.number().optional(),
+    attainableCovered:        z.number().optional(),
+    attainablePassed:         z.boolean().optional(),
+    surfacedKeywords:         z.array(z.string()).optional(),
 });
 
 export type AtsCheckResult = z.infer<typeof AtsCheckResultSchema>;

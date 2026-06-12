@@ -43,6 +43,8 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
+import { splitAttainable } from './ats/attainable.js';
+import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { enrichLedgerWithEvidence } from './ats/tool-evidence-retrieval.js';
 
@@ -105,6 +107,12 @@ const resumeViolationsMetric = new Counter({
     name:       'job_strategist_resume_violations_total',
     help:       'Resume guard violations caught (and rewritten) by code.',
     labelNames: ['code'] as const,
+    registers:  [obs.registry],
+});
+const atsFeedback = new Counter({
+    name:       'job_strategist_ats_feedback_total',
+    help:       'ATS feedback loop outcomes: fired (re-write ran), passed (no attainable missing), skipped (re-write not run).',
+    labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
 // Prose linting runs in 'flag' mode only — telemetry on AI-tell language in the
@@ -515,26 +523,65 @@ export async function main(): Promise<void> {
         // Renders the AI-authored resume to a text-selectable PDF, proves it
         // parses, and stores the canonical PDF + check. Delegated to a helper
         // that never throws (errors → 'unverified', never 'passed').
-        let atsCheck: AtsCheckResult | null = null;
+        let finalAts: AtsCheckResult | null = null;
         if (persisted && finalResume) {
             // Build a shared embedder for 3-tier ATS keyword matching (Titan, fail-open).
             const atsEmbedder = TitanEmbeddingProvider.fromEnvironment();
-            atsCheck = await renderCheckAndStoreAts({
+            const atsArgs = {
                 s3, pool,
                 bucket:        process.env['ASSETS_BUCKET'] ?? '',
                 resumeId:      persisted.resumeId,
                 userId:        env.userId,
-                resume:        finalResume,
                 research:      researchData,
                 log,
                 correlationId: env.pipelineRunId,
-                onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
+                onOutcome:     (status: AtsCheckResult['status'] | 'error') => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
                 jdExtraction,
                 familyVocab,
                 embedder:      atsEmbedder,
                 techGroups,
                 techAliasMap,
-            });
+            };
+            const atsCheck = await renderCheckAndStoreAts({ ...atsArgs, resume: finalResume });
+            finalAts = atsCheck;
+
+            // ── ATS feedback loop (pass-by-generation, ONE bounded honest re-write) ──
+            // Surface attainable-but-missing keywords (verified/transferable the
+            // candidate genuinely has — GAPs are excluded by splitAttainable and
+            // can never be surfaced) using ONLY the provided evidence, then re-render
+            // + re-check ONCE. Fail-open at every await; never throws.
+            const split = splitAttainable(atsCheck.jdKeywordCoverage, skillEvidenceLedger);
+            if (split.attainableMissing.length > 0) {
+                atsFeedback.inc({ outcome: 'fired' });
+                const baseResume = finalResume; // non-null inside this guard; narrows fail-open return
+                const surfaced = await surfaceKeywords(baseResume, split.attainableMissing).catch(() => baseResume);
+                if (surfaced !== baseResume) {
+                    finalResume = surfaced;
+                    const rePersisted = await persistTailoredResume(pool, {
+                        applicationId:  env.applicationId,
+                        userId:         env.userId,
+                        pipelineId:     env.pipelineId,
+                        targetRole:     env.targetRole,
+                        archetype,
+                        tailoredResume: surfaced,
+                    }).catch(() => null);
+                    const reResumeId = rePersisted?.resumeId ?? persisted.resumeId;
+                    finalAts = await renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced }).catch(() => atsCheck);
+                }
+            } else {
+                atsFeedback.inc({ outcome: 'skipped' });
+            }
+
+            // Stamp the pass-mark from the FINAL coverage.
+            const finalSplit = splitAttainable(finalAts.jdKeywordCoverage, skillEvidenceLedger);
+            if (finalSplit.attainablePassed) atsFeedback.inc({ outcome: 'passed' });
+            finalAts = {
+                ...finalAts,
+                attainableTotal:   finalSplit.attainableTotal,
+                attainableCovered: finalSplit.attainableCovered,
+                attainablePassed:  finalSplit.attainablePassed,
+                surfacedKeywords:  split.attainableMissing.map((e) => e.tool),
+            };
         }
 
         // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────
@@ -559,7 +606,7 @@ export async function main(): Promise<void> {
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck, yearsGap },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
             research:     researchData,
             jdExtraction,
         });
