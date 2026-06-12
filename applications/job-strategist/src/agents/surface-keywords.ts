@@ -128,24 +128,63 @@ function evidencePayload(missing: ReadonlyArray<SkillEvidenceEntry>) {
     }));
 }
 
+/** Optional grounding inputs for the XYZ + red-flag refinement pass. */
+export interface SurfaceKeywordsOpts {
+    /** Red-flag phrasings the rewrite must drop or reframe (e.g. "8-month gap"). */
+    readonly redFlags?: string[];
+    /** Verbatim career facts + project evidence + verified-match citations. */
+    readonly groundingFacts?: string;
+}
+
 /**
- * Surface attainable-but-missing keywords into the resume using ONLY the
- * provided evidence. FAIL-OPEN: empty input or any error → the input resume.
+ * Grounded experience-refinement pass: surface attainable-but-missing keywords
+ * AND rewrite the experience section in the Google XYZ formula, using ONLY the
+ * candidate's real evidence + the provided grounding facts. Red flags are
+ * dropped/reframed. FAIL-OPEN: empty input or any error → the input resume.
  */
 export async function surfaceKeywords(
     resume: StructuredResumeData,
     missing: ReadonlyArray<SkillEvidenceEntry>,
+    opts: SurfaceKeywordsOpts = {},
 ): Promise<StructuredResumeData> {
     if (missing.length === 0) return resume;
 
+    const redFlags = opts.redFlags ?? [];
+    const groundingFacts = opts.groundingFacts ?? '';
+
     const system = [
-        'You surface attainable keywords into a resume, using ONLY the candidate\'s real evidence provided',
-        '(the tool, its evidence description, its source files, and any transferable bridge).',
-        'Call emit_resume with the FULL resume JSON.',
-        'Insert each keyword into the most relevant experience, skills, or project section as a natural phrase.',
-        'NEVER fabricate a new claim. If a keyword is only transferable, frame it honestly via the bridge',
-        "(e.g. 'AWS Bedrock/Claude (transferable to OpenAI API)').",
-        'Preserve everything else exactly — every fact, number, date, and the profile identity.',
+        'You refine a resume\'s EXPERIENCE section and surface attainable keywords, using ONLY the',
+        'candidate\'s real evidence: the current resume, the provided grounding facts, and each missing',
+        'keyword\'s evidence (tool, description, source files, transferable bridge). Call emit_resume with',
+        'the FULL resume JSON.',
+        '',
+        '1. XYZ FORMULA — rewrite each experience highlight as "Accomplished X, as measured by Y, by doing Z"',
+        '   (outcome + metric + action). Lead with the outcome, then the action that produced it.',
+        '   The OUTCOME (X) does NOT need a number: it may be a DEFENSIBLE qualitative result — the',
+        '   well-established purpose or benefit the verified action delivers. Example: source says only',
+        '   "Migrated self-hosted Kubernetes to EKS" → "Migrated self-hosted Kubernetes to EKS, offloading',
+        '   control-plane management and enabling managed, elastic scaling." That is a TRUE description of',
+        '   what the action accomplishes, not an invented number. Pick the framing most relevant to the JD.',
+        '2. GROUNDED, NEVER INVENTED — the ACTION (Z) and any METRIC (Y) must come ONLY from the current resume',
+        '   or grounding facts. NEVER invent a number, percentage, duration, count, or any MEASURED result the',
+        '   source does not state. You may restructure a real number into the Y slot, never create one. What',
+        '   you MAY add is the qualitative, well-known benefit a verified action inherently provides (the X) —',
+        '   never a benefit the action does not actually deliver. Fabricated metrics are forbidden; defensible',
+        '   qualitative outcomes of real actions are encouraged. This honesty rule overrides everything.',
+        '3. SURFACE UNDER-FRAMED VALUE — proactively scan the verified evidence for actions stated flatly',
+        '   (e.g. just "Built X" or "Migrated A to B") whose favorable, JD-relevant outcome the candidate',
+        '   did not make explicit. Restructure them so the real value shows — using the established benefit of',
+        '   that action/technology that the source supports. Identify wins the candidate under-sold; never',
+        '   manufacture one the evidence cannot back.',
+        '4. WEAVE ATTAINABLE KEYWORDS — naturally include the missing tools/skills where the evidence supports',
+        '   them. If a keyword is only transferable, frame it honestly via its bridge',
+        "   (e.g. 'AWS Bedrock/Claude (transferable to OpenAI API)'). Never add a claim the evidence lacks.",
+        '5. REMOVE RED FLAGS — drop or reframe any phrasing that exposes a listed red flag: gap-naming,',
+        '   "pending/unrealised" impact, apologetic or hedged wording. Never add a claim to mask a flag —',
+        '   reframe with real evidence or simply omit the offending phrase.',
+        '6. PRESERVE every company, title, and period exactly, and the profile identity. Leave education and',
+        '   certifications unchanged. Only touch skills/projects when a keyword or red-flag fix requires it.',
+        '',
         'Output plain text only: no markdown, no em-dashes (the pipeline normalizes em-dashes anyway).',
     ].join('\n');
 
@@ -161,6 +200,8 @@ export async function surfaceKeywords(
 
     const userMessage =
         `<keywords>${JSON.stringify(evidencePayload(missing))}</keywords>\n` +
+        `<grounding_facts>${groundingFacts}</grounding_facts>\n` +
+        `<red_flags>${JSON.stringify(redFlags)}</red_flags>\n` +
         `<resume>${JSON.stringify(resume)}</resume>`;
 
     try {

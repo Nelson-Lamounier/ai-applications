@@ -57,4 +57,27 @@ describe('surfaceKeywords', () => {
         const out = await surfaceKeywords(resume, [entry('Terraform')]);
         expect(out).toBe(resume);
     });
+
+    it('forwards redFlags + groundingFacts into the user message and the XYZ system prompt', async () => {
+        const resume = baseResume();
+        mockRun.mockResolvedValue({ data: resume });
+        await surfaceKeywords(resume, [entry('Terraform')], {
+            redFlags: ['names an 8-month employment gap'],
+            groundingFacts: 'Cut deploy time from 30m to 5m on the Acme platform.',
+        });
+        expect(mockRun).toHaveBeenCalledTimes(1);
+        const call = mockRun.mock.calls[0][0];
+        expect(call.userMessage).toContain('names an 8-month employment gap');
+        expect(call.userMessage).toContain('Cut deploy time from 30m to 5m');
+        const sys = call.config.systemPrompt[0].text as string;
+        expect(sys).toMatch(/Accomplished X/i);
+        expect(sys).toMatch(/NEVER invent a number/i);
+    });
+
+    it('opts omitted → back-compat, still calls runAgent', async () => {
+        const resume = baseResume();
+        mockRun.mockResolvedValue({ data: resume });
+        await surfaceKeywords(resume, [entry('Terraform')]);
+        expect(mockRun).toHaveBeenCalledTimes(1);
+    });
 });
