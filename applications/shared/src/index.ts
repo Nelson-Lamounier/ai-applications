@@ -158,6 +158,8 @@ export type {
     JobRequirement,
     TechnologyInventory,
     ExperienceSignals,
+    JdSignal,
+    ResearchMatching,
     StrategistResearchResult,
     KbRetrievalStats,
     KbRetrievalSource,

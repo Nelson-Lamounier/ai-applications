@@ -364,8 +364,62 @@ export interface KbRetrievalStats {
 }
 
 /**
- * Complete output from the Strategist Research Agent.
+ * The complete JD signal — everything understood FROM the job description.
+ * Produced by the JD agent (the extended jd-extractor). The single source of
+ * JD understanding for the whole pipeline (writer target, ATS bar, UI "What we understood").
  */
+export interface JdSignal {
+    readonly targetRole: string;
+    readonly seniority: string;
+    readonly domain: string;
+    readonly hardRequirements: JobRequirement[];
+    readonly softRequirements: JobRequirement[];
+    readonly implicitRequirements: string[];
+    readonly technologyInventory: TechnologyInventory;
+    readonly experienceSignals: ExperienceSignals;
+    readonly requiredSkills: string[];
+    readonly preferredSkills: string[];
+    readonly tools: string[];
+    readonly concepts: string[];
+    readonly responsibilities: string[];
+    readonly retrievalKeywords: string[];
+}
+
+/**
+ * The candidate↔JD match — everything the research agent derives by matching the
+ * candidate's KB + career evidence against a (given) JdSignal. Does NOT include any
+ * JD-derived fields (those live in JdSignal).
+ */
+export interface ResearchMatching {
+    readonly verifiedMatches: VerifiedMatch[];
+    readonly partialMatches: PartialMatch[];
+    readonly gaps: SkillGap[];
+    readonly overallFitRating: FitRating;
+    readonly fitSummary: string;
+    readonly pillarClassification?: {
+        readonly primaryPillar: 'swe-general' | 'swe-dsa' | 'devops-sre-platform' | 'ai-engineering';
+        readonly secondaryPillars: ReadonlyArray<'swe-general' | 'swe-dsa' | 'devops-sre-platform' | 'ai-engineering'>;
+        readonly confidence: number;
+        readonly jdEvidenceTokens: string[];
+        readonly classificationNote: string;
+    };
+    readonly resumeData: StructuredResumeData | null;
+    readonly kbContext: string;
+    readonly kbRetrievalStats?: KbRetrievalStats;
+    readonly resumeConstraints: string;
+    readonly dsaTopicCalibration?: {
+        readonly likelyTopics: ReadonlyArray<{
+            readonly canonicalName: string;
+            readonly displayName: string;
+            readonly confidence: number;
+            readonly rationale: string;
+            readonly jdEvidenceQuote: string;
+        }>;
+        readonly honestyNote: string;
+    };
+}
+
+/** Assembled in run-pipeline as { ...JdSignal, ...ResearchMatching }. Members unchanged for back-compat. */
 export interface StrategistResearchResult {
     /** Extracted target role title */
     readonly targetRole: string;
