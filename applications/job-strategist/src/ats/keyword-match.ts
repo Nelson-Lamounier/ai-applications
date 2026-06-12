@@ -116,7 +116,7 @@ function matchOntology(term: string, resumeLowerText: string, familyVocab: strin
  * Build a reverse map: canonical → all surface forms (display form + all aliases).
  * Display form is derived by replacing underscores with spaces in the canonical.
  */
-function buildReverseAliasMap(aliasMap: Map<string, string>): Map<string, string[]> {
+export function buildReverseAliasMap(aliasMap: ReadonlyMap<string, string>): Map<string, string[]> {
     const reverse = new Map<string, string[]>();
     for (const [alias, canonical] of aliasMap) {
         const existing = reverse.get(canonical);
@@ -127,6 +127,24 @@ function buildReverseAliasMap(aliasMap: Map<string, string>): Map<string, string
         }
     }
     return reverse;
+}
+
+/** All surface forms for a canonical: its display form (underscores→spaces) + every alias. */
+export function surfaceFormsFor(canonical: string, reverseMap: Map<string, string[]>): Set<string> {
+    return new Set([canonical.replaceAll('_', ' '), ...(reverseMap.get(canonical) ?? [])]);
+}
+
+/**
+ * True when a space-padded, lowercased-alnum haystack mentions any surface form of
+ * `canonical` as a whole word. Shared by the tech-transfer tier and the
+ * vendor-provenance guard so both resolve canonicals identically.
+ */
+export function mentionsCanonical(canonical: string, paddedHaystack: string, reverseMap: Map<string, string[]>): boolean {
+    for (const form of surfaceFormsFor(canonical, reverseMap)) {
+        const norm = normalizeTerm(form);
+        if (norm.length > 0 && paddedHaystack.includes(` ${norm} `)) return true;
+    }
+    return false;
 }
 
 /**
@@ -146,27 +164,17 @@ export function matchTechTransfer(
 ): boolean {
     const termLower = term.toLowerCase().trim();
     // Resolve term → canonical: check aliasMap first, then normalized form
-    const jdCanonical = aliasMap.get(termLower) ?? normalizeTerm(term).replace(/ /g, '_');
+    const jdCanonical = aliasMap.get(termLower) ?? normalizeTerm(term).replaceAll(' ', '_');
 
     const reverseMap = buildReverseAliasMap(aliasMap);
     const resume = normalizeResume(resumeLowerText);
 
     for (const group of techGroups) {
         if (!group.includes(jdCanonical)) continue;
-
-        // Found a group containing this JD term; check siblings
+        // Found a group containing this JD term; check the siblings' surface forms.
         for (const sibling of group) {
             if (sibling === jdCanonical) continue;
-
-            // Surface forms = display form (underscore→space) + all aliases for this canonical
-            const displayForm = sibling.replace(/_/g, ' ');
-            const aliases = reverseMap.get(sibling) ?? [];
-            const surfaceForms = new Set([displayForm, ...aliases]);
-
-            for (const form of surfaceForms) {
-                const normForm = normalizeTerm(form);
-                if (normForm.length > 0 && resume.includes(` ${normForm} `)) return true;
-            }
+            if (mentionsCanonical(sibling, resume, reverseMap)) return true;
         }
     }
 

@@ -14,102 +14,15 @@
  * FAIL-OPEN: any error (or empty input) → the input resume, unchanged.
  */
 
-import { z } from 'zod';
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData, SkillEvidenceEntry } from '@bedrock/shared';
+import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.js';
 
 const MODEL_ID = process.env['SURFACE_KEYWORDS_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
-const ProfileSchema = z.object({
-    name: z.string(),
-    title: z.string(),
-    email: z.string(),
-    location: z.string(),
-    linkedin: z.string().optional(),
-    github: z.string().optional(),
-}).passthrough();
+const ResumeSchema = ResumeRewriteSchema;
 
-const ExperienceSchema = z.object({
-    company: z.string(),
-    title: z.string(),
-    period: z.string(),
-    highlights: z.array(z.string()),
-}).passthrough();
-
-const SkillCategorySchema = z.object({
-    category: z.string(),
-    skills: z.array(z.string()),
-}).passthrough();
-
-const EducationSchema = z.object({
-    degree: z.string(),
-    institution: z.string(),
-    period: z.string(),
-}).passthrough();
-
-const ResumeSchema = z.object({
-    profile: ProfileSchema,
-    summary: z.string(),
-    experience: z.array(ExperienceSchema),
-    skills: z.array(SkillCategorySchema),
-    education: z.array(EducationSchema),
-    certifications: z.array(z.object({}).passthrough()),
-    projects: z.array(z.object({}).passthrough()),
-    keyAchievements: z.array(z.object({}).passthrough()),
-    sectionOrder: z.array(z.string()).optional(),
-});
-
-const TOOL = {
-    name: 'emit_resume',
-    description: 'Return the resume as structured JSON with the keywords surfaced (plain-text strings, NO markdown).',
-    input_schema: {
-        type: 'object',
-        properties: {
-            profile: {
-                type: 'object',
-                properties: {
-                    name: { type: 'string' }, title: { type: 'string' }, email: { type: 'string' },
-                    location: { type: 'string' }, linkedin: { type: 'string' }, github: { type: 'string' },
-                },
-                required: ['name', 'title', 'email', 'location'],
-            },
-            summary: { type: 'string' },
-            experience: {
-                type: 'array',
-                items: {
-                    type: 'object',
-                    properties: {
-                        company: { type: 'string' }, title: { type: 'string' },
-                        period: { type: 'string' }, highlights: { type: 'array', items: { type: 'string' } },
-                    },
-                    required: ['company', 'title', 'period', 'highlights'],
-                },
-            },
-            skills: {
-                type: 'array',
-                items: {
-                    type: 'object',
-                    properties: { category: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } } },
-                    required: ['category', 'skills'],
-                },
-            },
-            education: {
-                type: 'array',
-                items: {
-                    type: 'object',
-                    properties: { degree: { type: 'string' }, institution: { type: 'string' }, period: { type: 'string' } },
-                    required: ['degree', 'institution', 'period'],
-                },
-            },
-            certifications: { type: 'array', items: { type: 'object' } },
-            projects: { type: 'array', items: { type: 'object' } },
-            keyAchievements: { type: 'array', items: { type: 'object' } },
-            sectionOrder: { type: 'array', items: { type: 'string' } },
-        },
-        required: ['profile', 'summary', 'experience', 'skills', 'education', 'certifications', 'projects', 'keyAchievements'],
-        additionalProperties: false,
-    },
-} as const;
+const TOOL = buildEmitResumeTool('Return the resume as structured JSON with the keywords surfaced (plain-text strings, NO markdown).');
 
 const CTX: BasePipelineContext = {
     pipelineId: 'surface-keywords',
