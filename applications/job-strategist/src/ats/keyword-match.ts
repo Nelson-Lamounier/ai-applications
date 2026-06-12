@@ -59,9 +59,18 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
     return matchSkillCategory(term.toLowerCase(), resume);
 }
 
-export type MatchTier = 'literal' | 'normalized' | 'ontology' | 'embedding' | 'none';
+export type MatchTier = 'literal' | 'normalized' | 'ontology' | 'tech-transfer' | 'embedding' | 'none';
 export interface Embedder { embed(text: string): Promise<number[]>; }
-export interface MatchCtx { familyVocab: string[][]; embedder: Embedder | null; threshold: number; resumeVector?: number[]; }
+export interface MatchCtx {
+    familyVocab: string[][];
+    embedder: Embedder | null;
+    threshold: number;
+    resumeVector?: number[];
+    /** Transfer/category groups — arrays of lowercased canonical tech names. Optional. */
+    techGroups?: string[][];
+    /** Alias → canonical map (lowercased keys). Optional. */
+    techAliasMap?: Map<string, string>;
+}
 
 function cosine(a: number[], b: number[]): number {
     let dot = 0, na = 0, nb = 0;
@@ -84,8 +93,69 @@ function matchOntology(term: string, resumeLowerText: string, familyVocab: strin
 }
 
 /**
- * 3-tier keyword match. literal -> normalized (Tier 1) -> ontology (Tier 2) -> embedding (Tier 3).
- * Tier 3 only runs on tier1+2 misses (cost). FAIL-OPEN: embedder error -> no false credit.
+ * Build a reverse map: canonical → all surface forms (display form + all aliases).
+ * Display form is derived by replacing underscores with spaces in the canonical.
+ */
+function buildReverseAliasMap(aliasMap: Map<string, string>): Map<string, string[]> {
+    const reverse = new Map<string, string[]>();
+    for (const [alias, canonical] of aliasMap) {
+        const existing = reverse.get(canonical);
+        if (existing) {
+            existing.push(alias);
+        } else {
+            reverse.set(canonical, [alias]);
+        }
+    }
+    return reverse;
+}
+
+/**
+ * Tech-transfer tier: resolve the JD term to a canonical, find its tech group,
+ * then check if the resume mentions any sibling canonical's surface forms.
+ *
+ * @param term             - JD term (raw, mixed case)
+ * @param resumeLowerText  - Full resume text (lowercased)
+ * @param techGroups       - Groups of mutually-transferable canonical tech names (lowercased)
+ * @param aliasMap         - alias→canonical map (lowercased keys)
+ */
+export function matchTechTransfer(
+    term: string,
+    resumeLowerText: string,
+    techGroups: string[][],
+    aliasMap: Map<string, string>,
+): boolean {
+    const termLower = term.toLowerCase().trim();
+    // Resolve term → canonical: check aliasMap first, then normalized form
+    const jdCanonical = aliasMap.get(termLower) ?? normalizeTerm(term).replace(/ /g, '_');
+
+    const reverseMap = buildReverseAliasMap(aliasMap);
+    const resume = normalizeResume(resumeLowerText);
+
+    for (const group of techGroups) {
+        if (!group.includes(jdCanonical)) continue;
+
+        // Found a group containing this JD term; check siblings
+        for (const sibling of group) {
+            if (sibling === jdCanonical) continue;
+
+            // Surface forms = display form (underscore→space) + all aliases for this canonical
+            const displayForm = sibling.replace(/_/g, ' ');
+            const aliases = reverseMap.get(sibling) ?? [];
+            const surfaceForms = new Set([displayForm, ...aliases]);
+
+            for (const form of surfaceForms) {
+                const normForm = normalizeTerm(form);
+                if (normForm.length > 0 && resume.includes(` ${normForm} `)) return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * 4-tier keyword match: literal → normalized (Tier 1) → ontology (Tier 2) → tech-transfer (Tier 3) → embedding (Tier 4).
+ * Embedding only runs on tier1-3 misses (cost). FAIL-OPEN: embedder error → no false credit.
  */
 export async function matchTerm(
     term: string,
@@ -97,6 +167,9 @@ export async function matchTerm(
     if (raw && resume.includes(` ${raw} `)) return { present: true, tier: 'literal' };
     if (matchTier1(term, resumeLowerText)) return { present: true, tier: 'normalized' };
     if (matchOntology(term, resumeLowerText, ctx.familyVocab)) return { present: true, tier: 'ontology' };
+    if (ctx.techGroups && ctx.techAliasMap && matchTechTransfer(term, resumeLowerText, ctx.techGroups, ctx.techAliasMap)) {
+        return { present: true, tier: 'tech-transfer' };
+    }
     if (ctx.embedder) {
         try {
             const rv = ctx.resumeVector ?? (await ctx.embedder.embed(resumeLowerText.slice(0, 8000)));

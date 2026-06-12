@@ -12,7 +12,7 @@
  */
 
 import type { SkillEvidenceEntry, VerifiedMatch, PartialMatch } from '@bedrock/shared';
-import { matchTier1 } from './keyword-match.js';
+import { matchTier1, matchTechTransfer } from './keyword-match.js';
 
 /**
  * Find a verified match for a given tool by bidirectional matchTier1 lookup.
@@ -38,6 +38,32 @@ function findPartialMatch(tool: string, partialMatches: PartialMatch[]): Partial
     );
 }
 
+/** Options for tech-group-based transferable resolution. */
+export interface LedgerOpts {
+    /** Transfer/category groups — arrays of lowercased canonical tech names. */
+    techGroups?: string[][];
+    /** Alias → canonical map (lowercased keys). */
+    techAliasMap?: Map<string, string>;
+}
+
+/**
+ * Find the first verified match whose skill is a sibling of `tool` in any tech group.
+ *
+ * A verified match is a sibling when:
+ *   matchTechTransfer(tool, verifiedMatch.skill, techGroups, techAliasMap) is true
+ * (i.e. the tool's canonical and the verified match's canonical share a group).
+ */
+function findVerifiedSiblingByGroup(
+    tool: string,
+    verifiedMatches: VerifiedMatch[],
+    techGroups: string[][],
+    techAliasMap: Map<string, string>,
+): VerifiedMatch | undefined {
+    return verifiedMatches.find((vm) =>
+        matchTechTransfer(tool, vm.skill, techGroups, techAliasMap),
+    );
+}
+
 /**
  * Build a per-tool Skill Evidence Ledger from the JD tool list and the
  * research matching result.
@@ -45,15 +71,19 @@ function findPartialMatch(tool: string, partialMatches: PartialMatch[]): Partial
  * Algorithm (per unique tool, preserving input order, case-insensitive dedupe):
  *  1. Find a verifiedMatch → verified + evidenceFiles + sourceCitation as evidence
  *  2. Else find a partialMatch → transferable + evidenceFiles + transferableFoundation as bridge
- *  3. Else → gap (honest: empty files, empty evidence)
+ *  3. Else if opts.techGroups provided: find a verified sibling in the same tech group
+ *     → transferable + sibling's evidenceFiles + transferableBridge describing the group link
+ *  4. Else → gap (honest: empty files, empty evidence)
  *
  * @param tools    - JD-required tools/skills (from technologyInventory.tools + requiredSkills, etc.)
  * @param matching - Research matching result (verifiedMatches + partialMatches)
+ * @param opts     - Optional tech-group resolution config (back-compat: omit for original behaviour)
  * @returns Ordered, deduped list of evidence entries
  */
 export function buildSkillEvidenceLedger(
     tools: string[],
     matching: Pick<{ verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[] }, 'verifiedMatches' | 'partialMatches'>,
+    opts?: LedgerOpts,
 ): SkillEvidenceEntry[] {
     const seen = new Set<string>();
     const ledger: SkillEvidenceEntry[] = [];
@@ -85,6 +115,21 @@ export function buildSkillEvidenceLedger(
                 transferableBridge: pm.transferableFoundation,
             });
             continue;
+        }
+
+        if (opts?.techGroups && opts.techAliasMap) {
+            const sibling = findVerifiedSiblingByGroup(tool, matching.verifiedMatches, opts.techGroups, opts.techAliasMap);
+            if (sibling) {
+                const verifiedTech = sibling.skill;
+                ledger.push({
+                    tool,
+                    status: 'transferable',
+                    evidenceFiles: sibling.evidenceFiles,
+                    evidence: sibling.sourceCitation,
+                    transferableBridge: `same technology group — ${verifiedTech} is transferable to ${tool}`,
+                });
+                continue;
+            }
         }
 
         ledger.push({
