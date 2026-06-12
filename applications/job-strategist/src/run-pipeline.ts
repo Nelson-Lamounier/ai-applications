@@ -45,6 +45,7 @@ import type { AtsCheckResult } from './ats/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
 import { splitAttainable } from './ats/attainable.js';
 import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
+import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
@@ -381,10 +382,13 @@ export async function main(): Promise<void> {
         // Tech-ontology grounding — load transfer groups + alias map ONCE (fail-open).
         // Prefer the explicit relationship graph; fall back to category groups when sparse.
         const techRepo = new TechnologyOntologyRepository(pool);
-        const [techTransferGroups, techCategoryGroups, techAliasMap] = await Promise.all([
+        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical] = await Promise.all([
             techRepo.loadTransferGroups().catch(() => [] as string[][]),
             techRepo.loadCategoryGroups().catch(() => [] as string[][]),
             techRepo.loadAliasMap().catch(() => new Map<string, string>()),
+            techRepo.loadRepoCodeTech(env.userId).catch(() => new Map<string, Set<string>>()),
+            techRepo.loadSucceedsEdges().catch(() => new Map<string, Set<string>>()),
+            techRepo.loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
         ]);
         const techGroups = techTransferGroups.length > 0 ? techTransferGroups : techCategoryGroups;
 
@@ -395,20 +399,35 @@ export async function main(): Promise<void> {
             ...jdExtraction.technologyInventory.languages,
         ];
         const techTransferContext = formatTechTransferContext(jdTools, techGroups, techAliasMap);
+        // Doc-vs-code drift: the authoritative current code stack per repo (deterministic
+        // extraction), injected so the matcher prefers code over stale documentation.
+        const codeStackContext = buildCodeStackContext(codeTechByRepo);
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext);
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext);
 
         // Vendor-provenance guard (deterministic): a competing vendor evidenced ONLY by
         // reference/example docs (e.g. an "OpenAI example" in a structured-output checklist
         // while the real stack is Bedrock/Anthropic) was VERIFIED by the LLM → demote to a
         // transferable partialMatch so it is never written as first-person production work.
         // Runs BEFORE the ledger + strategist so the correction propagates to both.
-        const { matching: guardedMatching, demotions } = demoteMisattributedVendors(research.data, { techGroups, techAliasMap });
+        const { matching: vendorGuarded, demotions } = demoteMisattributedVendors(research.data, { techGroups, techAliasMap });
         if (demotions.length > 0) {
             log.warn({
                 pipelineRunId: env.pipelineRunId,
                 demoted: demotions.map((d) => ({ skill: d.skill, vendor: d.matchedVendor, files: d.evidenceFiles })),
             }, 'vendor_provenance_demoted_reference_only_competing_vendor');
+        }
+
+        // Doc-vs-code drift guard (deterministic): a documented technology superseded
+        // by the repo's current code (doc names predecessor P; code lacks P but has a
+        // `succeeds`-successor of P, e.g. self-hosted Kubernetes → EKS) is demoted to a
+        // past-tense partialMatch so a stale doc is never presented as current work.
+        const { matching: guardedMatching, contradictions } = demoteCodeContradictedMatches(vendorGuarded, { codeTechByRepo, succeedsEdges, aliasToCanonical });
+        if (contradictions.length > 0) {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                contradicted: contradictions.map((c) => ({ skill: c.skill, repo: c.repo, docTech: c.docTech, codeSuccessors: c.codeSuccessors })),
+            }, 'code_truth_demoted_stale_documentation_claim');
         }
         const guardedResearch = { ...research, data: guardedMatching };
 
@@ -449,7 +468,7 @@ export async function main(): Promise<void> {
             new Date().getFullYear(),
         ).catch(() => null);
 
-        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap);
+        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 

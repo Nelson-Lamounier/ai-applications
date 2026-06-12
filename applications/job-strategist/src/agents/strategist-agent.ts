@@ -63,6 +63,8 @@ export interface StrategistAgentInput {
     readonly roleEvidence?: string;
     /** Non-apologetic framing line from the years-gap agent (relevant-years vs JD bar). Optional. */
     readonly yearsGapFraming?: string;
+    /** Authoritative current code stack per repo (doc-vs-code drift). Optional. */
+    readonly codeStackContext?: string;
 }
 
 // =============================================================================
@@ -120,6 +122,7 @@ function buildStrategistMessage(
     experienceFacts = '',
     roleEvidence = '',
     yearsGapFraming = '',
+    codeStackContext = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -137,6 +140,14 @@ function buildStrategistMessage(
             '### The Problem This Role Solves (position the candidate as the answer)',
             research.companyProblem.trim(),
             'Lead the summary + cover letter with how the candidate SOLVES this problem — using only verified/partial evidence below. Do not merely list matching keywords; show the candidate is the answer to what they are actually hiring for. Never invent capabilities to fit the problem.',
+            '',
+        );
+    }
+
+    if (codeStackContext.trim()) {
+        sections.push(
+            codeStackContext.trim(),
+            'When writing experience bullets, present the CURRENT code-stack technology as current; if the candidate previously used a different technology for the same repo (per the docs), describe it in the PAST tense as a prior approach. Never state a superseded technology as the current implementation.',
             '',
         );
     }
@@ -672,7 +683,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext);
     }
 
     /**
@@ -795,6 +806,7 @@ export async function executeStrategistAgent(
     experienceFacts = '',
     roleEvidenceBlock = '',
     yearsGap: YearsGap | null = null,
+    codeStackContext = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine, codeStackContext }, ctx);
 }
