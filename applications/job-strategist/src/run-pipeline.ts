@@ -21,7 +21,7 @@ import { extractResumeProseSections } from './lib/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
-import { resolveRoleFamilies } from './agents/resolve-role-families.js';
+import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
@@ -355,6 +355,13 @@ export async function main(): Promise<void> {
             (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, highlights: c.highlights })),
             roleRepo,
         ).catch(() => []);
+        // B1 — stage JD demand-side signal: record JD required skills + tools as
+        // vocabulary candidates for the families matched from the candidate's career.
+        void stageJdLearning(
+            roleRepo, ctx.userId, resolved,
+            jdExtraction.requiredSkills,
+            jdExtraction.technologyInventory.tools,
+        ).catch(() => undefined);
         const roleEvidenceBlock = formatRoleEvidence(resolved, companyFraming);
         // Flatten vocabulary groups from resolved role families for ontology-tier ATS matching.
         const familyVocab = resolved
