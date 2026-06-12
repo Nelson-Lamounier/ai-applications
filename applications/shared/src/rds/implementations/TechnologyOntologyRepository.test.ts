@@ -62,3 +62,87 @@ describe('TechnologyOntologyRepository.currentVersion', () => {
         expect(pool.calls[0].sql).toContain('FROM ontology_version');
     });
 });
+
+describe('TechnologyOntologyRepository.loadCategoryGroups', () => {
+    it('groups by category and drops singletons', async () => {
+        const pool = fakePool([
+            { canonical_name: 'anthropic_claude', category: 'ai_platform' },
+            { canonical_name: 'openai',            category: 'ai_platform' },
+            { canonical_name: 'aws_vpc',           category: 'cloud_networking' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadCategoryGroups();
+        // Only the ai_platform group has ≥2 members; cloud_networking singleton is dropped
+        expect(groups).toHaveLength(1);
+        expect(new Set(groups[0])).toEqual(new Set(['anthropic_claude', 'openai']));
+        expect(pool.calls[0].sql).toContain('FROM technology_ontology');
+        expect(pool.calls[0].sql).toContain('is_active = true');
+        expect(pool.calls[0].sql).toContain("curation_level IN ('curated', 'auto_imported')");
+    });
+
+    it('returns empty array when all categories are singletons', async () => {
+        const pool = fakePool([
+            { canonical_name: 'anthropic_claude', category: 'ai_platform' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        expect(await repo.loadCategoryGroups()).toEqual([]);
+    });
+
+    it('lowercases canonical names', async () => {
+        const pool = fakePool([
+            { canonical_name: 'TypeScript', category: 'language' },
+            { canonical_name: 'JavaScript', category: 'language' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadCategoryGroups();
+        expect(new Set(groups[0])).toEqual(new Set(['typescript', 'javascript']));
+    });
+});
+
+describe('TechnologyOntologyRepository.loadTransferGroups', () => {
+    it('returns [] when relationships table is empty', async () => {
+        const pool = fakePool([]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        expect(await repo.loadTransferGroups()).toEqual([]);
+        expect(pool.calls[0].sql).toContain('FROM technology_relationships');
+    });
+
+    it('merges a triangle of edges into one component', async () => {
+        // claude↔openai, bedrock↔openai, claude↔bedrock — should all merge
+        const pool = fakePool([
+            { from_name: 'anthropic_claude', to_name: 'openai' },
+            { from_name: 'aws_bedrock',      to_name: 'openai' },
+            { from_name: 'anthropic_claude', to_name: 'aws_bedrock' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(groups).toHaveLength(1);
+        expect(new Set(groups[0])).toEqual(
+            new Set(['anthropic_claude', 'openai', 'aws_bedrock']),
+        );
+    });
+
+    it('keeps disconnected components separate', async () => {
+        const pool = fakePool([
+            { from_name: 'anthropic_claude', to_name: 'openai' },
+            { from_name: 'typescript',       to_name: 'javascript' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(groups).toHaveLength(2);
+        const sets = groups.map(g => new Set(g));
+        const claudeGroup = sets.find(s => s.has('anthropic_claude'));
+        const tsGroup = sets.find(s => s.has('typescript'));
+        expect(claudeGroup).toEqual(new Set(['anthropic_claude', 'openai']));
+        expect(tsGroup).toEqual(new Set(['typescript', 'javascript']));
+    });
+
+    it('lowercases canonical names', async () => {
+        const pool = fakePool([
+            { from_name: 'Anthropic_Claude', to_name: 'OpenAI' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(new Set(groups[0])).toEqual(new Set(['anthropic_claude', 'openai']));
+    });
+});

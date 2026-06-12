@@ -317,6 +317,8 @@ interface ResearchMessageOptions {
     roleEvidenceSection?: string;
     /** Pre-formatted JD signal block injected above KB evidence. */
     jdSignalBlock?: string;
+    /** Grounded technology transferability context (A5). Injected as its own section when non-empty. */
+    techTransferContext?: string;
 }
 
 /**
@@ -345,6 +347,7 @@ function buildResearchMessage(
         jdExtractionSummary = '',
         roleEvidenceSection = '',
         jdSignalBlock = '',
+        techTransferContext = '',
     } = opts;
 
     const sections: string[] = [
@@ -424,6 +427,10 @@ function buildResearchMessage(
 
     if (roleEvidenceSection) {
         sections.push(roleEvidenceSection, '');
+    }
+
+    if (techTransferContext) {
+        sections.push(techTransferContext, '');
     }
 
     if (careerHistorySection) {
@@ -702,6 +709,7 @@ export async function executeResearchAgent(
     jdSignal: JdSignal | null = null,
     careerEntries: CareerEntry[] | null = null,
     roleEvidenceBlock = '',
+    techTransferContext = '',
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -818,6 +826,7 @@ export async function executeResearchAgent(
         jdExtractionSummary,
         roleEvidenceSection: roleEvidenceBlock,
         jdSignalBlock,
+        techTransferContext,
     });
 
     // 7. Run agent

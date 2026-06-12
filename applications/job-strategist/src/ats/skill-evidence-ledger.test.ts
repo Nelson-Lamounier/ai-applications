@@ -144,3 +144,134 @@ describe('buildSkillEvidenceLedger', () => {
         expect(ledger[0]!.evidenceFiles).toEqual(['Dockerfile']);
     });
 });
+
+// ---------------------------------------------------------------------------
+// A4 — Ledger transferable-via-group
+// ---------------------------------------------------------------------------
+
+const aiProviderGroup = ['anthropic_claude', 'openai', 'aws_bedrock', 'chatgpt', 'codex'];
+const techGroups = [aiProviderGroup];
+const techAliasMap = new Map<string, string>([
+    ['openai api', 'openai'],
+    ['openai', 'openai'],
+    ['chatgpt', 'chatgpt'],
+    ['codex', 'codex'],
+    ['anthropic claude', 'anthropic_claude'],
+    ['claude', 'anthropic_claude'],
+    ['aws bedrock', 'aws_bedrock'],
+    ['bedrock', 'aws_bedrock'],
+    ['amazon bedrock', 'aws_bedrock'],
+]);
+
+describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
+    it('tool with no direct match but verified sibling in same group → transferable with bridge', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({
+                    skill: 'AWS Bedrock',
+                    sourceCitation: 'Bedrock/Claude integration in ai-applications',
+                    evidenceFiles: ['Nelson-Lamounier/ai-applications/src/bedrock-client.ts'],
+                }),
+            ],
+            partialMatches: [],
+        };
+        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
+        expect(ledger).toHaveLength(1);
+        const entry = ledger[0]!;
+        expect(entry.status).toBe('transferable');
+        expect(entry.evidenceFiles).toEqual(['Nelson-Lamounier/ai-applications/src/bedrock-client.ts']);
+        expect(entry.evidence).toBe('Bedrock/Claude integration in ai-applications');
+        expect(entry.transferableBridge).toMatch(/same technology group/i);
+        expect(entry.transferableBridge).toMatch(/aws bedrock/i);
+        expect(entry.transferableBridge).toMatch(/openai api/i);
+    });
+
+    it('true gap tool with no group-sibling verified evidence → remains gap (honesty)', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({
+                    skill: 'AWS Bedrock',
+                    sourceCitation: 'bedrock project',
+                    evidenceFiles: ['bedrock-client.ts'],
+                }),
+            ],
+            partialMatches: [],
+        };
+        // Salesforce is NOT in the aiProviderGroup
+        const ledger = buildSkillEvidenceLedger(['Salesforce'], matching, { techGroups, techAliasMap });
+        expect(ledger).toHaveLength(1);
+        const entry = ledger[0]!;
+        expect(entry.status).toBe('gap');
+        expect(entry.evidenceFiles).toEqual([]);
+        expect(entry.evidence).toBe('');
+        expect(entry.transferableBridge).toBe('');
+    });
+
+    it('verified direct match always wins over group-based transferable', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({
+                    skill: 'OpenAI API',
+                    sourceCitation: 'direct openai usage',
+                    evidenceFiles: ['openai-client.ts'],
+                }),
+            ],
+            partialMatches: [],
+        };
+        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
+        expect(ledger[0]!.status).toBe('verified');
+        expect(ledger[0]!.evidenceFiles).toEqual(['openai-client.ts']);
+    });
+
+    it('partial direct match wins over group-based transferable', () => {
+        const matching = {
+            verifiedMatches: [],
+            partialMatches: [
+                makePartial({
+                    skill: 'OpenAI API',
+                    gapDescription: 'limited openai exposure',
+                    transferableFoundation: 'api design knowledge',
+                    evidenceFiles: ['some-api.ts'],
+                }),
+            ],
+        };
+        // Even though AWS Bedrock is NOT in verifiedMatches, the partial direct match wins
+        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
+        expect(ledger[0]!.status).toBe('transferable');
+        expect(ledger[0]!.transferableBridge).toBe('api design knowledge');
+    });
+
+    it('omitting opts entirely preserves original behaviour (back-compat)', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock project', evidenceFiles: ['f.ts'] }),
+            ],
+            partialMatches: [],
+        };
+        // Without opts, OpenAI API has no direct match → gap (no group resolution)
+        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching);
+        expect(ledger[0]!.status).toBe('gap');
+    });
+
+    it('group-transferable picks the first verified sibling match when multiple exist', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({
+                    skill: 'AWS Bedrock',
+                    sourceCitation: 'bedrock first',
+                    evidenceFiles: ['bedrock.ts'],
+                }),
+                makeVerified({
+                    skill: 'Claude',
+                    sourceCitation: 'claude second',
+                    evidenceFiles: ['claude.ts'],
+                }),
+            ],
+            partialMatches: [],
+        };
+        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
+        expect(ledger[0]!.status).toBe('transferable');
+        // First sibling found wins
+        expect(ledger[0]!.evidence).toBe('bedrock first');
+    });
+});

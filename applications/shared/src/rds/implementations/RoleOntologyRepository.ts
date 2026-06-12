@@ -50,8 +50,14 @@ export class RoleOntologyRepository {
         await this.pool.query(`UPDATE role_ontology SET popularity_score = popularity_score + 1 WHERE family_key = $1`, [familyKey]);
     }
 
-    /** Promote candidates corroborated by >= quorum distinct users to auto_imported. Idempotent. */
-    async promote(aliasQuorum: number, familyQuorum: number): Promise<void> {
+    /**
+     * Promote candidates corroborated by >= quorum distinct users to auto_imported. Idempotent.
+     * After promotion, prunes cleared candidates so the staging table stays bounded.
+     * B3 quality gate on vocab/skill: only values that are non-empty after trim, <= 60 chars,
+     * and not already present in the family's array are promoted.
+     */
+    async promote(aliasQuorum: number, vocabQuorum: number, familyQuorum: number): Promise<void> {
+        // (1) Promote alias candidates
         await this.pool.query(
             `INSERT INTO role_aliases (alias, family_key, curation, source)
              SELECT value, family_key, 'auto_imported', 'learned'
@@ -62,23 +68,28 @@ export class RoleOntologyRepository {
              ON CONFLICT (alias) DO NOTHING`,
             [aliasQuorum],
         );
+        // (2) Promote vocabulary + transferable_skill candidates (vocabQuorum, with B3 quality gate)
         await this.pool.query(
             `UPDATE role_ontology o SET
-                vocabulary          = CASE WHEN c.candidate_type = 'vocabulary' AND NOT (c.value = ANY(o.vocabulary))
+                vocabulary          = CASE WHEN c.candidate_type = 'vocabulary'
+                                                AND NOT (c.value = ANY(o.vocabulary))
                                            THEN array_append(o.vocabulary, c.value) ELSE o.vocabulary END,
-                transferable_skills = CASE WHEN c.candidate_type = 'transferable_skill' AND NOT (c.value = ANY(o.transferable_skills))
+                transferable_skills = CASE WHEN c.candidate_type = 'transferable_skill'
+                                                AND NOT (c.value = ANY(o.transferable_skills))
                                            THEN array_append(o.transferable_skills, c.value) ELSE o.transferable_skills END,
                 updated_at = now()
                FROM (
                  SELECT family_key, candidate_type, value
                    FROM role_learning_candidates
                   WHERE candidate_type IN ('vocabulary','transferable_skill')
+                    AND char_length(trim(value)) BETWEEN 1 AND 60
                   GROUP BY family_key, candidate_type, value
                  HAVING COUNT(DISTINCT contributing_user_id) >= $1
                ) c
               WHERE o.family_key = c.family_key`,
-            [aliasQuorum],
+            [vocabQuorum],
         );
+        // (3) Promote family candidates
         await this.pool.query(
             `UPDATE role_ontology SET curation = 'auto_imported', updated_at = now()
               WHERE curation = 'candidate' AND family_key IN (
@@ -86,6 +97,37 @@ export class RoleOntologyRepository {
                  WHERE candidate_type = 'family'
                  GROUP BY value
                 HAVING COUNT(DISTINCT contributing_user_id) >= $1)`,
+            [familyQuorum],
+        );
+        // (4) Prune: delete rows that have cleared their quorum (table stays bounded)
+        await this.pool.query(
+            `DELETE FROM role_learning_candidates
+              WHERE candidate_type = 'alias'
+                AND (family_key, value) IN (
+                  SELECT family_key, value FROM role_learning_candidates
+                   WHERE candidate_type = 'alias'
+                   GROUP BY family_key, value
+                  HAVING COUNT(DISTINCT contributing_user_id) >= $1)`,
+            [aliasQuorum],
+        );
+        await this.pool.query(
+            `DELETE FROM role_learning_candidates
+              WHERE candidate_type IN ('vocabulary','transferable_skill')
+                AND (family_key, candidate_type, value) IN (
+                  SELECT family_key, candidate_type, value FROM role_learning_candidates
+                   WHERE candidate_type IN ('vocabulary','transferable_skill')
+                   GROUP BY family_key, candidate_type, value
+                  HAVING COUNT(DISTINCT contributing_user_id) >= $1)`,
+            [vocabQuorum],
+        );
+        await this.pool.query(
+            `DELETE FROM role_learning_candidates
+              WHERE candidate_type = 'family'
+                AND (family_key, value) IN (
+                  SELECT family_key, value FROM role_learning_candidates
+                   WHERE candidate_type = 'family'
+                   GROUP BY family_key, value
+                  HAVING COUNT(DISTINCT contributing_user_id) >= $1)`,
             [familyQuorum],
         );
     }

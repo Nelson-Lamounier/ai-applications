@@ -1,5 +1,5 @@
 /** @format */
-import { normalizeTerm, matchTier1, matchTerm } from './keyword-match.js';
+import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer } from './keyword-match.js';
 
 describe('normalizeTerm', () => {
     it('strips qualifiers + generic suffixes, collapses punctuation', () => {
@@ -97,5 +97,102 @@ describe('matchTerm (3 tiers)', () => {
     it('no embedder → tiers 1-2 only', async () => {
         const res = await matchTerm('ChatGPT', r2, { familyVocab: [], embedder: null, threshold: 0.55 });
         expect(res.present).toBe(false); expect(res.tier).toBe('none');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// A3 — tech-transfer tier
+// ---------------------------------------------------------------------------
+
+// Tech group: all these canoncials are mutually transferable AI/LLM providers
+const aiProviderGroup = ['anthropic_claude', 'openai', 'aws_bedrock', 'chatgpt', 'codex'];
+
+// Alias map: JD terms / display forms → canonical names (lowercased keys)
+const aiAliasMap = new Map<string, string>([
+    ['openai api', 'openai'],
+    ['openai', 'openai'],
+    ['chatgpt', 'chatgpt'],
+    ['codex', 'codex'],
+    ['anthropic claude', 'anthropic_claude'],
+    ['claude', 'anthropic_claude'],
+    ['aws bedrock', 'aws_bedrock'],
+    ['bedrock', 'aws_bedrock'],
+    ['amazon bedrock', 'aws_bedrock'],
+]);
+
+const techGroups = [aiProviderGroup];
+
+describe('matchTechTransfer', () => {
+    it('JD "OpenAI API" + resume mentions "AWS Bedrock" (group sibling) → true', () => {
+        const resume = 'i built integrations using aws bedrock for llm inference';
+        expect(matchTechTransfer('OpenAI API', resume, techGroups, aiAliasMap)).toBe(true);
+    });
+
+    it('JD "OpenAI API" + resume mentions "Claude" (alias of anthropic_claude, group sibling) → true', () => {
+        const resume = 'i used claude to draft customer emails';
+        expect(matchTechTransfer('OpenAI API', resume, techGroups, aiAliasMap)).toBe(true);
+    });
+
+    it('JD "OpenAI API" + resume has NO group sibling → false', () => {
+        const resume = 'i built restful services in python with no llm tooling';
+        expect(matchTechTransfer('OpenAI API', resume, techGroups, aiAliasMap)).toBe(false);
+    });
+
+    it('JD term not in any tech group → false (no false credit)', () => {
+        const resume = 'salesforce crmanalytics and openai api usage';
+        expect(matchTechTransfer('Salesforce', resume, techGroups, aiAliasMap)).toBe(false);
+    });
+
+    it('canonical display form (underscore→space) is also checked against resume', () => {
+        // 'anthropic_claude' display = 'anthropic claude'; resume has it literally
+        const resume = 'built workflows with anthropic claude via api';
+        expect(matchTechTransfer('OpenAI API', resume, techGroups, aiAliasMap)).toBe(true);
+    });
+});
+
+describe('matchTerm — tech-transfer tier (A3)', () => {
+    const noEmbedder = { familyVocab: [], embedder: null as null, threshold: 0.55 };
+
+    it('resolves tier tech-transfer when ontology misses but group sibling is in resume', async () => {
+        const resume = 'integrated aws bedrock for llm inference across multiple microservices';
+        const res = await matchTerm('OpenAI API', resume, {
+            ...noEmbedder,
+            techGroups,
+            techAliasMap: aiAliasMap,
+        });
+        expect(res.present).toBe(true);
+        expect(res.tier).toBe('tech-transfer');
+    });
+
+    it('tech-transfer is skipped when ontology already fires — ontology wins', async () => {
+        // ontology family includes both terms; tech-transfer should not interfere
+        const ontVocab = [['openai', 'aws bedrock']];
+        const resume = 'aws bedrock usage in production';
+        const res = await matchTerm('openai', resume, {
+            ...noEmbedder,
+            familyVocab: ontVocab,
+            techGroups,
+            techAliasMap: aiAliasMap,
+        });
+        expect(res.present).toBe(true);
+        expect(res.tier).toBe('ontology');
+    });
+
+    it('omitting techGroups + techAliasMap leaves existing tiers unaffected (back-compat)', async () => {
+        // resume has no literal/normalized match and no ontology group → none
+        const res = await matchTerm('OpenAI API', 'python and bash scripting', noEmbedder);
+        expect(res.present).toBe(false);
+        expect(res.tier).toBe('none');
+    });
+
+    it('genuine gap with no group sibling → none (honesty)', async () => {
+        const resume = 'salesforce crm and excel reporting';
+        const res = await matchTerm('OpenAI API', resume, {
+            ...noEmbedder,
+            techGroups,
+            techAliasMap: aiAliasMap,
+        });
+        expect(res.present).toBe(false);
+        expect(res.tier).toBe('none');
     });
 });

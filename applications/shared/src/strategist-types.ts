@@ -392,6 +392,20 @@ export interface KbRetrievalStats {
 }
 
 /**
+ * The role's emphasis split across dimensions, roughly summing to 100.
+ * Inferred from the JD's responsibilities + requirements.
+ * Drives how the resume balances section emphasis.
+ * "technical" absorbs generic/core engineering work.
+ */
+export interface JdDimensionMix {
+    readonly customerFacing: number;   // customer service / relationships / communication
+    readonly technical: number;        // troubleshooting / debugging / engineering depth (absorbs generic eng)
+    readonly aiMl: number;             // AI / ML / LLM / automation
+    readonly supportOps: number;       // support operations / on-call / incident / SLA
+    readonly monitoring: number;       // observability / monitoring / metrics
+}
+
+/**
  * The complete JD signal — everything understood FROM the job description.
  * Produced by the JD agent (the extended jd-extractor). The single source of
  * JD understanding for the whole pipeline (writer target, ATS bar, UI "What we understood").
@@ -407,6 +421,8 @@ export interface JdSignal {
      * keyword match. '' when the JD gives no signal.
      */
     readonly companyProblem: string;
+    /** The role's emphasis split across dimensions (~summing to 100). Inferred from JD responsibilities + requirements. */
+    readonly dimensionMix: JdDimensionMix;
     readonly hardRequirements: JobRequirement[];
     readonly softRequirements: JobRequirement[];
     readonly implicitRequirements: string[];
@@ -468,6 +484,8 @@ export interface StrategistResearchResult {
     readonly domain: string;
     /** The underlying problem the role exists to solve (from the JD agent). Provided by the assembly. */
     readonly companyProblem: string;
+    /** The role's emphasis split across dimensions (~summing to 100). From the JD agent. */
+    readonly dimensionMix: JdDimensionMix;
 
     /** Requirements extracted from the JD */
     readonly hardRequirements: JobRequirement[];

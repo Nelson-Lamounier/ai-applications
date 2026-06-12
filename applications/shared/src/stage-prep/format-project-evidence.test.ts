@@ -27,7 +27,8 @@ describe('formatProjectEvidence', () => {
     }));
     expect(out).toContain('Tucaken — A multi-agent platform.');
     expect(out).toContain('Stack: TypeScript, Kubernetes');
-    expect(out).toContain('Key decisions: Chose Bedrock');
+    expect(out).toContain('Key design decisions:');
+    expect(out).toContain('- Chose Bedrock: why');
     expect(out).toContain('Tags: ai');
   });
 

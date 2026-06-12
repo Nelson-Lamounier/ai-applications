@@ -2,7 +2,7 @@
 jest.mock('./role-classifier.js', () => ({ classifyRole: jest.fn() }));
 import type { Pool } from 'pg';
 import { classifyRole } from './role-classifier.js';
-import { resolveRoleFamilies } from './resolve-role-families.js';
+import { resolveRoleFamilies, stageJdLearning } from './resolve-role-families.js';
 import { RoleOntologyRepository } from '@bedrock/shared';
 
 const FAM = { familyKey: 'technical-support', displayName: 'Technical Support', roleClass: 'customer_facing', canonicalResponsibilities: ['Triage queues'], vocabulary: ['SLA'], transferableSkills: ['empathy'], industryNotes: 'AWS≈SaaS' };
@@ -47,10 +47,19 @@ describe('resolveRoleFamilies', () => {
         expect(res[0].family).toBeNull();
     });
 
-    it('calls promote with the quorum at the end', async () => {
+    it('calls promote with 3-arg signature (aliasQuorum, vocabQuorum, familyQuorum) at the end', async () => {
         const repo = repoStub();
         await resolveRoleFamilies(pool, 'u-1', [{ title: 'Technical Customer Service Associate', company: 'AWS', highlights: [] }], repo);
-        expect(repo.promote).toHaveBeenCalled();
+        expect(repo.promote).toHaveBeenCalledWith(
+            expect.any(Number),
+            expect.any(Number),
+            expect.any(Number),
+        );
+        // vocabQuorum must be a distinct 2nd positional arg (not same as aliasQuorum)
+        const [aliasQ, vocabQ, familyQ] = (repo.promote as jest.Mock).mock.calls[0] as [number, number, number];
+        expect(aliasQ).toBeGreaterThan(0);
+        expect(vocabQ).toBeGreaterThan(0);
+        expect(familyQ).toBeGreaterThan(0);
     });
 
     it('alias substring match respects word boundaries (no over-match on short aliases)', async () => {
@@ -120,3 +129,67 @@ describe('resolveRoleFamilies', () => {
         expect(res[0].companyType).toBe('infra_provider');
     });
 });
+
+describe('stageJdLearning', () => {
+    function repoStubForJd(): RoleOntologyRepository {
+        return {
+            stageCandidate: jest.fn().mockResolvedValue(undefined),
+        } as unknown as RoleOntologyRepository;
+    }
+
+    const resolvedWithFamily: import('./resolve-role-families.js').ResolvedRole[] = [
+        { title: 'Support Engineer', company: 'AWS', family: FAM as import('@bedrock/shared').RoleFamily, matchVia: 'classifier' },
+    ];
+    const resolvedNoFamily: import('./resolve-role-families.js').ResolvedRole[] = [
+        { title: 'Unknown', company: 'X', family: null, matchVia: 'none' },
+    ];
+
+    it('stages JD skills + tools as vocabulary candidates for each resolved family', async () => {
+        const repo = repoStubForJd();
+        await stageJdLearning(repo, 'u-1', resolvedWithFamily, ['Kubernetes', 'Terraform'], ['AWS', 'Docker']);
+        expect(repo.stageCandidate).toHaveBeenCalledWith(expect.objectContaining({
+            familyKey: 'technical-support', candidateType: 'vocabulary', value: 'Kubernetes', contributingUserId: 'u-1',
+        }));
+        expect(repo.stageCandidate).toHaveBeenCalledWith(expect.objectContaining({
+            familyKey: 'technical-support', candidateType: 'vocabulary', value: 'Docker', contributingUserId: 'u-1',
+        }));
+    });
+
+    it('skips empty and > 60-char values (quality gate)', async () => {
+        const repo = repoStubForJd();
+        const longValue = 'A'.repeat(61);
+        await stageJdLearning(repo, 'u-1', resolvedWithFamily, ['', longValue, 'valid-skill'], []);
+        const stagedValues = (repo.stageCandidate as jest.Mock).mock.calls.map((c: [{ value: string }]) => c[0].value);
+        expect(stagedValues).not.toContain('');
+        expect(stagedValues).not.toContain(longValue);
+        expect(stagedValues).toContain('valid-skill');
+    });
+
+    it('dedupes values case-insensitively', async () => {
+        const repo = repoStubForJd();
+        await stageJdLearning(repo, 'u-1', resolvedWithFamily, ['Docker', 'docker', 'DOCKER'], []);
+        const stagedValues = (repo.stageCandidate as jest.Mock).mock.calls.map((c: [{ value: string }]) => c[0].value);
+        expect(stagedValues.filter((v: string) => v.toLowerCase() === 'docker').length).toBe(1);
+    });
+
+    it('does nothing when no resolved family is grounded (all null)', async () => {
+        const repo = repoStubForJd();
+        await stageJdLearning(repo, 'u-1', resolvedNoFamily, ['Kubernetes'], ['Docker']);
+        expect(repo.stageCandidate).not.toHaveBeenCalled();
+    });
+
+    it('stages for each grounded family independently', async () => {
+        const FAM2 = { ...FAM, familyKey: 'data-science' } as import('@bedrock/shared').RoleFamily;
+        const twoFamilies: import('./resolve-role-families.js').ResolvedRole[] = [
+            { title: 'Support Engineer', company: 'AWS', family: FAM as import('@bedrock/shared').RoleFamily, matchVia: 'classifier' },
+            { title: 'Data Analyst', company: 'Stripe', family: FAM2, matchVia: 'alias' },
+        ];
+        const repo = repoStubForJd();
+        await stageJdLearning(repo, 'u-1', twoFamilies, ['SQL'], []);
+        const calls = (repo.stageCandidate as jest.Mock).mock.calls as Array<[{ familyKey: string; value: string }]>;
+        const familiesThatGotSql = calls.filter((c) => c[0].value === 'SQL').map((c) => c[0].familyKey);
+        expect(familiesThatGotSql).toContain('technical-support');
+        expect(familiesThatGotSql).toContain('data-science');
+    });
+});
+

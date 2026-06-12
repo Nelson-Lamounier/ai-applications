@@ -15,13 +15,13 @@
  */
 import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, RdsVectorStore } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
-import { resolveRoleFamilies } from './agents/resolve-role-families.js';
+import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
 import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
@@ -43,8 +43,8 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
+import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { enrichLedgerWithEvidence } from './ats/tool-evidence-retrieval.js';
-import { RdsVectorStore } from '@bedrock/shared';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -355,13 +355,38 @@ export async function main(): Promise<void> {
             (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, highlights: c.highlights })),
             roleRepo,
         ).catch(() => []);
+        // B1 — stage JD demand-side signal: record JD required skills + tools as
+        // vocabulary candidates for the families matched from the candidate's career.
+        void stageJdLearning(
+            roleRepo, ctx.userId, resolved,
+            jdExtraction.requiredSkills,
+            jdExtraction.technologyInventory.tools,
+        ).catch(() => undefined);
         const roleEvidenceBlock = formatRoleEvidence(resolved, companyFraming);
         // Flatten vocabulary groups from resolved role families for ontology-tier ATS matching.
         const familyVocab = resolved
             .map((rr) => rr.family?.vocabulary ?? [])
             .filter((v) => v.length > 0);
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock);
+        // Tech-ontology grounding — load transfer groups + alias map ONCE (fail-open).
+        // Prefer the explicit relationship graph; fall back to category groups when sparse.
+        const techRepo = new TechnologyOntologyRepository(pool);
+        const [techTransferGroups, techCategoryGroups, techAliasMap] = await Promise.all([
+            techRepo.loadTransferGroups().catch(() => [] as string[][]),
+            techRepo.loadCategoryGroups().catch(() => [] as string[][]),
+            techRepo.loadAliasMap().catch(() => new Map<string, string>()),
+        ]);
+        const techGroups = techTransferGroups.length > 0 ? techTransferGroups : techCategoryGroups;
+
+        // A5 — build grounded tech-transfer context for the matcher persona.
+        // Lists only the groups relevant to THIS JD's tools (not the full ontology).
+        const jdTools = [
+            ...jdExtraction.technologyInventory.tools,
+            ...jdExtraction.technologyInventory.languages,
+        ];
+        const techTransferContext = formatTechTransferContext(jdTools, techGroups, techAliasMap);
+
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext);
 
         // Assemble StrategistResearchResult from jdExtraction (JdSignal) + research.data (ResearchMatching).
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
@@ -371,7 +396,7 @@ export async function main(): Promise<void> {
             ...jdExtraction.technologyInventory.languages,
             ...jdExtraction.requiredSkills,
         ];
-        const baseLedger = buildSkillEvidenceLedger(ledgerTools, research.data);
+        const baseLedger = buildSkillEvidenceLedger(ledgerTools, research.data, { techGroups, techAliasMap });
 
         // Enrich verified/transferable entries with per-tool targeted pgvector queries.
         // GAP entries are never touched (honesty invariant). Fail-open: any error → baseLedger.
@@ -507,6 +532,8 @@ export async function main(): Promise<void> {
                 jdExtraction,
                 familyVocab,
                 embedder:      atsEmbedder,
+                techGroups,
+                techAliasMap,
             });
         }
 

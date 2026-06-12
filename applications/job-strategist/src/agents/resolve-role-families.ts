@@ -4,8 +4,9 @@ import { RoleOntologyRepository, log } from '@bedrock/shared';
 import type { CompanyType, RoleFamily } from '@bedrock/shared';
 import { classifyRole } from './role-classifier.js';
 
-const QUORUM = Number(process.env['ROLE_LEARNING_QUORUM'] ?? '3');
-const FAMILY_QUORUM = Number(process.env['ROLE_FAMILY_QUORUM'] ?? '5');
+const QUORUM = Number.parseInt(process.env['ROLE_LEARNING_QUORUM'] ?? '3', 10);
+const VOCAB_QUORUM = Number.parseInt(process.env['ROLE_VOCAB_QUORUM'] ?? '2', 10);
+const FAMILY_QUORUM = Number.parseInt(process.env['ROLE_FAMILY_QUORUM'] ?? '5', 10);
 
 export interface ResolvedRole {
     title:       string;
@@ -94,6 +95,43 @@ export async function resolveRoleFamilies(
             out.push({ title: x.title, company: x.company, family: null, matchVia: 'none' });
         }
     }
-    await repo.promote(QUORUM, FAMILY_QUORUM).catch(() => undefined);
+    await repo.promote(QUORUM, VOCAB_QUORUM, FAMILY_QUORUM).catch(() => undefined);
     return out;
+}
+
+/**
+ * B1 demand-side learning: stage each JD requiredSkill and tool as a vocabulary
+ * candidate for each resolved family, recording what the market is asking for.
+ * - Dedupes values case-insensitively within this call.
+ * - Skips empty or > 60-char values (matches the B3 quality gate on the promo side).
+ * - Fail-open: errors are swallowed by the caller via .catch().
+ */
+export async function stageJdLearning(
+    repo: RoleOntologyRepository,
+    userId: string,
+    resolvedFamilies: ResolvedRole[],
+    jdRequiredSkills: string[],
+    jdTools: string[],
+): Promise<void> {
+    const groundedFamilyKeys = resolvedFamilies
+        .filter((r) => r.family !== null)
+        .map((r) => r.family!.familyKey);
+
+    if (groundedFamilyKeys.length === 0) return;
+
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+    for (const v of [...jdRequiredSkills, ...jdTools]) {
+        const trimmed = v.trim();
+        const key = trimmed.toLowerCase();
+        if (trimmed.length === 0 || trimmed.length > 60 || seen.has(key)) continue;
+        seen.add(key);
+        candidates.push(trimmed);
+    }
+
+    for (const familyKey of groundedFamilyKeys) {
+        for (const value of candidates) {
+            await repo.stageCandidate({ familyKey, candidateType: 'vocabulary', value, contributingUserId: userId });
+        }
+    }
 }

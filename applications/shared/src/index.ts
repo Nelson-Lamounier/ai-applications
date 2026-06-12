@@ -159,6 +159,7 @@ export type {
     TechnologyInventory,
     ExperienceSignals,
     JdSignal,
+    JdDimensionMix,
     ResearchMatching,
     StrategistResearchResult,
     KbRetrievalStats,

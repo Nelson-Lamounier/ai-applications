@@ -65,10 +65,19 @@ const ExperienceSignalsSchema = z.object({
     scaleIndicators:       z.string().default(''),
 }).default({ yearsExpected: '', domainExperience: '', leadershipExpectation: '', scaleIndicators: '' });
 
+const DimensionMixSchema = z.object({
+    customerFacing: z.number().default(0),
+    technical:      z.number().default(0),
+    aiMl:           z.number().default(0),
+    supportOps:     z.number().default(0),
+    monitoring:     z.number().default(0),
+}).default({ customerFacing: 0, technical: 0, aiMl: 0, supportOps: 0, monitoring: 0 });
+
 export const JdExtractionSchema = z.object({
     // New JdSignal fields
     targetRole:           z.string().default(''),
     companyProblem:       z.string().default(''),
+    dimensionMix:         DimensionMixSchema,
     hardRequirements:     z.array(JobRequirementSchema).default([]),
     softRequirements:     z.array(JobRequirementSchema).default([]),
     implicitRequirements: z.array(z.string()).default([]),
@@ -94,6 +103,7 @@ const MINIMAL_JD_SIGNAL: JdSignal = {
     seniority:            '',
     domain:               '',
     companyProblem:       '',
+    dimensionMix:         { customerFacing: 0, technical: 0, aiMl: 0, supportOps: 0, monitoring: 0 },
     hardRequirements:     [],
     softRequirements:     [],
     implicitRequirements: [],
@@ -124,6 +134,18 @@ const TOOL_SCHEMA = {
             companyProblem: {
                 type: 'string',
                 description: 'The underlying problem the company is trying to solve with this role — a 1-3 sentence synthesis of WHY the role exists, inferred from the JD\'s framing (the team\'s mission, what they are building, the pain they describe). NOT the requirements list. Example: "Scaling expert support for a frontier-AI product whose problems are novel and undefined, at a volume where hiring linearly fails — by building a support org that uses automation/agentic AI to scale its own leverage." Empty string only if the JD gives no signal about intent.',
+            },
+            dimensionMix: {
+                type: 'object',
+                description: 'The role\'s emphasis split (each 0-100, ~summing to 100) across customerFacing / technical / aiMl / supportOps / monitoring. Infer from how much of the JD is each; \'technical\' absorbs generic engineering. e.g. an OpenAI support-engineer JD ≈ {customerFacing:40, technical:30, aiMl:15, supportOps:15, monitoring:0}.',
+                properties: {
+                    customerFacing: { type: 'integer', description: 'Customer service / relationships / communication emphasis (0-100).' },
+                    technical:      { type: 'integer', description: 'Troubleshooting / debugging / engineering depth — absorbs generic engineering (0-100).' },
+                    aiMl:           { type: 'integer', description: 'AI / ML / LLM / automation emphasis (0-100).' },
+                    supportOps:     { type: 'integer', description: 'Support operations / on-call / incident / SLA emphasis (0-100).' },
+                    monitoring:     { type: 'integer', description: 'Observability / monitoring / metrics emphasis (0-100).' },
+                },
+                required: ['customerFacing', 'technical', 'aiMl', 'supportOps', 'monitoring'],
             },
             hardRequirements: {
                 type: 'array',
@@ -186,7 +208,7 @@ const TOOL_SCHEMA = {
             retrievalKeywords: { type: 'array', items: { type: 'string' }, description: 'Deduped lowercase technical terms best suited for semantic search over a candidate portfolio.' },
         },
         required: [
-            'targetRole', 'companyProblem',
+            'targetRole', 'companyProblem', 'dimensionMix',
             'hardRequirements', 'softRequirements', 'implicitRequirements',
             'technologyInventory', 'experienceSignals',
             'requiredSkills', 'preferredSkills', 'tools', 'concepts',
@@ -215,6 +237,7 @@ const SYSTEM_PROMPT = [
     '- tools = concrete named technologies/platforms/languages (Kubernetes, AWS, Terraform, Python…).',
     '- concepts = domains, architectural or methodological ideas (incident response, multi-account governance, observability…).',
     '- retrievalKeywords = a deduped, lowercase set of the most search-worthy technical terms (skills + tools + concepts), best for semantic search over a candidate portfolio. Drop boilerplate, perks, and legal text.',
+    '- dimensionMix = the role\'s emphasis split (each 0-100, ~summing to 100) across customerFacing/technical/aiMl/supportOps/monitoring — infer from how much of the JD is each; \'technical\' absorbs generic engineering; a pure backend role is technical-heavy, a support role is customerFacing+supportOps-heavy.',
     '- Use empty arrays/strings when a field is absent — never guess.',
 ].join('\n');
 
