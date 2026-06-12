@@ -27,16 +27,18 @@ import {
     log,
 } from '@bedrock/shared';
 import { loadCareerHistory, formatCareerHistory, type CareerEntry } from './career-history.js';
-import { jdRetrievalQueries, formatJdExtraction, type JdExtraction } from './jd-extractor.js';
+import { jdRetrievalQueries, formatJdExtraction } from './jd-extractor.js';
 import { computeKbStats } from '../lib/kb-stats.js';
 import type { Pool } from 'pg';
 import type {
     AgentConfig,
     AgentResult,
     IReranker,
+    JdSignal,
     PiiPattern,
     QueryParams,
     RerankCandidate,
+    ResearchMatching,
     SimilarityResult,
     StructuredResumeData,
     StrategistPipelineContext,
@@ -306,6 +308,17 @@ function deduplicatePassages(passages: string[]): string {
 // USER MESSAGE BUILDER
 // =============================================================================
 
+interface ResearchMessageOptions {
+    careerHistorySection?: string;
+    dsaCatalog?: string;
+    projectEvidenceSection?: string;
+    educationSection?: string;
+    jdExtractionSummary?: string;
+    roleEvidenceSection?: string;
+    /** Pre-formatted JD signal block injected above KB evidence. */
+    jdSignalBlock?: string;
+}
+
 /**
  * Build the user message for the Research Agent.
  *
@@ -315,19 +328,25 @@ function deduplicatePassages(passages: string[]): string {
  * @param jobDescription - Sanitised job description text
  * @param kbContext - Concatenated KB passages
  * @param resumeData - Structured resume data from pipeline context (may be null)
+ * @param opts - Optional named sections (career history, DSA catalog, etc.)
  * @returns Formatted user message
  */
 function buildResearchMessage(
     jobDescription: string,
     kbContext: string,
     resumeData: StructuredResumeData | null,
-    careerHistorySection = '',
-    dsaCatalog = '',
-    projectEvidenceSection = '',
-    educationSection = '',
-    jdExtractionSummary = '',
-    roleEvidenceSection = '',
+    opts: ResearchMessageOptions = {},
 ): string {
+    const {
+        careerHistorySection = '',
+        dsaCatalog = '',
+        projectEvidenceSection = '',
+        educationSection = '',
+        jdExtractionSummary = '',
+        roleEvidenceSection = '',
+        jdSignalBlock = '',
+    } = opts;
+
     const sections: string[] = [
         '## Job Description',
         '--- BEGIN JOB DESCRIPTION ---',
@@ -336,7 +355,9 @@ function buildResearchMessage(
         '',
     ];
 
-    if (jdExtractionSummary) {
+    if (jdSignalBlock) {
+        sections.push(jdSignalBlock, '');
+    } else if (jdExtractionSummary) {
         sections.push(jdExtractionSummary, '');
     }
 
@@ -406,13 +427,11 @@ function buildResearchMessage(
     }
 
     if (careerHistorySection) {
-        sections.push(careerHistorySection);
-        sections.push('');
+        sections.push(careerHistorySection, '');
     }
 
     if (educationSection) {
-        sections.push(educationSection);
-        sections.push('');
+        sections.push(educationSection, '');
     }
 
     sections.push(
@@ -441,7 +460,7 @@ function buildResearchMessage(
         );
     }
 
-    sections.push('Analyse this job description against the candidate\'s evidence and return the JSON research brief.');
+    sections.push('Match the candidate evidence against the given JD signal and return the JSON matching brief.');
 
     return sections.join('\n');
 }
@@ -469,40 +488,15 @@ const STR_ARRAY = { type: 'array', items: { type: 'string' } };
 
 /** Tool the research model is forced to call. Non-model fields (resumeData,
  *  kbContext, resumeConstraints) are injected after validation, not produced
- *  by the model, so they are absent from the schema. */
+ *  by the model. JD-signal fields (targetRole, seniority, domain,
+ *  hardRequirements, etc.) are provided via jdSignal — the model only emits
+ *  matching fields. */
 const RESEARCH_TOOL = {
     name: 'emit_research_brief',
-    description: 'Emit the structured job-fit research brief.',
+    description: 'Emit the structured candidate↔JD matching brief. Do NOT re-derive JD requirements — they are given in the JD Signal block.',
     inputSchema: {
         type: 'object',
         properties: {
-            targetRole:    { type: 'string' },
-            targetCompany: { type: 'string' },
-            seniority:     { type: 'string' },
-            domain:        { type: 'string' },
-            hardRequirements: { type: 'array', items: JOB_REQUIREMENT_SCHEMA },
-            softRequirements: { type: 'array', items: JOB_REQUIREMENT_SCHEMA },
-            implicitRequirements: STR_ARRAY,
-            technologyInventory: {
-                type: 'object',
-                properties: {
-                    languages: STR_ARRAY, frameworks: STR_ARRAY, infrastructure: STR_ARRAY,
-                    tools: STR_ARRAY, methodologies: STR_ARRAY,
-                },
-                required: ['languages', 'frameworks', 'infrastructure', 'tools', 'methodologies'],
-                additionalProperties: false,
-            },
-            experienceSignals: {
-                type: 'object',
-                properties: {
-                    yearsExpected:         { type: 'string' },
-                    domainExperience:      { type: 'string' },
-                    leadershipExpectation: { type: 'string' },
-                    scaleIndicators:       { type: 'string' },
-                },
-                required: ['yearsExpected', 'domainExperience', 'leadershipExpectation', 'scaleIndicators'],
-                additionalProperties: false,
-            },
             verifiedMatches: {
                 type: 'array',
                 items: {
@@ -584,9 +578,6 @@ const RESEARCH_TOOL = {
             },
         },
         required: [
-            'targetRole', 'targetCompany', 'seniority', 'domain',
-            'hardRequirements', 'softRequirements', 'implicitRequirements',
-            'technologyInventory', 'experienceSignals',
             'verifiedMatches', 'partialMatches', 'gaps',
             'overallFitRating', 'fitSummary',
         ],
@@ -594,34 +585,9 @@ const RESEARCH_TOOL = {
     },
 };
 
-const JobRequirementSchema = z.object({
-    skill: z.string(),
-    context: z.string(),
-    disqualifying: z.boolean().optional(),
-}).strict();
-
-/** Runtime safety-net for the model-produced fields only. */
+/** Runtime safety-net for the model-produced matching fields only.
+ *  JD-signal fields are NOT produced by this model — they come from JdSignal. */
 const ResearchModelSchema = z.object({
-    targetRole: z.string(),
-    targetCompany: z.string(),
-    seniority: z.string(),
-    domain: z.string(),
-    hardRequirements: z.array(JobRequirementSchema),
-    softRequirements: z.array(JobRequirementSchema),
-    implicitRequirements: z.array(z.string()),
-    technologyInventory: z.object({
-        languages: z.array(z.string()),
-        frameworks: z.array(z.string()),
-        infrastructure: z.array(z.string()),
-        tools: z.array(z.string()),
-        methodologies: z.array(z.string()),
-    }).strict(),
-    experienceSignals: z.object({
-        yearsExpected: z.string(),
-        domainExperience: z.string(),
-        leadershipExpectation: z.string(),
-        scaleIndicators: z.string(),
-    }).strict(),
     verifiedMatches: z.array(z.object({
         skill: z.string(),
         sourceCitation: z.string(),
@@ -663,7 +629,11 @@ const ResearchModelSchema = z.object({
  * pipeline fields. Fail-fast: an invalid brief must not reach the
  * Strategist agent / RDS (structure-output-checklist §7).
  *
- * @param raw      - Parsed tool input (model output)
+ * Returns ResearchMatching — the matching half only. JD-signal fields
+ * (targetRole, seniority, hardRequirements, etc.) are NOT in this result;
+ * run-pipeline assembles StrategistResearchResult by merging with JdSignal.
+ *
+ * @param raw      - Parsed tool input (model output — matching fields only)
  * @param injected - Pipeline-owned fields not produced by the model
  */
 export function validateResearchResult(
@@ -673,7 +643,7 @@ export function validateResearchResult(
         kbContext: string;
         resumeConstraints: string;
     },
-): StrategistResearchResult {
+): ResearchMatching {
     const validated = ResearchModelSchema.safeParse(raw);
     if (!validated.success) {
         throw new Error(
@@ -684,7 +654,7 @@ export function validateResearchResult(
         ...validated.data,
         ...injected,
         kbRetrievalStats: computeKbStats(injected.kbContext, MIN_COSINE),
-    } as StrategistResearchResult;
+    };
 }
 
 /**
@@ -722,10 +692,10 @@ export async function executeResearchAgent(
     pool?: Pool,
     projectEvidenceBlock = '',
     educationBlock = '',
-    jdExtraction: JdExtraction | null = null,
+    jdSignal: JdSignal | null = null,
     careerEntries: CareerEntry[] | null = null,
     roleEvidenceBlock = '',
-): Promise<AgentResult<StrategistResearchResult>> {
+): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
     const { sanitised, warnings, injectionDetected } = inputSanitiser.sanitiseWithWarnings(ctx.jobDescription);
@@ -755,7 +725,7 @@ export async function executeResearchAgent(
     // Prefer extraction-driven queries (clean skills/tools/concepts) over raw JD
     // substrings — boilerplate-free vectors sharpen retrieval. Fall back to the
     // legacy substring queries when extraction is absent (fail-open).
-    const q = jdExtraction ? jdRetrievalQueries(jdExtraction) : null;
+    const q = jdSignal ? jdRetrievalQueries(jdSignal) : null;
     const [factual1, factual2, factual3, factual4] = await Promise.all([
         // Query 1 — skills/tech matches across the user's docs
         querySingleRds(q ? q.skill : jd.substring(0, full), userId, store),
@@ -821,11 +791,30 @@ export async function executeResearchAgent(
     }
 
     // 6. Build user message
-    const jdExtractionSummary = jdExtraction ? formatJdExtraction(jdExtraction) : '';
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData, careerHistorySection, dsaCatalog, projectEvidenceBlock, educationBlock, jdExtractionSummary, roleEvidenceBlock);
+    const jdExtractionSummary = jdSignal ? formatJdExtraction(jdSignal) : '';
+
+    // Build the JD signal block injected into the prompt so the model can
+    // match against given requirements rather than re-deriving them.
+    const jdSignalBlock = jdSignal ? [
+        '## JD Signal (already extracted — MATCH the candidate against this; do not re-derive)',
+        `Target role: ${jdSignal.targetRole} · Seniority: ${jdSignal.seniority} · Domain: ${jdSignal.domain}`,
+        `Hard requirements: ${jdSignal.hardRequirements.map(r => `${r.skill}${r.disqualifying ? ' [disqualifying]' : ''}`).join(', ') || 'none'}`,
+        `Technology: languages ${jdSignal.technologyInventory.languages.join(', ') || 'none'} · tools ${jdSignal.technologyInventory.tools.join(', ') || 'none'} · methodologies ${jdSignal.technologyInventory.methodologies.join(', ') || 'none'} · infrastructure ${jdSignal.technologyInventory.infrastructure.join(', ') || 'none'} · frameworks ${jdSignal.technologyInventory.frameworks.join(', ') || 'none'}`,
+        `Experience signals: years ${jdSignal.experienceSignals.yearsExpected} · scale ${jdSignal.experienceSignals.scaleIndicators} · leadership ${jdSignal.experienceSignals.leadershipExpectation}`,
+    ].join('\n') : '';
+
+    const userMessage = buildResearchMessage(jd, kbContext, resumeData, {
+        careerHistorySection,
+        dsaCatalog,
+        projectEvidenceSection: projectEvidenceBlock,
+        educationSection: educationBlock,
+        jdExtractionSummary,
+        roleEvidenceSection: roleEvidenceBlock,
+        jdSignalBlock,
+    });
 
     // 7. Run agent
-    const result = await runAgent<StrategistResearchResult>({
+    const result = await runAgent<ResearchMatching>({
         config: RESEARCH_CONFIG,
         userMessage,
         parseResponse: (text) => {

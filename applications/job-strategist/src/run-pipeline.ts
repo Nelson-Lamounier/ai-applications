@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -360,18 +360,26 @@ export async function main(): Promise<void> {
 
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock);
 
+        // TODO(Task 5): assemble StrategistResearchResult from jdExtraction + research.data.
+        // research.data is now ResearchMatching; JD fields come from jdExtraction (JdSignal).
+        const researchData: StrategistResearchResult = {
+            ...jdExtraction,
+            targetCompany: ctx.targetCompany,
+            ...research.data,
+        } as StrategistResearchResult;
+
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
         // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line. Fail-open.
-        const hardYearsBar = research.data.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
+        const hardYearsBar = jdExtraction.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
         const yearsGap = await buildYearsGap(
             (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, period: c.period, family: null, roleClass: null })),
-            research.data.experienceSignals.yearsExpected,
+            jdExtraction.experienceSignals.yearsExpected,
             hardYearsBar,
             new Date().getFullYear(),
         ).catch(() => null);
 
-        const analysis = await executeStrategistAgent(ctx, research.data, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap);
+        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -421,7 +429,7 @@ export async function main(): Promise<void> {
         // rewritten in-place and counted for observability — never throws.
         const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
             analysis.data.coverLetter,
-            research.data.targetRole,
+            researchData.targetRole,
             analysis.data.archetypeSelection?.leadIdentity ?? '',
             yearsGap?.framingLine ?? '',
         );
@@ -436,7 +444,7 @@ export async function main(): Promise<void> {
         let finalResume = tailoredResumeData;
         if (tailoredResumeData) {
             const guarded = await guardResume(tailoredResumeData, {
-                targetRole:        research.data.targetRole,
+                targetRole:        researchData.targetRole,
                 leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
                 verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
                 archetypeSkillLead,
@@ -471,7 +479,7 @@ export async function main(): Promise<void> {
                 resumeId:      persisted.resumeId,
                 userId:        env.userId,
                 resume:        finalResume,
-                research:      research.data,
+                research:      researchData,
                 log,
                 correlationId: env.pipelineRunId,
                 onOutcome:     status => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
@@ -504,7 +512,7 @@ export async function main(): Promise<void> {
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
             analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck, yearsGap },
-            research:     research.data,
+            research:     researchData,
             jdExtraction,
         });
 
@@ -519,7 +527,7 @@ export async function main(): Promise<void> {
                 queryText: jdForCache,
                 response:  {
                     analysis: { ...analysis.data, analysisXml: finalAnalysis },
-                    research: research.data,
+                    research: researchData,
                 },
             }).catch(() => { /* fail-open — cache write must never break the run */ });
         }
