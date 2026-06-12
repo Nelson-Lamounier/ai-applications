@@ -1,5 +1,9 @@
 /** @format */
-jest.mock('@bedrock/shared', () => ({ runAgent: jest.fn(), log: () => undefined }));
+jest.mock('@bedrock/shared', () => ({
+    ...jest.requireActual('@bedrock/shared'),
+    runAgent: jest.fn(),
+    log: () => undefined,
+}));
 import { runAgent } from '@bedrock/shared';
 import { validateCoverLetter, guardCoverLetter, type CoverLetter } from './cover-letter-guard.js';
 
@@ -52,7 +56,7 @@ describe('guardCoverLetter', () => {
     it('clean letter → unchanged, no rewrite call', async () => {
         const clean = clObj(['I build production AI support. The AI Support Engineer role at OpenAI fits.']);
         const r = await guardCoverLetter(clean, 'AI Support Engineer', 'User Operations Engineer', '');
-        expect(r.letter).toBe(clean);
+        expect(r.letter).toStrictEqual(clean);
         expect(r.violations).toEqual([]);
         expect(mockRun).not.toHaveBeenCalled();
     });
@@ -61,13 +65,20 @@ describe('guardCoverLetter', () => {
         mockRun.mockResolvedValue({ data: fixed });
         const bad = clObj(['My 3 years falls short of the 8-year threshold.']);  // missing_title + names_gap
         const r = await guardCoverLetter(bad, 'AI Support Engineer', 'User Operations Engineer', '5 years across support');
-        expect(r.letter).toBe(fixed);
+        expect(r.letter).toStrictEqual(fixed);
         expect(r.violations.map((v) => v.code)).toEqual(expect.arrayContaining(['missing_title', 'names_gap']));
     });
     it('rewrite throws → returns ORIGINAL letter (fail-open)', async () => {
         mockRun.mockRejectedValue(new Error('bedrock down'));
         const bad = clObj(['My 3 years falls short of the threshold.']);
         const r = await guardCoverLetter(bad, 'AI Support Engineer', 'User Operations Engineer', '');
-        expect(r.letter).toBe(bad);
+        expect(r.letter).toStrictEqual(bad);
+    });
+    it('clean letter with em-dash → em-dash replaced by comma, no rewrite call', async () => {
+        const withDash = clObj(['I build production AI support — the biggest win. The AI Support Engineer role at OpenAI fits.']);
+        const r = await guardCoverLetter(withDash, 'AI Support Engineer', 'User Operations Engineer', '');
+        expect(r.violations).toEqual([]);
+        expect(mockRun).not.toHaveBeenCalled();
+        expect(r.letter?.paragraphs[0]).toBe('I build production AI support, the biggest win. The AI Support Engineer role at OpenAI fits.');
     });
 });

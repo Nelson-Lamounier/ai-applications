@@ -1,7 +1,7 @@
 /** @format */
 
 import { z } from 'zod';
-import { runAgent, log } from '@bedrock/shared';
+import { runAgent, log, normalizeProse } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, CoverLetter, CoverLetterSignoff } from '@bedrock/shared';
 
 export type { CoverLetter } from '@bedrock/shared';
@@ -47,6 +47,15 @@ export function validateCoverLetter(letter: CoverLetter, targetRole: string, lea
     if (MARKDOWN.test(text))   out.push({ code: 'has_markdown', detail: 'Agent emitted markdown formatting — the UI/PDF owns formatting; output must be plain text.' });
 
     return out;
+}
+
+/** Normalize em-dashes in all prose fields of a CoverLetter. */
+export function stripEmDashes(cl: CoverLetter): CoverLetter {
+    return {
+        greeting:   normalizeProse(cl.greeting),
+        paragraphs: cl.paragraphs.map(normalizeProse),
+        signoff:    cl.signoff,   // identity — leave untouched
+    };
 }
 
 // =============================================================================
@@ -124,7 +133,7 @@ export async function guardCoverLetter(
 ): Promise<{ letter: CoverLetter | null; violations: CoverLetterViolation[] }> {
     if (!letter) return { letter, violations: [] };
     const violations = validateCoverLetter(letter, targetRole, leadIdentity);
-    if (violations.length === 0) return { letter, violations };
+    if (violations.length === 0) return { letter: stripEmDashes(letter), violations };
     const fixed = await rewriteCoverLetter(letter, violations, { targetRole, leadIdentity, yearsGapFraming });
-    return { letter: fixed, violations };
+    return { letter: stripEmDashes(fixed), violations };
 }

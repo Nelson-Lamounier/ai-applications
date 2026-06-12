@@ -1,12 +1,12 @@
 /**
  * @format
- * Resume Constraints — Static Wiki Content
+ * Resume Constraints, Static Wiki Content
  *
  * These five pages were previously served deterministically by wiki-mcp via its
  * `/api/constraints` endpoint and `get_resume_constraints` MCP tool. Constraint
  * documents are system-level rules, not candidate-specific portfolio evidence.
  *
- * They MUST be delivered deterministically — vector search with userId metadata
+ * They MUST be delivered deterministically, vector search with userId metadata
  * filtering cannot retrieve them because they carry no userId attribute in the
  * Pinecone index (they are shared system documents, not per-user vectors).
  *
@@ -20,11 +20,11 @@
  * reflected here manually.
  *
  * Source pages (read-only originals in reasearch-brain/kowledge-base/wiki/resume/):
- *   - agent-guide.md     — generation rules, confidence thresholds, hard rules
- *   - gap-awareness.md   — honesty boundaries, what NOT to claim
- *   - voice-library.md   — authentic writing voice, banned terms, anti-AI rules
- *   - role-archetypes.md — per-role emphasis maps, archetype selector
- *   - achievements.md    — canonical quantified numbers and bullet templates
+ *   - agent-guide.md, generation rules, confidence thresholds, hard rules
+ *   - gap-awareness.md, honesty boundaries, what NOT to claim
+ *   - voice-library.md, authentic writing voice, banned terms, anti-AI rules
+ *   - role-archetypes.md, per-role emphasis maps, archetype selector
+ *   - achievements.md, canonical quantified numbers and bullet templates
  *
  * Last synced: 2026-04-20
  */
@@ -39,7 +39,7 @@
  * Injected as `resumeConstraints` in the Research Agent result and forwarded
  * to the Strategist Agent as authoritative generation rules.
  *
- * The strategist agent must treat these as absolute constraints — they override
+ * The strategist agent must treat these as absolute constraints, they override
  * any conflicting inference from KB portfolio evidence or the job description.
  */
 export const RESUME_CONSTRAINTS: string = `
@@ -47,7 +47,7 @@ export const RESUME_CONSTRAINTS: string = `
 SOURCE: resume/agent-guide.md
 ================================================================================
 
-# Agent Guide — Resume Generation
+# Agent Guide, Resume Generation
 
 **Start here.** This is the direct path for AI agents generating resume summaries, achievement bullets, and cover letters from this knowledge base.
 
@@ -56,7 +56,7 @@ SOURCE: resume/agent-guide.md
 | Status | What it means | What agents may say |
 |---|---|---|
 | **STRONG** | Fully implemented with file evidence | Claim directly and confidently |
-| **PARTIAL** | Implemented with caveats or missing components | Use \`recommended_framing\` only — never full achievement_pattern |
+| **PARTIAL** | Implemented with caveats or missing components | Use \`recommended_framing\` only, never full achievement_pattern |
 | **IN_PROGRESS** | Exists but not production-validated | Use "currently implementing" language only |
 | **ABSENT** | Not built | Never mention this concept |
 | **IMPLIED** | Reasonable inference, not directly evidenced | Mention with hedging language only |
@@ -65,18 +65,18 @@ SOURCE: resume/agent-guide.md
 
 | Signal strength | Score | Action |
 |---|---|---|
-| 3+ trigger phrases matched | 0.9+ | High confidence — proceed with archetype |
-| 1–2 trigger phrases matched | 0.7–0.8 | Moderate confidence — proceed, flag if ambiguous |
-| No clear trigger | 0.5 | Set \`archetype_gap_detected = true\` — use closest match, flag for human review |
+| 3+ trigger phrases matched | 0.9+ | High confidence, proceed with archetype |
+| 1–2 trigger phrases matched | 0.7–0.8 | Moderate confidence, proceed, flag if ambiguous |
+| No clear trigger | 0.5 | Set \`archetype_gap_detected = true\`, use closest match, flag for human review |
 
 ## Resume Input Path Handling
 
-**PATH A — No resume provided (default, recommended):**
+**PATH A, No resume provided (default, recommended):**
 Generate all content entirely from KB using archetype rules.
 No structural constraints from any uploaded document.
-This is the preferred path for all new applications — produces the cleanest output with no carry-over artefacts.
+This is the preferred path for all new applications, produces the cleanest output with no carry-over artefacts.
 
-**PATH B — Resume provided (formatting reference only):**
+**PATH B, Resume provided (formatting reference only):**
 The uploaded document is a FORMATTING REFERENCE. It contributes zero content.
 
 Permitted uses:
@@ -89,14 +89,14 @@ Prohibited uses (any violation is a fabrication error):
 - Treating any uploaded text as evidence of a claim
 
 **Empty section rule (PATH B):**
-If a section exists in the uploaded resume but has no KB evidence, leave that section EMPTY in the output — do not copy from the uploaded document to fill it.
+If a section exists in the uploaded resume but has no KB evidence, leave that section EMPTY in the output, do not copy from the uploaded document to fill it.
 
 **Archetype ordering rule (PATH B):**
 If the uploaded resume structure conflicts with archetype section ordering requirements, the archetype ordering wins.
 
 ## Step-by-Step: Resume Summary
 
-**Summary content filter — strict:**
+**Summary content filter, strict:**
 The Professional Summary must only contain concepts that either:
 1. Appear in the JD (exact term or close synonym), OR
 2. Are tier-1 differentiators for the role type
@@ -110,18 +110,18 @@ The Professional Summary must only contain concepts that either:
 | "full-stack", "React", "TypeScript", "frontend" | Full-stack + platform unified narrative |
 | "LLM", "AI", "Bedrock", "agent", "RAG" | AI-augmented engineering narrative |
 | "DevOps", "CI/CD", "pipelines", "cloud native" | Platform + delivery narrative |
-| "staff", "principal", "architect" | Mix all three acts — show breadth |
+| "staff", "principal", "architect" | Mix all three acts, show breadth |
 | "troubleshoot", "customer", "solutions engineer", "escalation", "TSE", "technical support" | Customer-facing infrastructure narrative |
-| "internal tools", "automated frameworks", "operational excellence", "playbooks", "data center", "server operations", "workflow execution", "supply chain software", "process standardisation" | Operations engineering narrative — lead with Python/Bash automation |
+| "internal tools", "automated frameworks", "operational excellence", "playbooks", "data center", "server operations", "workflow execution", "supply chain software", "process standardisation" | Operations engineering narrative, lead with Python/Bash automation |
 
 **Customer-facing support/TSE/Customer Engineering opener rule:**
 The professional summary's FIRST sentence MUST echo the SELECTED ARCHETYPE's lead identity (the same positioning the headline + cover letter share). For a support / customer-engineering archetype, lead with the support-and-AI differentiator (e.g. "Support engineer who builds production AI…"), NEVER an infrastructure-first identity ("Cloud infrastructure engineer…"). Then the strongest number, then the AI/portfolio hook, then the cert. When a YEARS GAP FRAMING line is provided, the opener reflects it; never state a single-role tenure that undersells.
 Rules: NEVER open with the certification name. Action-first, not title-first.
 
-**kubeadm differentiator for TSE / Kubernetes roles — MUST articulate the WHY:**
-> "kubeadm exposes control plane internals — etcd, kube-apiserver, kubelet, Calico CNI — that managed Kubernetes services abstract away. That is the layer that breaks in production customer escalations."
+**kubeadm differentiator for TSE / Kubernetes roles, MUST articulate the WHY:**
+> "kubeadm exposes control plane internals, etcd, kube-apiserver, kubelet, Calico CNI, that managed Kubernetes services abstract away. That is the layer that breaks in production customer escalations."
 
-**Use the managed service name from the JD — never hardcode one:**
+**Use the managed service name from the JD, never hardcode one:**
 | JD mentions | Managed service to name |
 |---|---|
 | "GKE", "Google Kubernetes Engine" | GKE |
@@ -133,21 +133,21 @@ Rules: NEVER open with the certification name. Action-first, not title-first.
 
 1. Draw from the Achievements page below. Prioritise STRONG concepts.
 2. For PARTIAL → use only recommended_framing. For IN_PROGRESS → "currently implementing". For ABSENT → do not generate.
-3. Preserve all numbers — never round beyond what's in the achievements list.
+3. Preserve all numbers, never round beyond what's in the achievements list.
 
 **Every bullet describing a technical implementation MUST close with an outcome.**
 Format: "[Strong verb] [specific technology + implementation detail], [concrete outcome]"
 
-**LEAD BULLET rule — highest-impact first:**
-Within each role, after archetype-category ordering is applied, the FIRST bullet MUST be the strongest number-led / highest-impact bullet — only bullets 1–2 are read, so the quantified win leads. Never bury a metric in bullet 3 or later when a stronger number exists earlier.
+**LEAD BULLET rule, highest-impact first:**
+Within each role, after archetype-category ordering is applied, the FIRST bullet MUST be the strongest number-led / highest-impact bullet, only bullets 1–2 are read, so the quantified win leads. Never bury a metric in bullet 3 or later when a stronger number exists earlier.
 
-**Achievement bullet ordering rule — role-type driven:**
+**Achievement bullet ordering rule, role-type driven:**
 
 Infrastructure/support roles (TSE, SRE, Platform, Solutions, DevOps):
 1. Kubernetes operational bullets first (kubeadm, Calico CNI, ArgoCD self-healing)
 2. Customer-facing incident triage second
 3. IaC and CI/CD third
-4. Observability fourth — use Kubernetes-native implementation
+4. Observability fourth, use Kubernetes-native implementation
 5. Serverless, frontend, full-stack bullets EXCLUDED ENTIRELY
 
 Full-stack/product roles:
@@ -162,18 +162,18 @@ AI/ML engineering roles:
 3. Kubernetes and observability third
 
 Operations Engineering / Internal Tooling roles:
-1. Python/Bash automation bullets first — lead with this even if IN_PROGRESS
+1. Python/Bash automation bullets first, lead with this even if IN_PROGRESS
 2. Operational runbooks and knowledge base documentation second
 3. Kubernetes operational depth third
 4. Root cause methodology fourth
 5. Serverless, frontend, full-stack bullets EXCLUDED ENTIRELY
-6. CDK bullets de-prioritised — supporting context only
+6. CDK bullets de-prioritised, supporting context only
 
 Technical Support / Customer Engineering roles:
 1. Customer-impact and reliability bullets first (escalation handling, knowledge-base documentation, resolution timelines)
 2. Production systems proof second (Kubernetes operational depth, self-healing, distributed tracing)
-3. AI and automation third — demonstrates engineering depth beyond ticket-closing
-4. IaC and CI/CD fourth — supporting context
+3. AI and automation third, demonstrates engineering depth beyond ticket-closing
+4. IaC and CI/CD fourth, supporting context
 5. Frontend, React, eCommerce bullets EXCLUDED ENTIRELY
 6. TRANSLATE transferable skills from ROLE EVIDENCE into support vocabulary when present
 
@@ -187,19 +187,19 @@ Technical Support / Customer Engineering roles:
 - 4 Bedrock AI applications
 - 265+ CDK test assertions
 - 22+ GitHub Actions workflows
-- ~90% prompt cache cost reduction (Writer Lambda only — scoped qualifier required)
+- ~90% prompt cache cost reduction (Writer Lambda only, scoped qualifier required)
 - DORA metrics (lead time, TTSR, CFR): DO NOT use until real measured values exist. Omit entirely if no concrete value is confirmed.
 
 ## Step-by-Step: Key Projects
 
 **PROJECTS COLLAPSE rule:**
-When the selected archetype deprioritises standalone projects (support / customer-engineering archetypes — Archetype 7), DO NOT emit a standalone Projects block — instead emit ONE compact "Selected work:" line of curated, deduplicated GitHub links placed under the most relevant role. Builder/engineering archetypes (Platform, SRE, Full-Stack, AI/ML, DevOps) keep the full Projects block.
+When the selected archetype deprioritises standalone projects (support / customer-engineering archetypes, Archetype 7), DO NOT emit a standalone Projects block, instead emit ONE compact "Selected work:" line of curated, deduplicated GitHub links placed under the most relevant role. Builder/engineering archetypes (Platform, SRE, Full-Stack, AI/ML, DevOps) keep the full Projects block.
 
 1. Maximum 2 projects per resume. Select the 2 most relevant to the JD.
-2. Apply deduplication — each concept, tool, or number appears in full only once across the entire resume.
-3. Never frame a project as "addressing a lack of X" — frame as a deliberate architectural decision.
+2. Apply deduplication, each concept, tool, or number appears in full only once across the entire resume.
+3. Never frame a project as "addressing a lack of X", frame as a deliberate architectural decision.
 
-**Mandatory pre-flight deduplication check — AGENT-INTERNAL ONLY:**
+**Mandatory pre-flight deduplication check, AGENT-INTERNAL ONLY:**
 Before drafting the second project, list every concept, tool, and number already used in Key Achievements. CI/CD pipeline detail is the most common failure point.
 
 **Cross-section deduplication rule:**
@@ -211,11 +211,11 @@ Before drafting the second project, list every concept, tool, and number already
 
 ## Step-by-Step: Technical Skills
 
-1. Order subsections to mirror JD priority — not alphabetically.
-   (a) The FIRST skill group MUST be the archetype's matched-domain group — for a support/customer archetype, a "Support & Troubleshooting" group (escalation management, root-cause analysis, SaaS & cloud troubleshooting, SLA / resolution-time ownership) leads. (b) Within EVERY group, list JD-matched / required terms first; infra jargon last.
+1. Order subsections to mirror JD priority, not alphabetically.
+   (a) The FIRST skill group MUST be the archetype's matched-domain group, for a support/customer archetype, a "Support & Troubleshooting" group (escalation management, root-cause analysis, SaaS & cloud troubleshooting, SLA / resolution-time ownership) leads. (b) Within EVERY group, list JD-matched / required terms first; infra jargon last.
 2. Each tool appears in one subsection only.
 3. Scripting/tooling subsection mandatory for TSE, SRE, Support, Solutions Engineer roles.
-4. GKE onboarding signal: when JD targets GCP and direct GCP experience is absent, add "GKE (actively onboarding)" — do not claim full GKE experience.
+4. GKE onboarding signal: when JD targets GCP and direct GCP experience is absent, add "GKE (actively onboarding)", do not claim full GKE experience.
 5. "portfolio-scale" is BANNED in the Skills section. Never write it.
 
 ## Step-by-Step: Cover Letter
@@ -225,7 +225,7 @@ Output format: plain prose only. No markdown headings in the output.
 2. Use one authentic phrase from Voice Library in the first paragraph.
 3. Select 2–3 achievement bullets that map to JD top 3 requirements.
 4. Close with the dual-perspective differentiator without capitalised AND.
-5. Never close on a gap — close on the strongest claim restated in the language of the role.
+5. Never close on a gap, close on the strongest claim restated in the language of the role.
 
 **"portfolio-scale" / "solo-operated" ban in cover letters:**
 Use "self-managed", "independently built and operated", or "built without a managed service abstraction" instead.
@@ -237,7 +237,7 @@ Order education entries by relevance-then-recency; do NOT give an older / less-r
 
 ## ATS Optimization Rules
 
-1. Exact keyword matching — use the JD's exact term.
+1. Exact keyword matching, use the JD's exact term.
 2. Certification names verbatim: \`AWS Certified DevOps Engineer – Professional\` (en-dash).
 3. Standard section headers: "Experience", "Skills", "Education", "Certifications".
 4. Bullet format: [Strong verb] [specific technology/context] [measurable outcome].
@@ -247,17 +247,17 @@ Order education entries by relevance-then-recency; do NOT give an older / less-r
 
 1. Before generating any bullet, retrieve a phrase from the Voice Library and use it as an anchor.
 2. Banned verbs: spearheaded, leveraged, orchestrated, revolutionized, streamlined, synergized, fostered, utilized.
-3. Vary sentence length — mix short (under 12 words), medium, and long.
+3. Vary sentence length, mix short (under 12 words), medium, and long.
 4. No consecutive same-verb openers.
 5. Specific proper nouns over generic descriptions.
-6. Cover letters: first-person direct — "I built X" not "X was built".
-7. No opener clichés — never start with "I am writing to express my interest in".
-8. Capitalised AND for emphasis (e.g. "built the platform AND deployed") is an AI-generation signal — banned.
-9. Em dash (—) permitted only in date ranges and role/company separators. All other uses banned.
-10. Professional Summary opener — NEVER cert-first. First sentence MUST be a role identity statement.
+6. Cover letters: first-person direct, "I built X" not "X was built".
+7. No opener clichés, never start with "I am writing to express my interest in".
+8. Capitalised AND for emphasis (e.g. "built the platform AND deployed") is an AI-generation signal, banned.
+9. Em dash (, ) permitted only in date ranges and role/company separators. All other uses banned.
+10. Professional Summary opener, NEVER cert-first. First sentence MUST be a role identity statement.
 11. Professional Summary: 100 words maximum. Closing sentence must contain one concrete DORA-flavoured number.
 
-## Resume Word Count Budget — Hard Limits
+## Resume Word Count Budget, Hard Limits
 
 | Section | Limit |
 |---|---|
@@ -274,19 +274,19 @@ Trim order: Experience first → Skills second → Projects third. Never trim Ke
 
 ## Hard Rules for All Agents
 
-These are absolute — not suggestions:
+These are absolute, not suggestions:
 
-1. **NEVER say "service mesh"** — Traefik v3 is ingress. Say "Traefik v3 ingress and cross-namespace routing with middleware chains."
-2. **NEVER claim SLA compliance** — no formal SLA exists.
-3. **NEVER claim on-call experience** — solo-operated, no on-call rotation.
-4. **NEVER claim Terraform experience** — CDK only. Say "AWS CDK TypeScript (equivalent IaC capability)" if asked.
-5. **NEVER say "enterprise-scale" or "100+ node clusters"** — dual-pool cluster, max 6 nodes.
-6. **NEVER say "SLO-based error budgets" or "burn-rate alerts"** — threshold-based alerting only.
-7. **NEVER claim EKS/GKE/AKS** — say "evaluated managed K8s, chose kubeadm for full-stack learning depth."
-8. **NEVER claim fine-tuning or RLHF** — Bedrock API only, no model training.
-9. **NEVER claim Commander.js CLI** — justfile task runner + TypeScript scripts.
-10. **ALWAYS add scope qualifier in experience bullets** — "solo-operated" or "self-managed". BANNED in Professional Summary AND Skills section.
-11. **NEVER claim "AWS Solutions Architect"** — the only AWS certification is \`AWS Certified DevOps Engineer – Professional\` (2025). Any other AWS credential is a fabrication.
+1. **NEVER say "service mesh"**, Traefik v3 is ingress. Say "Traefik v3 ingress and cross-namespace routing with middleware chains."
+2. **NEVER claim SLA compliance**, no formal SLA exists.
+3. **NEVER claim on-call experience**, solo-operated, no on-call rotation.
+4. **NEVER claim Terraform experience**, CDK only. Say "AWS CDK TypeScript (equivalent IaC capability)" if asked.
+5. **NEVER say "enterprise-scale" or "100+ node clusters"**, dual-pool cluster, max 6 nodes.
+6. **NEVER say "SLO-based error budgets" or "burn-rate alerts"**, threshold-based alerting only.
+7. **NEVER claim EKS/GKE/AKS**, say "evaluated managed K8s, chose kubeadm for full-stack learning depth."
+8. **NEVER claim fine-tuning or RLHF**, Bedrock API only, no model training.
+9. **NEVER claim Commander.js CLI**, justfile task runner + TypeScript scripts.
+10. **ALWAYS add scope qualifier in experience bullets**, "solo-operated" or "self-managed". BANNED in Professional Summary AND Skills section.
+11. **NEVER claim "AWS Solutions Architect"**, the only AWS certification is \`AWS Certified DevOps Engineer – Professional\` (2025). Any other AWS credential is a fabrication.
 12. Profile title field: must be a role descriptor, not a credential string. Never write a certification name as a job title.
 
 ## Concept Status Quick-Reference
@@ -300,9 +300,9 @@ These are absolute — not suggestions:
 | Three-pillar observability (Prometheus/Loki/Tempo) | STRONG |
 | CDK multi-account IaC (4 accounts) | STRONG |
 | AWS Bedrock / AI pipelines (4 applications) | STRONG |
-| Service mesh | PARTIAL — use recommended_framing only |
-| Formal SLOs / error budgets | PARTIAL — threshold-based alerting only |
-| DORA metrics | PARTIAL — estimates, not measured dashboards |
+| Service mesh | PARTIAL, use recommended_framing only |
+| Formal SLOs / error budgets | PARTIAL, threshold-based alerting only |
+| DORA metrics | PARTIAL, estimates, not measured dashboards |
 | Multi-region active-active | ABSENT |
 | Terraform / HCL | ABSENT |
 | GCP / GKE | ABSENT |
@@ -340,18 +340,18 @@ What is NOT in the portfolio and why. Overclaiming on any of these points risks 
 
 Do NOT claim these:
 
-- **EKS / GKE / AKS** — deliberate choice to use kubeadm for learning depth
-- **Terraform** — CDK only; can say "familiar with Terraform concepts, implemented IaC via CDK"
-- **Helm chart authoring from scratch** — used existing charts; "configured and customised third-party Helm charts"
-- **Service mesh (Istio, Linkerd)** — Traefik v3 provides L7 ingress. NEVER use "service mesh". Use "Traefik v3 ingress and cross-namespace routing" instead. No mTLS between pods.
-- **Multi-region active-active** — single-region (eu-west-1) with edge stack in us-east-1 for CloudFront only
-- **Fine-tuning / RLHF** — Bedrock API only; no model training
-- **Formal SLOs** — threshold-based alerting; no error budgets or burn-rate alerts
-- **Commander.js CLI** — justfile task runner + TypeScript. Do NOT claim Commander.js.
-- **GCP / GKE / Google Cloud** — AWS-native portfolio; GCP status is IN_PROGRESS with no confirmed activity
-- **Large-scale multi-node clusters** — dual-pool cluster (general t3.small 1–4, monitoring t3.medium 1–2)
+- **EKS / GKE / AKS**, deliberate choice to use kubeadm for learning depth
+- **Terraform**, CDK only; can say "familiar with Terraform concepts, implemented IaC via CDK"
+- **Helm chart authoring from scratch**, used existing charts; "configured and customised third-party Helm charts"
+- **Service mesh (Istio, Linkerd)**, Traefik v3 provides L7 ingress. NEVER use "service mesh". Use "Traefik v3 ingress and cross-namespace routing" instead. No mTLS between pods.
+- **Multi-region active-active**, single-region (eu-west-1) with edge stack in us-east-1 for CloudFront only
+- **Fine-tuning / RLHF**, Bedrock API only; no model training
+- **Formal SLOs**, threshold-based alerting; no error budgets or burn-rate alerts
+- **Commander.js CLI**, justfile task runner + TypeScript. Do NOT claim Commander.js.
+- **GCP / GKE / Google Cloud**, AWS-native portfolio; GCP status is IN_PROGRESS with no confirmed activity
+- **Large-scale multi-node clusters**, dual-pool cluster (general t3.small 1–4, monitoring t3.medium 1–2)
 
-**General evidence gate — applies to all IN_PROGRESS gap entries:**
+**General evidence gate, applies to all IN_PROGRESS gap entries:**
 | Evidence available | What agent may say |
 |---|---|
 | Confirmed activity in KB | Name only the specific confirmed activities |
@@ -360,11 +360,11 @@ Do NOT claim these:
 
 ## What Was Built That's Unusual (Highlight These)
 
-- Self-hosted Kubernetes without managed services — shows depth
+- Self-hosted Kubernetes without managed services, shows depth
 - End-to-end observability from OS metrics to distributed traces to RUM
-- Three distinct LLM system patterns — most engineers have zero production-pattern AI experience
-- Reactive autonomous agent with real write access — not a toy chatbot
-- 265+ IaC test assertions — most infrastructure code is untested
+- Three distinct LLM system patterns, most engineers have zero production-pattern AI experience
+- Reactive autonomous agent with real write access, not a toy chatbot
+- 265+ IaC test assertions, most infrastructure code is untested
 
 
 ================================================================================
@@ -375,7 +375,7 @@ SOURCE: resume/voice-library.md
 
 Nelson's authentic writing voice. Retrieve before generating any resume bullet or cover letter paragraph. Anchor at least one phrase per paragraph.
 
-## Authentic Phrases — Use as Anchors
+## Authentic Phrases, Use as Anchors
 
 ### Action phrases
 - "I took on the role of..."
@@ -410,7 +410,7 @@ Nelson's authentic writing voice. Retrieve before generating any resume bullet o
 ## Sentence Length Variation (Anti-AI Pattern)
 
 **Short punch:** "The result: zero dropped cases during the transition period."
-**Medium evidence:** most bullets — technology + context + outcome
+**Medium evidence:** most bullets, technology + context + outcome
 **Long context:** intro or positioning paragraphs
 
 Rule: no more than 3 consecutive bullets of similar length.
@@ -441,14 +441,14 @@ Portfolio context: built, configured, deployed, wrote, designed, ran, debugged, 
 
 Rule: start each bullet with one of these. No verb appears more than twice in any 6-bullet section.
 
-## Anti-AI-Scan Checklist (AGENT-INTERNAL — never include in output)
+## Anti-AI-Scan Checklist (AGENT-INTERNAL, never include in output)
 
 Verify silently before finalising any section:
 1. No consecutive bullets start with the same verb
 2. No banned terms present
 3. At least one bullet uses a short sentence (under 12 words)
 4. At least one authentic phrase from this library is present
-5. Specific proper nouns used — not generic descriptions
+5. Specific proper nouns used, not generic descriptions
 6. First-person in cover letter ("I built") not passive
 7. Sentence lengths vary across the document
 8. No phrase like "passionate about", "results-driven", "dynamic professional"
@@ -460,7 +460,7 @@ SOURCE: resume/role-archetypes.md
 
 # Role Archetypes
 
-Per-role emphasis maps. When given a job description, identify the archetype, pull bullets from achievements, apply concept-to-resume language, and respect gap-awareness. Adapt emphasis — never invent new claims.
+Per-role emphasis maps. When given a job description, identify the archetype, pull bullets from achievements, apply concept-to-resume language, and respect gap-awareness. Adapt emphasis, never invent new claims.
 
 ## Archetype 1: Platform / Infrastructure Engineer
 
@@ -494,13 +494,13 @@ Per-role emphasis maps. When given a job description, identify the archetype, pu
 This archetype takes priority over Full-Stack and DevOps when the role is internal-facing.
 
 **Lead with (priority order):**
-1. Python/Bash automation system — case distribution, ROI analysis, business case, EMEA-to-global rollout
-2. Operational playbooks and runbooks — structured processes adopted team-wide
-3. Kubernetes operational depth — bootstrap automation (Step Functions + SSM + Python)
-4. Root cause methodology — log correlation, distributed tracing, systematic diagnosis
+1. Python/Bash automation system, case distribution, ROI analysis, business case, EMEA-to-global rollout
+2. Operational playbooks and runbooks, structured processes adopted team-wide
+3. Kubernetes operational depth, bootstrap automation (Step Functions + SSM + Python)
+4. Root cause methodology, log correlation, distributed tracing, systematic diagnosis
 
 **Exclude entirely:** Next.js, React, Tailwind, DynamoDB single-table design, HMAC token verification, Serverless REST API design
-**Skills lead:** Scripting & Operational Tooling — Python first, then Bash, AWS CLI, kubectl
+**Skills lead:** Scripting & Operational Tooling, Python first, then Bash, AWS CLI, kubectl
 **Summary framing:** Lead with systematic troubleshooting and automation depth, not cloud architecture.
 
 Example opener:
@@ -514,23 +514,23 @@ Example opener:
 
 This archetype takes priority over SRE and Operations when the role is customer-facing support or technical account work.
 
-**Lead identity:** Support engineer who ships production systems — applies the same root-cause methodology to customer escalations as to internal incidents, backed by real Kubernetes and AWS production depth.
+**Lead identity:** Support engineer who ships production systems, applies the same root-cause methodology to customer escalations as to internal incidents, backed by real Kubernetes and AWS production depth.
 
 **Lead with (priority order):**
-1. Customer-impact and reliability bullets — incident resolution, escalation handling, knowledge-base documentation
-2. Kubernetes operational depth — demonstrates the production systems credibility behind customer-facing work
-3. AI and automation proof — self-healing reactive agent, observability pipelines, prompt caching
-4. Work history beneath the above — production depth validates the support framing
+1. Customer-impact and reliability bullets, incident resolution, escalation handling, knowledge-base documentation
+2. Kubernetes operational depth, demonstrates the production systems credibility behind customer-facing work
+3. AI and automation proof, self-healing reactive agent, observability pipelines, prompt caching
+4. Work history beneath the above, production depth validates the support framing
 
 **sectionOrder:** summary, experience, projects, education, skills, certifications
 (experience leads; projects surface production credibility before skills)
 
 **Exclude entirely:** Detailed CDK assertions counts, Terraform references, frontend/React bullets, eCommerce metrics
-**Skills lead:** lead with the "Support & Troubleshooting" group (per the Technical Skills rule) — escalation management, root-cause analysis, SaaS & cloud troubleshooting, SLA / resolution-time ownership, AWS troubleshooting, incident triage, Kubernetes, distributed tracing
+**Skills lead:** lead with the "Support & Troubleshooting" group (per the Technical Skills rule), escalation management, root-cause analysis, SaaS & cloud troubleshooting, SLA / resolution-time ownership, AWS troubleshooting, incident triage, Kubernetes, distributed tracing
 **Summary framing:** Lead with customer-impact and reliability; close with a production-systems metric that demonstrates the engineering depth behind the support role.
 
 Example opener:
-> "Platform support engineer with 3+ years resolving AWS production escalations across IAM, compute, and networking — systematically debugging distributed systems, authoring operational runbooks adopted team-wide, and building self-healing Kubernetes automation. AWS Certified DevOps Engineer – Professional."
+> "Platform support engineer with 3+ years resolving AWS production escalations across IAM, compute, and networking, systematically debugging distributed systems, authoring operational runbooks adopted team-wide, and building self-healing Kubernetes automation. AWS Certified DevOps Engineer – Professional."
 
 **Gaps to acknowledge:** solo-operated, no formal SLA environment, portfolio-scale traffic.
 
@@ -545,7 +545,7 @@ Example opener:
 | "CI/CD", "DevOps", "pipeline", "cloud native" | DevOps / Cloud |
 | "internal tools", "automated frameworks", "operational excellence", "playbooks", "data center", "server operations", "workflow execution", "supply chain software", "process standardisation" | Operations Engineering / Internal Tooling |
 | "support", "customer service", "SLA", "on-call", "escalations", "queue", "ticketing", "customer success", "technical account", "education on the use of our platforms" | Technical Support / Customer Engineering |
-| "staff", "principal", "architect" | Mix archetypes equally — show breadth |
+| "staff", "principal", "architect" | Mix archetypes equally, show breadth |
 
 **Google-affiliated disambiguation:**
 - "Server Operations", "Data Center Software", "Supply Chain", "operational tooling" → Archetype 6
@@ -561,7 +561,7 @@ SOURCE: resume/achievements.md
 
 # Quantified Achievements
 
-Canonical achievement statements grounded in implementation evidence. Preserve scope qualifiers — these are portfolio projects, not enterprise production systems.
+Canonical achievement statements grounded in implementation evidence. Preserve scope qualifiers, these are portfolio projects, not enterprise production systems.
 
 ## Engineering Discipline
 
@@ -576,7 +576,7 @@ Canonical achievement statements grounded in implementation evidence. Preserve s
 | GitOps self-heal window | Manual kubectl changes reverted within **3 min** | Portfolio project |
 | SSM decoupling MTTR improvement | Stack failure MTTR from ~30 min → **~5 min** | Portfolio project |
 
-## DORA Metrics (Estimates — not measured dashboards)
+## DORA Metrics (Estimates, not measured dashboards)
 
 | Metric | Value | Notes |
 |---|---|---|
@@ -619,19 +619,19 @@ Canonical achievement statements grounded in implementation evidence. Preserve s
 
 | Achievement | Status |
 |---|---|
-| Service continuity lead — EMEA case coverage | STRONG |
-| Technical Tooling SME — knowledge transfer | STRONG |
+| Service continuity lead, EMEA case coverage | STRONG |
+| Technical Tooling SME, knowledge transfer | STRONG |
 | Internal wiki documentation (3 years, multi-team) | STRONG |
-| Case distribution automation — design + business case | IN_PROGRESS |
+| Case distribution automation, design + business case | IN_PROGRESS |
 | AWS Certified DevOps Engineer – Professional (2025) | STRONG |
-| Higher Diploma in Science in Computing (Web & Cloud Technologies) — Dublin Business School (2024) | STRONG |
+| Higher Diploma in Science in Computing (Web & Cloud Technologies), Dublin Business School (2024) | STRONG |
 | Year-end performance rating: Meets High Bar | STRONG |
 
 ## Resume Bullet Templates by Role
 
 ### Kubernetes / TSE / SRE / Container Operations
 \`\`\`
-Self-hosted Kubernetes cluster via kubeadm on AWS EC2 — bootstrapped control plane
+Self-hosted Kubernetes cluster via kubeadm on AWS EC2, bootstrapped control plane
 from scratch, configured Calico CNI for pod networking with namespace-level
 NetworkPolicies, ArgoCD App-of-Apps GitOps delivery (25 applications) with
 self-healing and drift correction, Traefik v3 ingress with cross-namespace routing
@@ -641,15 +641,14 @@ and middleware chains, etcd and PKI backup to S3 with ~5–8 min control-plane R
 ### Platform / Infrastructure / IaC
 \`\`\`
 Designed 10-stack CDK architecture (VPC, security groups, compute, IAM, observability,
-edge) with lifecycle-separated stacks — IAM-only changes deploy in ~30 s vs. ~8 min
+edge) with lifecycle-separated stacks, IAM-only changes deploy in ~30 s vs. ~8 min
 full compute cycle.
 \`\`\`
 
 ### SRE / Operations
 \`\`\`
 Built self-healing reactive agent (Bedrock ConverseCommand + 6 MCP tools) that
-autonomously diagnoses CloudWatch alarms and triggers bootstrap Step Functions —
-zero human intervention for transient node failures.
+autonomously diagnoses CloudWatch alarms and triggers bootstrap Step Functions, zero human intervention for transient node failures.
 
 Designed disaster recovery path: etcd + PKI backup to S3, TLS/JWT to SSM, full
 control-plane reconstruction in ~5–8 min RTO.
@@ -666,17 +665,16 @@ OTel distributed traces, Prometheus metrics, Faro RUM, Vitest test coverage,
 \`\`\`
 
 ### Operations Engineering / Internal Tooling
-Lead bullet (IN_PROGRESS — use "currently implementing" or "designed" framing):
+Lead bullet (IN_PROGRESS, use "currently implementing" or "designed" framing):
 \`\`\`
 Designed end-to-end Python/Bash automation system to replace 10–20 hours/week of
-manual case distribution workflow in the EMEA support team — authored full ROI
+manual case distribution workflow in the EMEA support team, authored full ROI
 analysis and business case for EMEA and global rollout; pending security review.
 \`\`\`
 
 Second bullet:
 \`\`\`
-Built and maintained internal knowledge base across multiple AWS teams over 3 years —
-HTML/CSS/JavaScript structured documentation covering operational processes, runbooks,
+Built and maintained internal knowledge base across multiple AWS teams over 3 years, HTML/CSS/JavaScript structured documentation covering operational processes, runbooks,
 and escalation paths; adopted team-wide as primary reference for new engineer onboarding.
 \`\`\`
 

@@ -1,8 +1,11 @@
 /** @format */
-jest.mock('@bedrock/shared', () => ({ runAgent: jest.fn(), log: () => undefined }));
+jest.mock('@bedrock/shared', () => ({
+    ...jest.requireActual('@bedrock/shared'),
+    runAgent: jest.fn(),
+    log: () => undefined,
+}));
 import { runAgent } from '@bedrock/shared';
-import { guardResume } from './resume-guard.js';
-import { validateResume } from './resume-guard.js';
+import { guardResume, validateResume } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const mockRun = runAgent as jest.Mock;
@@ -46,7 +49,7 @@ describe('guardResume', () => {
     it('clean resume → unchanged, no rewrite call', async () => {
         const r = base();
         const res = await guardResume(r, ctx);
-        expect(res.resume).toBe(r);
+        expect(res.resume).toStrictEqual(r);
         expect(res.violations).toEqual([]);
         expect(mockRun).not.toHaveBeenCalled();
     });
@@ -55,13 +58,20 @@ describe('guardResume', () => {
         mockRun.mockResolvedValue({ data: fixed });
         const bad = base({ summary: 'Cloud infrastructure engineer with 3 years that falls short of the 8-year bar.' });
         const res = await guardResume(bad, ctx);
-        expect(res.resume).toBe(fixed);
+        expect(res.resume).toStrictEqual(fixed);
         expect(res.violations.map((v) => v.code)).toEqual(expect.arrayContaining(['summary_wrong_cluster', 'summary_names_gap']));
     });
     it('rewrite throws → returns ORIGINAL (fail-open)', async () => {
         mockRun.mockRejectedValue(new Error('down'));
         const bad = base({ summary: 'Cloud infrastructure engineer, 3 years, falls short.' });
         const res = await guardResume(bad, ctx);
-        expect(res.resume).toBe(bad);
+        expect(res.resume).toStrictEqual(bad);
+    });
+    it('clean resume with em-dash in summary → em-dash replaced by comma, no rewrite call', async () => {
+        const withDash = base({ summary: 'Support engineer who ships production AI — the biggest win. 5 years across support and operations.' });
+        const res = await guardResume(withDash, ctx);
+        expect(res.violations).toEqual([]);
+        expect(mockRun).not.toHaveBeenCalled();
+        expect(res.resume.summary).toBe('Support engineer who ships production AI, the biggest win. 5 years across support and operations.');
     });
 });
