@@ -28,30 +28,30 @@
  */
 
 import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
+import { buildReverseAliasMap } from './keyword-match.js';
 
-/** Path segments / filename tokens that mark a doc as ILLUSTRATIVE, not authored evidence. */
-const REFERENCE_PATH_RE = /\/(checklists?|reference|examples?|samples?|templates?|tutorials?|guides?|cheat-?sheets?|snippets?|how-?tos?)\//i;
-const REFERENCE_FILE_RE = /(?:^|\/)[^/]*(checklist|example|sample|template|tutorial|cheat-?sheet|snippet|how-?to)[^/]*\.[a-z]+$/i;
+/** Directory names that mark a doc as ILLUSTRATIVE (a pattern reference), not authored evidence. */
+const REFERENCE_DIR_TOKENS = new Set([
+    'checklist', 'checklists', 'reference', 'references', 'example', 'examples',
+    'sample', 'samples', 'template', 'templates', 'tutorial', 'tutorials',
+    'guide', 'guides', 'cheatsheet', 'cheatsheets', 'cheat-sheet',
+    'snippet', 'snippets', 'howto', 'how-to', 'how-tos',
+]);
+/** Filename stems that mark the file itself as a reference/example. */
+const REFERENCE_FILE_RE = /(checklist|example|sample|template|tutorial|cheat-?sheet|snippet|how-?to)/i;
 
 /** A KB path that demonstrates a pattern rather than evidencing the candidate's own production work. */
 export function isReferenceDoc(path: string): boolean {
-    return REFERENCE_PATH_RE.test(path) || REFERENCE_FILE_RE.test(path);
-}
-
-/** Build canonical → [aliases] from the alias→canonical map. */
-function reverseAliases(aliasMap: ReadonlyMap<string, string>): Map<string, string[]> {
-    const reverse = new Map<string, string[]>();
-    for (const [alias, canonical] of aliasMap) {
-        const existing = reverse.get(canonical);
-        if (existing) existing.push(alias);
-        else reverse.set(canonical, [alias]);
-    }
-    return reverse;
+    const segments = path.toLowerCase().split('/');
+    const dirs = segments.slice(0, -1);
+    if (dirs.some((d) => REFERENCE_DIR_TOKENS.has(d))) return true;
+    const file = segments.at(-1) ?? '';
+    return REFERENCE_FILE_RE.test(file);
 }
 
 /** Normalise free text to a space-padded token stream for whole-token containment. */
 function padded(text: string): string {
-    return ' ' + text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+    return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
 }
 
 export interface VendorGroupHit {
@@ -71,12 +71,12 @@ export function vendorGroupForSkill(
     techGroups: ReadonlyArray<ReadonlyArray<string>>,
     aliasMap: ReadonlyMap<string, string>,
 ): VendorGroupHit | null {
-    const reverse = reverseAliases(aliasMap);
+    const reverse = buildReverseAliasMap(aliasMap);
     const hay = padded(skill);
     for (const group of techGroups) {
         if (group.length < 2) continue;
         for (const member of group) {
-            const surfaceForms = new Set([member.replace(/_/g, ' '), ...(reverse.get(member) ?? [])]);
+            const surfaceForms = new Set([member.replaceAll('_', ' '), ...(reverse.get(member) ?? [])]);
             for (const form of surfaceForms) {
                 const norm = padded(form).trim();
                 if (norm.length >= 3 && hay.includes(` ${norm} `)) {
@@ -111,7 +111,7 @@ function isReferenceOnly(vm: VerifiedMatch): boolean {
 
 /** Build the honest transferable PartialMatch a demoted vendor becomes. */
 function toPartial(vm: VerifiedMatch, hit: VendorGroupHit): PartialMatch {
-    const siblingDisplay = hit.siblings.map((s) => s.replace(/_/g, ' ')).join(', ');
+    const siblingDisplay = hit.siblings.map((s) => s.replaceAll('_', ' ')).join(', ');
     return {
         skill: vm.skill,
         gapDescription: `Evidence for "${vm.skill}" comes only from reference/example documentation, not authored production work.`,

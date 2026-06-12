@@ -116,7 +116,7 @@ function matchOntology(term: string, resumeLowerText: string, familyVocab: strin
  * Build a reverse map: canonical → all surface forms (display form + all aliases).
  * Display form is derived by replacing underscores with spaces in the canonical.
  */
-function buildReverseAliasMap(aliasMap: Map<string, string>): Map<string, string[]> {
+export function buildReverseAliasMap(aliasMap: ReadonlyMap<string, string>): Map<string, string[]> {
     const reverse = new Map<string, string[]>();
     for (const [alias, canonical] of aliasMap) {
         const existing = reverse.get(canonical);
