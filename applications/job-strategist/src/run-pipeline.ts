@@ -44,6 +44,7 @@ import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
 import { splitAttainable } from './ats/attainable.js';
+import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
@@ -397,7 +398,21 @@ export async function main(): Promise<void> {
 
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext);
 
-        // Assemble StrategistResearchResult from jdExtraction (JdSignal) + research.data (ResearchMatching).
+        // Vendor-provenance guard (deterministic): a competing vendor evidenced ONLY by
+        // reference/example docs (e.g. an "OpenAI example" in a structured-output checklist
+        // while the real stack is Bedrock/Anthropic) was VERIFIED by the LLM → demote to a
+        // transferable partialMatch so it is never written as first-person production work.
+        // Runs BEFORE the ledger + strategist so the correction propagates to both.
+        const { matching: guardedMatching, demotions } = demoteMisattributedVendors(research.data, { techGroups, techAliasMap });
+        if (demotions.length > 0) {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                demoted: demotions.map((d) => ({ skill: d.skill, vendor: d.matchedVendor, files: d.evidenceFiles })),
+            }, 'vendor_provenance_demoted_reference_only_competing_vendor');
+        }
+        const guardedResearch = { ...research, data: guardedMatching };
+
+        // Assemble StrategistResearchResult from jdExtraction (JdSignal) + guarded matching.
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
         // JD tool list and the matching result, so it belongs in the pipeline orchestrator, not the agent.
         const ledgerTools = [
@@ -405,7 +420,7 @@ export async function main(): Promise<void> {
             ...jdExtraction.technologyInventory.languages,
             ...jdExtraction.requiredSkills,
         ];
-        const baseLedger = buildSkillEvidenceLedger(ledgerTools, research.data, { techGroups, techAliasMap });
+        const baseLedger = buildSkillEvidenceLedger(ledgerTools, guardedResearch.data, { techGroups, techAliasMap });
 
         // Enrich verified/transferable entries with per-tool targeted pgvector queries.
         // GAP entries are never touched (honesty invariant). Fail-open: any error → baseLedger.
@@ -419,7 +434,7 @@ export async function main(): Promise<void> {
         const researchData: StrategistResearchResult = {
             ...jdExtraction,
             targetCompany: ctx.targetCompany,
-            ...research.data,
+            ...guardedResearch.data,
             skillEvidenceLedger,
         };
 
