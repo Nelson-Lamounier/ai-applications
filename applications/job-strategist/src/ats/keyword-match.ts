@@ -28,16 +28,35 @@ function normalizeResume(text: string): string {
     return ' ' + text.toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
 }
 
+// Generic "scripting / programming / languages" JD terms don't appear verbatim in
+// resumes, which list concrete languages. Credit such a term when the resume
+// demonstrates a real language — honest (the candidate genuinely codes). Deliberately
+// NARROW: only language/scripting/programming/coding cues, never bare "automation"
+// (that would over-credit gaps like "AI-driven customer support automation").
+const LANG_CATEGORY_CUE = /\b(languages?|scripting|programming|coding)\b/;
+const LANGUAGE_EXEMPLARS = [
+    ' python ', ' bash ', ' shell ', ' powershell ', ' sql ', ' javascript ', ' typescript ',
+    ' golang ', ' java ', ' ruby ', ' rust ', ' kotlin ', ' scala ', ' perl ',
+];
+
+function matchSkillCategory(rawTermLower: string, paddedResume: string): boolean {
+    if (!LANG_CATEGORY_CUE.test(rawTermLower)) return false;
+    return LANGUAGE_EXEMPLARS.some((ex) => paddedResume.includes(ex));
+}
+
 export function matchTier1(term: string, resumeLowerText: string): boolean {
-    const normTerm = normalizeTerm(term);
-    if (normTerm.length === 0) return false;
     const resume = normalizeResume(resumeLowerText);
-    // Word-boundary substring (space-padded) — so "go" does NOT match "going" and a
-    // 2-char atomic skill ("ML", "QA") matches its own word, not a substring of another.
-    if (resume.includes(` ${normTerm} `)) return true;
-    const tokens = normTerm.split(' ').filter((t) => t.length >= 3);
-    if (tokens.length === 0) return false;
-    return tokens.every((tok) => resume.includes(` ${tok} `));
+    const normTerm = normalizeTerm(term);
+    if (normTerm.length > 0) {
+        // Word-boundary substring (space-padded) — so "go" does NOT match "going" and a
+        // 2-char atomic skill ("ML", "QA") matches its own word, not a substring of another.
+        if (resume.includes(` ${normTerm} `)) return true;
+        const tokens = normTerm.split(' ').filter((t) => t.length >= 3);
+        if (tokens.length > 0 && tokens.every((tok) => resume.includes(` ${tok} `))) return true;
+    }
+    // Skill-category credit — e.g. "scripting languages" reduces to "languages" and won't
+    // match literally, but the resume lists Python/Bash → the language skill IS present.
+    return matchSkillCategory(term.toLowerCase(), resume);
 }
 
 export type MatchTier = 'literal' | 'normalized' | 'ontology' | 'embedding' | 'none';
