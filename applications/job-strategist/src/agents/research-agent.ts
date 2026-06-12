@@ -34,6 +34,7 @@ import type {
     AgentConfig,
     AgentResult,
     IReranker,
+    JdDimensionMix,
     JdSignal,
     PiiPattern,
     QueryParams,
@@ -128,6 +129,62 @@ const RERANKER_DISABLED = process.env.RERANKER_DISABLED === '1';
  */
 const MIN_COSINE = Number.parseFloat(process.env.KB_MIN_COSINE ?? '0.20');
 
+/**
+ * Customer-facing/support weight (customerFacing + supportOps, each 0-100) at or
+ * above which a role is treated as "support-heavy". For such roles the doc-KB
+ * (engineering repos) grounds support competencies poorly, so we boost
+ * career_history retrieval and instruct the matcher to ground support evidence
+ * in the candidate's actual support/customer-facing roles. Env-tunable.
+ */
+const SUPPORT_HEAVY_THRESHOLD = Number.parseInt(process.env['SUPPORT_HEAVY_THRESHOLD'] ?? '40', 10);
+
+/**
+ * Combined customer-facing + support-ops weight from the JD's dimensionMix.
+ * Absent/zero dimensionMix (older runs) yields 0 — below any sane threshold,
+ * so behaviour is unchanged.
+ */
+function customerSupportWeight(dimensionMix?: JdDimensionMix | null): number {
+    return (dimensionMix?.customerFacing ?? 0) + (dimensionMix?.supportOps ?? 0);
+}
+
+/**
+ * True when the role is support/customer-heavy (weight >= threshold). Pure —
+ * unit-testable without touching the vector stores.
+ */
+export function isSupportHeavy(dimensionMix?: JdDimensionMix | null, threshold: number = SUPPORT_HEAVY_THRESHOLD): boolean {
+    return customerSupportWeight(dimensionMix) >= threshold;
+}
+
+/**
+ * The matcher-facing grounding note prepended to kbContext for support-heavy
+ * roles. Returns '' below the threshold (no note → behaviour unchanged). Pure.
+ */
+export function supportGroundingNote(weight: number, threshold: number = SUPPORT_HEAVY_THRESHOLD): string {
+    if (weight < threshold) return '';
+    return `NOTE: This is a customer-facing/support-heavy role (customerFacing+support = ${weight}%). Ground customer-support, troubleshooting, communication, and relationship competencies PRIMARILY in the candidate's support/customer-facing CAREER HISTORY below, not only the code repositories.`;
+}
+
+/**
+ * Resolve the support-heavy retrieval boost from the JD signal. Pure + fail-open:
+ * absent/zero dimensionMix → default career limit and empty note (behaviour
+ * unchanged). When support-heavy, doubles the career passage limit so support
+ * competencies are grounded in the candidate's actual support/customer-facing
+ * roles rather than the structurally-weak engineering doc-KB.
+ */
+function resolveSupportBoost(dimensionMix?: JdDimensionMix | null): {
+    weight: number;
+    careerLimit: number;
+    groundingNote: string;
+} {
+    const weight = customerSupportWeight(dimensionMix);
+    const heavy = isSupportHeavy(dimensionMix);
+    return {
+        weight,
+        careerLimit: heavy ? MAX_KB_PASSAGES * 2 : MAX_KB_PASSAGES,
+        groundingNote: supportGroundingNote(weight),
+    };
+}
+
 // =============================================================================
 // CLIENTS
 // =============================================================================
@@ -160,14 +217,16 @@ async function querySingleRds(
     query: string,
     userId: string,
     store: { querySimilar(p: QueryParams): Promise<SimilarityResult[]> },
+    maxPassages: number = MAX_KB_PASSAGES,
 ): Promise<string[]> {
-    const overfetch = MAX_KB_PASSAGES * RETRIEVE_OVERFETCH;
+    const finalK = Math.max(1, maxPassages);
+    const overfetch = finalK * RETRIEVE_OVERFETCH;
 
     log('INFO', 'Querying RDS vector store', {
         agent:        'strategist-research',
         queryPreview: piiScrubber.scrub(query.substring(0, 80)).redacted,
         retrieveK:    overfetch,
-        finalK:       MAX_KB_PASSAGES,
+        finalK,
         rerank:       reranker !== null,
     });
 
@@ -201,7 +260,7 @@ async function querySingleRds(
         text:        r.content,
     }));
 
-    const reranked = await rerankPassages(query, passages);
+    const reranked = await rerankPassages(query, passages, finalK);
 
     // Surface BOTH scores: cosine is authoritative (floor + grounding), rerank
     // drives ordering. A 0.31-cosine passage must not be mislabelled by a 0.015 rerank.
@@ -234,9 +293,10 @@ interface RankedPassage {
 async function rerankPassages(
     query:     string,
     passages:  RawPassage[],
+    finalK:    number = MAX_KB_PASSAGES,
 ): Promise<RankedPassage[]> {
     const cosineTopK: RankedPassage[] = passages
-        .slice(0, MAX_KB_PASSAGES)
+        .slice(0, finalK)
         .map(p => ({ source: p.source, cosineScore: p.cosineScore, rerankScore: p.cosineScore, text: p.text }));
 
     if (!reranker || passages.length <= 1) return cosineTopK;
@@ -247,7 +307,7 @@ async function rerankPassages(
     }));
 
     try {
-        const ranked = await reranker.rerank(query, candidates, { topK: MAX_KB_PASSAGES });
+        const ranked = await reranker.rerank(query, candidates, { topK: finalK });
 
         // Map rerank IDs back to passage objects in rerank order.
         const byId = new Map(passages.map(p => [p.id, p] as const));
@@ -752,15 +812,31 @@ export async function executeResearchAgent(
         querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
     ]);
 
+    // Support-heavy roles (customerFacing + supportOps >= threshold) ground their
+    // support competencies in the candidate's career_history (e.g. AWS TSA role),
+    // NOT the structurally-weak engineering doc-KB. resolveSupportBoost is pure +
+    // fail-open: absent/zero dimensionMix → default limit and empty note.
+    const { weight: supportWeight, careerLimit, groundingNote } = resolveSupportBoost(jdSignal?.dimensionMix);
+    log('INFO', 'Career grounding boost resolved', {
+        agent: 'strategist-research',
+        customerSupportWeight: supportWeight,
+        threshold: SUPPORT_HEAVY_THRESHOLD,
+        careerLimit,
+    });
+
     let career: string[] = [];
     try {
         const careerStore = RdsExperienceVectorStore.fromEnvironment();
-        career = await querySingleRds(`work history roles responsibilities ${jd.substring(0, half)}`, userId, careerStore);
+        career = await querySingleRds(`work history roles responsibilities ${jd.substring(0, half)}`, userId, careerStore, careerLimit);
     } catch (e) {
         log('WARN', 'career vector query failed (non-fatal)', { error: (e as Error).message });
     }
     const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4, ...career];
-    kbContext = deduplicatePassages(allFactualPassages);
+    const dedupedContext = deduplicatePassages(allFactualPassages);
+
+    // Prepend the support-grounding note (empty below threshold) so the matcher
+    // weights career evidence for support competencies.
+    kbContext = groundingNote ? `${groundingNote}\n\n${dedupedContext}` : dedupedContext;
 
     log('INFO', 'Retrieval complete', {
         agent: 'strategist-research',

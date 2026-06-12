@@ -5,37 +5,50 @@
  * For each JD-required tool/skill, builds a file-cited evidence row that maps
  * the candidate's matching evidence to one of three statuses:
  *   - verified: the tool is clearly demonstrated (with KB file citations)
- *   - transferable: related/partial evidence exists (with bridging foundation)
- *   - gap: no evidence found (honest empty)
+ *   - transferable: related/partial/implied evidence exists (with bridging foundation)
+ *   - gap: the tool matches one of the matcher's ACTUAL gaps (honest empty)
+ *
+ * HONESTY MODEL: a tool is `gap` ONLY when it matches a real matcher gap (the
+ * authoritative "what's missing"). A verified competency phrased differently is
+ * bridged to `verified` via token-overlap. A generic/implied competency the
+ * matcher did NOT flag as missing is `transferable` (implied), never a false gap.
  *
  * Pure + deterministic + unit-tested. No LLM involved.
  */
 
-import type { SkillEvidenceEntry, VerifiedMatch, PartialMatch } from '@bedrock/shared';
-import { matchTier1, matchTechTransfer } from './keyword-match.js';
+import type { SkillEvidenceEntry, VerifiedMatch, PartialMatch, SkillGap } from '@bedrock/shared';
+import { matchTier1, matchTechTransfer, tokenOverlapMatch } from './keyword-match.js';
+
+/** The implied-transferable bridge used when a tool matches nothing the matcher flagged. */
+const IMPLIED_BRIDGE =
+    'Implied by the role\'s verified competencies — the matcher did not flag this as a gap.';
 
 /**
- * Find a verified match for a given tool by bidirectional matchTier1 lookup.
- *
- * Tries both directions:
- *   matchTier1(tool, verifiedMatch.skill)  — tool text searched in skill
- *   matchTier1(verifiedMatch.skill, tool)  — skill text searched in tool
- *
- * This lets "Python" find "Scripting and automation (Python/Bash)" via either direction.
+ * Combined "semantic-ish" match: literal (bidirectional matchTier1) OR significant
+ * token-overlap. Token-overlap bridges differently-phrased competencies — e.g.
+ * "Critical thinking and root cause analysis" ↔ "...root-cause analysis".
  */
+function combinedMatch(tool: string, skill: string): boolean {
+    return matchTier1(tool, skill) || matchTier1(skill, tool) || tokenOverlapMatch(tool, skill);
+}
+
+/** Find a verified match for a given tool by combined (literal + token-overlap) match. */
 function findVerifiedMatch(tool: string, verifiedMatches: VerifiedMatch[]): VerifiedMatch | undefined {
-    return verifiedMatches.find(
-        (vm) => matchTier1(tool, vm.skill) || matchTier1(vm.skill, tool),
-    );
+    return verifiedMatches.find((vm) => combinedMatch(tool, vm.skill));
+}
+
+/** Find a partial match for a given tool by combined (literal + token-overlap) match. */
+function findPartialMatch(tool: string, partialMatches: PartialMatch[]): PartialMatch | undefined {
+    return partialMatches.find((pm) => combinedMatch(tool, pm.skill));
 }
 
 /**
- * Find a partial match for a given tool by bidirectional matchTier1 lookup.
+ * Find a matcher GAP for a given tool by combined (literal + token-overlap) match.
+ * This is the ONLY path to `gap` status — the tool must match one of the matcher's
+ * actual gaps (the authoritative "what's missing").
  */
-function findPartialMatch(tool: string, partialMatches: PartialMatch[]): PartialMatch | undefined {
-    return partialMatches.find(
-        (pm) => matchTier1(tool, pm.skill) || matchTier1(pm.skill, tool),
-    );
+function findGapMatch(tool: string, gaps: SkillGap[]): SkillGap | undefined {
+    return gaps.find((g) => combinedMatch(tool, g.skill));
 }
 
 /** Options for tech-group-based transferable resolution. */
@@ -48,10 +61,6 @@ export interface LedgerOpts {
 
 /**
  * Find the first verified match whose skill is a sibling of `tool` in any tech group.
- *
- * A verified match is a sibling when:
- *   matchTechTransfer(tool, verifiedMatch.skill, techGroups, techAliasMap) is true
- * (i.e. the tool's canonical and the verified match's canonical share a group).
  */
 function findVerifiedSiblingByGroup(
     tool: string,
@@ -68,21 +77,24 @@ function findVerifiedSiblingByGroup(
  * Build a per-tool Skill Evidence Ledger from the JD tool list and the
  * research matching result.
  *
- * Algorithm (per unique tool, preserving input order, case-insensitive dedupe):
- *  1. Find a verifiedMatch → verified + evidenceFiles + sourceCitation as evidence
- *  2. Else find a partialMatch → transferable + evidenceFiles + transferableFoundation as bridge
- *  3. Else if opts.techGroups provided: find a verified sibling in the same tech group
- *     → transferable + sibling's evidenceFiles + transferableBridge describing the group link
- *  4. Else → gap (honest: empty files, empty evidence)
+ * Status resolution order (per unique tool, preserving input order, case-insensitive dedupe):
+ *  1. verified           — combined-match to a verifiedMatch
+ *  2. transferable (group)— verified sibling in the same tech group (when opts provided)
+ *  3. transferable (partial) — combined-match to a partialMatch
+ *  4. gap                — combined-match to a matcher GAP (the ONLY path to gap)
+ *  5. transferable (implied) — matched nothing the matcher flagged → implied competency
  *
- * @param tools    - JD-required tools/skills (from technologyInventory.tools + requiredSkills, etc.)
- * @param matching - Research matching result (verifiedMatches + partialMatches)
- * @param opts     - Optional tech-group resolution config (back-compat: omit for original behaviour)
+ * @param tools    - JD-required tools/skills
+ * @param matching - Research matching result (verifiedMatches + partialMatches + gaps)
+ * @param opts     - Optional tech-group resolution config
  * @returns Ordered, deduped list of evidence entries
  */
 export function buildSkillEvidenceLedger(
     tools: string[],
-    matching: Pick<{ verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[] }, 'verifiedMatches' | 'partialMatches'>,
+    matching: Pick<
+        { verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[]; gaps: SkillGap[] },
+        'verifiedMatches' | 'partialMatches' | 'gaps'
+    >,
     opts?: LedgerOpts,
 ): SkillEvidenceEntry[] {
     const seen = new Set<string>();
@@ -93,6 +105,7 @@ export function buildSkillEvidenceLedger(
         if (seen.has(key)) continue;
         seen.add(key);
 
+        // 1. verified
         const vm = findVerifiedMatch(tool, matching.verifiedMatches);
         if (vm) {
             ledger.push({
@@ -105,6 +118,22 @@ export function buildSkillEvidenceLedger(
             continue;
         }
 
+        // 2. transferable — verified sibling in the same tech group
+        if (opts?.techGroups && opts.techAliasMap) {
+            const sibling = findVerifiedSiblingByGroup(tool, matching.verifiedMatches, opts.techGroups, opts.techAliasMap);
+            if (sibling) {
+                ledger.push({
+                    tool,
+                    status: 'transferable',
+                    evidenceFiles: sibling.evidenceFiles,
+                    evidence: sibling.sourceCitation,
+                    transferableBridge: `same technology group — ${sibling.skill} is transferable to ${tool}`,
+                });
+                continue;
+            }
+        }
+
+        // 3. transferable — partial match
         const pm = findPartialMatch(tool, matching.partialMatches);
         if (pm) {
             ledger.push({
@@ -117,27 +146,27 @@ export function buildSkillEvidenceLedger(
             continue;
         }
 
-        if (opts?.techGroups && opts.techAliasMap) {
-            const sibling = findVerifiedSiblingByGroup(tool, matching.verifiedMatches, opts.techGroups, opts.techAliasMap);
-            if (sibling) {
-                const verifiedTech = sibling.skill;
-                ledger.push({
-                    tool,
-                    status: 'transferable',
-                    evidenceFiles: sibling.evidenceFiles,
-                    evidence: sibling.sourceCitation,
-                    transferableBridge: `same technology group — ${verifiedTech} is transferable to ${tool}`,
-                });
-                continue;
-            }
+        // 4. gap — ONLY when the tool matches one of the matcher's actual gaps
+        const gap = findGapMatch(tool, matching.gaps);
+        if (gap) {
+            ledger.push({
+                tool,
+                status: 'gap',
+                evidenceFiles: [],
+                evidence: '',
+                transferableBridge: '',
+            });
+            continue;
         }
 
+        // 5. transferable (implied) — matched nothing the matcher flagged as missing.
+        // A generic/implied competency the matcher did NOT gap → transferable, NOT a false gap.
         ledger.push({
             tool,
-            status: 'gap',
+            status: 'transferable',
             evidenceFiles: [],
             evidence: '',
-            transferableBridge: '',
+            transferableBridge: IMPLIED_BRIDGE,
         });
     }
 
