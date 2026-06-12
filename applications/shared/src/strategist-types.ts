@@ -372,6 +372,13 @@ export interface JdSignal {
     readonly targetRole: string;
     readonly seniority: string;
     readonly domain: string;
+    /**
+     * The underlying problem the company is trying to solve with this role — a 1-3
+     * sentence synthesis of WHY the role exists (not the requirements list). Lets the
+     * writer position the candidate as the solution to the actual problem, not just a
+     * keyword match. '' when the JD gives no signal.
+     */
+    readonly companyProblem: string;
     readonly hardRequirements: JobRequirement[];
     readonly softRequirements: JobRequirement[];
     readonly implicitRequirements: string[];
@@ -429,6 +436,8 @@ export interface StrategistResearchResult {
     readonly seniority: string;
     /** Role domain classification */
     readonly domain: string;
+    /** The underlying problem the role exists to solve (from the JD agent). Provided by the assembly. */
+    readonly companyProblem: string;
 
     /** Requirements extracted from the JD */
     readonly hardRequirements: JobRequirement[];

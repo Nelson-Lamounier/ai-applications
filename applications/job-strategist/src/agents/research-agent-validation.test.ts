@@ -159,6 +159,7 @@ describe('executeResearchAgent KB-matcher contract', () => {
             targetRole: 'Senior SRE',
             seniority: 'senior',
             domain: 'devops-sre-platform',
+            companyProblem: 'Keep production reliable at scale.',
             hardRequirements: [{ skill: 'Kubernetes', context: '5y prod', disqualifying: true }],
             softRequirements: [{ skill: 'Mentoring', context: 'team lead' }],
             implicitRequirements: ['on-call'],

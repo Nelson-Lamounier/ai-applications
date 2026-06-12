@@ -68,6 +68,7 @@ const ExperienceSignalsSchema = z.object({
 export const JdExtractionSchema = z.object({
     // New JdSignal fields
     targetRole:           z.string().default(''),
+    companyProblem:       z.string().default(''),
     hardRequirements:     z.array(JobRequirementSchema).default([]),
     softRequirements:     z.array(JobRequirementSchema).default([]),
     implicitRequirements: z.array(z.string()).default([]),
@@ -92,6 +93,7 @@ const MINIMAL_JD_SIGNAL: JdSignal = {
     targetRole:           '',
     seniority:            '',
     domain:               '',
+    companyProblem:       '',
     hardRequirements:     [],
     softRequirements:     [],
     implicitRequirements: [],
@@ -118,6 +120,10 @@ const TOOL_SCHEMA = {
             targetRole: {
                 type: 'string',
                 description: 'The exact job title as stated in the JD (e.g. "Senior Platform Engineer").',
+            },
+            companyProblem: {
+                type: 'string',
+                description: 'The underlying problem the company is trying to solve with this role — a 1-3 sentence synthesis of WHY the role exists, inferred from the JD\'s framing (the team\'s mission, what they are building, the pain they describe). NOT the requirements list. Example: "Scaling expert support for a frontier-AI product whose problems are novel and undefined, at a volume where hiring linearly fails — by building a support org that uses automation/agentic AI to scale its own leverage." Empty string only if the JD gives no signal about intent.',
             },
             hardRequirements: {
                 type: 'array',
@@ -180,7 +186,7 @@ const TOOL_SCHEMA = {
             retrievalKeywords: { type: 'array', items: { type: 'string' }, description: 'Deduped lowercase technical terms best suited for semantic search over a candidate portfolio.' },
         },
         required: [
-            'targetRole',
+            'targetRole', 'companyProblem',
             'hardRequirements', 'softRequirements', 'implicitRequirements',
             'technologyInventory', 'experienceSignals',
             'requiredSkills', 'preferredSkills', 'tools', 'concepts',
@@ -199,6 +205,7 @@ const SYSTEM_PROMPT = [
     'You are the single source of JD understanding for the whole pipeline — be thorough and atomic.',
     'Rules:',
     '- Extract only what the JD states or strongly implies. Do not invent skills the JD never mentions.',
+    '- companyProblem = the UNDERLYING problem the role exists to solve. Read past the requirements list: infer from the team mission, what they are building, the pain/scale they describe, and how they frame the role. Write 1-3 sentences capturing WHY this role exists and what success changes for the company — the thing a great candidate should position themselves as the solution to. This is judgement, not a keyword list. Empty only if the JD truly gives no signal of intent.',
     '- hardRequirements = must-haves; set disqualifying=true when the absence of the skill/qualification would likely reject the candidate at screening.',
     '- softRequirements = nice-to-haves / "preferred" / "bonus" items.',
     '- implicitRequirements = unstated but strongly implied expectations (e.g. on-call availability, autonomous working style).',

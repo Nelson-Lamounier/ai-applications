@@ -132,6 +132,15 @@ function buildStrategistMessage(
         '',
     ];
 
+    if (research.companyProblem?.trim()) {
+        sections.push(
+            '### The Problem This Role Solves (position the candidate as the answer)',
+            research.companyProblem.trim(),
+            'Lead the summary + cover letter with how the candidate SOLVES this problem — using only verified/partial evidence below. Do not merely list matching keywords; show the candidate is the answer to what they are actually hiring for. Never invent capabilities to fit the problem.',
+            '',
+        );
+    }
+
     // Hard requirements
     sections.push('### Hard Requirements');
     for (const req of research.hardRequirements) {

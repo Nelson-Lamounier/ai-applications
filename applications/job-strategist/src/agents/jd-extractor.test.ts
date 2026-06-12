@@ -69,6 +69,7 @@ describe('JdExtractionSchema', () => {
         expect(parsed).toEqual({
             // New JdSignal fields
             targetRole:           '',
+            companyProblem:       '',
             hardRequirements:     [],
             softRequirements:     [],
             implicitRequirements: [],
@@ -89,6 +90,7 @@ const FULL_JD_SIGNAL: JdSignal = {
     targetRole:           'Senior Platform Engineer',
     seniority:            'senior',
     domain:               'Cloud/DevOps',
+    companyProblem:       'Scale reliable platform delivery as the team grows.',
     hardRequirements:     [{ skill: 'Kubernetes', context: '5+ years production', disqualifying: true }],
     softRequirements:     [{ skill: 'ArgoCD', context: 'nice-to-have' }],
     implicitRequirements: ['incident-response mindset'],
@@ -126,6 +128,8 @@ describe('extractJdSignal', () => {
 
         // targetRole
         expect(result!.targetRole).toBe('Senior Platform Engineer');
+        // companyProblem — the synthesized "why this role exists"
+        expect(result!.companyProblem).toBe('Scale reliable platform delivery as the team grows.');
 
         // hardRequirements — array of {skill, context, disqualifying}
         expect(result!.hardRequirements).toHaveLength(1);
