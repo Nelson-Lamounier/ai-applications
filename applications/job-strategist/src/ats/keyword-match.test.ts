@@ -1,5 +1,5 @@
 /** @format */
-import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer } from './keyword-match.js';
+import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer, tokenOverlapMatch } from './keyword-match.js';
 
 describe('normalizeTerm', () => {
     it('strips qualifiers + generic suffixes, collapses punctuation', () => {
@@ -56,6 +56,49 @@ describe('matchTier1', () => {
         const r = 'Support engineer; Python and Bash automation';
         expect(matchTier1('AI-driven customer support automation', r)).toBe(false); // no language/scripting cue
         expect(matchTier1('scripting languages', 'recruiter with no technical skills')).toBe(false); // no language in resume
+    });
+});
+
+describe('tokenOverlapMatch', () => {
+    it('≥2 shared significant tokens → true (bridges competency phrasing)', () => {
+        // shares {root, cause, analysis}
+        expect(tokenOverlapMatch(
+            'Critical thinking and root cause analysis',
+            'SaaS support operations, escalation management, root-cause analysis',
+        )).toBe(true);
+    });
+
+    it('exactly 2 shared tokens → true', () => {
+        // {customer, support} shared
+        expect(tokenOverlapMatch(
+            'Direct customer support and relationship building',
+            'Direct customer support / customer interaction',
+        )).toBe(true);
+    });
+
+    it('1 shared token → false (unless ≥60% of smaller set)', () => {
+        // 'payment systems' → {payment}; 'payment gateway integration' → {payment, gateway, integration}
+        // 1 shared / min(1,3) = 100% of the smaller set → true by the 60% rule
+        expect(tokenOverlapMatch('payment systems', 'fraud detection pipeline', 2)).toBe(false);
+    });
+
+    it('1 shared token, larger disjoint sets → false', () => {
+        // {customer, retention} vs {customer, acquisition, funnel, analytics} → 1 shared, 1/2 = 50% < 60% → false
+        expect(tokenOverlapMatch('customer retention', 'customer acquisition funnel analytics')).toBe(false);
+    });
+
+    it('1 shared token but ≥60% of smaller set → true', () => {
+        // {alerting} vs {alerting, dashboards} → 1 shared, 1/min(1,2)=100% ≥ 60% → true
+        expect(tokenOverlapMatch('alerting', 'alerting dashboards')).toBe(true);
+    });
+
+    it('disjoint sets → false', () => {
+        expect(tokenOverlapMatch('Salesforce CRM', 'Kubernetes orchestration')).toBe(false);
+    });
+
+    it('empty token set on either side → false', () => {
+        expect(tokenOverlapMatch('', 'root cause analysis')).toBe(false);
+        expect(tokenOverlapMatch('and or the', 'root cause analysis')).toBe(false);
     });
 });
 

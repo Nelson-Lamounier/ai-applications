@@ -59,6 +59,26 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
     return matchSkillCategory(term.toLowerCase(), resume);
 }
 
+/**
+ * Significant-token overlap — bridges differently-phrased competencies.
+ *
+ * "Critical thinking and root cause analysis" vs "...root-cause analysis" → shares
+ * {root,cause,analysis}. Reuses `normalizeTerm` (strips qualifier/suffix noise), then
+ * compares the sets of significant (≥3-char) tokens.
+ *
+ * Matches when ≥ `minShared` tokens overlap OR ≥ 60% of the smaller token set overlaps
+ * (so a short, fully-contained phrase like "alerting" vs "alerting dashboards" bridges).
+ */
+export function tokenOverlapMatch(a: string, b: string, minShared = 2): boolean {
+    const toks = (s: string) => new Set(normalizeTerm(s).split(' ').filter((t) => t.length >= 3));
+    const A = toks(a), B = toks(b);
+    if (A.size === 0 || B.size === 0) return false;
+    let shared = 0;
+    for (const t of A) if (B.has(t)) shared++;
+    // match if ≥ minShared shared tokens OR ≥ 60% of the smaller set overlaps
+    return shared >= minShared || shared / Math.min(A.size, B.size) >= 0.6;
+}
+
 export type MatchTier = 'literal' | 'normalized' | 'ontology' | 'tech-transfer' | 'embedding' | 'none';
 export interface Embedder { embed(text: string): Promise<number[]>; }
 export interface MatchCtx {

@@ -1,6 +1,6 @@
 /** @format */
 import { buildSkillEvidenceLedger } from './skill-evidence-ledger.js';
-import type { VerifiedMatch, PartialMatch } from '@bedrock/shared';
+import type { VerifiedMatch, PartialMatch, SkillGap } from '@bedrock/shared';
 
 const makeVerified = (overrides: Partial<VerifiedMatch> & Pick<VerifiedMatch, 'skill'>): VerifiedMatch => ({
     sourceCitation: 'some project',
@@ -18,6 +18,16 @@ const makePartial = (overrides: Partial<PartialMatch> & Pick<PartialMatch, 'skil
     ...overrides,
 });
 
+const makeGap = (overrides: Partial<SkillGap> & Pick<SkillGap, 'skill'>): SkillGap => ({
+    gapType: 'soft',
+    impactSeverity: 'minor',
+    disqualifyingAssessment: 'not disqualifying',
+    ...overrides,
+});
+
+/** The implied-transferable bridge used when a tool matches nothing the matcher flagged. */
+const IMPLIED_BRIDGE = 'Implied by the role\'s verified competencies — the matcher did not flag this as a gap.';
+
 describe('buildSkillEvidenceLedger', () => {
     it('tool with a verifiedMatch → status verified + sourceCitation as evidence + evidenceFiles', () => {
         const matching = {
@@ -29,6 +39,7 @@ describe('buildSkillEvidenceLedger', () => {
                 }),
             ],
             partialMatches: [],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['Python'], matching);
         expect(ledger).toHaveLength(1);
@@ -52,6 +63,7 @@ describe('buildSkillEvidenceLedger', () => {
                     evidenceFiles: ['Nelson-Lamounier/repo/src/api/rest.ts'],
                 }),
             ],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['GraphQL'], matching);
         expect(ledger).toHaveLength(1);
@@ -64,10 +76,11 @@ describe('buildSkillEvidenceLedger', () => {
         });
     });
 
-    it('unmatched tool → status gap + empty evidenceFiles + empty strings', () => {
+    it('tool matching a real matcher GAP → status gap + empty evidenceFiles + empty strings', () => {
         const matching = {
             verifiedMatches: [],
             partialMatches: [],
+            gaps: [makeGap({ skill: 'Rust' })],
         };
         const ledger = buildSkillEvidenceLedger(['Rust'], matching);
         expect(ledger).toHaveLength(1);
@@ -80,12 +93,30 @@ describe('buildSkillEvidenceLedger', () => {
         });
     });
 
+    it('tool matching NOTHING (not verified, not partial, not a matcher gap) → transferable (implied), NOT a false gap', () => {
+        const matching = {
+            verifiedMatches: [],
+            partialMatches: [],
+            gaps: [],
+        };
+        const ledger = buildSkillEvidenceLedger(['Rust'], matching);
+        expect(ledger).toHaveLength(1);
+        expect(ledger[0]).toEqual({
+            tool: 'Rust',
+            status: 'transferable',
+            evidenceFiles: [],
+            evidence: '',
+            transferableBridge: IMPLIED_BRIDGE,
+        });
+    });
+
     it('deduplicates tools case-insensitively — first occurrence wins', () => {
         const matching = {
             verifiedMatches: [
                 makeVerified({ skill: 'Python', sourceCitation: 'pipeline', evidenceFiles: ['a.py'] }),
             ],
             partialMatches: [],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['Python', 'python', 'PYTHON'], matching);
         expect(ledger).toHaveLength(1);
@@ -100,6 +131,7 @@ describe('buildSkillEvidenceLedger', () => {
                 makeVerified({ skill: 'AWS CDK' }),
             ],
             partialMatches: [],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['AWS CDK', 'TypeScript', 'Rust'], matching);
         expect(ledger.map((e) => e.tool)).toEqual(['AWS CDK', 'TypeScript', 'Rust']);
@@ -115,6 +147,7 @@ describe('buildSkillEvidenceLedger', () => {
                 }),
             ],
             partialMatches: [],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['Python'], matching);
         expect(ledger).toHaveLength(1);
@@ -126,6 +159,7 @@ describe('buildSkillEvidenceLedger', () => {
         const matching = {
             verifiedMatches: [makeVerified({ skill: 'Python' })],
             partialMatches: [],
+            gaps: [],
         };
         expect(buildSkillEvidenceLedger([], matching)).toEqual([]);
     });
@@ -138,6 +172,7 @@ describe('buildSkillEvidenceLedger', () => {
             partialMatches: [
                 makePartial({ skill: 'Docker', gapDescription: 'some gap', evidenceFiles: ['other.ts'] }),
             ],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['Docker'], matching);
         expect(ledger[0]!.status).toBe('verified');
@@ -174,6 +209,7 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
                 }),
             ],
             partialMatches: [],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
         expect(ledger).toHaveLength(1);
@@ -186,7 +222,7 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
         expect(entry.transferableBridge).toMatch(/openai api/i);
     });
 
-    it('true gap tool with no group-sibling verified evidence → remains gap (honesty)', () => {
+    it('true gap tool with no group-sibling verified evidence but a matching matcher gap → remains gap (honesty)', () => {
         const matching = {
             verifiedMatches: [
                 makeVerified({
@@ -196,6 +232,8 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
                 }),
             ],
             partialMatches: [],
+            // The matcher flagged Salesforce as a real gap — so it stays gap.
+            gaps: [makeGap({ skill: 'Salesforce' })],
         };
         // Salesforce is NOT in the aiProviderGroup
         const ledger = buildSkillEvidenceLedger(['Salesforce'], matching, { techGroups, techAliasMap });
@@ -217,6 +255,7 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
                 }),
             ],
             partialMatches: [],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
         expect(ledger[0]!.status).toBe('verified');
@@ -234,6 +273,7 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
                     evidenceFiles: ['some-api.ts'],
                 }),
             ],
+            gaps: [],
         };
         // Even though AWS Bedrock is NOT in verifiedMatches, the partial direct match wins
         const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
@@ -241,16 +281,32 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
         expect(ledger[0]!.transferableBridge).toBe('api design knowledge');
     });
 
-    it('omitting opts entirely preserves original behaviour (back-compat)', () => {
+    it('omitting opts: no group resolution; tool matching a matcher gap → gap', () => {
         const matching = {
             verifiedMatches: [
                 makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock project', evidenceFiles: ['f.ts'] }),
             ],
             partialMatches: [],
+            // The matcher flagged OpenAI API as a real gap.
+            gaps: [makeGap({ skill: 'OpenAI API' })],
         };
-        // Without opts, OpenAI API has no direct match → gap (no group resolution)
+        // Without opts, OpenAI API has no group resolution; it matches a real matcher gap → gap
         const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching);
         expect(ledger[0]!.status).toBe('gap');
+    });
+
+    it('omitting opts: tool matching NOTHING (no group, no matcher gap) → transferable (implied)', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock project', evidenceFiles: ['f.ts'] }),
+            ],
+            partialMatches: [],
+            gaps: [],
+        };
+        // Without opts and with no matching matcher gap, OpenAI API → transferable (implied), NOT a false gap
+        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching);
+        expect(ledger[0]!.status).toBe('transferable');
+        expect(ledger[0]!.transferableBridge).toBe(IMPLIED_BRIDGE);
     });
 
     it('group-transferable picks the first verified sibling match when multiple exist', () => {
@@ -268,10 +324,106 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
                 }),
             ],
             partialMatches: [],
+            gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching, { techGroups, techAliasMap });
         expect(ledger[0]!.status).toBe('transferable');
         // First sibling found wins
         expect(ledger[0]!.evidence).toBe('bedrock first');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Grounding accuracy — ledger status aligns with the matcher (token-overlap
+// bridges competency phrasing; gap ONLY when it matches a real matcher gap).
+// Run 5a4e5c87: verified competencies were being re-gapped by literal matching.
+// ---------------------------------------------------------------------------
+
+describe('buildSkillEvidenceLedger — token-overlap bridging + matcher-aligned gaps', () => {
+    it('"Critical thinking and root cause analysis" + verified "...root-cause analysis" → verified (token-overlap)', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({
+                    skill: 'SaaS support operations, escalation management, root-cause analysis',
+                    sourceCitation: 'incident runbooks in ai-applications',
+                    evidenceFiles: ['Nelson-Lamounier/ai-applications/docs/runbooks/escalation.md'],
+                }),
+            ],
+            partialMatches: [],
+            gaps: [],
+        };
+        const ledger = buildSkillEvidenceLedger(['Critical thinking and root cause analysis'], matching);
+        expect(ledger[0]!.status).toBe('verified');
+        expect(ledger[0]!.evidenceFiles).toEqual(['Nelson-Lamounier/ai-applications/docs/runbooks/escalation.md']);
+        expect(ledger[0]!.evidence).toBe('incident runbooks in ai-applications');
+    });
+
+    it('"Direct customer support and relationship building" + verified "Direct customer support / customer interaction" → verified', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({
+                    skill: 'Direct customer support / customer interaction',
+                    sourceCitation: 'support role evidence',
+                    evidenceFiles: ['career/support-role.md'],
+                }),
+            ],
+            partialMatches: [],
+            gaps: [],
+        };
+        const ledger = buildSkillEvidenceLedger(['Direct customer support and relationship building'], matching);
+        expect(ledger[0]!.status).toBe('verified');
+        expect(ledger[0]!.evidenceFiles).toEqual(['career/support-role.md']);
+    });
+
+    it('"8+ years experience" + matcher gap "8+ years user operations experience" → gap (the real gap stays gap)', () => {
+        const matching = {
+            verifiedMatches: [],
+            partialMatches: [],
+            gaps: [makeGap({ skill: '8+ years user operations experience' })],
+        };
+        const ledger = buildSkillEvidenceLedger(['8+ years experience'], matching);
+        expect(ledger[0]).toEqual({
+            tool: '8+ years experience',
+            status: 'gap',
+            evidenceFiles: [],
+            evidence: '',
+            transferableBridge: '',
+        });
+    });
+
+    it('"Problem solving" with NO verified/partial/gap match → transferable (implied), empty files, implied bridge', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock', evidenceFiles: ['b.ts'] }),
+            ],
+            partialMatches: [],
+            gaps: [makeGap({ skill: '8+ years user operations experience' })],
+        };
+        const ledger = buildSkillEvidenceLedger(['Problem solving'], matching);
+        expect(ledger[0]).toEqual({
+            tool: 'Problem solving',
+            status: 'transferable',
+            evidenceFiles: [],
+            evidence: '',
+            transferableBridge: IMPLIED_BRIDGE,
+        });
+    });
+
+    it('a tool matching BOTH a verified and a matcher gap resolves to verified (verified checked first)', () => {
+        const matching = {
+            verifiedMatches: [
+                makeVerified({
+                    skill: 'root-cause analysis and escalation management',
+                    sourceCitation: 'verified evidence',
+                    evidenceFiles: ['rca.md'],
+                }),
+            ],
+            partialMatches: [],
+            // The matcher ALSO listed a gap that token-overlaps "root cause analysis"
+            gaps: [makeGap({ skill: 'formal root cause analysis certification' })],
+        };
+        const ledger = buildSkillEvidenceLedger(['Critical thinking and root cause analysis'], matching);
+        expect(ledger[0]!.status).toBe('verified');
+        expect(ledger[0]!.evidenceFiles).toEqual(['rca.md']);
     });
 });
