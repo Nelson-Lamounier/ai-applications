@@ -1,155 +1,102 @@
 /**
  * @format
- * Tool Evidence Retrieval — per-tool targeted pgvector query for the Skill Evidence Ledger.
+ * Skill Evidence Ledger — structured code-evidence enrichment.
  *
- * After the deterministic ledger is built by buildSkillEvidenceLedger, this
- * module ENRICHES each verified/transferable entry's evidenceFiles by running
- * a dedicated pgvector query for that specific tool.
+ * "What your repos prove" must cite REAL code, not whatever reads similarly. Cosine
+ * retrieval (used previously here) ranks prose docs above code and matches files by
+ * lexical name overlap — so a soft skill like "complex technical communication" got
+ * attached to a frontend component named CompanyProblemPanel.tsx. That is the wrong
+ * question ("what reads like this?") for a proof lane.
  *
- * GAP entries are NEVER touched — their evidenceFiles remain [] (honesty invariant).
- * All retrieval errors are fail-open — the entry is returned unchanged.
+ * This module instead attaches the actual CODE files that use a skill's technology,
+ * from the deterministic technology_evidence lane (TechnologyOntologyRepository.
+ * loadCanonicalToCodeFiles). A ledger entry is enriched ONLY when BOTH hold:
+ *   (a) the skill resolves to a tech canonical the user actually has IN CODE, and
+ *   (b) it was not already grounded purely in experience (matcher gave no files).
+ * Soft/experience skills therefore keep their honest career grounding (no files);
+ * gap entries are never touched. No embeddings, no I/O — pure + deterministic.
  */
 
 import type { SkillEvidenceEntry } from '@bedrock/shared';
+import { buildReverseAliasMap, mentionsCanonical } from './keyword-match.js';
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface EvidenceRetrievalDeps {
-    readonly store: {
-        querySimilar(p: {
-            userId: string;
-            queryEmbedding: number[];
-            queryText: string;
-            useHybrid: boolean;
-            limit: number;
-        }): Promise<Array<{ repoFullName: string; filePath: string; cosine: number | null }>>;
-    };
-    readonly embedder: { embed(text: string): Promise<number[]> };
-    readonly userId: string;
+export interface LedgerEvidenceDeps {
+    /** canonical(lower) → code file paths that use it (technology_evidence, code layers). */
+    readonly canonicalToFiles: ReadonlyMap<string, ReadonlyArray<string>>;
+    /** alias(lower) → canonical(lower) — resolves a JD skill phrase to a tech canonical. */
+    readonly aliasToCanonical: ReadonlyMap<string, string>;
 }
 
-export interface EvidenceRetrievalOpts {
-    /** Maximum files to keep per entry (default: 3). */
+export interface LedgerEvidenceOpts {
+    /** Maximum code files to attach per entry (default: 3). */
     readonly topN?: number;
-    /** Minimum cosine score to include a result (default: FLOOR env var or 0.28). */
-    readonly floor?: number;
-    /** How many rows to fetch from the DB before scoring/capping (default: 12). */
-    readonly limit?: number;
 }
 
 // ---------------------------------------------------------------------------
-// Constants
+// Helpers
 // ---------------------------------------------------------------------------
+
+/** Space-pad a phrase to a lowercased alnum token stream for whole-word containment. */
+function padded(text: string): string {
+    return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
+}
 
 /**
- * Default cosine floor — a notch above the 0.20 noise-floor used by research
- * queries so only files with real topical overlap are attached as proof.
- * Override via LEDGER_EVIDENCE_FLOOR env var.
+ * Resolve a skill phrase to a tech canonical the user HAS in code, or null. Scans only
+ * the canonicals present in code evidence (≤ a few hundred), so a match means there is
+ * real code to cite. Whole-token match via the alias reverse map — "Python scripting and
+ * automation" → python; "Complex technical communication" → null (no code canonical named).
  */
-const DEFAULT_FLOOR = Number.parseFloat(process.env['LEDGER_EVIDENCE_FLOOR'] ?? '0.28');
-
-// ---------------------------------------------------------------------------
-// retrieveToolEvidenceFiles
-// ---------------------------------------------------------------------------
-
-/**
- * Targeted retrieval for ONE tool → its best KB file paths.
- *
- * Steps:
- *  1. Embed the tool name via Titan.
- *  2. querySimilar (hybrid, limit rows from the DB).
- *  3. Filter by cosine >= floor (null cosine treated as below floor).
- *  4. Map to `${repoFullName}/${filePath}` (canonical path).
- *  5. Dedupe preserving order, take topN.
- *
- * Fail-open: any error → [].
- */
-export async function retrieveToolEvidenceFiles(
-    tool: string,
-    deps: EvidenceRetrievalDeps,
-    opts?: EvidenceRetrievalOpts,
-): Promise<string[]> {
-    const floor = opts?.floor ?? DEFAULT_FLOOR;
-    const topN = opts?.topN ?? 3;
-    const limit = opts?.limit ?? 12;
-
-    try {
-        const queryEmbedding = await deps.embedder.embed(tool);
-        const rows = await deps.store.querySimilar({
-            userId: deps.userId,
-            queryEmbedding,
-            queryText: tool,
-            useHybrid: true,
-            limit,
-        });
-
-        const seen = new Set<string>();
-        const paths: string[] = [];
-
-        for (const row of rows) {
-            if (row.cosine == null || row.cosine < floor) continue;
-            const path = `${row.repoFullName}/${row.filePath}`;
-            if (seen.has(path)) continue;
-            seen.add(path);
-            paths.push(path);
-            if (paths.length >= topN) break;
-        }
-
-        return paths;
-    } catch {
-        return [];
+function resolveCodeCanonical(
+    skill: string,
+    canonicalToFiles: LedgerEvidenceDeps['canonicalToFiles'],
+    reverse: Map<string, string[]>,
+): string | null {
+    const hay = padded(skill);
+    for (const canonical of canonicalToFiles.keys()) {
+        if (mentionsCanonical(canonical, hay, reverse)) return canonical;
     }
+    return null;
 }
 
 // ---------------------------------------------------------------------------
-// enrichLedgerWithEvidence
+// attachCodeEvidence
 // ---------------------------------------------------------------------------
 
 /**
- * Enrich a Skill Evidence Ledger with per-tool targeted retrieval.
+ * Attach structured code-file evidence to a Skill Evidence Ledger.
  *
- * Rules:
- *  - GAP entries are returned UNCHANGED (evidenceFiles stay []).
- *  - verified/transferable: UNION (retrieved files ++ matcher files), deduped,
- *    per-tool retrieved files placed first, capped at topN.
- *  - Fail-open per entry: any retrieval error → original entry returned.
- *  - All entries are processed concurrently (Promise.all).
+ * Per non-gap entry:
+ *  - resolve the skill to a code-present canonical (a); experienceGrounded = the matcher
+ *    cited no files (b). Enrich ONLY when a canonical resolves AND it was not experience-
+ *    grounded — otherwise return the entry unchanged (soft/experience skills stay honest).
+ *  - when enriching: REPLACE the matcher files with structured code files (structured-only
+ *    proof — a code-demonstrable skill cites code, not the matcher's docs).
+ *  - gap entries: never touched. Pure + deterministic; no retrieval, no embeddings.
  */
-export async function enrichLedgerWithEvidence(
+export function attachCodeEvidence(
     ledger: SkillEvidenceEntry[],
-    deps: EvidenceRetrievalDeps,
-    opts?: EvidenceRetrievalOpts,
-): Promise<SkillEvidenceEntry[]> {
+    deps: LedgerEvidenceDeps,
+    opts?: LedgerEvidenceOpts,
+): SkillEvidenceEntry[] {
     const topN = opts?.topN ?? 3;
+    const reverse = buildReverseAliasMap(deps.aliasToCanonical);
 
-    return Promise.all(
-        ledger.map(async (entry) => {
-            // Honesty invariant: gap entries never get files.
-            if (entry.status === 'gap') {
-                return entry;
-            }
+    return ledger.map((entry) => {
+        if (entry.status === 'gap') return entry;                       // honesty invariant
 
-            try {
-                const retrieved = await retrieveToolEvidenceFiles(entry.tool, deps, opts);
+        const experienceGrounded = entry.evidenceFiles.length === 0;    // (b) matcher grounded in career
+        const canonical = resolveCodeCanonical(entry.tool, deps.canonicalToFiles, reverse); // (a)
+        if (!canonical || experienceGrounded) return entry;             // BOTH conditions required
 
-                // Union: per-tool retrieval first, then existing matcher files.
-                const seen = new Set<string>();
-                const merged: string[] = [];
+        const codeFiles = deps.canonicalToFiles.get(canonical) ?? [];
+        if (codeFiles.length === 0) return entry;                       // no code proof → keep matcher files
 
-                for (const f of [...retrieved, ...entry.evidenceFiles]) {
-                    if (seen.has(f)) continue;
-                    seen.add(f);
-                    merged.push(f);
-                    if (merged.length >= topN) break;
-                }
-
-                return { ...entry, evidenceFiles: merged };
-            } catch {
-                // Fail-open: return original entry on any unexpected error.
-                return entry;
-            }
-        }),
-    );
+        // Structured-only: cite the real code files, not the matcher's (possibly doc) files.
+        return { ...entry, evidenceFiles: codeFiles.slice(0, topN) };
+    });
 }

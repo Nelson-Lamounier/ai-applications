@@ -15,7 +15,7 @@
  */
 import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, RdsVectorStore } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
@@ -53,7 +53,7 @@ import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, p
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
-import { enrichLedgerWithEvidence } from './ats/tool-evidence-retrieval.js';
+import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -431,7 +431,7 @@ export async function main(): Promise<void> {
         // Tech-ontology grounding — load transfer groups + alias map ONCE (fail-open).
         // Prefer the explicit relationship graph; fall back to category groups when sparse.
         const techRepo = new TechnologyOntologyRepository(pool);
-        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths, evidenceTopology] = await Promise.all([
+        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths, evidenceTopology, canonicalToCodeFiles] = await Promise.all([
             techRepo.loadTransferGroups().catch(() => [] as string[][]),
             techRepo.loadCategoryGroups().catch(() => [] as string[][]),
             techRepo.loadAliasMap().catch(() => new Map<string, string>()),
@@ -441,6 +441,7 @@ export async function main(): Promise<void> {
             techRepo.loadRepoArchetypeSignals(env.userId).catch(() => new Map<string, Record<string, boolean>>()),
             techRepo.loadRepoFilePaths(env.userId).catch(() => new Map<string, Set<string>>()),
             techRepo.loadRepoEvidenceTopology(env.userId).catch(() => new Map<string, Record<string, unknown>>()),
+            techRepo.loadCanonicalToCodeFiles(env.userId).catch(() => new Map<string, string[]>()),
         ]);
         const techGroups = techTransferGroups.length > 0 ? techTransferGroups : techCategoryGroups;
 
@@ -509,14 +510,12 @@ export async function main(): Promise<void> {
         ];
         const baseLedger = buildSkillEvidenceLedger(ledgerTools, guardedResearch.data, { techGroups, techAliasMap });
 
-        // Enrich verified/transferable entries with per-tool targeted pgvector queries.
-        // GAP entries are never touched (honesty invariant). Fail-open: any error → baseLedger.
-        const ledgerEmbedder = TitanEmbeddingProvider.fromEnvironment();
-        const ledgerStore = RdsVectorStore.fromEnvironment();
-        const skillEvidenceLedger = await enrichLedgerWithEvidence(
-            baseLedger,
-            { store: ledgerStore, embedder: ledgerEmbedder, userId: env.userId },
-        ).catch(() => baseLedger);
+        // Attach STRUCTURED code-file evidence: the actual code files using each skill's
+        // technology (technology_evidence), not cosine-nearest prose/lexical matches. A
+        // soft skill (e.g. "complex technical communication") resolves to no code canonical
+        // → keeps its honest career grounding. GAP entries untouched. Pure + deterministic
+        // (no I/O), so it is called directly — it never reaches out and cannot block.
+        const skillEvidenceLedger = attachCodeEvidence(baseLedger, { canonicalToFiles: canonicalToCodeFiles, aliasToCanonical });
 
         const researchData: StrategistResearchResult = {
             ...jdExtraction,
