@@ -46,7 +46,7 @@ import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
 import { splitAttainable } from './ats/attainable.js';
 import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
-import { buildProvenanceRows, persistEvidenceProvenance } from './lib/evidence-provenance.js';
+import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
@@ -159,6 +159,49 @@ async function lintResumeProse(
             pipelineRunId: env.pipelineRunId,
             err:           (e as Error).message,
         }, 'resume_prose_lint_failed (non-fatal)');
+    }
+}
+
+/**
+ * Record the run's evidence provenance (Phase 1) + per-repo quality rollup (Phase 2)
+ * into their queryable tables. Flattens the retrieval trace + usage attribution
+ * (cited / demoted / never-used) already computed upstream. Pure observability
+ * side-channel — fail-open, never gates the run.
+ */
+async function recordRunProvenance(
+    pool: Pool,
+    env: { pipelineRunId: string; userId: string },
+    researchData: StrategistResearchResult,
+    matching: { verifiedMatches: ReadonlyArray<{ evidenceFiles?: string[] }>; partialMatches: ReadonlyArray<{ evidenceFiles?: string[] }> },
+    demotions: ReadonlyArray<{ evidenceFiles: string[] }>,
+    contradictions: ReadonlyArray<{ evidenceFiles: string[] }>,
+    codeTechByRepo: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<void> {
+    try {
+        const verifiedFiles = new Set<string>();
+        for (const m of matching.verifiedMatches) for (const f of m.evidenceFiles ?? []) verifiedFiles.add(f);
+        const partialFiles = new Set<string>();
+        for (const m of matching.partialMatches) for (const f of m.evidenceFiles ?? []) partialFiles.add(f);
+        const demotedFiles = new Map<string, 'vendor_provenance' | 'code_truth'>();
+        for (const d of demotions) for (const f of d.evidenceFiles) demotedFiles.set(f, 'vendor_provenance');
+        for (const c of contradictions) for (const f of c.evidenceFiles) demotedFiles.set(f, 'code_truth');
+        const provRows = buildProvenanceRows({
+            kbContext: researchData.kbContext ?? '',
+            floor: researchData.kbRetrievalStats?.floor ?? 0.2,
+            verifiedFiles, partialFiles, demotedFiles,
+        });
+        const persisted = await persistEvidenceProvenance(pool, {
+            pipelineRunId: env.pipelineRunId, userId: env.userId,
+            targetRole: researchData.targetRole, targetCompany: researchData.targetCompany ?? '',
+            agent: 'research',
+        }, provRows);
+        const qualityRows = buildRepoQualityRows(provRows, codeTechByRepo);
+        await persistRepoEvidenceQuality(pool, {
+            pipelineRunId: env.pipelineRunId, userId: env.userId, targetRole: researchData.targetRole,
+        }, qualityRows);
+        log.info({ pipelineRunId: env.pipelineRunId, provenanceRows: persisted, repoQualityRows: qualityRows.length }, 'evidence_provenance_persisted');
+    } catch (e) {
+        log.warn({ pipelineRunId: env.pipelineRunId, err: (e as Error).message }, 'evidence_provenance_persist_failed (non-fatal)');
     }
 }
 
@@ -458,31 +501,8 @@ export async function main(): Promise<void> {
             skillEvidenceLedger,
         };
 
-        // Evidence provenance (Phase 1, observability, fail-open): flatten the retrieval
-        // trace + usage attribution (cited / demoted / never-used) into the queryable
-        // evidence_provenance table. Pure side-channel — never gates the run.
-        try {
-            const verifiedFiles = new Set<string>();
-            for (const m of guardedMatching.verifiedMatches) for (const f of m.evidenceFiles ?? []) verifiedFiles.add(f);
-            const partialFiles = new Set<string>();
-            for (const m of guardedMatching.partialMatches) for (const f of m.evidenceFiles ?? []) partialFiles.add(f);
-            const demotedFiles = new Map<string, 'vendor_provenance' | 'code_truth'>();
-            for (const d of demotions) for (const f of d.evidenceFiles) demotedFiles.set(f, 'vendor_provenance');
-            for (const c of contradictions) for (const f of c.evidenceFiles) demotedFiles.set(f, 'code_truth');
-            const provRows = buildProvenanceRows({
-                kbContext: researchData.kbContext ?? '',
-                floor: researchData.kbRetrievalStats?.floor ?? 0.2,
-                verifiedFiles, partialFiles, demotedFiles,
-            });
-            const persisted = await persistEvidenceProvenance(pool, {
-                pipelineRunId: env.pipelineRunId, userId: env.userId,
-                targetRole: researchData.targetRole, targetCompany: researchData.targetCompany ?? '',
-                agent: 'research',
-            }, provRows);
-            log.info({ pipelineRunId: env.pipelineRunId, provenanceRows: persisted }, 'evidence_provenance_persisted');
-        } catch (e) {
-            log.warn({ pipelineRunId: env.pipelineRunId, err: (e as Error).message }, 'evidence_provenance_persist_failed (non-fatal)');
-        }
+        // Evidence provenance + per-repo quality (Phases 1-2, observability, fail-open).
+        await recordRunProvenance(pool, env, researchData, guardedMatching, demotions, contradictions, codeTechByRepo);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
