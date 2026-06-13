@@ -88,6 +88,16 @@ describe('deriveTopology', () => {
         expect(p.concepts).toContain('database-migrations');
         expect(p.concepts.some((c) => c === 'tested' || c === 'well-tested')).toBe(true);
     });
+
+    it('folds ingestion evidence-topology (scripts + migration tool) into concepts', () => {
+        const [p] = buildRepoProfiles(
+            new Map([['o/api', tech('typescript')]]),
+            new Map([['o/api', sig({ has_dockerfile: true })]]),
+            new Map(),
+            new Map([['o/api', { has_test_script: true, has_build_script: true, has_migrations: true, migration_tools: ['prisma'], is_monorepo: true }]]),
+        );
+        expect(p.concepts).toEqual(expect.arrayContaining(['tested', 'build-tooling', 'database-migrations', 'migrations:prisma', 'monorepo']));
+    });
 });
 
 describe('buildRepoProfileContext', () => {

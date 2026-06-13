@@ -239,6 +239,24 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
     }
 
     /**
+     * Persist the deterministic evidence topology (package.json scripts + DB
+     * migration ecosystem + monorepo) for a repo. Same write shape as
+     * saveArchetypeSignals. No-op safe when the row doesn't yet exist.
+     */
+    async saveEvidenceTopology(
+        userId: string,
+        repoFullName: string,
+        topology: Record<string, unknown>,
+    ): Promise<void> {
+        await this.pool.query(
+            `UPDATE repo_sync_state
+                SET evidence_topology = $3::jsonb
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName, JSON.stringify(topology)],
+        );
+    }
+
+    /**
      * Read the last-synced commit SHA watermark. Plain pool.query (mirrors
      * markPhase/saveArchetypeSignals — no explicit txn / set_config; relies on
      * the pool's pre-set RLS GUC). Returns null when no row exists or the

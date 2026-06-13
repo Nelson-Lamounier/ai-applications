@@ -134,10 +134,29 @@ function deriveConcepts(
  * Build one RepoProfile per repo present in either input. Pure + deterministic.
  * Repos with neither tech nor signals are skipped.
  */
+/** Concepts from the ingestion-derived evidence topology (scripts, DB migrations, monorepo). */
+function evidenceTopologyConcepts(et: Record<string, unknown> | undefined): string[] {
+    if (!et) return [];
+    const out: string[] = [];
+    const on = (k: string): boolean => et[k] === true;
+    if (on('has_test_script')) out.push('tested');
+    if (on('has_build_script')) out.push('build-tooling');
+    if (on('has_lint_script')) out.push('lint-tooling');
+    if (on('has_typecheck_script')) out.push('typechecked');
+    if (on('has_migrations')) {
+        out.push('database-migrations');
+        const tools = et['migration_tools'];
+        if (Array.isArray(tools)) for (const t of tools) if (typeof t === 'string') out.push(`migrations:${t}`);
+    }
+    if (on('is_monorepo')) out.push('monorepo');
+    return out;
+}
+
 export function buildRepoProfiles(
     codeTechByRepo: ReadonlyMap<string, ReadonlySet<string>>,
     signalsByRepo: ReadonlyMap<string, Signals>,
     filePathsByRepo: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+    evidenceTopologyByRepo: ReadonlyMap<string, Record<string, unknown>> = new Map(),
 ): RepoProfile[] {
     const repos = new Set<string>([...codeTechByRepo.keys(), ...signalsByRepo.keys()]);
     const profiles: RepoProfile[] = [];
@@ -149,7 +168,10 @@ export function buildRepoProfiles(
         const frameworks = [...tech].filter(isFramework).sort((a, b) => a.localeCompare(b));
         const services = [...tech].filter(isService).sort((a, b) => a.localeCompare(b));
         const repoType = classifyRepoType(sig, tech, frameworks);
-        const concepts = deriveConcepts(sig, services, frameworks, topology);
+        const concepts = [...new Set([
+            ...deriveConcepts(sig, services, frameworks, topology),
+            ...evidenceTopologyConcepts(evidenceTopologyByRepo.get(repo)),
+        ])];
         profiles.push({ repoFullName: repo, repoType, frameworks, services, concepts });
     }
     return profiles.sort((a, b) => a.repoFullName.localeCompare(b.repoFullName));

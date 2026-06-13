@@ -29,6 +29,7 @@ import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoFile }  from '../in
 import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
 import { deriveRepoSignals }  from '../../projects/repo-signals.js';
+import { deriveEvidenceTopology } from '../../projects/evidence-topology.js';
 
 /**
  * Bounded concurrency for GitHub file fetches. Override via
@@ -91,6 +92,8 @@ export interface OrchestratorOptions {
      */
     readonly syncStateSignalSink?: {
         saveArchetypeSignals(userId: string, repoFullName: string, signals: Record<string, boolean>): Promise<void>;
+        /** Optional: persist the evidence topology (scripts + DB migrations + monorepo). */
+        saveEvidenceTopology?(userId: string, repoFullName: string, topology: Record<string, unknown>): Promise<void>;
     };
     /**
      * When provided together with {@link watermarkStore}, ingestRepo runs an
@@ -379,16 +382,33 @@ export class RepoIngestionOrchestrator {
     ): Promise<void> {
         if (!this.syncStateSignalSink) return;
         try {
-            const signals = deriveRepoSignals(
-                allFiles.map((f) => ({ path: f.path })),
-                { projectShape: undefined },
-            );
+            const fileList = allFiles.map((f) => ({ path: f.path }));
+            const signals = deriveRepoSignals(fileList, { projectShape: undefined });
             await this.syncStateSignalSink.saveArchetypeSignals(userId, repoFullName, signals);
+            // Evidence topology — needs package.json content (scripts) + the full tree
+            // (DB migrations across ecosystems). Best-effort; package.json may be absent.
+            if (this.syncStateSignalSink.saveEvidenceTopology) {
+                const pkg = await this.fetchPackageJson(repoFullName);
+                const topology = deriveEvidenceTopology(fileList, pkg);
+                await this.syncStateSignalSink.saveEvidenceTopology(userId, repoFullName, { ...topology });
+            }
         } catch (err) {
             console.warn(
                 `[RepoIngestionOrchestrator] archetype-signal persist skipped for ${repoFullName}:`,
                 err,
             );
+        }
+    }
+
+    /** Fetch + parse the repo-root package.json (null when absent or unparseable). */
+    private async fetchPackageJson(repoFullName: string): Promise<Record<string, unknown> | null> {
+        try {
+            const content = await this.repoAdapter.fetchFile(repoFullName, 'package.json');
+            if (!content) return null;
+            const parsed: unknown = JSON.parse(content);
+            return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+        } catch {
+            return null;
         }
     }
 

@@ -125,6 +125,25 @@ export class TechnologyOntologyRepository {
     }
 
     /**
+     * Load each repo's evidence topology (repo_sync_state.evidence_topology — the
+     * manifest+tree evidence: package.json scripts, DB-migration ecosystem, monorepo)
+     * for a user. Feeds the Repository Profile builder. Empty map when none stored.
+     */
+    async loadRepoEvidenceTopology(userId: string): Promise<Map<string, Record<string, unknown>>> {
+        const { rows } = await this.pool.query<{ repo_full_name: string; evidence_topology: Record<string, unknown> | null }>(
+            `SELECT repo_full_name, evidence_topology
+               FROM repo_sync_state
+              WHERE user_id = $1 AND evidence_topology IS NOT NULL`,
+            [userId],
+        );
+        const map = new Map<string, Record<string, unknown>>();
+        for (const r of rows) {
+            if (r.evidence_topology) map.set(r.repo_full_name, r.evidence_topology);
+        }
+        return map;
+    }
+
+    /**
      * Load each repo's archetype signals (repo_sync_state.archetype_signals — the
      * folder-structure scan: has_iac, has_k8s_manifests, has_argocd_apps, …) for a
      * user. Feeds the Repository Profile builder. Empty map when none stored.
