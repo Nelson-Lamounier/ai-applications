@@ -31,6 +31,9 @@ import { CommitChunker }      from '../implementations/CommitChunker.js';
 import { deriveRepoSignals }  from '../../projects/repo-signals.js';
 import { deriveEvidenceTopology } from '../../projects/evidence-topology.js';
 
+/** Cap on package.json manifests fetched per repo for evidence-topology (monorepo-safe). */
+const MAX_PACKAGE_JSON_FETCHES = 25;
+
 /**
  * Bounded concurrency for GitHub file fetches. Override via
  * FILE_FETCH_CONCURRENCY. Keep small enough to avoid GitHub's secondary
@@ -388,8 +391,8 @@ export class RepoIngestionOrchestrator {
             // Evidence topology — needs package.json content (scripts) + the full tree
             // (DB migrations across ecosystems). Best-effort; package.json may be absent.
             if (this.syncStateSignalSink.saveEvidenceTopology) {
-                const pkg = await this.fetchPackageJson(repoFullName);
-                const topology = deriveEvidenceTopology(fileList, pkg);
+                const pkgs = await this.fetchPackageJsons(repoFullName, fileList);
+                const topology = deriveEvidenceTopology(fileList, pkgs);
                 await this.syncStateSignalSink.saveEvidenceTopology(userId, repoFullName, { ...topology });
             }
         } catch (err) {
@@ -400,13 +403,32 @@ export class RepoIngestionOrchestrator {
         }
     }
 
-    /** Fetch + parse the repo-root package.json (null when absent or unparseable). */
-    private async fetchPackageJson(repoFullName: string): Promise<Record<string, unknown> | null> {
+    /**
+     * Fetch + parse EVERY package.json (root + workspace packages, shallowest first,
+     * capped) so monorepo scripts/deps are seen — they live in the workspace packages,
+     * not the root. Returns only the manifests that parsed.
+     */
+    private async fetchPackageJsons(
+        repoFullName: string,
+        fileList: readonly { path: string }[],
+    ): Promise<Array<Record<string, unknown> | null>> {
+        const PKG_RE = /(?:^|\/)package\.json$/i;
+        const pkgPaths = fileList
+            .map((f) => f.path)
+            .filter((p) => PKG_RE.test(p))
+            .sort((a, b) => a.split('/').length - b.split('/').length) // root + shallow first
+            .slice(0, MAX_PACKAGE_JSON_FETCHES);
+        const parsed = await Promise.all(pkgPaths.map((p) => this.fetchPackageJsonAt(repoFullName, p)));
+        return parsed.filter((p): p is Record<string, unknown> => p !== null);
+    }
+
+    /** Fetch + parse one package.json (null when absent or unparseable). */
+    private async fetchPackageJsonAt(repoFullName: string, path: string): Promise<Record<string, unknown> | null> {
         try {
-            const content = await this.repoAdapter.fetchFile(repoFullName, 'package.json');
+            const content = await this.repoAdapter.fetchFile(repoFullName, path);
             if (!content) return null;
-            const parsed: unknown = JSON.parse(content);
-            return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+            const json: unknown = JSON.parse(content);
+            return json !== null && typeof json === 'object' ? (json as Record<string, unknown>) : null;
         } catch {
             return null;
         }

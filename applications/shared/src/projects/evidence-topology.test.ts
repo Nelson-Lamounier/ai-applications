@@ -2,33 +2,46 @@
 import { deriveEvidenceTopology } from './evidence-topology.js';
 
 const files = (...paths: string[]) => paths.map((path) => ({ path }));
+type Manifest = Record<string, unknown> | null;
+const one = (pkg: Manifest) => [pkg]; // single-package repo
 
 describe('deriveEvidenceTopology — package.json scripts (manifest evidence)', () => {
     it('detects real test/lint/build/typecheck scripts', () => {
-        const t = deriveEvidenceTopology([], {
+        const t = deriveEvidenceTopology([], one({
             scripts: { test: 'vitest run', lint: 'eslint .', build: 'tsc -p .', typecheck: 'tsc --noEmit' },
-        });
+        }));
         expect(t).toMatchObject({ has_test_script: true, has_lint_script: true, has_build_script: true, has_typecheck_script: true });
     });
 
     it('ignores the npm placeholder test script', () => {
-        const t = deriveEvidenceTopology([], { scripts: { test: 'echo "Error: no test specified" && exit 1' } });
+        const t = deriveEvidenceTopology([], one({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }));
         expect(t.has_test_script).toBe(false);
     });
 
     it('detects typecheck via an inline tsc --noEmit even without a named script', () => {
-        const t = deriveEvidenceTopology([], { scripts: { check: 'tsc --noEmit && eslint .' } });
+        const t = deriveEvidenceTopology([], one({ scripts: { check: 'tsc --noEmit && eslint .' } }));
         expect(t.has_typecheck_script).toBe(true);
     });
 
-    it('no scripts → all false', () => {
-        const t = deriveEvidenceTopology([], {});
+    it('MONOREPO: scripts in a workspace package count (root has none)', () => {
+        const t = deriveEvidenceTopology(
+            files('package.json', 'packages/api/package.json'),
+            [
+                { workspaces: ['packages/*'] },                                  // root: no scripts
+                { scripts: { test: 'jest', build: 'tsc -b' } },                  // workspace package: scripts
+            ],
+        );
+        expect(t).toMatchObject({ has_test_script: true, has_build_script: true, is_monorepo: true });
+    });
+
+    it('no scripts in any manifest → all false', () => {
+        const t = deriveEvidenceTopology([], [{}, { workspaces: ['x'] }]);
         expect(t).toMatchObject({ has_test_script: false, has_lint_script: false, has_build_script: false });
     });
 });
 
 describe('deriveEvidenceTopology — migrations across ALL DB ecosystems', () => {
-    const cases: Array<[string, ReturnType<typeof files>, Record<string, unknown> | null, string]> = [
+    const cases: Array<[string, ReturnType<typeof files>, Manifest, string]> = [
         ['raw SQL', files('db/migrations/001_init.sql'), null, 'sql-migrations'],
         ['Prisma (path)', files('prisma/migrations/20240101_init/migration.sql'), null, 'prisma'],
         ['Prisma (schema)', files('prisma/schema.prisma'), null, 'prisma'],
@@ -48,19 +61,19 @@ describe('deriveEvidenceTopology — migrations across ALL DB ecosystems', () =>
     ];
 
     it.each(cases)('detects %s migrations → %s', (_label, fs, pkg, tool) => {
-        const t = deriveEvidenceTopology(fs, pkg);
+        const t = deriveEvidenceTopology(fs, one(pkg));
         expect(t.has_migrations).toBe(true);
         expect(t.migration_tools).toContain(tool);
     });
 
     it('drops the generic sql-migrations catch-all when a specific tool matches', () => {
-        const t = deriveEvidenceTopology(files('prisma/migrations/1/migration.sql', 'db/migrations/2.sql'), { dependencies: { prisma: '^5' } });
+        const t = deriveEvidenceTopology(files('prisma/migrations/1/migration.sql', 'db/migrations/2.sql'), one({ dependencies: { prisma: '^5' } }));
         expect(t.migration_tools).toContain('prisma');
         expect(t.migration_tools).not.toContain('sql-migrations');
     });
 
     it('no migration system → has_migrations false', () => {
-        const t = deriveEvidenceTopology(files('src/index.ts', 'README.md'), { scripts: { build: 'tsc' } });
+        const t = deriveEvidenceTopology(files('src/index.ts', 'README.md'), one({ scripts: { build: 'tsc' } }));
         expect(t.has_migrations).toBe(false);
         expect(t.migration_tools).toEqual([]);
     });
@@ -68,15 +81,15 @@ describe('deriveEvidenceTopology — migrations across ALL DB ecosystems', () =>
 
 describe('deriveEvidenceTopology — monorepo', () => {
     it('detects workspaces field', () => {
-        expect(deriveEvidenceTopology([], { workspaces: ['packages/*'] }).is_monorepo).toBe(true);
+        expect(deriveEvidenceTopology([], one({ workspaces: ['packages/*'] })).is_monorepo).toBe(true);
     });
     it('detects ≥2 nested package.json', () => {
-        expect(deriveEvidenceTopology(files('packages/a/package.json', 'packages/b/package.json'), null).is_monorepo).toBe(true);
+        expect(deriveEvidenceTopology(files('packages/a/package.json', 'packages/b/package.json'), [null]).is_monorepo).toBe(true);
     });
     it('detects a workspace config file (turbo/nx/pnpm/lerna)', () => {
-        expect(deriveEvidenceTopology(files('turbo.json'), null).is_monorepo).toBe(true);
+        expect(deriveEvidenceTopology(files('turbo.json'), [null]).is_monorepo).toBe(true);
     });
     it('single package → not a monorepo', () => {
-        expect(deriveEvidenceTopology(files('package.json', 'src/index.ts'), {}).is_monorepo).toBe(false);
+        expect(deriveEvidenceTopology(files('package.json', 'src/index.ts'), one({})).is_monorepo).toBe(false);
     });
 });
