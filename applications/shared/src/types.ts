@@ -154,7 +154,9 @@ export type AgentName =
     // resume guard pipeline.
     | 'resume-rewrite'
     // ATS feedback loop — surface attainable-but-missing keywords.
-    | 'surface-keywords';
+    | 'surface-keywords'
+    // doc-vs-code drift — reframe a superseded-tech bullet as a migration narrative.
+    | 'migration-reframe';
 
 /**
  * Model-agnostic configuration for a single agent.

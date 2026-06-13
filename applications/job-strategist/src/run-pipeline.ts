@@ -47,6 +47,7 @@ import { splitAttainable } from './ats/attainable.js';
 import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
 import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/repo-profile.js';
+import { detectStaleMigrations, reframeStaleMigrations } from './ats/migration-reframe.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
@@ -598,6 +599,20 @@ export async function main(): Promise<void> {
             });
             finalResume = guarded.resume;
             for (const v of guarded.violations) resumeViolationsMetric.inc({ code: v.code });
+        }
+
+        // Career/bullet drift: reframe an experience bullet describing a tech the code
+        // has since superseded (e.g. self-hosted kubeadm → managed EKS) into an honest
+        // migration narrative. Deterministic detection + grounded Haiku reframe; fail-open.
+        if (finalResume) {
+            const staleMigrations = detectStaleMigrations(finalResume, { succeedsEdges, codeTechByRepo, aliasToCanonical });
+            if (staleMigrations.length > 0) {
+                log.warn({
+                    pipelineRunId: env.pipelineRunId,
+                    migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
+                }, 'migration_reframe_fired');
+                finalResume = await reframeStaleMigrations(finalResume, staleMigrations).catch(() => finalResume);
+            }
         }
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
