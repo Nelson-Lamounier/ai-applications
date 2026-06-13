@@ -425,16 +425,22 @@ export class RdsVectorStore implements IVectorStore {
                 AND COALESCE((d.metadata->>'is_fork')::bool, false) = false
                 AND COALESCE((d.metadata->>'authored')::bool, true) = true
                 AND COALESCE(d.metadata->>'repo_classification', 'project') NOT IN ('noise', 'tutorial')
-                -- SOFT tech/skill widener (transfer-aware). Tech gating is FILE-grained
-                -- when the chunk's file has deterministic tech evidence (metadata.file_tech_stack):
-                -- a monitoring YAML stamped {alertmanager} is correctly excluded from a Python/LLM JD.
-                -- Repo-grained repo_tech_stack is the FALLBACK only for chunks with no file evidence
-                -- (prose/docs the code-layer extractor doesn't cover), preserving their recall.
+                -- SOFT tech/skill widener (transfer-aware), applied by chunk TYPE:
+                --   • PROSE (docs/README) is NEVER tech-gated — it is the cosine "evidence"
+                --     lane; gating it by repo tech wrongly drops cross-domain prose (e.g. a
+                --     TS/React app's docs for a Python JD).
+                --   • CODE/CONFIG with file-grained tech evidence (metadata.file_tech_stack)
+                --     must overlap the JD tech — a monitoring YAML stamped {alertmanager} is
+                --     excluded from a Python/LLM JD.
+                --   • CONFIG WITHOUT file evidence is excluded: it must not free-ride its
+                --     repo's stack (the old repo_tech_stack fallback admitted any YAML in a
+                --     repo that used a JD tech anywhere). Code/other without evidence passes
+                --     to cosine. Chunk skills[] overlap always admits.
                 AND ($6::bool = false OR cardinality($7::text[]) = 0
                      OR d.skills && $7::text[]
                      OR (d.metadata ? 'file_tech_stack' AND d.metadata->'file_tech_stack' ?| $7::text[])
                      OR (NOT (d.metadata ? 'file_tech_stack')
-                         AND d.metadata ? 'repo_tech_stack' AND d.metadata->'repo_tech_stack' ?| $7::text[]))
+                         AND d.file_path !~* '\\.(ya?ml|json|toml|lock|cfg|ini|env|tf|tfvars)$'))
                 AND ($8::uuid[] IS NULL OR d.id <> ALL($8))
               ORDER BY d.embedding <=> $3::vector
               LIMIT $5`,
