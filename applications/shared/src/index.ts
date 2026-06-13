@@ -540,3 +540,9 @@ export { RdsSystemDesignConcernRepository } from './rds/implementations/RdsSyste
 // ─── Role Ontology ────────────────────────────────────────────────────────────
 export { RoleOntologyRepository } from './rds/implementations/RoleOntologyRepository.js';
 export type { RoleFamily, RoleClass, RoleCandidateType, RoleLearningCandidate, NewFamily, CompanyType } from './rds/types/role-ontology.js';
+
+export {
+    stampUserEvidenceMetadata,
+    buildEvidenceStamp,
+} from './projects/index.js';
+export type { EvidenceStamp, RepoSignals } from './projects/index.js';
