@@ -478,7 +478,7 @@ export async function main(): Promise<void> {
         // while the real stack is Bedrock/Anthropic) was VERIFIED by the LLM → demote to a
         // transferable partialMatch so it is never written as first-person production work.
         // Runs BEFORE the ledger + strategist so the correction propagates to both.
-        const { matching: vendorGuarded, demotions } = demoteMisattributedVendors(research.data, { techGroups, techAliasMap });
+        const { matching: vendorGuarded, demotions } = demoteMisattributedVendors(research.data, { techGroups, techAliasMap, codeTechByRepo });
         if (demotions.length > 0) {
             log.warn({
                 pipelineRunId: env.pipelineRunId,

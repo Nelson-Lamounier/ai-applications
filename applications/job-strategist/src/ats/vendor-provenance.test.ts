@@ -102,4 +102,38 @@ describe('demoteMisattributedVendors', () => {
         expect(r.matching).toBe(input);
         expect(r.demotions).toHaveLength(0);
     });
+
+    describe('absent-from-code cross-check (robust where the path heuristic misses)', () => {
+        const codeWith = (...techs: string[]) =>
+            new Map<string, ReadonlySet<string>>([['Nelson-Lamounier/ai-applications', new Set(techs)]]);
+
+        it('demotes a vendor backed by an AUTHORED doc when the vendor is absent from code but a sibling is present', () => {
+            // Claims OpenAI from a normal (non-reference) doc, but the code uses Bedrock.
+            const r = demoteMisattributedVendors(
+                matching([verified('OpenAI API and ChatGPT integration', [AUTHORED])]),
+                { techGroups: GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('bedrock', 'typescript') },
+            );
+            expect(r.matching.verifiedMatches).toHaveLength(0);
+            expect(r.matching.partialMatches).toHaveLength(1);
+            expect(r.matching.partialMatches[0].gapDescription).toMatch(/not present in the candidate's authored code/i);
+        });
+
+        it('KEEPS a vendor that IS in the candidate code (real production use)', () => {
+            const r = demoteMisattributedVendors(
+                matching([verified('OpenAI API', [AUTHORED])]),
+                { techGroups: GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('openai', 'bedrock') },
+            );
+            expect(r.matching.verifiedMatches).toHaveLength(1);
+            expect(r.demotions).toHaveLength(0);
+        });
+
+        it('KEEPS a vendor absent from code when NO sibling is in code (no transferable bridge — could be undetectable)', () => {
+            const r = demoteMisattributedVendors(
+                matching([verified('OpenAI API', [AUTHORED])]),
+                { techGroups: GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('python', 'kubernetes') },
+            );
+            expect(r.matching.verifiedMatches).toHaveLength(1);
+            expect(r.demotions).toHaveLength(0);
+        });
+    });
 });
