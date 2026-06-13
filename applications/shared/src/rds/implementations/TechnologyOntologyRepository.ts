@@ -98,6 +98,25 @@ export class TechnologyOntologyRepository {
     }
 
     /**
+     * Load each repo's archetype signals (repo_sync_state.archetype_signals — the
+     * folder-structure scan: has_iac, has_k8s_manifests, has_argocd_apps, …) for a
+     * user. Feeds the Repository Profile builder. Empty map when none stored.
+     */
+    async loadRepoArchetypeSignals(userId: string): Promise<Map<string, Record<string, boolean>>> {
+        const { rows } = await this.pool.query<{ repo_full_name: string; archetype_signals: Record<string, boolean> | null }>(
+            `SELECT repo_full_name, archetype_signals
+               FROM repo_sync_state
+              WHERE user_id = $1 AND archetype_signals IS NOT NULL`,
+            [userId],
+        );
+        const map = new Map<string, Record<string, boolean>>();
+        for (const r of rows) {
+            if (r.archetype_signals) map.set(r.repo_full_name, r.archetype_signals);
+        }
+        return map;
+    }
+
+    /**
      * Load `succeeds` relationships as a predecessor -> successors map.
      * A row `(from=aws_eks, to=self_hosted_kubernetes, kind='succeeds')` means
      * "aws_eks SUCCEEDS self_hosted_kubernetes" (the newer tech replaces the older).

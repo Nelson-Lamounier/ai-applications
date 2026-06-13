@@ -46,6 +46,7 @@ import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
 import { splitAttainable } from './ats/attainable.js';
 import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
+import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/repo-profile.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
@@ -168,15 +169,19 @@ async function lintResumeProse(
  * (cited / demoted / never-used) already computed upstream. Pure observability
  * side-channel — fail-open, never gates the run.
  */
-async function recordRunProvenance(
-    pool: Pool,
-    env: { pipelineRunId: string; userId: string },
-    researchData: StrategistResearchResult,
-    matching: { verifiedMatches: ReadonlyArray<{ evidenceFiles?: string[] }>; partialMatches: ReadonlyArray<{ evidenceFiles?: string[] }> },
-    demotions: ReadonlyArray<{ evidenceFiles: string[] }>,
-    contradictions: ReadonlyArray<{ evidenceFiles: string[] }>,
-    codeTechByRepo: ReadonlyMap<string, ReadonlySet<string>>,
-): Promise<void> {
+interface RunProvenanceInputs {
+    readonly pool: Pool;
+    readonly env: { pipelineRunId: string; userId: string };
+    readonly researchData: StrategistResearchResult;
+    readonly matching: { verifiedMatches: ReadonlyArray<{ evidenceFiles?: string[] }>; partialMatches: ReadonlyArray<{ evidenceFiles?: string[] }> };
+    readonly demotions: ReadonlyArray<{ evidenceFiles: string[] }>;
+    readonly contradictions: ReadonlyArray<{ evidenceFiles: string[] }>;
+    readonly codeTechByRepo: ReadonlyMap<string, ReadonlySet<string>>;
+    readonly repoProfiles: ReadonlyArray<RepoProfile>;
+}
+
+async function recordRunProvenance(args: RunProvenanceInputs): Promise<void> {
+    const { pool, env, researchData, matching, demotions, contradictions, codeTechByRepo, repoProfiles } = args;
     try {
         const verifiedFiles = new Set<string>();
         for (const m of matching.verifiedMatches) for (const f of m.evidenceFiles ?? []) verifiedFiles.add(f);
@@ -190,16 +195,14 @@ async function recordRunProvenance(
             floor: researchData.kbRetrievalStats?.floor ?? 0.2,
             verifiedFiles, partialFiles, demotedFiles,
         });
+        const meta = { pipelineRunId: env.pipelineRunId, userId: env.userId };
         const persisted = await persistEvidenceProvenance(pool, {
-            pipelineRunId: env.pipelineRunId, userId: env.userId,
-            targetRole: researchData.targetRole, targetCompany: researchData.targetCompany ?? '',
-            agent: 'research',
+            ...meta, targetRole: researchData.targetRole, targetCompany: researchData.targetCompany ?? '', agent: 'research',
         }, provRows);
         const qualityRows = buildRepoQualityRows(provRows, codeTechByRepo);
-        await persistRepoEvidenceQuality(pool, {
-            pipelineRunId: env.pipelineRunId, userId: env.userId, targetRole: researchData.targetRole,
-        }, qualityRows);
-        log.info({ pipelineRunId: env.pipelineRunId, provenanceRows: persisted, repoQualityRows: qualityRows.length }, 'evidence_provenance_persisted');
+        await persistRepoEvidenceQuality(pool, { ...meta, targetRole: researchData.targetRole }, qualityRows);
+        const profilesPersisted = await persistRepoProfiles(pool, meta, repoProfiles);
+        log.info({ pipelineRunId: env.pipelineRunId, provenanceRows: persisted, repoQualityRows: qualityRows.length, repoProfiles: profilesPersisted }, 'evidence_provenance_persisted');
     } catch (e) {
         log.warn({ pipelineRunId: env.pipelineRunId, err: (e as Error).message }, 'evidence_provenance_persist_failed (non-fatal)');
     }
@@ -426,13 +429,14 @@ export async function main(): Promise<void> {
         // Tech-ontology grounding — load transfer groups + alias map ONCE (fail-open).
         // Prefer the explicit relationship graph; fall back to category groups when sparse.
         const techRepo = new TechnologyOntologyRepository(pool);
-        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical] = await Promise.all([
+        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals] = await Promise.all([
             techRepo.loadTransferGroups().catch(() => [] as string[][]),
             techRepo.loadCategoryGroups().catch(() => [] as string[][]),
             techRepo.loadAliasMap().catch(() => new Map<string, string>()),
             techRepo.loadRepoCodeTech(env.userId).catch(() => new Map<string, Set<string>>()),
             techRepo.loadSucceedsEdges().catch(() => new Map<string, Set<string>>()),
             techRepo.loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
+            techRepo.loadRepoArchetypeSignals(env.userId).catch(() => new Map<string, Record<string, boolean>>()),
         ]);
         const techGroups = techTransferGroups.length > 0 ? techTransferGroups : techCategoryGroups;
 
@@ -443,9 +447,13 @@ export async function main(): Promise<void> {
             ...jdExtraction.technologyInventory.languages,
         ];
         const techTransferContext = formatTechTransferContext(jdTools, techGroups, techAliasMap);
-        // Doc-vs-code drift: the authoritative current code stack per repo (deterministic
-        // extraction), injected so the matcher prefers code over stale documentation.
-        const codeStackContext = buildCodeStackContext(codeTechByRepo);
+        // Doc-vs-code drift + repo identity: the authoritative current code stack per repo
+        // AND each repo's deterministic profile (cdk-infra/k8s-platform/…, what it provisions).
+        // Folded into one grounding block so the matcher prefers code over stale docs and
+        // attributes work to the right repo (e.g. cdk-monitoring IS the EKS-via-CDK infra).
+        const repoProfiles = buildRepoProfiles(codeTechByRepo, archetypeSignals);
+        const codeStackContext = [buildCodeStackContext(codeTechByRepo), buildRepoProfileContext(repoProfiles)]
+            .filter(Boolean).join('\n\n');
 
         const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext);
 
@@ -501,8 +509,11 @@ export async function main(): Promise<void> {
             skillEvidenceLedger,
         };
 
-        // Evidence provenance + per-repo quality (Phases 1-2, observability, fail-open).
-        await recordRunProvenance(pool, env, researchData, guardedMatching, demotions, contradictions, codeTechByRepo);
+        // Evidence provenance + per-repo quality + repo profiles (observability, fail-open).
+        await recordRunProvenance({
+            pool, env, researchData, matching: guardedMatching,
+            demotions, contradictions, codeTechByRepo, repoProfiles,
+        });
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
