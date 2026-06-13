@@ -1,5 +1,5 @@
 /** @format */
-import { buildRepoProfiles, buildRepoProfileContext } from './repo-profile.js';
+import { buildRepoProfiles, buildRepoProfileContext, deriveTopology } from './repo-profile.js';
 import type { Signals } from './repo-profile.js';
 
 const tech = (...t: string[]) => new Set(t);
@@ -58,6 +58,35 @@ describe('buildRepoProfiles', () => {
 
     it('skips repos with neither tech nor signals', () => {
         expect(buildRepoProfiles(new Map([['o/empty', new Set<string>()]]), new Map())).toHaveLength(0);
+    });
+});
+
+describe('deriveTopology', () => {
+    it('derives test/migration/monorepo signals from file paths (evidence, not claims)', () => {
+        const paths = new Set([
+            'o/r/src/index.ts', 'o/r/src/index.test.ts', 'o/r/src/__tests__/util.ts',
+            'o/r/migrations/001_init.sql', 'o/r/packages/a/package.json', 'o/r/packages/b/package.json',
+        ]);
+        const t = deriveTopology(paths);
+        expect(t.hasTests).toBe(true);
+        expect(t.hasMigrations).toBe(true);
+        expect(t.isMonorepo).toBe(true);            // ≥2 nested package.json
+        expect(t.testRatio).toBeCloseTo(2 / 6, 2);  // 2 test files of 6
+    });
+
+    it('reports no topology for a flat repo with no tests/migrations', () => {
+        const t = deriveTopology(new Set(['o/r/main.py', 'o/r/README.md']));
+        expect(t).toEqual({ hasTests: false, testRatio: 0, hasMigrations: false, isMonorepo: false });
+    });
+
+    it('folds topology into repo-profile concepts (tested / database-migrations)', () => {
+        const [p] = buildRepoProfiles(
+            new Map([['o/api', tech('typescript')]]),
+            new Map([['o/api', sig({ has_dockerfile: true })]]),
+            new Map([['o/api', new Set(['o/api/src/a.ts', 'o/api/src/a.test.ts', 'o/api/migrations/1.sql'])]]),
+        );
+        expect(p.concepts).toContain('database-migrations');
+        expect(p.concepts.some((c) => c === 'tested' || c === 'well-tested')).toBe(true);
     });
 });
 
