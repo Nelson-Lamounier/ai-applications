@@ -98,6 +98,45 @@ export class TechnologyOntologyRepository {
     }
 
     /**
+     * Load canonical tech → the CODE files that actually use it, for a user. This is the
+     * structured "proof" lane behind the Skill Evidence Ledger: a deterministic answer to
+     * "which authored code files demonstrate this technology?" — unlike cosine retrieval,
+     * which surfaces prose docs and lexically-similar-but-irrelevant files.
+     *
+     * Code layers only (syft/treesitter/iac/dockerfile — never README/code-prose), latest
+     * commit per repo, paths as `${repo}/${file}`. Returns canonical(lower) → ordered
+     * unique paths. Empty map when no code evidence exists (callers fail-safe).
+     */
+    async loadCanonicalToCodeFiles(userId: string): Promise<Map<string, string[]>> {
+        const { rows } = await this.pool.query<{ canonical: string; path: string }>(
+            `WITH latest_commit AS (
+                 SELECT DISTINCT ON (repo_full_name) repo_full_name, commit_sha
+                   FROM technology_evidence
+                  WHERE user_id = $1
+                  ORDER BY repo_full_name, created_at DESC
+             )
+             SELECT lower(o.canonical_name) AS canonical,
+                    te.repo_full_name || '/' || te.file_path AS path
+               FROM technology_evidence te
+               JOIN latest_commit lc
+                 ON lc.repo_full_name = te.repo_full_name AND lc.commit_sha = te.commit_sha
+               JOIN technology_ontology o ON o.id = te.technology_id
+              WHERE te.user_id = $1
+                AND te.source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')
+              GROUP BY lower(o.canonical_name), te.repo_full_name || '/' || te.file_path
+              ORDER BY 1, 2`,
+            [userId],
+        );
+        const byCanonical = new Map<string, string[]>();
+        for (const r of rows) {
+            const list = byCanonical.get(r.canonical);
+            if (list === undefined) byCanonical.set(r.canonical, [r.path]);
+            else list.push(r.path);
+        }
+        return byCanonical;
+    }
+
+    /**
      * Load the DISTINCT ingested file paths per repo for a user — the union of paths
      * seen by the doc-chunker (document_embeddings) and the code extractor
      * (technology_evidence). A run-time evidence-topology proxy for the repo file tree
