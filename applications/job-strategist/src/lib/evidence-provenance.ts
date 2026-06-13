@@ -14,9 +14,11 @@
 
 import type { Pool } from 'pg';
 
-/** Header on each assembled kbContext passage. Rerank captured (computeKbStats drops it). */
-const HEADER_COSINE = /^\[Source:\s*(.+?),\s*Cosine:\s*([0-9.]+),\s*Rerank:\s*([0-9.]+)\]/;
-const HEADER_LEGACY = /^\[Source:\s*(.+?),\s*Score:\s*([0-9.]+)\]/;
+// Header on each assembled kbContext passage. Rerank captured (computeKbStats drops it).
+// The source is matched with a negated class `[^,\]]+` (linear, no backtracking) rather
+// than `.+?` — the path never contains a comma or `]`, and this avoids any ReDoS risk.
+const HEADER_COSINE = /^\[Source:\s*([^,\]]+),\s*Cosine:\s*([0-9.]+),\s*Rerank:\s*([0-9.]+)\]/;
+const HEADER_LEGACY = /^\[Source:\s*([^,\]]+),\s*Score:\s*([0-9.]+)\]/;
 
 export type UsageStatus = 'retrieved' | 'cited_verified' | 'cited_partial' | 'demoted';
 export type DemotionReason = 'vendor_provenance' | 'code_truth';
