@@ -425,8 +425,16 @@ export class RdsVectorStore implements IVectorStore {
                 AND COALESCE((d.metadata->>'is_fork')::bool, false) = false
                 AND COALESCE((d.metadata->>'authored')::bool, true) = true
                 AND COALESCE(d.metadata->>'repo_classification', 'project') NOT IN ('noise', 'tutorial')
-                AND ($6::bool = false OR cardinality($7::text[]) = 0 OR d.skills && $7::text[]
-                     OR (d.metadata ? 'repo_tech_stack' AND d.metadata->'repo_tech_stack' ?| $7::text[]))
+                -- SOFT tech/skill widener (transfer-aware). Tech gating is FILE-grained
+                -- when the chunk's file has deterministic tech evidence (metadata.file_tech_stack):
+                -- a monitoring YAML stamped {alertmanager} is correctly excluded from a Python/LLM JD.
+                -- Repo-grained repo_tech_stack is the FALLBACK only for chunks with no file evidence
+                -- (prose/docs the code-layer extractor doesn't cover), preserving their recall.
+                AND ($6::bool = false OR cardinality($7::text[]) = 0
+                     OR d.skills && $7::text[]
+                     OR (d.metadata ? 'file_tech_stack' AND d.metadata->'file_tech_stack' ?| $7::text[])
+                     OR (NOT (d.metadata ? 'file_tech_stack')
+                         AND d.metadata ? 'repo_tech_stack' AND d.metadata->'repo_tech_stack' ?| $7::text[]))
                 AND ($8::uuid[] IS NULL OR d.id <> ALL($8))
               ORDER BY d.embedding <=> $3::vector
               LIMIT $5`,

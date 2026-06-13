@@ -158,7 +158,10 @@ export interface QueryParams {
 export interface RetrievalPrefilter {
     /** JD skills (lowercased) — chunk `skills[]` overlap. */
     readonly skills: readonly string[];
-    /** JD tech canonicals ∪ transfer-group siblings (lowercased) — `metadata.repo_tech_stack` overlap. */
+    /**
+     * JD tech canonicals ∪ transfer-group siblings (lowercased). Matched file-grained
+     * against `metadata.file_tech_stack` when present, else repo-grained `metadata.repo_tech_stack`.
+     */
     readonly tech: readonly string[];
     /** Minimum survivors before the soft tech/skill filter is topped-up from the hard-gated set. */
     readonly minResults?: number;
