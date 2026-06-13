@@ -22,7 +22,13 @@ import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@be
 import { buildReverseAliasMap, mentionsCanonical } from './keyword-match.js';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../agents/resume-tool-schema.js';
 
-const MODEL_ID = process.env['MIGRATION_REFRAME_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+// Sonnet, not Haiku: this is nuanced multi-section structured generation — rewrite ONLY
+// the flagged bullets, return the FULL resume byte-for-byte otherwise, via a forced tool
+// with a strict schema. Haiku is flaky on this class (silently no-ops or fails schema →
+// the .catch keeps the STALE resume), so the stale-tech claim survived unreframed. Matches
+// the Coach Phone-Screen fix (PR #66) and CLAUDE.md design principle #4 (Sonnet by default
+// for nuanced structured output). Override per-env if a cheaper model is ever verified.
+const MODEL_ID = process.env['MIGRATION_REFRAME_MODEL'] ?? 'eu.anthropic.claude-sonnet-4-6';
 
 /** Space-pad a phrase to a lowercased alnum token stream for whole-word containment. */
 function padded(text: string): string {
@@ -101,15 +107,24 @@ export function detectStaleMigrations(resume: StructuredResumeData, deps: Migrat
 
     const reverse = buildReverseAliasMap(deps.aliasToCanonical);
     const out: StaleMigration[] = [];
-    const experience = Array.isArray(resume.experience) ? resume.experience : [];
-    for (const exp of experience) {
-        const highlights = Array.isArray(exp.highlights) ? exp.highlights : [];
-        for (const highlight of highlights) {
-            const flag = flagHighlight(highlight, superseded, reverse);
-            if (flag) out.push(flag);
-        }
+    for (const text of proseSurfaces(resume)) {
+        const flag = flagHighlight(text, superseded, reverse);
+        if (flag) out.push(flag);
     }
     return out;
+}
+
+/**
+ * Every prose surface that can carry a stale tech claim — summary, experience
+ * highlights, AND keyAchievements. A "self-hosted kubeadm" claim lands in all three
+ * (observed in production); scanning only highlights left the summary/achievement
+ * copies stale. reframeStaleMigrations rewrites the flagged text wherever it appears.
+ */
+function proseSurfaces(resume: StructuredResumeData): string[] {
+    const highlights = (resume.experience ?? []).flatMap((e) => e?.highlights ?? []);
+    const achievements = (resume.keyAchievements ?? []).map((a) => a?.achievement);
+    return [resume.summary, ...highlights, ...achievements]
+        .filter((t): t is string => typeof t === 'string' && t.length > 0);
 }
 
 const CTX: BasePipelineContext = {
