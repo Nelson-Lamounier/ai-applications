@@ -66,6 +66,17 @@ export interface ISyncStateRepository {
     ): Promise<void>;
 
     /**
+     * Persist the deterministic evidence topology (package.json scripts +
+     * DB-migration ecosystem + monorepo) onto the repo_sync_state row. Best-effort:
+     * a no-op if the row does not yet exist.
+     */
+    saveEvidenceTopology(
+        userId: string,
+        repoFullName: string,
+        topology: Record<string, unknown>,
+    ): Promise<void>;
+
+    /**
      * Read the last-synced commit SHA watermark for this (userId, repoFullName).
      * Returns null when no row exists or the column has not been set yet
      * (e.g. runs that pre-date migration 048).
