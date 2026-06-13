@@ -36,6 +36,11 @@ const RESEARCH = {
 
 const silentLog: AtsLogger = { info: () => undefined, warn: () => undefined };
 
+// NOTE: this suite renders a REAL PDF (renderResumePdf → loadReactPdf → @react-pdf/renderer)
+// and parses it back, so it is the live coverage for the PDF render path. A standalone
+// react-pdf.test.ts smoke test was removed: loading that heavy un-mockable ESM module on
+// its own raced jest's worker teardown ("Test environment has been torn down") and flaked
+// in CI; here the full render awaits to completion, so the module settles before teardown.
 describe('renderCheckAndStoreAts', () => {
     it('renders, passes the check, stores artifacts, and reports the outcome', async () => {
         const put = jest.fn().mockResolvedValue({});
