@@ -2,7 +2,6 @@
 import type { S3Client } from '@aws-sdk/client-s3';
 import type { StrategistResearchResult, StructuredResumeData } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import type { JdExtraction } from '../agents/jd-extractor.js';
 
 import { renderCheckAndStoreAts, type AtsLogger } from './run-ats-check.js';
 
@@ -18,27 +17,22 @@ const RESUME: StructuredResumeData = {
     certifications: [], projects: [], keyAchievements: [],
 };
 
-// Only the fields collectJdMustHavesV2/collectGroundedTerms read are needed.
+// Only the fields collectJdMustHaves/collectGroundedTerms read are needed.
+// Must-haves come ONLY from technologyInventory (the single JD signal the writer
+// targets), so the normalized-match phrase + the genuine gap live there:
+//   methodologies → "Critical thinking and root cause analysis" (normalized match
+//     vs the resume's "root-cause analysis")
+//   tools         → "ChatGPT" (a genuine gap, tier none with no embedder)
 const RESEARCH = {
     hardRequirements: [{ skill: 'Kubernetes', context: '' }],
-    technologyInventory: { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
+    technologyInventory: {
+        languages: [], frameworks: [], infrastructure: [],
+        tools: ['ChatGPT'],
+        methodologies: ['Critical thinking and root cause analysis'],
+    },
     verifiedMatches: [{ skill: 'Kubernetes', sourceCitation: '', depth: 'deep', recency: '' }],
     partialMatches: [],
 } as unknown as StrategistResearchResult;
-
-// JD extraction with an atomic phrase that needs normalized matching
-// ("Critical thinking and root cause analysis" -> resume has "root-cause analysis")
-// and a genuine gap ("ChatGPT").
-const JD_EXTRACTION: JdExtraction = {
-    requiredSkills:    ['Kubernetes'],
-    preferredSkills:   [],
-    tools:             ['ChatGPT'],
-    concepts:          ['Critical thinking and root cause analysis'],
-    responsibilities:  [],
-    domain:            '',
-    seniority:         '',
-    retrievalKeywords: [],
-};
 
 const silentLog: AtsLogger = { info: () => undefined, warn: () => undefined };
 
@@ -93,7 +87,6 @@ describe('renderCheckAndStoreAts', () => {
             s3, pool, bucket: 'assets-bucket', resumeId: 'r-2', userId: 'u-1',
             resume: RESUME, research: RESEARCH, log: silentLog, correlationId: 'p-2',
             onOutcome: () => undefined,
-            jdExtraction: JD_EXTRACTION,
             familyVocab:  [],
             embedder:     null,
         });
