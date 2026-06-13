@@ -55,6 +55,25 @@ describe('detectStaleMigrations', () => {
         expect(r).toHaveLength(2);
     });
 
+    it('flags a stale claim in the SUMMARY, not just experience highlights', () => {
+        const resume = {
+            summary: 'Shipped 25 ArgoCD apps in a self-hosted Kubernetes environment.',
+            experience: [],
+        } as unknown as StructuredResumeData;
+        const r = detectStaleMigrations(resume, DEPS);
+        expect(r).toHaveLength(1);
+        expect(r[0].successors).toEqual(['aws_eks']);
+    });
+
+    it('flags a stale claim in keyAchievements (achievement string)', () => {
+        const resume = {
+            experience: [],
+            keyAchievements: [{ achievement: 'Operated a self-hosted Kubernetes cluster via kubeadm.' }],
+        } as unknown as StructuredResumeData;
+        const r = detectStaleMigrations(resume, DEPS);
+        expect(r).toHaveLength(1);
+    });
+
     it('FAIL-SAFE: no succeeds edges → no flags', () => {
         expect(detectStaleMigrations(resumeWith('Self-hosted Kubernetes via kubeadm'), { ...DEPS, succeedsEdges: new Map() })).toHaveLength(0);
     });

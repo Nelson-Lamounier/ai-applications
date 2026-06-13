@@ -99,18 +99,46 @@ export interface DemoteResult {
     readonly demotions: VendorDemotion[];
 }
 
+/** Why a competing-vendor match is demoted (drives the honest gap wording). */
+type DemotionReason = 'reference-only' | 'absent-from-code';
+
 /** True when the match is backed ONLY by reference/example docs (≥1 file, all reference). */
 function isReferenceOnly(vm: VerifiedMatch): boolean {
     const files = vm.evidenceFiles ?? [];
     return files.length > 0 && files.every(isReferenceDoc);
 }
 
+/** Union of every repo's current code tech (lowercased canonicals). */
+function allCodeTech(codeTechByRepo?: ReadonlyMap<string, ReadonlySet<string>>): Set<string> {
+    const all = new Set<string>();
+    for (const set of codeTechByRepo?.values() ?? []) for (const t of set) all.add(t);
+    return all;
+}
+
+/**
+ * Decide whether (and why) a competing-vendor match should be demoted:
+ *   • reference-only — every evidence file is a reference/example doc (path heuristic).
+ *   • absent-from-code — the claimed vendor is NOT in the candidate's code while an
+ *     interchangeable SIBLING is (e.g. claims OpenAI, but the code uses Bedrock). This
+ *     is robust where the path heuristic misses: a competing vendor backed by a normal
+ *     doc but absent from authored code is not production work. Requires a sibling in
+ *     code so a real transferable bridge exists; skipped when no code evidence loaded.
+ */
+function demotionReason(vm: VerifiedMatch, hit: VendorGroupHit, code: ReadonlySet<string>): DemotionReason | null {
+    if (isReferenceOnly(vm)) return 'reference-only';
+    if (code.size > 0 && !code.has(hit.matched) && hit.siblings.some((s) => code.has(s))) return 'absent-from-code';
+    return null;
+}
+
 /** Build the honest transferable PartialMatch a demoted vendor becomes. */
-function toPartial(vm: VerifiedMatch, hit: VendorGroupHit): PartialMatch {
+function toPartial(vm: VerifiedMatch, hit: VendorGroupHit, reason: DemotionReason): PartialMatch {
     const siblingDisplay = hit.siblings.map((s) => s.replaceAll('_', ' ')).join(', ');
+    const gap = reason === 'reference-only'
+        ? `Evidence for "${vm.skill}" comes only from reference/example documentation, not authored production work.`
+        : `"${vm.skill}" is not present in the candidate's authored code, which uses an interchangeable alternative (${siblingDisplay}) instead.`;
     return {
         skill: vm.skill,
-        gapDescription: `Evidence for "${vm.skill}" comes only from reference/example documentation, not authored production work.`,
+        gapDescription: gap,
         transferableFoundation: `Hands-on experience with interchangeable alternatives in the same technology family (${siblingDisplay}).`,
         framingSuggestion: `Frame as transferable from ${siblingDisplay}. Do NOT claim direct production use of ${vm.skill}.`,
         evidenceFiles: vm.evidenceFiles ?? [],
@@ -124,18 +152,25 @@ function toPartial(vm: VerifiedMatch, hit: VendorGroupHit): PartialMatch {
  */
 export function demoteMisattributedVendors(
     matching: ResearchMatching,
-    deps: { techGroups: ReadonlyArray<ReadonlyArray<string>>; techAliasMap: ReadonlyMap<string, string> },
+    deps: {
+        techGroups: ReadonlyArray<ReadonlyArray<string>>;
+        techAliasMap: ReadonlyMap<string, string>;
+        /** Per-repo current code tech — enables the absent-from-code demotion. Optional/fail-open. */
+        codeTechByRepo?: ReadonlyMap<string, ReadonlySet<string>>;
+    },
 ): DemoteResult {
     if (deps.techGroups.length === 0) return { matching, demotions: [] };
+    const code = allCodeTech(deps.codeTechByRepo);
 
     const keptVerified: VerifiedMatch[] = [];
     const demotedPartials: PartialMatch[] = [];
     const demotions: VendorDemotion[] = [];
 
     for (const vm of matching.verifiedMatches) {
-        const hit = isReferenceOnly(vm) ? vendorGroupForSkill(vm.skill, deps.techGroups, deps.techAliasMap) : null;
-        if (hit) {
-            demotedPartials.push(toPartial(vm, hit));
+        const hit = vendorGroupForSkill(vm.skill, deps.techGroups, deps.techAliasMap);
+        const reason = hit ? demotionReason(vm, hit, code) : null;
+        if (hit && reason) {
+            demotedPartials.push(toPartial(vm, hit, reason));
             demotions.push({ skill: vm.skill, matchedVendor: hit.matched, siblings: hit.siblings, evidenceFiles: vm.evidenceFiles ?? [] });
         } else {
             keptVerified.push(vm);
