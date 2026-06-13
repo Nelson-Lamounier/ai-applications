@@ -139,3 +139,7 @@ export type {
     SystemTourAgentLike,
     SystemTourCache,
 } from './system-tour-orchestrator.js';
+
+export { stampUserEvidenceMetadata } from './stamp-evidence-metadata.js';
+export { buildEvidenceStamp } from './evidence-metadata-stamp.js';
+export type { EvidenceStamp, RepoSignals } from './evidence-metadata-stamp.js';

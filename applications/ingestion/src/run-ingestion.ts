@@ -40,6 +40,7 @@ import {
     RdsDiagnosticInputsReadRepository,
     RdsRepoActivityStore,
     RdsRepoFileStateRepository,
+    stampUserEvidenceMetadata,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -443,6 +444,16 @@ async function main(): Promise<void> {
 
         await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
         outcome = 'success';
+
+        // Stamp evidence metadata (verified-authorship + tech) onto this repo's chunks
+        // so filter-then-rank retrieval can gate fork/low-trust evidence + pre-filter by
+        // tech. Reads already-persisted profile/commits/tech; best-effort, never fatal.
+        try {
+            const stamped = await stampUserEvidenceMetadata(pgPool, env.userId, env.repoFullName);
+            console.info(`[run-ingestion] evidence-metadata stamped: ${stamped} repo(s)`);
+        } catch (err) {
+            console.warn(`[run-ingestion] evidence-metadata stamp skipped for ${env.repoFullName}:`, err);
+        }
 
         // Record the sync classification on the (already-upserted) repo_sync_state
         // row so the dashboard can show which repos were initial vs full-reindex vs
