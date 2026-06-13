@@ -247,6 +247,7 @@ export type {
     HashCheckResult,
     SimilarityResult,
     QueryParams,
+    RetrievalPrefilter,
     RepoSyncState,
     SyncStatus,
     IngestionReport,

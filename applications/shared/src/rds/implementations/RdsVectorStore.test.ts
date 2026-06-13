@@ -72,3 +72,54 @@ describe('RdsVectorStore.upsertBatch (multi-row)', () => {
         expect(res).toEqual({ inserted: 0, updated: 0, skipped: 0, errors: 0 });
     });
 });
+
+describe('RdsVectorStore.querySimilar (filter-then-rank)', () => {
+    const simRow = (over: Record<string, unknown> = {}) => ({
+        id: 'id1', repo_full_name: 'o/r', file_path: 'a.ts', heading: null,
+        content: 'x', chunk_index: 0, tags: [], similarity: 0.9, cosine: 0.9, ...over,
+    });
+
+    it('routes to the filtered path when a prefilter is present and gates tech FILE-grained with a repo fallback', async () => {
+        const query = jest.fn(async () => ({ rows: [simRow()] }));
+        await store(query).querySimilar({
+            userId: 'u1', queryEmbedding: [0.1, 0.2], limit: 5,
+            prefilter: { skills: ['python'], tech: ['openai_api'], minResults: 1 },
+        });
+
+        // minResults=1 satisfied by the single row → pass-2 top-up never runs.
+        expect(query).toHaveBeenCalledTimes(1);
+        const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        // file-grained tech preferred…
+        expect(sql).toMatch(/metadata->'file_tech_stack' \?\| \$7::text\[\]/);
+        // …with repo_tech_stack as the fallback ONLY for chunks lacking file evidence.
+        expect(sql).toMatch(/NOT \(d\.metadata \? 'file_tech_stack'\)/);
+        // hard authorship gates still present.
+        expect(sql).toMatch(/COALESCE\(\(d\.metadata->>'is_fork'\)::bool, false\) = false/);
+        // applySoft=true on pass 1; $7 carries skills ∪ tech.
+        expect(values[5]).toBe(true);
+        expect(values[6]).toEqual(['python', 'openai_api']);
+    });
+
+    it('tops up from the hard-gated-only set (soft relaxed) when pass 1 under-fills minResults', async () => {
+        const query = jest.fn()
+            .mockResolvedValueOnce({ rows: [simRow({ id: 'p1' })] })           // pass 1 (soft): 1 < minResults 3
+            .mockResolvedValueOnce({ rows: [simRow({ id: 't1' }), simRow({ id: 't2' })] }); // pass 2 top-up
+        const res = await store(query).querySimilar({
+            userId: 'u1', queryEmbedding: [0.1, 0.2], limit: 3,
+            prefilter: { skills: [], tech: ['openai_api'], minResults: 3 },
+        });
+
+        expect(query).toHaveBeenCalledTimes(2);
+        const [, p2vals] = query.mock.calls[1] as unknown as [string, unknown[]];
+        expect(p2vals[5]).toBe(false);              // applySoft=false on the top-up
+        expect(p2vals[7]).toEqual(['p1']);          // excludeIds = pass-1 results
+        expect(res.map((r) => r.id)).toEqual(['p1', 't1', 't2']);
+    });
+
+    it('does NOT use the filtered path when no prefilter is supplied (fail-open to pure vector)', async () => {
+        const query = jest.fn(async () => ({ rows: [simRow()] }));
+        await store(query).querySimilar({ userId: 'u1', queryEmbedding: [0.1, 0.2] });
+        const [sql] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(sql).not.toMatch(/file_tech_stack/);
+    });
+});

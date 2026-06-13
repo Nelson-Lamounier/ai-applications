@@ -48,6 +48,7 @@ import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
 import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/repo-profile.js';
 import { detectStaleMigrations, reframeStaleMigrations } from './ats/migration-reframe.js';
+import { buildRetrievalPrefilter } from './ats/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
@@ -458,7 +459,19 @@ export async function main(): Promise<void> {
         const codeStackContext = [buildCodeStackContext(codeTechByRepo), buildRepoProfileContext(repoProfiles)]
             .filter(Boolean).join('\n\n');
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext);
+        // Filter-then-rank pre-filter (Increment 2): transfer-aware tech/skill + the
+        // structural fork/junk gates over the chunk metadata stamp. Env-gated so it
+        // ships dark; absent ⇒ today's pure-vector retrieval (fail-open).
+        const ti = jdExtraction.technologyInventory;
+        const retrievalPrefilter = process.env['RETRIEVAL_PREFILTER'] === 'on'
+            ? buildRetrievalPrefilter(
+                [...jdExtraction.requiredSkills, ...jdExtraction.preferredSkills],
+                [...ti.tools, ...ti.languages, ...ti.frameworks, ...ti.infrastructure, ...jdExtraction.retrievalKeywords],
+                techGroups, aliasToCanonical,
+            )
+            : undefined;
+
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter);
 
         // Vendor-provenance guard (deterministic): a competing vendor evidenced ONLY by
         // reference/example docs (e.g. an "OpenAI example" in a structured-output checklist

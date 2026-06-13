@@ -55,6 +55,31 @@ export async function stampUserEvidenceMetadata(pool: Pool, userId: string, only
               WHERE user_id = $1 AND repo_full_name = $2`,
             [userId, repo, JSON.stringify(stamp)],
         );
+        // File-grained tech: stamp metadata.file_tech_stack onto each chunk from
+        // the deterministic tech-extractor's per-file evidence. Repo-level
+        // repo_tech_stack is too coarse for the retrieval pre-filter (one tech
+        // anywhere in a ~90-tech monorepo admits every chunk); file_tech_stack
+        // lets filter-then-rank gate a monitoring YAML out of a Python/LLM JD.
+        // Set-based: one UPDATE joins the per-file canonical aggregate. Chunks
+        // whose file has no code-layer evidence (prose/docs) get no key and the
+        // retrieval filter falls back to repo_tech_stack, preserving recall.
+        await pool.query(
+            `UPDATE document_embeddings d
+                SET metadata = COALESCE(d.metadata, '{}'::jsonb)
+                             || jsonb_build_object('file_tech_stack', ft.tech)
+               FROM (
+                 SELECT te.file_path,
+                        array_agg(DISTINCT lower(o.canonical_name)) AS tech
+                   FROM technology_evidence te
+                   JOIN technology_ontology o ON o.id = te.technology_id
+                  WHERE te.user_id = $1 AND te.repo_full_name = $2
+                    AND te.source_layer = ANY($3)
+                  GROUP BY te.file_path
+               ) ft
+              WHERE d.user_id = $1 AND d.repo_full_name = $2
+                AND d.file_path = ft.file_path`,
+            [userId, repo, CODE_LAYERS],
+        );
         stamped += 1;
     }
     return stamped;
