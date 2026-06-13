@@ -377,10 +377,71 @@ export class RdsVectorStore implements IVectorStore {
     // =========================================================================
 
     async querySimilar(params: QueryParams): Promise<SimilarityResult[]> {
+        // Filter-then-rank: when a structured pre-filter is present it takes
+        // precedence (hard authorship/junk gates + soft tech/skill widener over
+        // the metadata stamp), routed through the vector path. Absent ⇒ today's
+        // behaviour (hybrid when requested, else pure vector). Fail-open.
+        if (params.prefilter) {
+            return this.queryVectorFiltered(params);
+        }
         if (params.useHybrid && params.queryText) {
             return this.queryHybrid(params);
         }
         return this.queryVector(params);
+    }
+
+    /**
+     * Filter-then-rank vector search. Pass 1 applies the HARD gates (no fork, no
+     * noise/tutorial repo) + the SOFT tech/skill widener; if fewer than `minResults`
+     * survive, pass 2 tops up from the hard-gated-only set (soft filter relaxed), so
+     * the tech/skill filter can never collapse recall. Hard gates always hold.
+     */
+    private async queryVectorFiltered(params: QueryParams): Promise<SimilarityResult[]> {
+        const { limit = 10, prefilter } = params;
+        const minResults = prefilter?.minResults ?? limit;
+        const pass1 = await this.runFilteredVector(params, true, []);
+        if (pass1.length >= minResults) return pass1;
+        const excludeIds = pass1.map((r) => r.id);
+        const topUp = await this.runFilteredVector({ ...params, limit: limit - pass1.length }, false, excludeIds);
+        return [...pass1, ...topUp];
+    }
+
+    /** One filtered vector pass. `applySoft` toggles the tech/skill widener; `excludeIds` skips already-returned chunks. */
+    private async runFilteredVector(params: QueryParams, applySoft: boolean, excludeIds: string[]): Promise<SimilarityResult[]> {
+        const { userId, repoFullName, queryEmbedding, limit = 10, efSearch = 40, prefilter } = params;
+        const skills = prefilter?.skills ?? [];
+        const tech = prefilter?.tech ?? [];
+        const result = await this.execute<SimilarityRow>(
+            `WITH _ AS (SELECT set_config('hnsw.ef_search', $1, true))
+             SELECT d.id, d.repo_full_name, d.file_path, d.heading, d.content, d.chunk_index, d.tags,
+                    1 - (d.embedding <=> $3::vector) AS similarity,
+                    1 - (d.embedding <=> $3::vector) AS cosine
+               FROM document_embeddings d, _
+              WHERE d.user_id = $2
+                AND ($4::text IS NULL OR d.repo_full_name = $4)
+                -- HARD gates (verified authorship): never retrieve fork, junk, or
+                -- not-the-user's-work code as authored evidence. COALESCE defaults so
+                -- unstamped chunks pass (fail-open until the repo is re-synced).
+                AND COALESCE((d.metadata->>'is_fork')::bool, false) = false
+                AND COALESCE((d.metadata->>'authored')::bool, true) = true
+                AND COALESCE(d.metadata->>'repo_classification', 'project') NOT IN ('noise', 'tutorial')
+                AND ($6::bool = false OR cardinality($7::text[]) = 0 OR d.skills && $7::text[]
+                     OR (d.metadata ? 'repo_tech_stack' AND d.metadata->'repo_tech_stack' ?| $7::text[]))
+                AND ($8::uuid[] IS NULL OR d.id <> ALL($8))
+              ORDER BY d.embedding <=> $3::vector
+              LIMIT $5`,
+            [
+                String(efSearch),
+                userId,
+                `[${queryEmbedding.join(',')}]`,
+                repoFullName ?? null,
+                limit,
+                applySoft,
+                [...new Set([...skills, ...tech])],
+                excludeIds.length > 0 ? excludeIds : null,
+            ],
+        );
+        return result.rows.map((row) => this.mapSimilarityRow(row));
     }
 
     /** Pure HNSW cosine-similarity search. */

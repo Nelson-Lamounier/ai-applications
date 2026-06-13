@@ -40,6 +40,7 @@ import type {
     QueryParams,
     RerankCandidate,
     ResearchMatching,
+    RetrievalPrefilter,
     SimilarityResult,
     StructuredResumeData,
     StrategistPipelineContext,
@@ -218,6 +219,7 @@ async function querySingleRds(
     userId: string,
     store: { querySimilar(p: QueryParams): Promise<SimilarityResult[]> },
     maxPassages: number = MAX_KB_PASSAGES,
+    prefilter?: RetrievalPrefilter,
 ): Promise<string[]> {
     const finalK = Math.max(1, maxPassages);
     const overfetch = finalK * RETRIEVE_OVERFETCH;
@@ -237,6 +239,7 @@ async function querySingleRds(
         queryText:  query,
         useHybrid:  true,
         limit:      overfetch,
+        prefilter,
     });
 
     // Floor on RAW cosine (not the hybrid/RRF `similarity`, which is rank-derived).
@@ -778,6 +781,7 @@ export async function executeResearchAgent(
     roleEvidenceBlock = '',
     techTransferContext = '',
     codeStackContext = '',
+    retrievalPrefilter?: RetrievalPrefilter,
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -809,15 +813,18 @@ export async function executeResearchAgent(
     // substrings — boilerplate-free vectors sharpen retrieval. Fall back to the
     // legacy substring queries when extraction is absent (fail-open).
     const q = jdSignal ? jdRetrievalQueries(jdSignal) : null;
+    // Bind the per-run retrieval pre-filter (filter-then-rank) into every KB query.
+    const rds = (query: string, max: number = MAX_KB_PASSAGES): Promise<string[]> =>
+        querySingleRds(query, userId, store, max, retrievalPrefilter);
     const [factual1, factual2, factual3, factual4] = await Promise.all([
         // Query 1 — skills/tech matches across the user's docs
-        querySingleRds(q ? q.skill : jd.substring(0, full), userId, store),
+        rds(q ? q.skill : jd.substring(0, full)),
         // Query 2 — experience / work-history signal
-        querySingleRds(q ? q.experience : `professional experience skills qualifications ${jd.substring(half)}`, userId, store),
+        rds(q ? q.experience : `professional experience skills qualifications ${jd.substring(half)}`),
         // Query 3 — JD-aware project/portfolio query
-        querySingleRds(q ? q.project : `portfolio project implementation achievements ${jd.substring(0, half)}`, userId, store),
+        rds(q ? q.project : `portfolio project implementation achievements ${jd.substring(0, half)}`),
         // Query 4 — DORA metrics and outcome measurements (static)
-        querySingleRds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance', userId, store),
+        rds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance'),
     ]);
 
     // Support-heavy roles (customerFacing + supportOps >= threshold) ground their

@@ -142,6 +142,26 @@ export interface QueryParams {
      * Falls back to vector-only if queryText is absent.
      */
     readonly useHybrid?: boolean;
+    /**
+     * Optional structured pre-filter (filter-then-rank). When present, hard-gates
+     * unauthored/junk evidence and soft-prefilters by tech/skill before vector
+     * ranking. Absent ⇒ today's pure-vector behaviour (fail-open).
+     */
+    readonly prefilter?: RetrievalPrefilter;
+}
+
+/**
+ * Structured retrieval pre-filter from the JD + repo evidence stamp.
+ * Hard gates are pure exclusions; the tech/skill widener is soft (a fail-open
+ * top-up backfills from the hard-gated set if it would over-cut recall).
+ */
+export interface RetrievalPrefilter {
+    /** JD skills (lowercased) — chunk `skills[]` overlap. */
+    readonly skills: readonly string[];
+    /** JD tech canonicals ∪ transfer-group siblings (lowercased) — `metadata.repo_tech_stack` overlap. */
+    readonly tech: readonly string[];
+    /** Minimum survivors before the soft tech/skill filter is topped-up from the hard-gated set. */
+    readonly minResults?: number;
 }
 
 // =============================================================================
