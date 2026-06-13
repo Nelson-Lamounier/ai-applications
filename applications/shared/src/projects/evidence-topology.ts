@@ -105,25 +105,49 @@ function hasRealScript(scripts: Record<string, string>, name: string): boolean {
     return typeof v === 'string' && v.length > 0 && !PLACEHOLDER_TEST.test(v);
 }
 
+type Manifest = Record<string, unknown> | null;
+
+/** ANY manifest (root OR a workspace package) has a real script `name`. */
+function anyRealScript(pkgs: ReadonlyArray<Manifest>, name: string): boolean {
+    return pkgs.some((pkg) => hasRealScript(scriptsOf(pkg), name));
+}
+
+/** Typecheck: an explicit script, or a `tsc --noEmit` in any script, in any manifest. */
+function anyTypecheck(pkgs: ReadonlyArray<Manifest>): boolean {
+    return pkgs.some((pkg) => {
+        const scripts = scriptsOf(pkg);
+        return hasRealScript(scripts, 'typecheck') || hasRealScript(scripts, 'type-check') ||
+            Object.values(scripts).some((cmd) => /\btsc\b.*--noemit|--noemit.*\btsc\b|\btsc --noemit\b/.test(cmd));
+    });
+}
+
+/** Union of dependency names across every manifest (for migration-tool deps). */
+function unionDepNames(pkgs: ReadonlyArray<Manifest>): Set<string> {
+    const names = new Set<string>();
+    for (const pkg of pkgs) for (const d of depNamesOf(pkg)) names.add(d);
+    return names;
+}
+
+/**
+ * Derive the topology from the file tree + ALL package.json manifests (root +
+ * workspace packages) — a monorepo's test/lint/build scripts and DB deps live in
+ * the workspace packages, not the root, so scanning every manifest is required.
+ * A single-package repo passes `[rootPkg]`.
+ */
 export function deriveEvidenceTopology(
     files: readonly { path: string }[],
-    packageJson: Record<string, unknown> | null,
+    packageJsons: ReadonlyArray<Manifest>,
 ): EvidenceTopology {
     const paths = files.map((f) => f.path);
-    const scripts = scriptsOf(packageJson);
-    const deps = depNamesOf(packageJson);
-
-    const migrationTools = detectMigrationTools(paths, deps);
+    const migrationTools = detectMigrationTools(paths, unionDepNames(packageJsons));
     const nestedPkgCount = paths.filter((p) => NESTED_PKG_RE.test(p)).length;
-    const hasWorkspaceField = packageJson?.workspaces != null;
+    const hasWorkspaceField = packageJsons.some((p) => p?.workspaces != null);
 
     return {
-        has_test_script: hasRealScript(scripts, 'test'),
-        has_lint_script: hasRealScript(scripts, 'lint'),
-        has_build_script: hasRealScript(scripts, 'build'),
-        // typecheck: an explicit script, or a `tsc`-based check anywhere in scripts.
-        has_typecheck_script: hasRealScript(scripts, 'typecheck') || hasRealScript(scripts, 'type-check') ||
-            Object.values(scripts).some((cmd) => /\btsc\b.*--noemit|--noemit.*\btsc\b|\btsc --noemit\b/.test(cmd)),
+        has_test_script: anyRealScript(packageJsons, 'test'),
+        has_lint_script: anyRealScript(packageJsons, 'lint'),
+        has_build_script: anyRealScript(packageJsons, 'build'),
+        has_typecheck_script: anyTypecheck(packageJsons),
         has_migrations: migrationTools.length > 0,
         migration_tools: migrationTools.toSorted((a, b) => a.localeCompare(b)),
         is_monorepo: nestedPkgCount >= 2 || hasWorkspaceField || paths.some((p) => WORKSPACE_FILE_RE.test(p)),
