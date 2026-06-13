@@ -77,6 +77,8 @@ export interface CodeContradiction {
     readonly docTech: string;
     /** The successor canonical(s) present in the repo's current code. */
     readonly codeSuccessors: string[];
+    /** The KB evidence files the stale claim was cited from (for provenance attribution). */
+    readonly evidenceFiles: string[];
 }
 
 export interface CodeTruthDeps {
@@ -121,7 +123,7 @@ function findContradiction(
             const codeSet = deps.codeTechByRepo.get(repo);
             if (codeSet === undefined || codeSet.has(predecessor)) continue; // no code truth, or P still used
             const present = [...successors].filter((s) => codeSet.has(s));
-            if (present.length > 0) return { skill: vm.skill, repo, docTech: predecessor, codeSuccessors: present };
+            if (present.length > 0) return { skill: vm.skill, repo, docTech: predecessor, codeSuccessors: present, evidenceFiles: vm.evidenceFiles ?? [] };
         }
     }
     return null;
