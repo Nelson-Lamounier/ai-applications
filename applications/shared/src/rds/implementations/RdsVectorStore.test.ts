@@ -79,7 +79,7 @@ describe('RdsVectorStore.querySimilar (filter-then-rank)', () => {
         content: 'x', chunk_index: 0, tags: [], similarity: 0.9, cosine: 0.9, ...over,
     });
 
-    it('routes to the filtered path when a prefilter is present and gates tech FILE-grained with a repo fallback', async () => {
+    it('gates tech by chunk TYPE: file-grained for code/config, prose exempt, config-without-evidence excluded', async () => {
         const query = jest.fn(async () => ({ rows: [simRow()] }));
         await store(query).querySimilar({
             userId: 'u1', queryEmbedding: [0.1, 0.2], limit: 5,
@@ -89,10 +89,17 @@ describe('RdsVectorStore.querySimilar (filter-then-rank)', () => {
         // minResults=1 satisfied by the single row → pass-2 top-up never runs.
         expect(query).toHaveBeenCalledTimes(1);
         const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
-        // file-grained tech preferred…
+        // file-grained tech gate for chunks WITH evidence…
         expect(sql).toMatch(/metadata->'file_tech_stack' \?\| \$7::text\[\]/);
-        // …with repo_tech_stack as the fallback ONLY for chunks lacking file evidence.
+        // …and chunks WITHOUT file evidence pass UNLESS they are a config file (the
+        // config-extension exclusion that stops a YAML free-riding its repo stack).
         expect(sql).toMatch(/NOT \(d\.metadata \? 'file_tech_stack'\)/);
+        expect(sql).toContain("d.file_path !~* '\\.(ya?ml|json|toml|lock|cfg|ini|env|tf|tfvars)$'");
+        // the broken repo-grained fallback must be GONE (it admitted any chunk of a
+        // repo that used a JD tech anywhere — the prose-gating + config-leak bug).
+        // Assert the metadata ACCESS is gone (a comment may still name the old field).
+        expect(sql).not.toMatch(/metadata->'repo_tech_stack'/);
+        expect(sql).not.toMatch(/repo_tech_stack' \?\|/);
         // hard authorship gates still present.
         expect(sql).toMatch(/COALESCE\(\(d\.metadata->>'is_fork'\)::bool, false\) = false/);
         // applySoft=true on pass 1; $7 carries skills ∪ tech.
