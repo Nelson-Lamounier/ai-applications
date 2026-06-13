@@ -46,6 +46,7 @@ import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
 import { splitAttainable } from './ats/attainable.js';
 import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
+import { buildProvenanceRows, persistEvidenceProvenance } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
@@ -456,6 +457,32 @@ export async function main(): Promise<void> {
             ...guardedResearch.data,
             skillEvidenceLedger,
         };
+
+        // Evidence provenance (Phase 1, observability, fail-open): flatten the retrieval
+        // trace + usage attribution (cited / demoted / never-used) into the queryable
+        // evidence_provenance table. Pure side-channel — never gates the run.
+        try {
+            const verifiedFiles = new Set<string>();
+            for (const m of guardedMatching.verifiedMatches) for (const f of m.evidenceFiles ?? []) verifiedFiles.add(f);
+            const partialFiles = new Set<string>();
+            for (const m of guardedMatching.partialMatches) for (const f of m.evidenceFiles ?? []) partialFiles.add(f);
+            const demotedFiles = new Map<string, 'vendor_provenance' | 'code_truth'>();
+            for (const d of demotions) for (const f of d.evidenceFiles) demotedFiles.set(f, 'vendor_provenance');
+            for (const c of contradictions) for (const f of c.evidenceFiles) demotedFiles.set(f, 'code_truth');
+            const provRows = buildProvenanceRows({
+                kbContext: researchData.kbContext ?? '',
+                floor: researchData.kbRetrievalStats?.floor ?? 0.2,
+                verifiedFiles, partialFiles, demotedFiles,
+            });
+            const persisted = await persistEvidenceProvenance(pool, {
+                pipelineRunId: env.pipelineRunId, userId: env.userId,
+                targetRole: researchData.targetRole, targetCompany: researchData.targetCompany ?? '',
+                agent: 'research',
+            }, provRows);
+            log.info({ pipelineRunId: env.pipelineRunId, provenanceRows: persisted }, 'evidence_provenance_persisted');
+        } catch (e) {
+            log.warn({ pipelineRunId: env.pipelineRunId, err: (e as Error).message }, 'evidence_provenance_persist_failed (non-fatal)');
+        }
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
