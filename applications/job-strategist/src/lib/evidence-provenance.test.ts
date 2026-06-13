@@ -1,5 +1,5 @@
 /** @format */
-import { buildProvenanceRows } from './evidence-provenance.js';
+import { buildProvenanceRows, buildRepoQualityRows } from './evidence-provenance.js';
 
 const KB = [
     '[Source: Nelson-Lamounier/cdk-monitoring/docs/k8s.md, Cosine: 0.390, Rerank: 0.810]',
@@ -64,5 +64,32 @@ describe('buildProvenanceRows', () => {
 
     it('returns no rows for an empty kbContext', () => {
         expect(buildProvenanceRows({ ...inputs, kbContext: '' })).toHaveLength(0);
+    });
+});
+
+describe('buildRepoQualityRows', () => {
+    const rows = buildProvenanceRows(inputs); // cdk: 1 demoted; ai-applications: 1 demoted, 1 verified, 1 retrieved
+    const codeTech = new Map<string, Set<string>>([
+        ['Nelson-Lamounier/cdk-monitoring', new Set(['aws_eks', 'kubernetes', 'argocd'])],
+        ['Nelson-Lamounier/ai-applications', new Set(['typescript'])],
+    ]);
+
+    it('aggregates per repo: retrieved/cited/demoted + cite_rate + code richness', () => {
+        const q = buildRepoQualityRows(rows, codeTech);
+        const ai = q.find((r) => r.repoFullName === 'Nelson-Lamounier/ai-applications');
+        // ai-applications passages: checklist (demoted), metrics.ts (cited_verified), unused.md (retrieved)
+        expect(ai).toMatchObject({ passagesRetrieved: 3, passagesCited: 1, demotedCount: 1, codeTechCount: 1 });
+        expect(ai?.citeRate).toBeCloseTo(1 / 3, 2);
+        const cdk = q.find((r) => r.repoFullName === 'Nelson-Lamounier/cdk-monitoring');
+        expect(cdk).toMatchObject({ passagesRetrieved: 1, passagesCited: 0, demotedCount: 1, codeTechCount: 3 });
+    });
+
+    it('codeTechCount is 0 for a repo with no extracted code', () => {
+        const q = buildRepoQualityRows(rows, new Map());
+        expect(q.every((r) => r.codeTechCount === 0)).toBe(true);
+    });
+
+    it('returns no rows for an empty trace', () => {
+        expect(buildRepoQualityRows([], codeTech)).toHaveLength(0);
     });
 });
