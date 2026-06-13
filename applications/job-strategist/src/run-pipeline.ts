@@ -430,7 +430,7 @@ export async function main(): Promise<void> {
         // Tech-ontology grounding — load transfer groups + alias map ONCE (fail-open).
         // Prefer the explicit relationship graph; fall back to category groups when sparse.
         const techRepo = new TechnologyOntologyRepository(pool);
-        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals] = await Promise.all([
+        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths] = await Promise.all([
             techRepo.loadTransferGroups().catch(() => [] as string[][]),
             techRepo.loadCategoryGroups().catch(() => [] as string[][]),
             techRepo.loadAliasMap().catch(() => new Map<string, string>()),
@@ -438,6 +438,7 @@ export async function main(): Promise<void> {
             techRepo.loadSucceedsEdges().catch(() => new Map<string, Set<string>>()),
             techRepo.loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
             techRepo.loadRepoArchetypeSignals(env.userId).catch(() => new Map<string, Record<string, boolean>>()),
+            techRepo.loadRepoFilePaths(env.userId).catch(() => new Map<string, Set<string>>()),
         ]);
         const techGroups = techTransferGroups.length > 0 ? techTransferGroups : techCategoryGroups;
 
@@ -452,7 +453,7 @@ export async function main(): Promise<void> {
         // AND each repo's deterministic profile (cdk-infra/k8s-platform/…, what it provisions).
         // Folded into one grounding block so the matcher prefers code over stale docs and
         // attributes work to the right repo (e.g. cdk-monitoring IS the EKS-via-CDK infra).
-        const repoProfiles = buildRepoProfiles(codeTechByRepo, archetypeSignals);
+        const repoProfiles = buildRepoProfiles(codeTechByRepo, archetypeSignals, repoFilePaths);
         const codeStackContext = [buildCodeStackContext(codeTechByRepo), buildRepoProfileContext(repoProfiles)]
             .filter(Boolean).join('\n\n');
 

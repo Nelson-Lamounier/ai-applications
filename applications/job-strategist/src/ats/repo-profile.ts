@@ -30,6 +30,41 @@ const EXTRA_SERVICE_CANONICALS = new Set([
     'kubernetes', 'aurora_postgres', 'postgresql', 'redis', 'prometheus', 'grafana', 'loki', 'tempo',
 ]);
 
+// Run-time evidence topology, derived from ingested file paths (test files,
+// migrations, nested manifests). Evidence (real files), not README claims.
+const TEST_FILE_RE = /(?:\.(?:test|spec)\.[jt]sx?$)|(?:\/__tests__\/)|(?:\/tests?\/)/i;
+const MIGRATION_RE = /(?:^|\/)migrations?\//i;
+const NESTED_PKG_RE = /\/package\.json$/i;
+/** A repo is "well-tested" when test files are a meaningful share of its ingested files. */
+const WELL_TESTED_RATIO = 0.1;
+
+export interface RepoTopology {
+    readonly hasTests: boolean;
+    /** distinct test files / distinct ingested files. */
+    readonly testRatio: number;
+    readonly hasMigrations: boolean;
+    readonly isMonorepo: boolean;
+}
+
+/** Derive evidence topology from a repo's ingested file paths. Pure. */
+export function deriveTopology(paths: ReadonlySet<string>): RepoTopology {
+    let testFiles = 0;
+    let migrationFiles = 0;
+    let nestedPkg = 0;
+    for (const p of paths) {
+        if (TEST_FILE_RE.test(p)) testFiles += 1;
+        if (MIGRATION_RE.test(p)) migrationFiles += 1;
+        if (NESTED_PKG_RE.test(p)) nestedPkg += 1;
+    }
+    const total = paths.size;
+    return {
+        hasTests: testFiles > 0,
+        testRatio: total > 0 ? Math.round((testFiles / total) * 1000) / 1000 : 0,
+        hasMigrations: migrationFiles > 0,
+        isMonorepo: nestedPkg >= 2,
+    };
+}
+
 export interface RepoProfile {
     readonly repoFullName: string;
     /** cdk-infra | k8s-platform | iac-infra | ml | mobile | docs-site | library | monorepo | application | unknown */
@@ -71,8 +106,13 @@ function classifyRepoType(sig: Signals, tech: ReadonlySet<string>, frameworks: R
     return 'unknown';
 }
 
-/** Rule-based higher-level concepts from signals + the assembled facts. */
-function deriveConcepts(sig: Signals, services: ReadonlyArray<string>, frameworks: ReadonlyArray<string>): string[] {
+/** Rule-based higher-level concepts from signals, assembled facts, and evidence topology. */
+function deriveConcepts(
+    sig: Signals,
+    services: ReadonlyArray<string>,
+    frameworks: ReadonlyArray<string>,
+    topology: RepoTopology,
+): string[] {
     const has = (k: string): boolean => sig[k] === true;
     const out = new Set<string>();
     if (has('has_argocd_apps')) out.add('gitops');
@@ -83,6 +123,10 @@ function deriveConcepts(sig: Signals, services: ReadonlyArray<string>, framework
     if (has('has_dockerfile') || has('has_compose')) out.add('containerized');
     if (has('has_deployment_workflow')) out.add('ci-cd-delivery');
     if (frameworks.includes('aws_cdk') || frameworks.includes('cloudformation')) out.add('aws-native-iac');
+    // Evidence topology (real files, not README claims).
+    if (topology.hasTests) out.add(topology.testRatio >= WELL_TESTED_RATIO ? 'well-tested' : 'tested');
+    if (topology.hasMigrations) out.add('database-migrations');
+    if (topology.isMonorepo) out.add('monorepo');
     return [...out];
 }
 
@@ -93,6 +137,7 @@ function deriveConcepts(sig: Signals, services: ReadonlyArray<string>, framework
 export function buildRepoProfiles(
     codeTechByRepo: ReadonlyMap<string, ReadonlySet<string>>,
     signalsByRepo: ReadonlyMap<string, Signals>,
+    filePathsByRepo: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
 ): RepoProfile[] {
     const repos = new Set<string>([...codeTechByRepo.keys(), ...signalsByRepo.keys()]);
     const profiles: RepoProfile[] = [];
@@ -100,10 +145,11 @@ export function buildRepoProfiles(
         const tech = codeTechByRepo.get(repo) ?? new Set<string>();
         const sig = signalsByRepo.get(repo) ?? {};
         if (tech.size === 0 && Object.keys(sig).length === 0) continue;
+        const topology = deriveTopology(filePathsByRepo.get(repo) ?? new Set<string>());
         const frameworks = [...tech].filter(isFramework).sort((a, b) => a.localeCompare(b));
         const services = [...tech].filter(isService).sort((a, b) => a.localeCompare(b));
         const repoType = classifyRepoType(sig, tech, frameworks);
-        const concepts = deriveConcepts(sig, services, frameworks);
+        const concepts = deriveConcepts(sig, services, frameworks, topology);
         profiles.push({ repoFullName: repo, repoType, frameworks, services, concepts });
     }
     return profiles.sort((a, b) => a.repoFullName.localeCompare(b.repoFullName));

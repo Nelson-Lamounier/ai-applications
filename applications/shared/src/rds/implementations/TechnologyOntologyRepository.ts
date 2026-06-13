@@ -98,6 +98,33 @@ export class TechnologyOntologyRepository {
     }
 
     /**
+     * Load the DISTINCT ingested file paths per repo for a user — the union of paths
+     * seen by the doc-chunker (document_embeddings) and the code extractor
+     * (technology_evidence). A run-time evidence-topology proxy for the repo file tree
+     * (test files, migrations dirs, nested package.json) without re-reading the repo.
+     * Partial by construction (only ingested/extracted files), but test files in
+     * particular are richly captured. Empty map when nothing ingested.
+     */
+    async loadRepoFilePaths(userId: string): Promise<Map<string, Set<string>>> {
+        const { rows } = await this.pool.query<{ repo_full_name: string; file_path: string }>(
+            `SELECT DISTINCT repo_full_name, file_path FROM document_embeddings WHERE user_id = $1
+             UNION
+             SELECT DISTINCT repo_full_name, file_path FROM technology_evidence WHERE user_id = $1`,
+            [userId],
+        );
+        const byRepo = new Map<string, Set<string>>();
+        for (const r of rows) {
+            let set = byRepo.get(r.repo_full_name);
+            if (set === undefined) {
+                set = new Set();
+                byRepo.set(r.repo_full_name, set);
+            }
+            set.add(r.file_path);
+        }
+        return byRepo;
+    }
+
+    /**
      * Load each repo's archetype signals (repo_sync_state.archetype_signals — the
      * folder-structure scan: has_iac, has_k8s_manifests, has_argocd_apps, …) for a
      * user. Feeds the Repository Profile builder. Empty map when none stored.
