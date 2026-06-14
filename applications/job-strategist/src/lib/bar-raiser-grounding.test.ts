@@ -20,6 +20,8 @@ const emptyEvidence: ProjectEvidenceInput = {
   decisions: [],
   stackItems: [],
   tags: [],
+  highlights: [],
+  challenges: [],
   repoEvidence: [],
 };
 

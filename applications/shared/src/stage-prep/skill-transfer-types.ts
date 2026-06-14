@@ -24,9 +24,20 @@ export interface SkillCandidateSet {
 export interface ProjectEvidenceInput {
   readonly projects:    readonly { id: string; name: string; tagline?: string | null; pitch?: string | null }[];
   readonly components:  readonly { id: string; projectId: string; name: string; kind: string }[];
-  readonly decisions:   readonly { id: string; projectId: string; title: string; decision: string | null }[];
-  readonly stackItems:  readonly { id: string; projectId: string; name: string; category: string }[];
+  readonly decisions:   readonly {
+    id: string; projectId: string; title: string; decision: string | null;
+    context?: string | null; consequences?: string | null;
+  }[];
+  readonly stackItems:  readonly {
+    id: string; projectId: string; name: string; category: string;
+    justification?: string | null;
+  }[];
   readonly tags:        readonly { projectId: string; tag: string }[];
+  /** Achievement highlights mined from the case study — the richest resume-grade
+   *  signal (e.g. "recall 0.25→0.67 over 6 iterations"). */
+  readonly highlights:  readonly { projectId: string; title: string; description: string | null }[];
+  /** Problem/solution pairs — concrete technical depth for the JD narrative. */
+  readonly challenges:  readonly { projectId: string; problem: string; solution: string | null }[];
   readonly repoEvidence: readonly {
     projectId: string; source: 'tech_evidence' | 'dsa_evidence';
     id: string; rawName: string; fileLine: string;

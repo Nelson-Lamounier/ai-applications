@@ -3,7 +3,7 @@ import { formatProjectEvidence } from './format-project-evidence.js';
 import type { ProjectEvidenceInput } from './skill-transfer-types.js';
 
 const EMPTY: ProjectEvidenceInput = {
-  projects: [], components: [], decisions: [], stackItems: [], tags: [], repoEvidence: [],
+  projects: [], components: [], decisions: [], stackItems: [], tags: [], highlights: [], challenges: [], repoEvidence: [],
 };
 
 function input(over: Partial<ProjectEvidenceInput>): ProjectEvidenceInput {
@@ -30,6 +30,45 @@ describe('formatProjectEvidence', () => {
     expect(out).toContain('Key design decisions:');
     expect(out).toContain('- Chose Bedrock: why');
     expect(out).toContain('Tags: ai');
+  });
+
+  it('surfaces highlights and challenges — the rich case-study signal', () => {
+    const out = formatProjectEvidence(input({
+      projects: [{ id: 'p1', name: 'AI Apps' }],
+      highlights: [
+        { projectId: 'p1', title: '5-agent pipeline in production', description: 'Runs as K8s Jobs after each ingestion.' },
+      ],
+      challenges: [
+        { projectId: 'p1', problem: 'Tech-extraction recall too low', solution: 'Parity loop drove recall 0.25 to 0.67.' },
+      ],
+    }));
+    expect(out).toContain('Highlights:');
+    expect(out).toContain('- 5-agent pipeline in production — Runs as K8s Jobs after each ingestion.');
+    expect(out).toContain('Challenges solved:');
+    expect(out).toContain('Tech-extraction recall too low → Parity loop drove recall 0.25 to 0.67.');
+  });
+
+  it('dedupes near-identical highlights (regeneration accumulates rows)', () => {
+    const out = formatProjectEvidence(input({
+      projects: [{ id: 'p1', name: 'AI Apps' }],
+      highlights: [
+        { projectId: 'p1', title: 'Recall improved', description: 'first' },
+        { projectId: 'p1', title: 'Recall Improved', description: 'second (dup title)' },
+      ],
+    }));
+    expect(out).toContain('first');
+    expect(out).not.toContain('second (dup title)');
+  });
+
+  it('includes decision context/consequences-backed decisions and richer caps', () => {
+    const out = formatProjectEvidence(input({
+      projects: [{ id: 'p1', name: 'AI Apps' }],
+      decisions: Array.from({ length: 5 }, (_, i) => ({
+        id: `d${String(i)}`, projectId: 'p1', title: `Decision ${String(i)}`, decision: 'rationale',
+      })),
+    }));
+    // Default cap is now 5 decisions (was 3).
+    expect(out).toContain('Decision 4: rationale');
   });
 
   it('falls back to tagline when pitch is absent', () => {

@@ -12,7 +12,7 @@ export class RdsProjectEvidenceRepository {
   constructor(private readonly pool: Pool) {}
 
   async load(userId: string): Promise<ProjectEvidenceInput> {
-    const [projects, components, decisions, stackItems, tags, repoEvidence] = await Promise.all([
+    const [projects, components, decisions, stackItems, tags, highlights, challenges, repoEvidence] = await Promise.all([
       // Exclude ARCHIVED projects: when a multi-repo system is confirmed, the constituent
       // single-repo defaults are archived — feeding them here would double-count the same
       // repo (e.g. cdk-monitoring as both a platform component AND its own archived default).
@@ -20,9 +20,13 @@ export class RdsProjectEvidenceRepository {
       // they never gate it — a user with one un-curated repo still gets full analysis.
       this.pool.query(`SELECT id, name, tagline, pitch FROM projects WHERE user_id = $1 AND status <> 'archived'`, [userId]),
       this.pool.query(`SELECT id, project_id, name, kind FROM project_components WHERE user_id = $1`, [userId]),
-      this.pool.query(`SELECT id, project_id, title, decision FROM project_decisions WHERE user_id = $1`, [userId]),
-      this.pool.query(`SELECT id, project_id, name, category FROM project_stack_items WHERE user_id = $1`, [userId]),
+      this.pool.query(`SELECT id, project_id, title, decision, context, consequences FROM project_decisions WHERE user_id = $1`, [userId]),
+      this.pool.query(`SELECT id, project_id, name, category, justification FROM project_stack_items WHERE user_id = $1`, [userId]),
       this.pool.query(`SELECT project_id, tag FROM project_tags WHERE user_id = $1`, [userId]),
+      // Highlights + challenges are the richest resume-grade signal the case study
+      // produces; they were previously generated but never surfaced to the JD.
+      this.pool.query(`SELECT project_id, title, description FROM project_highlights WHERE user_id = $1 ORDER BY order_index`, [userId]),
+      this.pool.query(`SELECT project_id, problem, solution FROM project_challenges WHERE user_id = $1 ORDER BY order_index`, [userId]),
       this.pool.query(
         `WITH proj_repo AS (
            SELECT DISTINCT pc.project_id, r.full_name
@@ -50,11 +54,15 @@ export class RdsProjectEvidenceRepository {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       components: components.rows.map((r: any) => ({ id: r.id, projectId: r.project_id, name: r.name, kind: r.kind })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      decisions:  decisions.rows.map((r: any) => ({ id: r.id, projectId: r.project_id, title: r.title, decision: r.decision ?? null })),
+      decisions:  decisions.rows.map((r: any) => ({ id: r.id, projectId: r.project_id, title: r.title, decision: r.decision ?? null, context: r.context ?? null, consequences: r.consequences ?? null })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      stackItems: stackItems.rows.map((r: any) => ({ id: r.id, projectId: r.project_id, name: r.name, category: r.category })),
+      stackItems: stackItems.rows.map((r: any) => ({ id: r.id, projectId: r.project_id, name: r.name, category: r.category, justification: r.justification ?? null })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       tags:       tags.rows.map((r: any) => ({ projectId: r.project_id, tag: r.tag })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      highlights: highlights.rows.map((r: any) => ({ projectId: r.project_id, title: r.title, description: r.description ?? null })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      challenges: challenges.rows.map((r: any) => ({ projectId: r.project_id, problem: r.problem, solution: r.solution ?? null })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       repoEvidence: repoEvidence.rows.map((r: any) => ({ projectId: r.project_id, source: r.source, id: r.id, rawName: r.raw_name, fileLine: r.file_line })),
     };
