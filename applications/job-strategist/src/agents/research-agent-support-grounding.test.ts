@@ -61,12 +61,16 @@ describe('isSupportHeavy (default threshold 40)', () => {
 });
 
 describe('supportGroundingNote', () => {
-    it('returns a career-history grounding note at/above threshold, with the weight', () => {
+    it('returns a balanced grounding note at/above threshold, with the weight', () => {
         const note = supportGroundingNote(50);
         expect(note).not.toBe('');
         expect(note).toContain('customer-facing/support-heavy');
         expect(note).toContain('50%');
-        expect(note).toContain('CAREER HISTORY');
+        // Balance: grounds soft skills in BOTH repo evidence AND career, preferring demonstrated project work.
+        expect(note).toMatch(/BOTH/);
+        expect(note).toMatch(/PREFER demonstrated project\/repository work/);
+        expect(note).toMatch(/career history to corroborate/);
+        expect(note).not.toMatch(/PRIMARILY/);
     });
 
     it('returns empty string below threshold (no note → behaviour unchanged)', () => {
