@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
-import { tarballUrl, fetchTarball } from './fetchTarball.js';
+import { tarballUrl, fetchTarball, shaFromCodeloadUrl } from './fetchTarball.js';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -63,5 +63,16 @@ describe('fetchTarball', () => {
             fetchTarball('owner/repo', 'main', 'tok', path.join(dir, 'r.tar.gz'), 1_000),
         ).rejects.toThrow(/repo_too_large/i);
         await fs.rm(dir, { recursive: true, force: true });
+    });
+});
+
+describe('shaFromCodeloadUrl', () => {
+    it('extracts the 40-hex SHA from a resolved codeload URL', () => {
+        expect(shaFromCodeloadUrl('https://codeload.github.com/o/r/legacy.tar.gz/2c9dacce1d3cf5ffd722b2a28021692023dea548'))
+            .toBe('2c9dacce1d3cf5ffd722b2a28021692023dea548');
+    });
+    it('returns undefined for a non-SHA last segment (e.g. literal HEAD)', () => {
+        expect(shaFromCodeloadUrl('https://api.github.com/repos/o/r/tarball/HEAD')).toBeUndefined();
+        expect(shaFromCodeloadUrl('https://codeload.github.com/o/r/legacy.tar.gz/main')).toBeUndefined();
     });
 });
