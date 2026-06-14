@@ -117,6 +117,20 @@ async function upsertProjectTopFields(
     return { taglineUpdated: updateTagline, pitchUpdated: updatePitch };
 }
 
+/**
+ * Reconcile a generated list section to EXACTLY the current payload, idempotently:
+ *
+ *   1. Insert each current row if its (project_id, content_hash) isn't already
+ *      present — so an unchanged row keeps its id/order, costing one no-op.
+ *   2. Prune stale machine rows: delete this project's rows whose content_hash
+ *      is not in the current set. This is what stops regeneration from
+ *      ACCUMULATING superseded rows (the dup bug) when the agent's output changes
+ *      or a repo is added.
+ *
+ * Two rows are never pruned: NULL-content_hash rows (user-authored — `NULL <> x`
+ * is NULL, so they fall out of the delete) and, when `preserveUserConfirmed`,
+ * rows the user has confirmed. Returns the number of NEW rows inserted.
+ */
 async function insertGenerated(
     client: PoolClient,
     table: 'project_decisions' | 'project_highlights' | 'project_challenges' | 'project_stack_items',
@@ -126,11 +140,14 @@ async function insertGenerated(
         signals:       SourceSignal;
         columns:       Record<string, unknown>;
     }>,
+    opts: { preserveUserConfirmed?: boolean } = {},
 ): Promise<number> {
     let inserted = 0;
+    const currentHashes: string[] = [];
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const hash = computeContentHash(row.contentFields, row.signals);
+        currentHashes.push(hash);
         const cols  = [
             'user_id', 'project_id',
             ...Object.keys(row.columns),
@@ -159,6 +176,26 @@ async function insertGenerated(
         `;
         const r = await client.query(insertSql, vals);
         inserted += r.rowCount ?? 0;
+    }
+
+    // Prune superseded machine rows so the section reflects only the current run.
+    const preserveClause = opts.preserveUserConfirmed ? ' AND is_user_confirmed = FALSE' : '';
+    if (currentHashes.length > 0) {
+        await client.query(
+            `DELETE FROM ${table}
+              WHERE project_id = $1
+                AND content_hash <> ALL($2::text[])${preserveClause}`,
+            [input.projectId, currentHashes],
+        );
+    } else {
+        // The agent produced no rows for this section — clear stale machine rows
+        // (NULL-hash user rows and, if requested, user-confirmed rows survive).
+        await client.query(
+            `DELETE FROM ${table}
+              WHERE project_id = $1
+                AND content_hash IS NOT NULL${preserveClause}`,
+            [input.projectId],
+        );
     }
     return inserted;
 }
@@ -299,6 +336,7 @@ export async function persistCaseStudy(
                         is_user_confirmed: false,
                     },
                 })),
+                { preserveUserConfirmed: true },
             );
         } else {
             skippedSections.push('decisions');
