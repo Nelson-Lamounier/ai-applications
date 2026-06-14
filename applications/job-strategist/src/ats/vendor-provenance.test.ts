@@ -118,6 +118,18 @@ describe('demoteMisattributedVendors', () => {
             expect(r.matching.partialMatches[0].gapDescription).toMatch(/not present in the candidate's authored code/i);
         });
 
+        it('lists ONLY the code-present alternatives in the bridge — drops group noise (aws_vpc)', () => {
+            const noisyGroup: string[][] = [['openai', 'claude', 'bedrock', 'aws_vpc']];
+            const r = demoteMisattributedVendors(
+                matching([verified('OpenAI API', [AUTHORED])]),
+                { techGroups: noisyGroup, techAliasMap: ALIAS, codeTechByRepo: codeWith('bedrock') },
+            );
+            const bridge = r.matching.partialMatches[0].transferableFoundation;
+            expect(bridge).toMatch(/bedrock/i);
+            expect(bridge).not.toMatch(/aws vpc/i); // group member, not in code → excluded
+            expect(bridge).not.toMatch(/claude/i);  // group member, not in code → excluded
+        });
+
         it('KEEPS a vendor that IS in the candidate code (real production use)', () => {
             const r = demoteMisattributedVendors(
                 matching([verified('OpenAI API', [AUTHORED])]),
