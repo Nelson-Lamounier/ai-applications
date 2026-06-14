@@ -111,3 +111,55 @@ export function formatEducation(entries: EducationEntry[]): string {
     }
     return lines.join('\n');
 }
+
+export interface CertificationEntry {
+    readonly name: string;
+    readonly issuer: string;
+    readonly date: string;
+}
+
+interface CertificationRow { raw_data: { name?: string; issuer?: string; date?: string; period?: string } | null }
+
+/**
+ * Load the user's certifications from user_career_history (entry_type='certification').
+ * Previously dropped entirely — the pipeline only loaded experience + education — so a
+ * relevant professional cert (e.g. AWS Certified DevOps Engineer – Professional) was
+ * invisible to the matcher. FACTUAL: reproduce the certification name verbatim.
+ */
+export async function loadCertifications(pool: Pool, userId: string, limit = 12): Promise<CertificationEntry[]> {
+    const r = await pool.query<CertificationRow>(
+        `SELECT raw_data FROM user_career_history
+          WHERE user_id = $1::uuid AND entry_type = 'certification'
+          ORDER BY display_order ASC
+          LIMIT $2`,
+        [userId, limit],
+    );
+    return r.rows.map(row => ({
+        name:   row.raw_data?.name ?? '',
+        issuer: row.raw_data?.issuer ?? '',
+        date:   row.raw_data?.date ?? row.raw_data?.period ?? '',
+    })).filter(e => e.name);
+}
+
+/**
+ * Render certifications as a verbatim factual block AND instruct the matcher to weigh each
+ * against the JD — a current, domain-relevant professional certification is strong
+ * corroborating evidence for the related required skills, and must be cited where it
+ * reinforces a match (not invented, not over-claimed into unrelated skills).
+ */
+export function formatCertifications(entries: CertificationEntry[]): string {
+    if (entries.length === 0) return '';
+    const lines = [
+        'VERIFIED CERTIFICATIONS (FACTUAL — reproduce the certification name VERBATIM; never invent).',
+        'WEIGH each against the JD: a current, domain-relevant professional certification is strong',
+        'corroborating evidence for the related required skills — cite it where it reinforces a match',
+        '(e.g. an AWS professional cert reinforces cloud troubleshooting, automation, and infra skills).',
+        'Do NOT stretch a certification into unrelated skills.',
+    ];
+    for (const e of entries) {
+        const parts = [e.name, e.issuer].filter(Boolean).join(' — ');
+        const suffix = e.date ? ` (${e.date})` : '';
+        lines.push(`- ${parts}${suffix}`);
+    }
+    return lines.join('\n');
+}

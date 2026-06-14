@@ -24,7 +24,7 @@ import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
-import { loadEducation, formatEducation, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
+import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { extractJobDescription } from './agents/jd-extractor.js';
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
@@ -399,13 +399,15 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, educationEntries, careerEntries, jdExtraction] = await Promise.all([
+        const [projectEvidenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
             loadEducation(pool, ctx.userId).catch(() => []),
+            loadCertifications(pool, ctx.userId).catch(() => []),
             loadCareerHistory(pool, ctx.userId).catch(() => []),
             extractJobDescription(ctx.jobDescription),
         ]);
         const educationBlock      = formatEducation(educationEntries);
+        const certificationsBlock = formatCertifications(certificationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
 
         // Role-ontology grounding — translate experience into target-role vocabulary. Fail-open.
@@ -473,7 +475,7 @@ export async function main(): Promise<void> {
             )
             : undefined;
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter);
+        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock);
 
         // Vendor-provenance guard (deterministic): a competing vendor evidenced ONLY by
         // reference/example docs (e.g. an "OpenAI example" in a structured-output checklist
