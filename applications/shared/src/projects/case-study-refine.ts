@@ -15,8 +15,32 @@
  */
 import type { Pool } from 'pg';
 
-import type { PriorCaseStudy } from './case-study-types.js';
+import type { CaseStudyContext, PriorCaseStudy } from './case-study-types.js';
 import type { SourceSignal } from './case-study-types.js';
+
+/**
+ * Scope the heavy evidence (commits / pulls / KB chunks) to a subset of repos —
+ * used on a refine run to keep ONLY the newly-added repos' evidence in the prompt.
+ * The prior case study already carries each preserved row's `sourceSignals`, and
+ * the grounding verifier checks a row against its own signals (not the context),
+ * so old repos don't need their commits re-loaded. `repositories` and
+ * `components` are left intact so the agent still sees the full project shape.
+ *
+ * Pure; returns a new context. Cutting old repos' commits is where the token (and
+ * therefore cost) saving comes from on an incremental refine.
+ */
+export function scopeEvidenceToRepos(
+    context: CaseStudyContext,
+    repoFullNames: readonly string[],
+): CaseStudyContext {
+    const keep = new Set(repoFullNames);
+    return {
+        ...context,
+        commits:  context.commits.filter((c) => keep.has(c.repoFullName)),
+        pulls:    context.pulls.filter((p) => keep.has(p.repoFullName)),
+        kbChunks: context.kbChunks.filter((k) => keep.has(k.repoFullName)),
+    };
+}
 
 const EMPTY_SIGNAL: SourceSignal = {
     commits: [], pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',

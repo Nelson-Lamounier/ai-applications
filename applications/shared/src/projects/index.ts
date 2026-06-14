@@ -112,7 +112,7 @@ export type {
     RunCaseStudyOutput,
 } from './case-study-orchestrator.js';
 
-export { reconstructPriorCaseStudy, underrepresentedRepos } from './case-study-refine.js';
+export { reconstructPriorCaseStudy, underrepresentedRepos, scopeEvidenceToRepos } from './case-study-refine.js';
 export {
     runRefineGraders,
     gradeNewRepoCoverage,

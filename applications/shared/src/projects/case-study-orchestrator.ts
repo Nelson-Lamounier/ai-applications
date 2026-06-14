@@ -34,7 +34,7 @@ import {
     loadCaseStudyContext,
     type LoadCaseStudyContextResult,
 } from './case-study-loader.js';
-import { reconstructPriorCaseStudy, underrepresentedRepos } from './case-study-refine.js';
+import { reconstructPriorCaseStudy, underrepresentedRepos, scopeEvidenceToRepos } from './case-study-refine.js';
 import {
     persistCaseStudy,
     type PersistCaseStudySummary,
@@ -223,10 +223,16 @@ async function resolveRefineContext(
     if (!prior) return { contextLoaded: baseContext, refined: false };
     const repoNames = baseContext.context.repositories.map((r) => r.fullName);
     const refineNewRepos = underrepresentedRepos(prior, repoNames);
+    // Cost-scope: when there ARE newly-added repos, drop old repos' commits/PRs/KB
+    // from the prompt — the prior case study covers them. A plain re-refine (no new
+    // repo) keeps full context so the agent can still re-ground from scratch.
+    const scoped = refineNewRepos.length > 0
+        ? scopeEvidenceToRepos(baseContext.context, refineNewRepos)
+        : baseContext.context;
     return {
         contextLoaded: {
             ...baseContext,
-            context: { ...baseContext.context, priorCaseStudy: prior, refineNewRepos },
+            context: { ...scoped, priorCaseStudy: prior, refineNewRepos },
         },
         refined: true,
     };

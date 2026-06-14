@@ -2,8 +2,8 @@
 import { describe, it, expect } from '@jest/globals';
 import type { Pool } from 'pg';
 
-import { reconstructPriorCaseStudy, underrepresentedRepos } from './case-study-refine.js';
-import type { PriorCaseStudy } from './case-study-types.js';
+import { reconstructPriorCaseStudy, underrepresentedRepos, scopeEvidenceToRepos } from './case-study-refine.js';
+import type { CaseStudyContext, PriorCaseStudy } from './case-study-types.js';
 
 /** Mock pg Pool routing canned rows by a substring match on the SQL. */
 function fakePool(routes: Array<{ match: RegExp; rows: unknown[] }>): Pool {
@@ -111,5 +111,32 @@ describe('underrepresentedRepos', () => {
     it('preserves the input repo order', () => {
         const prior = priorWith([]);
         expect(underrepresentedRepos(prior, ['c', 'a', 'b'])).toEqual(['c', 'a', 'b']);
+    });
+});
+
+function ctxWith(repos: string[]): CaseStudyContext {
+    return {
+        projectId: 'p', projectName: 'P', tagline: null, pitch: null, userOverrides: {},
+        components: [], repositories: repos.map((r, i) => ({ id: `r${String(i)}`, fullName: r, primaryLanguage: null, topics: [], techStack: [], defaultBranch: null })),
+        commits: repos.map((r) => ({ repoFullName: r, sha: 'abc1234', authoredAt: 't', authorName: 'a', message: 'm' })),
+        pulls:   repos.map((r, i) => ({ repoFullName: r, number: i + 1, title: 't', body: null, state: 'open' as const, mergedAt: null, htmlUrl: 'u' })),
+        kbChunks: repos.map((r) => ({ repoFullName: r, filePath: 'f', chunkType: 'document', content: 'c' })),
+    };
+}
+
+describe('scopeEvidenceToRepos', () => {
+    it('keeps only the named repos\' commits / pulls / kb, leaving repositories intact', () => {
+        const scoped = scopeEvidenceToRepos(ctxWith(['acme/api', 'acme/web']), ['acme/web']);
+        expect(scoped.commits.map((c) => c.repoFullName)).toEqual(['acme/web']);
+        expect(scoped.pulls.map((p) => p.repoFullName)).toEqual(['acme/web']);
+        expect(scoped.kbChunks.map((k) => k.repoFullName)).toEqual(['acme/web']);
+        // Full project shape preserved so the agent still sees every repo/component.
+        expect(scoped.repositories.map((r) => r.fullName)).toEqual(['acme/api', 'acme/web']);
+    });
+
+    it('drops everything when the repo set is empty', () => {
+        const scoped = scopeEvidenceToRepos(ctxWith(['acme/api']), []);
+        expect(scoped.commits).toEqual([]);
+        expect(scoped.kbChunks).toEqual([]);
     });
 });
