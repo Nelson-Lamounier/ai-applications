@@ -22,6 +22,29 @@ const EMPTY_SIGNAL: SourceSignal = {
     commits: [], pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED',
 };
 
+/**
+ * Repositories the prior case study does NOT ground any row in — i.e. repos that
+ * were added since the case study was written and have no decision / highlight /
+ * challenge / stack item citing their commits or files. These are the repos a
+ * refine run must make sure to cover, so a freshly-added repo isn't crowded out
+ * of the capped sections by the (stronger, more numerous) prior content.
+ *
+ * Pure. `repoFullNames` is the project's current repo set; the result preserves
+ * that order and is a subset of it.
+ */
+export function underrepresentedRepos(
+    prior: PriorCaseStudy,
+    repoFullNames: readonly string[],
+): string[] {
+    const cited = new Set<string>();
+    const rows = [...prior.decisions, ...prior.highlights, ...prior.challenges, ...prior.stack];
+    for (const row of rows) {
+        for (const c of row.sourceSignals.commits) cited.add(c.repoFullName);
+        for (const f of row.sourceSignals.files)   cited.add(f.repoFullName);
+    }
+    return repoFullNames.filter((name) => !cited.has(name));
+}
+
 /** Coerce a JSONB source_signals cell into a SourceSignal, tolerating partial/legacy shapes. */
 function asSignal(raw: unknown): SourceSignal {
     if (!raw || typeof raw !== 'object') return EMPTY_SIGNAL;

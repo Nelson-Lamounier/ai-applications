@@ -118,7 +118,12 @@ Produce the UPDATED full case study, not a fresh one:
   - REVISE the tagline, pitch, architecture, and resume bullets so they describe
     the project AS IT NOW STANDS across all repositories and components.
   - Do NOT duplicate a prior item with reworded text. Respect the same caps
-    (≤5 decisions, ≤5 highlights, ≤5 challenges).`;
+    (≤5 decisions, ≤5 highlights, ≤5 challenges).
+  - COVERAGE: any repository listed in <newRepos> is newly added and absent from
+    the prior case study. Each one MUST appear in at least one highlight AND one
+    challenge, grounded in its commits/pulls/files — drop or merge a weaker prior
+    item to make room within the caps if needed. A new repo that only shows up in
+    the stack list is NOT sufficient.`;
 
 export function buildSystemPrompt(context: CaseStudyContext): string {
     let prompt = SYSTEM_PROMPT_TEXT;
@@ -369,6 +374,13 @@ export function buildUserMessage(ctx: CaseStudyContext): string {
             JSON.stringify(ctx.priorCaseStudy),
             '</priorCaseStudy>',
         );
+        if (ctx.refineNewRepos && ctx.refineNewRepos.length > 0) {
+            lines.push(
+                '<newRepos>',
+                JSON.stringify(ctx.refineNewRepos),
+                '</newRepos>',
+            );
+        }
     }
     lines.push('', `Emit the ${CASE_STUDY_TOOL.name} tool now.`);
     return lines.join('\n');

@@ -266,4 +266,9 @@ export interface CaseStudyContext {
     // writing from scratch. Attached by the orchestrator (post-pack). Absent →
     // today's full-generation behavior.
     readonly priorCaseStudy?: PriorCaseStudy | null;
+    // Repos present in the project but not grounded by any prior row — the refine
+    // agent is told to guarantee these get covered so a newly-added repo isn't
+    // crowded out of the capped sections. Set by the orchestrator alongside
+    // priorCaseStudy; empty/absent when the prior already covers every repo.
+    readonly refineNewRepos?: readonly string[];
 }
