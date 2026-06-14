@@ -20,8 +20,6 @@
  * interface so tests can inject a mock implementation without spinning
  * up Bedrock.
  */
-import type { SystemContentBlock } from '@aws-sdk/client-bedrock-runtime';
-
 import { runAgent, parseJsonResponse } from '../agent-runner.js';
 import type { BasePipelineContext } from '../base-agent.js';
 import type { AgentConfig, AgentResult } from '../types.js';
@@ -105,20 +103,41 @@ Use commits + KB passages as evidence for every grounded claim.`;
  * shifts section emphasis; it never changes the output schema, the evidence
  * requirement, or the grounding pass. Absent archetype → base prompt verbatim.
  */
+// Appended when a prior case study is supplied — turns the run into an
+// incremental refine rather than a from-scratch write.
+const REFINE_PROMPT_BLOCK = `
+REFINE MODE — a prior case study for this project is supplied in <priorCaseStudy>.
+The project has changed since it was written (typically a repository was added).
+Produce the UPDATED full case study, not a fresh one:
+  - PRESERVE prior decisions / challenges / highlights / stack that are still
+    accurate. Reuse their \`sourceSignals\` verbatim — those rows are already
+    grounded; you do not need new evidence to keep them.
+  - ADD rows for work shown by the newly-supplied commits / pulls / KB that the
+    prior case study missed. Ground every new row in that evidence.
+  - DROP a prior row only if it is now wrong or superseded.
+  - REVISE the tagline, pitch, architecture, and resume bullets so they describe
+    the project AS IT NOW STANDS across all repositories and components.
+  - Do NOT duplicate a prior item with reworded text. Respect the same caps
+    (≤5 decisions, ≤5 highlights, ≤5 challenges).`;
+
 export function buildSystemPrompt(context: CaseStudyContext): string {
-    if (!context.archetype) return SYSTEM_PROMPT_TEXT;
-    const stageLabel = context.stage ?? 'unspecified';
-    const priority   = (context.prioritySections ?? []).join(', ');
-    const deemph     = (context.deemphasizedSections ?? []).join(', ');
-    const block = [
-        '',
-        'Project calibration:',
-        `This is a ${stageLabel}-level ${context.archetype.name} project.` +
-            (priority ? ` Recruiters at this level look hardest at: ${priority}. Prioritise depth and evidence in those sections.` : ''),
-        deemph ? `De-emphasise: ${deemph}.` : '',
-        'Still emit every section the evidence supports — calibration changes emphasis, never truthfulness. Omit any section you cannot ground.',
-    ].filter(Boolean).join('\n');
-    return `${SYSTEM_PROMPT_TEXT}\n${block}`;
+    let prompt = SYSTEM_PROMPT_TEXT;
+    if (context.archetype) {
+        const stageLabel = context.stage ?? 'unspecified';
+        const priority   = (context.prioritySections ?? []).join(', ');
+        const deemph     = (context.deemphasizedSections ?? []).join(', ');
+        const block = [
+            '',
+            'Project calibration:',
+            `This is a ${stageLabel}-level ${context.archetype.name} project.` +
+                (priority ? ` Recruiters at this level look hardest at: ${priority}. Prioritise depth and evidence in those sections.` : ''),
+            deemph ? `De-emphasise: ${deemph}.` : '',
+            'Still emit every section the evidence supports — calibration changes emphasis, never truthfulness. Omit any section you cannot ground.',
+        ].filter(Boolean).join('\n');
+        prompt = `${prompt}\n${block}`;
+    }
+    if (context.priorCaseStudy) prompt = `${prompt}\n${REFINE_PROMPT_BLOCK}`;
+    return prompt;
 }
 
 // ─── Forced tool_use schema ─────────────────────────────────────────────────
@@ -323,7 +342,7 @@ const CASE_STUDY_TOOL = {
 
 // ─── User message ───────────────────────────────────────────────────────────
 
-function buildUserMessage(ctx: CaseStudyContext): string {
+export function buildUserMessage(ctx: CaseStudyContext): string {
     // Trim to the project envelope the model needs. We deliberately do not
     // forward `user_overrides` here — sticky-edit enforcement lives at the
     // persistence layer.
@@ -336,16 +355,23 @@ function buildUserMessage(ctx: CaseStudyContext): string {
         commits:      ctx.commits,
         pulls:        ctx.pulls,
     };
-    return [
+    const lines = [
         '<project>',
         JSON.stringify(envelope),
         '</project>',
         '<kbChunks>',
         JSON.stringify(ctx.kbChunks),
         '</kbChunks>',
-        '',
-        `Emit the ${CASE_STUDY_TOOL.name} tool now.`,
-    ].join('\n');
+    ];
+    if (ctx.priorCaseStudy) {
+        lines.push(
+            '<priorCaseStudy>',
+            JSON.stringify(ctx.priorCaseStudy),
+            '</priorCaseStudy>',
+        );
+    }
+    lines.push('', `Emit the ${CASE_STUDY_TOOL.name} tool now.`);
+    return lines.join('\n');
 }
 
 // ─── Entrypoint ─────────────────────────────────────────────────────────────

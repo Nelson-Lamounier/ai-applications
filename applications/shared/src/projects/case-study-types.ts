@@ -174,6 +174,15 @@ export const CaseStudySchema = z.object({
 }).strict();
 export type CaseStudy = z.infer<typeof CaseStudySchema>;
 
+/**
+ * A project's existing case study, reconstructed from the DB for incremental
+ * refinement. Carries each row's stored `sourceSignals` so the refine agent can
+ * preserve already-grounded rows verbatim rather than re-deriving their
+ * evidence. depthMarkers/architecture/resumeBullets are intentionally omitted —
+ * the agent regenerates those holistically; they're not useful as scaffold.
+ */
+export type PriorCaseStudy = Pick<CaseStudy, 'tagline' | 'pitch' | 'stack' | 'decisions' | 'highlights' | 'challenges'>;
+
 // ─── Per-project input context ──────────────────────────────────────────────
 
 /**
@@ -250,4 +259,11 @@ export interface CaseStudyContext {
     readonly stage?:                'junior' | 'mid' | 'senior' | 'staff' | null;
     readonly prioritySections?:     readonly string[];
     readonly deemphasizedSections?: readonly string[];
+
+    // ── Incremental refine (optional) ─────────────────────────────────────
+    // When present, the agent runs in REFINE mode: it updates this prior case
+    // study to reflect the project's current repositories/components instead of
+    // writing from scratch. Attached by the orchestrator (post-pack). Absent →
+    // today's full-generation behavior.
+    readonly priorCaseStudy?: PriorCaseStudy | null;
 }

@@ -34,6 +34,7 @@ import {
     loadCaseStudyContext,
     type LoadCaseStudyContextResult,
 } from './case-study-loader.js';
+import { reconstructPriorCaseStudy } from './case-study-refine.js';
 import {
     persistCaseStudy,
     type PersistCaseStudySummary,
@@ -57,10 +58,19 @@ export interface RunCaseStudyInput {
     readonly verifier?:     IGroundingVerifier;
     readonly cache?:        ISemanticCache;
     readonly ctx:               BasePipelineContext;
+    /**
+     * Incremental refine: when true and the project already has a completed
+     * case study, the agent updates that prior study (preserving grounded rows)
+     * rather than writing from scratch. Falls back to full generation when there
+     * is no prior. The semantic cache is bypassed for refine runs — they
+     * deliberately merge prior + new evidence and should always execute.
+     */
+    readonly refine?:       boolean;
 }
 
 export interface RunCaseStudyOutput {
     readonly cacheHit:   boolean;
+    readonly refined:    boolean;
     readonly caseStudy:  CaseStudy;
     readonly persisted:  PersistCaseStudySummary;
     readonly inputHash:  string;
@@ -149,33 +159,22 @@ export async function runCaseStudyOrchestration(
     pool: Pool,
     input: RunCaseStudyInput,
 ): Promise<RunCaseStudyOutput> {
-    const contextLoaded = await loadCaseStudyContext(pool, input.projectId);
-    const inputHash     = computeInputHash(contextLoaded);
+    const baseContext = await loadCaseStudyContext(pool, input.projectId);
+    const { contextLoaded, refined } = await resolveRefineContext(pool, baseContext, input);
+    const inputHash = computeInputHash(contextLoaded);
 
-    const cacheScope = `${CACHE_SCOPE_PREFIX}:${contextLoaded.userId}:${input.projectId}`;
-    const cacheQueryText = inputHash; // hash IS the query; small + deterministic
+    const cacheKey = {
+        scope:     `${CACHE_SCOPE_PREFIX}:${contextLoaded.userId}:${input.projectId}`,
+        kbTag:     input.kbTag,
+        queryText: inputHash, // hash IS the query; small + deterministic
+    };
+    // The semantic cache is bypassed for refine runs — they merge prior + new
+    // evidence and must always execute.
+    const cacheable = Boolean(input.cache) && !refined;
 
     // 1. Try the cache.
-    let caseStudy: CaseStudy | undefined;
-    let cacheHit = false;
-    if (input.cache) {
-        try {
-            const hit = await input.cache.get({
-                scope:     cacheScope,
-                kbTag:     input.kbTag,
-                queryText: cacheQueryText,
-            });
-            if (hit.hit && hit.response) {
-                const parsed = CaseStudySchema.safeParse(hit.response);
-                if (parsed.success) {
-                    caseStudy = parsed.data;
-                    cacheHit  = true;
-                }
-            }
-        } catch {
-            // Cache failures are non-fatal — fall through to a fresh run.
-        }
-    }
+    let caseStudy = cacheable ? await cacheGet(input.cache!, cacheKey) : undefined;
+    const cacheHit = caseStudy !== undefined;
 
     // 2. Run the agent if the cache missed.
     if (!caseStudy) {
@@ -201,25 +200,50 @@ export async function runCaseStudyOrchestration(
         client.release();
     }
 
-    // 4. Update the cache. Fail-open — never throw on a cache put.
-    if (input.cache && !cacheHit) {
-        try {
-            await input.cache.put({
-                scope:     cacheScope,
-                kbTag:     input.kbTag,
-                queryText: cacheQueryText,
-                response:  caseStudy,
-            });
-        } catch {
-            // ignore
-        }
-    }
+    // 4. Update the cache (fail-open; never for cache hits or refine runs).
+    if (cacheable && !cacheHit) await cachePut(input.cache!, cacheKey, caseStudy);
 
+    return { cacheHit, refined, caseStudy, persisted, inputHash, contextLoaded };
+}
+
+interface CacheKey { scope: string; kbTag: string; queryText: string }
+
+/**
+ * Resolve the context to feed the agent: when `refine` is set and a completed
+ * prior case study exists, attach it so the agent updates it. Otherwise the base
+ * context drives a normal from-scratch generation.
+ */
+async function resolveRefineContext(
+    pool: Pool,
+    baseContext: LoadCaseStudyContextResult,
+    input: RunCaseStudyInput,
+): Promise<{ contextLoaded: LoadCaseStudyContextResult; refined: boolean }> {
+    if (!input.refine) return { contextLoaded: baseContext, refined: false };
+    const prior = await reconstructPriorCaseStudy(pool, input.projectId);
+    if (!prior) return { contextLoaded: baseContext, refined: false };
     return {
-        cacheHit,
-        caseStudy,
-        persisted,
-        inputHash,
-        contextLoaded,
+        contextLoaded: { ...baseContext, context: { ...baseContext.context, priorCaseStudy: prior } },
+        refined: true,
     };
+}
+
+/** Cache read — returns the parsed CaseStudy on a valid hit, else undefined. Fail-open. */
+async function cacheGet(cache: ISemanticCache, key: CacheKey): Promise<CaseStudy | undefined> {
+    try {
+        const hit = await cache.get(key);
+        if (!hit.hit || !hit.response) return undefined;
+        const parsed = CaseStudySchema.safeParse(hit.response);
+        return parsed.success ? parsed.data : undefined;
+    } catch {
+        return undefined; // cache failures are non-fatal — fall through to a fresh run
+    }
+}
+
+/** Cache write — fail-open; never throws. */
+async function cachePut(cache: ISemanticCache, key: CacheKey, response: CaseStudy): Promise<void> {
+    try {
+        await cache.put({ ...key, response });
+    } catch {
+        // ignore
+    }
 }
