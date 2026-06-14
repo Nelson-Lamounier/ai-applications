@@ -21,7 +21,7 @@ const evidence: ProjectEvidenceInput = {
   projects: [{ id: 'p1', name: 'Tucaken' }],
   components: [{ id: 'c1', projectId: 'p1', name: 'Tenant RLS policy layer', kind: 'backend' }],
   decisions: [], stackItems: [{ id: 's1', projectId: 'p1', name: 'tenant scoping', category: 'framework' }],
-  tags: [], repoEvidence: [],
+  tags: [], highlights: [], challenges: [], repoEvidence: [],
 };
 
 describe('detectConcernEvidence', () => {

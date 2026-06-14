@@ -3,13 +3,15 @@ import { describe, it, expect } from '@jest/globals';
 import { joinSkillCandidates, validateSkillTransfer } from './skill-transfer.js';
 import type { ProjectEvidenceInput, SkillCandidateSet, SkillTransferEntry } from './skill-transfer-types.js';
 
-const EMPTY: ProjectEvidenceInput = { projects: [], components: [], decisions: [], stackItems: [], tags: [], repoEvidence: [] };
+const EMPTY: ProjectEvidenceInput = { projects: [], components: [], decisions: [], stackItems: [], tags: [], highlights: [], challenges: [], repoEvidence: [] };
 const input: ProjectEvidenceInput = {
   projects:   [{ id: 'p1', name: 'AI Apps' }],
   components: [{ id: 'c1', projectId: 'p1', name: 'EKS Kubernetes cluster', kind: 'infra' }],
   decisions:  [{ id: 'd1', projectId: 'p1', title: 'Chose Postgres over DynamoDB', decision: 'Relational fit' }],
   stackItems: [{ id: 's1', projectId: 'p1', name: 'Terraform', category: 'iac' }],
   tags:       [{ projectId: 'p1', tag: 'observability' }],
+  highlights: [],
+  challenges: [],
   repoEvidence: [{ projectId: 'p1', source: 'tech_evidence', id: 'e1', rawName: 'pgvector', fileLine: 'src/db.ts:12' }],
 };
 
