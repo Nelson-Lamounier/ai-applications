@@ -146,3 +146,35 @@ describe('TechnologyOntologyRepository.loadTransferGroups', () => {
         expect(new Set(groups[0])).toEqual(new Set(['anthropic_claude', 'openai']));
     });
 });
+
+describe('TechnologyOntologyRepository.loadRepoCodeTech', () => {
+    it('aggregates code tech across ALL commits — no single latest_commit shadowing', async () => {
+        const pool = fakePool([
+            { repo_full_name: 'o/r', canonical: 'aws_eks' },
+            { repo_full_name: 'o/r', canonical: 'kubernetes' },
+            { repo_full_name: 'o/r2', canonical: 'python' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const map = await repo.loadRepoCodeTech('u1');
+        expect([...map.get('o/r')!].sort()).toEqual(['aws_eks', 'kubernetes']);
+        expect([...map.get('o/r2')!]).toEqual(['python']);
+        // The fix: no single-latest-commit filter that a partial/'HEAD' run could shadow.
+        expect(pool.calls[0].sql).not.toContain('latest_commit');
+        expect(pool.calls[0].sql).toContain("source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')");
+    });
+});
+
+describe('TechnologyOntologyRepository.loadCanonicalToCodeFiles', () => {
+    it('maps canonical → code files aggregated across commits (no latest_commit)', async () => {
+        const pool = fakePool([
+            { canonical: 'aws_eks', path: 'o/r/infra/eks.ts' },
+            { canonical: 'aws_eks', path: 'o/r/infra/eks-addons.ts' },
+            { canonical: 'python', path: 'o/r/scripts/x.py' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const map = await repo.loadCanonicalToCodeFiles('u1');
+        expect(map.get('aws_eks')).toEqual(['o/r/infra/eks.ts', 'o/r/infra/eks-addons.ts']);
+        expect(map.get('python')).toEqual(['o/r/scripts/x.py']);
+        expect(pool.calls[0].sql).not.toContain('latest_commit');
+    });
+});
