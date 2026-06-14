@@ -1,5 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
+import type { Pool } from 'pg';
 import { RdsProjectEvidenceRepository } from './project-evidence.js';
 
 /** Minimal fake pg Pool returning canned rows keyed by a substring of the SQL. */
@@ -9,7 +10,7 @@ function fakePool(routes: Array<{ match: RegExp; rows: unknown[] }>) {
       const r = routes.find(x => x.match.test(sql));
       return { rows: r ? r.rows : [] };
     },
-  } as unknown as import('pg').Pool;
+  } as unknown as Pool;
 }
 
 describe('RdsProjectEvidenceRepository.load', () => {
@@ -31,5 +32,13 @@ describe('RdsProjectEvidenceRepository.load', () => {
   it('returns all-empty arrays when the user has no projects', async () => {
     const input = await new RdsProjectEvidenceRepository(fakePool([])).load('u1');
     expect(input).toEqual({ projects: [], components: [], decisions: [], stackItems: [], tags: [], repoEvidence: [] });
+  });
+
+  it('excludes ARCHIVED projects from the JD feed (a confirmed merge archives the repo defaults)', async () => {
+    const seen: string[] = [];
+    const pool = { query: async (sql: string) => { seen.push(sql); return { rows: [] }; } } as unknown as Pool;
+    await new RdsProjectEvidenceRepository(pool).load('u1');
+    const projectsSql = seen.find(s => /FROM projects\b/i.test(s));
+    expect(projectsSql).toMatch(/status\s*<>\s*'archived'/i);
   });
 });
