@@ -112,7 +112,19 @@ export type {
     RunCaseStudyOutput,
 } from './case-study-orchestrator.js';
 
-export { reconstructPriorCaseStudy } from './case-study-refine.js';
+export { reconstructPriorCaseStudy, underrepresentedRepos } from './case-study-refine.js';
+export {
+    runRefineGraders,
+    gradeNewRepoCoverage,
+    gradeNoDuplicates,
+    gradeCaps,
+    gradePriorContinuity,
+} from './case-study-refine-grader.js';
+export type {
+    RefineGradeInput,
+    RefineGradeResult,
+    RefineGradeReport,
+} from './case-study-refine-grader.js';
 
 // ─── System tour (S7a) ──────────────────────────────────────────────────────
 export { SystemTourSchema } from './system-tour-types.js';
