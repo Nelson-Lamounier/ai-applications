@@ -20,7 +20,6 @@ function makeClient(): {
     calls:  CapturedQuery[];
 } {
     const calls: CapturedQuery[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = {
         async query(sql: string, params?: readonly unknown[]) {
             calls.push({ sql, params: params ?? [] });
@@ -106,5 +105,71 @@ describe('persistCaseStudy — computed archetype/stage', () => {
         // computed_archetype + computed_stage params resolve to null.
         expect(upd.params[upd.params.length - 2]).toBeNull();
         expect(upd.params[upd.params.length - 1]).toBeNull();
+    });
+});
+
+const emptySignals = { commits: [], pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED' as const };
+
+function deletesFor(calls: CapturedQuery[], table: string): CapturedQuery[] {
+    return calls.filter((c) => new RegExp(`DELETE FROM ${table}\\b`).test(c.sql));
+}
+
+describe('persistCaseStudy — replace/prune semantics (no accumulation)', () => {
+    it('prunes superseded rows so a section reflects only the current run', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId: 'proj-1', userId: 'user-1', pipelineRunId: 'run-2', model: 'sonnet', inputHash: 'h',
+            caseStudy: {
+                ...emptyCaseStudy,
+                decisions:  [{ title: 'D', context: 'c', decision: 'x', consequences: 'y', confidence: 'high', sourceSignals: emptySignals }],
+                highlights: [{ title: 'H', description: 'd', sourceSignals: emptySignals }],
+            },
+        });
+
+        // Each populated list section emits a content_hash-set prune.
+        const decDel = deletesFor(calls, 'project_decisions');
+        expect(decDel).toHaveLength(1);
+        expect(decDel[0].sql).toMatch(/content_hash <> ALL\(\$2::text\[\]\)/);
+        // Decisions preserve user-confirmed rows; the others do not have that column.
+        expect(decDel[0].sql).toMatch(/is_user_confirmed = FALSE/);
+
+        const hiDel = deletesFor(calls, 'project_highlights');
+        expect(hiDel).toHaveLength(1);
+        expect(hiDel[0].sql).toMatch(/content_hash <> ALL\(\$2::text\[\]\)/);
+        expect(hiDel[0].sql).not.toMatch(/is_user_confirmed/);
+    });
+
+    it('clears stale machine rows when a section comes back empty (keeps NULL-hash user rows)', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId: 'proj-1', userId: 'user-1', pipelineRunId: 'run-3', model: 'sonnet', inputHash: 'h',
+            caseStudy: emptyCaseStudy, // all list sections empty
+        });
+
+        const hiDel = deletesFor(calls, 'project_highlights');
+        expect(hiDel).toHaveLength(1);
+        expect(hiDel[0].sql).toMatch(/content_hash IS NOT NULL/);
+        expect(hiDel[0].sql).not.toMatch(/<> ALL/);
+    });
+
+    it('does not prune sticky sections (user owns them)', async () => {
+        const calls: CapturedQuery[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const client: any = {
+            async query(sql: string, params?: readonly unknown[]) {
+                calls.push({ sql, params: params ?? [] });
+                if (/SELECT user_overrides/.test(sql)) return { rows: [{ user_overrides: { highlights: true } }] };
+                return { rows: [], rowCount: 0 };
+            },
+        };
+        await persistCaseStudy(client, {
+            projectId: 'proj-1', userId: 'user-1', pipelineRunId: 'run-4', model: 'sonnet', inputHash: 'h',
+            caseStudy: {
+                ...emptyCaseStudy,
+                highlights: [{ title: 'H', description: 'd', sourceSignals: emptySignals }],
+            },
+        });
+        // highlights is sticky → neither inserted nor pruned.
+        expect(deletesFor(calls, 'project_highlights')).toHaveLength(0);
     });
 });
