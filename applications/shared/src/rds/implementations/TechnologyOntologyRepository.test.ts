@@ -177,4 +177,16 @@ describe('TechnologyOntologyRepository.loadCanonicalToCodeFiles', () => {
         expect(map.get('python')).toEqual(['o/r/scripts/x.py']);
         expect(pool.calls[0].sql).not.toContain('latest_commit');
     });
+
+    it('also maps files to their LANGUAGE by extension (a .py file proves python)', async () => {
+        const pool = fakePool([]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        await repo.loadCanonicalToCodeFiles('u1');
+        const sql = pool.calls[0].sql;
+        // The extension→language UNION must be present so a Checkov rule .py file tagged
+        // 'checkov' still counts toward 'python' (the cdk-monitoring coverage gap).
+        expect(sql).toMatch(/ILIKE '%\.py'\s*THEN 'python'/);
+        expect(sql).toMatch(/ILIKE '%\.tsx'\s*THEN 'typescript'/);
+        expect(sql).toMatch(/UNION/);
+    });
 });
