@@ -54,6 +54,7 @@ import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
+import { applyDegreeReconcile } from './ats/education-reconcile.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -498,7 +499,24 @@ export async function main(): Promise<void> {
                 contradicted: contradictions.map((c) => ({ skill: c.skill, repo: c.repo, docTech: c.docTech, codeSuccessors: c.codeSuccessors })),
             }, 'code_truth_demoted_stale_documentation_claim');
         }
-        const guardedResearch = { ...research, data: guardedMatching };
+        // Education / degree reconciliation (deterministic): the JD degree requirement is a
+        // soft requirement that the skill/tool-centric matcher never reconciled, so a relevant
+        // qualification (e.g. a Higher Diploma in Computing) was silently dropped — neither
+        // credited as a relevant technical field nor flagged. Answer it EXACTLY ONCE against
+        // the candidate's education so a degree line is never dropped again.
+        const { matching: degreeReconciled, result: degreeResult } = applyDegreeReconcile(guardedMatching, {
+            hardRequirements: jdExtraction.hardRequirements,
+            softRequirements: jdExtraction.softRequirements,
+            education: educationEntries,
+        });
+        if (degreeResult) {
+            log.info({
+                pipelineRunId: env.pipelineRunId,
+                requirement: degreeResult.requirementSkill,
+                outcome: degreeResult.verified ? 'verified' : degreeResult.partial ? 'partial' : 'gap',
+            }, 'education_degree_reconciled');
+        }
+        const guardedResearch = { ...research, data: degreeReconciled };
 
         // Assemble StrategistResearchResult from jdExtraction (JdSignal) + guarded matching.
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
