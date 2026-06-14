@@ -34,7 +34,7 @@ import {
     loadCaseStudyContext,
     type LoadCaseStudyContextResult,
 } from './case-study-loader.js';
-import { reconstructPriorCaseStudy } from './case-study-refine.js';
+import { reconstructPriorCaseStudy, underrepresentedRepos } from './case-study-refine.js';
 import {
     persistCaseStudy,
     type PersistCaseStudySummary,
@@ -221,8 +221,13 @@ async function resolveRefineContext(
     if (!input.refine) return { contextLoaded: baseContext, refined: false };
     const prior = await reconstructPriorCaseStudy(pool, input.projectId);
     if (!prior) return { contextLoaded: baseContext, refined: false };
+    const repoNames = baseContext.context.repositories.map((r) => r.fullName);
+    const refineNewRepos = underrepresentedRepos(prior, repoNames);
     return {
-        contextLoaded: { ...baseContext, context: { ...baseContext.context, priorCaseStudy: prior } },
+        contextLoaded: {
+            ...baseContext,
+            context: { ...baseContext.context, priorCaseStudy: prior, refineNewRepos },
+        },
         refined: true,
     };
 }

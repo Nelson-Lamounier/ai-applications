@@ -64,6 +64,10 @@ describe('buildSystemPrompt — refine mode', () => {
         expect(out).toMatch(/REFINE MODE/);
         expect(out).toMatch(/PRESERVE prior/);
         expect(out).toMatch(/Reuse their `sourceSignals` verbatim/);
+        // New-repo coverage guarantee.
+        expect(out).toMatch(/COVERAGE/);
+        expect(out).toMatch(/<newRepos>/);
+        expect(out).toMatch(/at least one highlight AND one\s+challenge/);
     });
 
     it('composes refine with archetype calibration', () => {
@@ -85,5 +89,16 @@ describe('buildUserMessage — refine mode', () => {
         const out = buildUserMessage({ ...baseCtx, priorCaseStudy: prior });
         expect(out).toMatch(/<priorCaseStudy>/);
         expect(out).toMatch(/old tagline/);
+    });
+
+    it('includes <newRepos> when under-represented repos are flagged', () => {
+        const out = buildUserMessage({ ...baseCtx, priorCaseStudy: prior, refineNewRepos: ['acme/web'] });
+        expect(out).toMatch(/<newRepos>/);
+        expect(out).toMatch(/acme\/web/);
+    });
+
+    it('omits <newRepos> when the list is empty', () => {
+        const out = buildUserMessage({ ...baseCtx, priorCaseStudy: prior, refineNewRepos: [] });
+        expect(out).not.toMatch(/<newRepos>/);
     });
 });

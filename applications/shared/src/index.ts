@@ -483,6 +483,12 @@ export {
     loadCaseStudyContext,
     persistCaseStudy,
     runCaseStudyOrchestration,
+    // Incremental refine eval (CLAUDE.md §5)
+    runRefineGraders,
+    gradeNewRepoCoverage,
+    gradeNoDuplicates,
+    gradeCaps,
+    gradePriorContinuity,
     // System tour (S7)
     SystemTourSchema,
     bedrockSystemTourAgent,
@@ -508,6 +514,10 @@ export type {
     // Case study (Phase 2B)
     SourceSignal,
     CaseStudy,
+    PriorCaseStudy,
+    RefineGradeInput,
+    RefineGradeResult,
+    RefineGradeReport,
     CaseStudyContext,
     StackItem,
     Decision,

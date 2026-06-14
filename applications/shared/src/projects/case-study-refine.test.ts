@@ -2,7 +2,8 @@
 import { describe, it, expect } from '@jest/globals';
 import type { Pool } from 'pg';
 
-import { reconstructPriorCaseStudy } from './case-study-refine.js';
+import { reconstructPriorCaseStudy, underrepresentedRepos } from './case-study-refine.js';
+import type { PriorCaseStudy } from './case-study-types.js';
 
 /** Mock pg Pool routing canned rows by a substring match on the SQL. */
 function fakePool(routes: Array<{ match: RegExp; rows: unknown[] }>): Pool {
@@ -75,5 +76,40 @@ describe('reconstructPriorCaseStudy', () => {
             { match: /FROM project_decisions/i, rows: [{ title: 'D', context: '', decision: '', consequences: '', confidence: 'bogus', source_signals: null }] },
         ]), 'p1');
         expect(prior?.decisions[0].confidence).toBe('medium');
+    });
+});
+
+const sig = (repo: string) => ({ commits: [{ repoFullName: repo, sha: 'abc1234', authoredAt: 't', message: 'm' }], pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED' as const });
+
+function priorWith(repos: string[]): PriorCaseStudy {
+    return {
+        tagline: 't', pitch: 'p',
+        highlights: repos.map((r) => ({ title: `h-${r}`, description: 'd', sourceSignals: sig(r) })),
+        decisions: [], challenges: [], stack: [],
+    };
+}
+
+describe('underrepresentedRepos', () => {
+    it('returns repos not grounded by any prior row (newly added)', () => {
+        const prior = priorWith(['acme/api']);
+        expect(underrepresentedRepos(prior, ['acme/api', 'acme/web'])).toEqual(['acme/web']);
+    });
+
+    it('returns [] when the prior already cites every repo', () => {
+        const prior = priorWith(['acme/api', 'acme/web']);
+        expect(underrepresentedRepos(prior, ['acme/api', 'acme/web'])).toEqual([]);
+    });
+
+    it('also counts repos cited only via files (not commits)', () => {
+        const prior: PriorCaseStudy = {
+            tagline: 't', pitch: 'p', decisions: [], challenges: [], stack: [],
+            highlights: [{ title: 'h', description: 'd', sourceSignals: { commits: [], pulls: [], files: [{ repoFullName: 'acme/api', path: 'x' }], ungroundedClaims: [], grounding: 'NOT_VERIFIED' } }],
+        };
+        expect(underrepresentedRepos(prior, ['acme/api', 'acme/web'])).toEqual(['acme/web']);
+    });
+
+    it('preserves the input repo order', () => {
+        const prior = priorWith([]);
+        expect(underrepresentedRepos(prior, ['c', 'a', 'b'])).toEqual(['c', 'a', 'b']);
     });
 });
