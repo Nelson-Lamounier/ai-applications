@@ -56,6 +56,7 @@ import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
 import { applyDegreeReconcile } from './ats/education-reconcile.js';
+import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -483,6 +484,17 @@ export async function main(): Promise<void> {
 
         const research = await executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock);
 
+        // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line.
+        // Computed BEFORE the guard chain so it can deterministically constrain the matcher's
+        // own overallFitRating/gaps (see applyYearsGapReconcile). Fail-open.
+        const hardYearsBar = jdExtraction.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
+        const yearsGap = await buildYearsGap(
+            (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, period: c.period, family: null, roleClass: null })),
+            jdExtraction.experienceSignals.yearsExpected,
+            hardYearsBar,
+            new Date().getFullYear(),
+        ).catch(() => null);
+
         // Vendor-provenance guard (deterministic): a competing vendor evidenced ONLY by
         // reference/example docs (e.g. an "OpenAI example" in a structured-output checklist
         // while the real stack is Bedrock/Anthropic) was VERIFIED by the LLM → demote to a
@@ -524,7 +536,22 @@ export async function main(): Promise<void> {
                 outcome: degreeResult.verified ? 'verified' : degreeResult.partial ? 'partial' : 'gap',
             }, 'education_degree_reconciled');
         }
-        const guardedResearch = { ...research, data: degreeReconciled };
+
+        // Years-gap enforcement (deterministic): when the JD's experience bar is a hard,
+        // disqualifying requirement the candidate misses, the matcher (Haiku) may still rate
+        // STRONG FIT with 0 gaps and "exceeds all hard requirements" — and a re-run of the SAME
+        // JD then correctly rates REACH. Force the gap + cap the rating so the verdict (and the
+        // downstream résumé structure it drives) is stable and honest run-to-run.
+        const { matching: yearsReconciled, applied: yearsGapApplied } = applyYearsGapReconcile(degreeReconciled, yearsGap);
+        if (yearsGapApplied) {
+            log.info({
+                pipelineRunId: env.pipelineRunId,
+                relevantYears: yearsGap?.relevantYears,
+                requiredYears: yearsGap?.requiredYears,
+                cappedFitRating: yearsReconciled.overallFitRating,
+            }, 'years_gap_enforced_disqualifying_experience_bar');
+        }
+        const guardedResearch = { ...research, data: yearsReconciled };
 
         // Assemble StrategistResearchResult from jdExtraction (JdSignal) + guarded matching.
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
@@ -557,15 +584,6 @@ export async function main(): Promise<void> {
         });
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
-
-        // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line. Fail-open.
-        const hardYearsBar = jdExtraction.hardRequirements.some((r) => r.disqualifying === true && /year/i.test(r.context));
-        const yearsGap = await buildYearsGap(
-            (careerEntries ?? []).map((c) => ({ title: c.title, company: c.company, period: c.period, family: null, roleClass: null })),
-            jdExtraction.experienceSignals.yearsExpected,
-            hardYearsBar,
-            new Date().getFullYear(),
-        ).catch(() => null);
 
         const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext);
 
