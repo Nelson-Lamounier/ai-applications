@@ -12,7 +12,7 @@ export class RdsProjectEvidenceRepository {
   constructor(private readonly pool: Pool) {}
 
   async load(userId: string): Promise<ProjectEvidenceInput> {
-    const [projects, components, decisions, stackItems, tags, highlights, challenges, repoEvidence] = await Promise.all([
+    const [projects, components, decisions, stackItems, tags, highlights, challenges, repoEvidence, projectRepos] = await Promise.all([
       // Exclude ARCHIVED projects: when a multi-repo system is confirmed, the constituent
       // single-repo defaults are archived — feeding them here would double-count the same
       // repo (e.g. cdk-monitoring as both a platform component AND its own archived default).
@@ -47,10 +47,25 @@ export class RdsProjectEvidenceRepository {
           WHERE de.user_id = $1`,
         [userId],
       ),
+      // Repos that make up each project — so the JD knows a project's repo
+      // identity (one résumé entry per project) and can cite a real GitHub URL
+      // instead of inventing one. Excludes archived projects to match the list above.
+      this.pool.query(
+        `SELECT pc.project_id, array_agg(DISTINCT r.full_name ORDER BY r.full_name) AS repos
+           FROM project_components pc
+           JOIN project_repositories pr ON pr.project_component_id = pc.id
+           JOIN repositories r          ON r.id = pr.repository_id
+           JOIN projects p              ON p.id = pc.project_id
+          WHERE pc.user_id = $1 AND p.status <> 'archived'
+          GROUP BY pc.project_id`,
+        [userId],
+      ),
     ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reposByProject = new Map<string, string[]>(projectRepos.rows.map((r: any) => [r.project_id, (r.repos ?? []) as string[]]));
     return {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      projects:   projects.rows.map((r: any) => ({ id: r.id, name: r.name, tagline: r.tagline ?? null, pitch: r.pitch ?? null })),
+      projects:   projects.rows.map((r: any) => ({ id: r.id, name: r.name, tagline: r.tagline ?? null, pitch: r.pitch ?? null, repos: reposByProject.get(r.id) ?? [] })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       components: components.rows.map((r: any) => ({ id: r.id, projectId: r.project_id, name: r.name, kind: r.kind })),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

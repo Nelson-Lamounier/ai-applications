@@ -15,6 +15,16 @@ describe('formatProjectEvidence', () => {
     expect(formatProjectEvidence(EMPTY)).toBe('');
   });
 
+  it('emits the one-entry-per-project rule and each project\'s repo github URLs', () => {
+    const out = formatProjectEvidence(input({
+      projects: [{ id: 'p1', name: 'AI Apps', repos: ['Nelson-Lamounier/ai-applications', 'Nelson-Lamounier/kubernetes-bootstrap'] }],
+    }));
+    expect(out).toMatch(/1 documented project\b/);
+    expect(out).toMatch(/EXACTLY ONE résumé project entry/);
+    expect(out).toMatch(/never split a multi-repo/i);
+    expect(out).toContain('Repos (github): github.com/Nelson-Lamounier/ai-applications, github.com/Nelson-Lamounier/kubernetes-bootstrap');
+  });
+
   it('renders name, pitch, stack, decisions, and tags', () => {
     const out = formatProjectEvidence(input({
       projects: [{ id: 'p1', name: 'Tucaken', tagline: 'tag', pitch: 'A multi-agent platform. More detail.' }],

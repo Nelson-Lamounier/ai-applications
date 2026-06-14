@@ -22,7 +22,7 @@ export interface SkillCandidateSet {
 
 /** Raw project evidence for one user (what the repository returns). */
 export interface ProjectEvidenceInput {
-  readonly projects:    readonly { id: string; name: string; tagline?: string | null; pitch?: string | null }[];
+  readonly projects:    readonly { id: string; name: string; tagline?: string | null; pitch?: string | null; repos?: readonly string[] }[];
   readonly components:  readonly { id: string; projectId: string; name: string; kind: string }[];
   readonly decisions:   readonly {
     id: string; projectId: string; title: string; decision: string | null;

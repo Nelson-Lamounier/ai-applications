@@ -70,9 +70,13 @@ export function formatProjectEvidence(
 
   const ranked = [...input.projects].sort((a, b) => documentedScore(g, b) - documentedScore(g, a));
 
+  const shown = Math.min(ranked.length, caps.maxProjects);
   const lines: string[] = [
-    'PROJECT CASE STUDIES — the candidate\'s documented projects (their own work).',
+    `PROJECT CASE STUDIES — the candidate has ${shown} documented project${shown === 1 ? '' : 's'} (their own work), listed below.`,
     'Ground achievement bullets in these when the JD skill is demonstrated here; reference the project by name.',
+    'RESUME RULE: represent EACH documented project as EXACTLY ONE résumé project entry — never split a multi-repo',
+    'project into multiple entries (a project may span several repos; keep it as one). Use the project name verbatim,',
+    'and set the entry\'s github link to one of the project\'s repo URLs listed under it.',
     '',
   ];
   ranked.slice(0, caps.maxProjects).forEach((p, i) => renderProject(lines, p, i, g, caps));
@@ -98,6 +102,10 @@ function renderProject(
 ): void {
   const pitch = pitchOf(p);
   lines.push(pitch ? `${index + 1}. ${p.name} — ${pitch}` : `${index + 1}. ${p.name}`);
+
+  // The project's repos — one résumé entry per project; pick a primary repo URL for its github link.
+  const repos = (p.repos ?? []).filter(Boolean).slice(0, 6);
+  if (repos.length > 0) lines.push(`   Repos (github): ${repos.map((r) => `github.com/${r}`).join(', ')}`);
 
   const stack = at(g.stack, p.id).map((s) => s.name).filter(Boolean).slice(0, caps.maxStack);
   if (stack.length > 0) lines.push(`   Stack: ${stack.join(', ')}`);
