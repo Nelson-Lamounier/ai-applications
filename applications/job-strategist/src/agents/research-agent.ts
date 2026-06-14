@@ -376,6 +376,7 @@ interface ResearchMessageOptions {
     dsaCatalog?: string;
     projectEvidenceSection?: string;
     educationSection?: string;
+    certificationsSection?: string;
     jdExtractionSummary?: string;
     roleEvidenceSection?: string;
     /** Pre-formatted JD signal block injected above KB evidence. */
@@ -409,6 +410,7 @@ function buildResearchMessage(
         dsaCatalog = '',
         projectEvidenceSection = '',
         educationSection = '',
+        certificationsSection = '',
         jdExtractionSummary = '',
         roleEvidenceSection = '',
         jdSignalBlock = '',
@@ -509,6 +511,9 @@ function buildResearchMessage(
 
     if (educationSection) {
         sections.push(educationSection, '');
+    }
+    if (certificationsSection) {
+        sections.push(certificationsSection, '');
     }
 
     sections.push(
@@ -782,6 +787,7 @@ export async function executeResearchAgent(
     techTransferContext = '',
     codeStackContext = '',
     retrievalPrefilter?: RetrievalPrefilter,
+    certificationsBlock = '',
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -914,6 +920,7 @@ export async function executeResearchAgent(
         dsaCatalog,
         projectEvidenceSection: projectEvidenceBlock,
         educationSection: educationBlock,
+        certificationsSection: certificationsBlock,
         jdExtractionSummary,
         roleEvidenceSection: roleEvidenceBlock,
         jdSignalBlock,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
-import { formatCareerHistory, formatEducation, formatExperienceFacts } from './career-history.js';
-import type { CareerEntry, EducationEntry } from './career-history.js';
+import { formatCareerHistory, formatEducation, formatCertifications, formatExperienceFacts } from './career-history.js';
+import type { CareerEntry, EducationEntry, CertificationEntry } from './career-history.js';
 
 const ENTRIES: CareerEntry[] = [
     { title: 'Senior Platform Engineer', company: 'Acme', period: '2021–2024', highlights: ['Led migration to EKS', 'Cut MTTR 40%'] },
@@ -33,6 +33,22 @@ describe('formatEducation', () => {
     });
     it('returns empty string for no entries', () => {
         expect(formatEducation([])).toBe('');
+    });
+});
+
+const CERTS: CertificationEntry[] = [
+    { name: 'AWS Certified DevOps Engineer - Professional', issuer: 'Amazon Web Services', date: '2024' },
+];
+describe('formatCertifications', () => {
+    it('renders the cert verbatim and instructs the matcher to weigh JD relevance', () => {
+        const out = formatCertifications(CERTS);
+        expect(out).toContain('VERIFIED CERTIFICATIONS');
+        expect(out).toContain('AWS Certified DevOps Engineer - Professional');
+        expect(out).toMatch(/WEIGH each against the JD/i);   // relevance directive present
+        expect(out).toMatch(/reinforces a match/i);
+    });
+    it('returns empty string for no entries', () => {
+        expect(formatCertifications([])).toBe('');
     });
 });
 
