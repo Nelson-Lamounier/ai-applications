@@ -162,7 +162,7 @@ export function isSupportHeavy(dimensionMix?: JdDimensionMix | null, threshold: 
  */
 export function supportGroundingNote(weight: number, threshold: number = SUPPORT_HEAVY_THRESHOLD): string {
     if (weight < threshold) return '';
-    return `NOTE: This is a customer-facing/support-heavy role (customerFacing+support = ${weight}%). Ground customer-support, troubleshooting, communication, and relationship competencies PRIMARILY in the candidate's support/customer-facing CAREER HISTORY below, not only the code repositories.`;
+    return `NOTE: This is a customer-facing/support-heavy role (customerFacing+support = ${weight}%). Ground customer-support, troubleshooting, communication, root-cause, and relationship competencies in BOTH the candidate's project/repository evidence AND their support/customer-facing career history. PREFER demonstrated project/repository work where it exists — a project highlight or challenge (e.g. debugging a silent IAM deny, fixing data-correctness incidents, writing ADRs/runbooks) is first-person proof of these competencies — and use the career history to corroborate, not replace it. Cite whichever source the evidence actually comes from.`;
 }
 
 /**
