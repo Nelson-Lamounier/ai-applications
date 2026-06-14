@@ -1,7 +1,7 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { buildSystemPrompt } from './case-study-agent.js';
-import type { CaseStudyContext } from './case-study-types.js';
+import { buildSystemPrompt, buildUserMessage } from './case-study-agent.js';
+import type { CaseStudyContext, PriorCaseStudy } from './case-study-types.js';
 
 const baseCtx: CaseStudyContext = {
     projectId: 'p', projectName: 'P', tagline: null, pitch: null, userOverrides: {},
@@ -46,5 +46,44 @@ describe('buildSystemPrompt', () => {
             prioritySections: ['installation'],
         });
         expect(prompt).toMatch(/unspecified-level Published CLI Tool/);
+    });
+});
+
+const prior: PriorCaseStudy = {
+    tagline: 'old tagline', pitch: 'old pitch',
+    decisions: [], highlights: [], challenges: [], stack: [],
+};
+
+describe('buildSystemPrompt — refine mode', () => {
+    it('omits the REFINE block for a from-scratch run', () => {
+        expect(buildSystemPrompt(baseCtx)).not.toMatch(/REFINE MODE/);
+    });
+
+    it('appends the REFINE block when a prior case study is present', () => {
+        const out = buildSystemPrompt({ ...baseCtx, priorCaseStudy: prior });
+        expect(out).toMatch(/REFINE MODE/);
+        expect(out).toMatch(/PRESERVE prior/);
+        expect(out).toMatch(/Reuse their `sourceSignals` verbatim/);
+    });
+
+    it('composes refine with archetype calibration', () => {
+        const out = buildSystemPrompt({
+            ...baseCtx, priorCaseStudy: prior,
+            archetype: { id: 'production_saas', name: 'Production SaaS' }, stage: 'senior',
+        });
+        expect(out).toMatch(/Project calibration/);
+        expect(out).toMatch(/REFINE MODE/);
+    });
+});
+
+describe('buildUserMessage — refine mode', () => {
+    it('omits the priorCaseStudy block for a from-scratch run', () => {
+        expect(buildUserMessage(baseCtx)).not.toMatch(/<priorCaseStudy>/);
+    });
+
+    it('includes the priorCaseStudy block when present', () => {
+        const out = buildUserMessage({ ...baseCtx, priorCaseStudy: prior });
+        expect(out).toMatch(/<priorCaseStudy>/);
+        expect(out).toMatch(/old tagline/);
     });
 });

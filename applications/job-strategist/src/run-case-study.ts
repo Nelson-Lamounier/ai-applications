@@ -122,6 +122,12 @@ async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.pipelineRunId, 'generating');
 
+        // Incremental refine by default: when the project already has a
+        // completed case study, the agent updates it (preserving grounded rows)
+        // instead of regenerating from scratch. First-ever generation falls back
+        // to full. Set CASE_STUDY_DISABLE_REFINE=true to force a full rewrite.
+        const refine = process.env.CASE_STUDY_DISABLE_REFINE !== 'true';
+
         const out = await runCaseStudyOrchestration(pool, {
             projectId:     env.projectId,
             pipelineRunId: env.pipelineRunId,
@@ -131,6 +137,7 @@ async function main(): Promise<void> {
             verifier,
             cache,
             ctx,
+            refine,
         });
 
         // S7b: generate the project's system-tour walkthrough from the fresh case study.
@@ -158,6 +165,7 @@ async function main(): Promise<void> {
 
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
             cacheHit:                  out.cacheHit,
+            refined:                   out.refined,
             inputHash:                 out.inputHash,
             stackItemsInserted:        out.persisted.stackItemsInserted,
             decisionsInserted:         out.persisted.decisionsInserted,
@@ -181,6 +189,7 @@ async function main(): Promise<void> {
             userId:               env.userId,
             projectId:            env.projectId,
             cacheHit:             out.cacheHit,
+            refined:              out.refined,
             decisionsInserted:    out.persisted.decisionsInserted,
             highlightsInserted:   out.persisted.highlightsInserted,
             challengesInserted:   out.persisted.challengesInserted,

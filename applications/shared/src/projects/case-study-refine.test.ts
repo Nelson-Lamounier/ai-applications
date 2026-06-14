@@ -1,0 +1,79 @@
+/** @format */
+import { describe, it, expect } from '@jest/globals';
+import type { Pool } from 'pg';
+
+import { reconstructPriorCaseStudy } from './case-study-refine.js';
+
+/** Mock pg Pool routing canned rows by a substring match on the SQL. */
+function fakePool(routes: Array<{ match: RegExp; rows: unknown[] }>): Pool {
+    return {
+        query: async (sql: string) => {
+            const r = routes.find((x) => x.match.test(sql));
+            return { rows: r ? r.rows : [] };
+        },
+    } as unknown as Pool;
+}
+
+const completeProject = { match: /FROM projects/i, rows: [{ tagline: 'T', pitch: 'P', case_study_generated_at: '2026-06-01T00:00:00Z' }] };
+
+describe('reconstructPriorCaseStudy', () => {
+    it('returns null when the project has never generated a case study', async () => {
+        const pool = fakePool([{ match: /FROM projects/i, rows: [{ tagline: null, pitch: null, case_study_generated_at: null }] }]);
+        expect(await reconstructPriorCaseStudy(pool, 'p1')).toBeNull();
+    });
+
+    it('still reconstructs mid-regenerate (status pending but generated_at set, rows present)', async () => {
+        // The regenerate endpoint flips status to pending before this job runs;
+        // refine must survive that by gating on generated_at, not status.
+        const prior = await reconstructPriorCaseStudy(fakePool([
+            completeProject,
+            { match: /FROM project_highlights/i, rows: [{ title: 'H', description: 'd', source_signals: null }] },
+        ]), 'p1');
+        expect(prior).not.toBeNull();
+        expect(prior?.highlights[0].title).toBe('H');
+    });
+
+    it('returns null when the project does not exist', async () => {
+        expect(await reconstructPriorCaseStudy(fakePool([]), 'p1')).toBeNull();
+    });
+
+    it('returns null when the case study is complete but has no rows', async () => {
+        expect(await reconstructPriorCaseStudy(fakePool([completeProject]), 'p1')).toBeNull();
+    });
+
+    it('reconstructs sections with their stored sourceSignals', async () => {
+        const signal = { commits: [{ repoFullName: 'a/b', sha: 'abc1234', authoredAt: 't', message: 'm' }], pulls: [], files: [], ungroundedClaims: [], grounding: 'GROUNDED' };
+        const prior = await reconstructPriorCaseStudy(fakePool([
+            completeProject,
+            { match: /FROM project_decisions/i,  rows: [{ title: 'D', context: 'c', decision: 'x', consequences: 'y', confidence: 'high', source_signals: signal }] },
+            { match: /FROM project_highlights/i,  rows: [{ title: 'H', description: 'd', source_signals: signal }] },
+            { match: /FROM project_challenges/i,  rows: [{ problem: 'pr', solution: 'so', source_signals: signal }] },
+            { match: /FROM project_stack_items/i, rows: [{ category: 'language', name: 'TypeScript', justification: 'j', source_signals: signal }] },
+        ]), 'p1');
+
+        expect(prior).not.toBeNull();
+        expect(prior?.tagline).toBe('T');
+        expect(prior?.decisions[0]).toMatchObject({ title: 'D', confidence: 'high' });
+        // sourceSignals are carried verbatim so the agent can preserve grounded rows.
+        expect(prior?.decisions[0].sourceSignals.commits[0].sha).toBe('abc1234');
+        expect(prior?.highlights[0]).toMatchObject({ title: 'H', description: 'd' });
+        expect(prior?.challenges[0]).toMatchObject({ problem: 'pr', solution: 'so' });
+        expect(prior?.stack[0]).toMatchObject({ category: 'language', name: 'TypeScript' });
+    });
+
+    it('coerces a missing/garbage source_signals into an empty NOT_VERIFIED signal', async () => {
+        const prior = await reconstructPriorCaseStudy(fakePool([
+            completeProject,
+            { match: /FROM project_highlights/i, rows: [{ title: 'H', description: 'd', source_signals: null }] },
+        ]), 'p1');
+        expect(prior?.highlights[0].sourceSignals).toEqual({ commits: [], pulls: [], files: [], ungroundedClaims: [], grounding: 'NOT_VERIFIED' });
+    });
+
+    it('falls back to medium confidence when the stored value is unexpected', async () => {
+        const prior = await reconstructPriorCaseStudy(fakePool([
+            completeProject,
+            { match: /FROM project_decisions/i, rows: [{ title: 'D', context: '', decision: '', consequences: '', confidence: 'bogus', source_signals: null }] },
+        ]), 'p1');
+        expect(prior?.decisions[0].confidence).toBe('medium');
+    });
+});

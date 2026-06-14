@@ -71,6 +71,7 @@ export {
 export type {
     SourceSignal,
     CaseStudy,
+    PriorCaseStudy,
     CaseStudyContext,
     StackItem,
     Decision,
@@ -110,6 +111,8 @@ export type {
     RunCaseStudyInput,
     RunCaseStudyOutput,
 } from './case-study-orchestrator.js';
+
+export { reconstructPriorCaseStudy } from './case-study-refine.js';
 
 // ─── System tour (S7a) ──────────────────────────────────────────────────────
 export { SystemTourSchema } from './system-tour-types.js';
