@@ -13,7 +13,12 @@ export class RdsProjectEvidenceRepository {
 
   async load(userId: string): Promise<ProjectEvidenceInput> {
     const [projects, components, decisions, stackItems, tags, repoEvidence] = await Promise.all([
-      this.pool.query(`SELECT id, name, tagline, pitch FROM projects WHERE user_id = $1`, [userId]),
+      // Exclude ARCHIVED projects: when a multi-repo system is confirmed, the constituent
+      // single-repo defaults are archived — feeding them here would double-count the same
+      // repo (e.g. cdk-monitoring as both a platform component AND its own archived default).
+      // Active single-repo defaults still flow through: projects ENRICH the JD when present,
+      // they never gate it — a user with one un-curated repo still gets full analysis.
+      this.pool.query(`SELECT id, name, tagline, pitch FROM projects WHERE user_id = $1 AND status <> 'archived'`, [userId]),
       this.pool.query(`SELECT id, project_id, name, kind FROM project_components WHERE user_id = $1`, [userId]),
       this.pool.query(`SELECT id, project_id, title, decision FROM project_decisions WHERE user_id = $1`, [userId]),
       this.pool.query(`SELECT id, project_id, name, category FROM project_stack_items WHERE user_id = $1`, [userId]),
