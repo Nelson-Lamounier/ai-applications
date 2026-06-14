@@ -24,6 +24,7 @@ import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
+import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
 import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { extractJobDescription } from './agents/jd-extractor.js';
 import { buildYearsGap } from './agents/years-gap.js';
@@ -399,13 +400,18 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction] = await Promise.all([
+        const [projectEvidenceBlock, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
+            loadProfileIntelligenceBlock(pool, ctx.userId),
             loadEducation(pool, ctx.userId).catch(() => []),
             loadCertifications(pool, ctx.userId).catch(() => []),
             loadCareerHistory(pool, ctx.userId).catch(() => []),
             extractJobDescription(ctx.jobDescription),
         ]);
+        // Candidate grounding fed to research + strategist: documented project case
+        // studies PLUS the code-grounded Profile Intelligence (direction / undersold
+        // strengths / unsupported claims). Both fail-open to '' independently.
+        const candidateGroundingBlock = [projectEvidenceBlock, profileIntelligenceBlock].filter(Boolean).join('\n\n');
         const educationBlock      = formatEducation(educationEntries);
         const certificationsBlock = formatCertifications(certificationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
@@ -475,7 +481,7 @@ export async function main(): Promise<void> {
             )
             : undefined;
 
-        const research = await executeResearchAgent(ctx, pool, projectEvidenceBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock);
+        const research = await executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock);
 
         // Vendor-provenance guard (deterministic): a competing vendor evidenced ONLY by
         // reference/example docs (e.g. an "OpenAI example" in a structured-output checklist
@@ -561,7 +567,7 @@ export async function main(): Promise<void> {
             new Date().getFullYear(),
         ).catch(() => null);
 
-        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext);
+        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
