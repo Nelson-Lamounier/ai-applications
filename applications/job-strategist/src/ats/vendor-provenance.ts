@@ -131,8 +131,14 @@ function demotionReason(vm: VerifiedMatch, hit: VendorGroupHit, code: ReadonlySe
 }
 
 /** Build the honest transferable PartialMatch a demoted vendor becomes. */
-function toPartial(vm: VerifiedMatch, hit: VendorGroupHit, reason: DemotionReason): PartialMatch {
-    const siblingDisplay = hit.siblings.map((s) => s.replaceAll('_', ' ')).join(', ');
+function toPartial(vm: VerifiedMatch, hit: VendorGroupHit, reason: DemotionReason, code: ReadonlySet<string>): PartialMatch {
+    // List ONLY the interchangeable alternatives the candidate actually uses in code
+    // (e.g. bedrock, claude, titan) — not every member of the transfer group, which
+    // bleeds unrelated canonicals (e.g. "aws vpc") into the bridge. Fall back to the
+    // full family only when none of the siblings are code-present.
+    const codeSiblings = hit.siblings.filter((s) => code.has(s));
+    const relevant = codeSiblings.length > 0 ? codeSiblings : hit.siblings;
+    const siblingDisplay = relevant.map((s) => s.replaceAll('_', ' ')).join(', ');
     const gap = reason === 'reference-only'
         ? `Evidence for "${vm.skill}" comes only from reference/example documentation, not authored production work.`
         : `"${vm.skill}" is not present in the candidate's authored code, which uses an interchangeable alternative (${siblingDisplay}) instead.`;
@@ -170,7 +176,7 @@ export function demoteMisattributedVendors(
         const hit = vendorGroupForSkill(vm.skill, deps.techGroups, deps.techAliasMap);
         const reason = hit ? demotionReason(vm, hit, code) : null;
         if (hit && reason) {
-            demotedPartials.push(toPartial(vm, hit, reason));
+            demotedPartials.push(toPartial(vm, hit, reason, code));
             demotions.push({ skill: vm.skill, matchedVendor: hit.matched, siblings: hit.siblings, evidenceFiles: vm.evidenceFiles ?? [] });
         } else {
             keptVerified.push(vm);

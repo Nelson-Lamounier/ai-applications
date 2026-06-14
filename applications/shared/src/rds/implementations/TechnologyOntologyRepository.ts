@@ -115,14 +115,43 @@ export class TechnologyOntologyRepository {
      */
     async loadCanonicalToCodeFiles(userId: string): Promise<Map<string, string[]>> {
         const { rows } = await this.pool.query<{ canonical: string; path: string }>(
-            `SELECT lower(o.canonical_name) AS canonical,
-                    te.repo_full_name || '/' || te.file_path AS path
-               FROM technology_evidence te
-               JOIN technology_ontology o ON o.id = te.technology_id
-              WHERE te.user_id = $1
-                AND te.source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')
-              GROUP BY lower(o.canonical_name), te.repo_full_name || '/' || te.file_path
-              ORDER BY 1, 2`,
+            // Two sources of (canonical → file) proof, UNIONed:
+            //  1. Library/framework tech tagged by the ontology (existing behaviour).
+            //  2. The file's LANGUAGE by extension — a .py file proves Python even when its
+            //     ontology tag is a library (cdk-monitoring's Checkov rule .py files were tagged
+            //     'checkov', so 'python' got 0 of them despite 109 .py files). Same code source
+            //     layers, so a language skill cites real source files, not just config/CI mentions.
+            `SELECT canonical, path FROM (
+               SELECT lower(o.canonical_name) AS canonical,
+                      te.repo_full_name || '/' || te.file_path AS path
+                 FROM technology_evidence te
+                 JOIN technology_ontology o ON o.id = te.technology_id
+                WHERE te.user_id = $1
+                  AND te.source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')
+               UNION
+               SELECT CASE
+                        WHEN te.file_path ILIKE '%.py'                               THEN 'python'
+                        WHEN te.file_path ILIKE '%.ts' OR te.file_path ILIKE '%.tsx' THEN 'typescript'
+                        WHEN te.file_path ILIKE '%.js' OR te.file_path ILIKE '%.jsx'
+                          OR te.file_path ILIKE '%.mjs'                              THEN 'javascript'
+                        WHEN te.file_path ILIKE '%.go'                               THEN 'go'
+                        WHEN te.file_path ILIKE '%.rs'                               THEN 'rust'
+                        WHEN te.file_path ILIKE '%.java'                             THEN 'java'
+                        WHEN te.file_path ILIKE '%.rb'                               THEN 'ruby'
+                        WHEN te.file_path ILIKE '%.sh' OR te.file_path ILIKE '%.bash' THEN 'bash'
+                      END AS canonical,
+                      te.repo_full_name || '/' || te.file_path AS path
+                 FROM technology_evidence te
+                WHERE te.user_id = $1
+                  AND te.source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')
+                  AND (te.file_path ILIKE '%.py'  OR te.file_path ILIKE '%.ts'  OR te.file_path ILIKE '%.tsx'
+                    OR te.file_path ILIKE '%.js'  OR te.file_path ILIKE '%.jsx' OR te.file_path ILIKE '%.mjs'
+                    OR te.file_path ILIKE '%.go'  OR te.file_path ILIKE '%.rs'  OR te.file_path ILIKE '%.java'
+                    OR te.file_path ILIKE '%.rb'  OR te.file_path ILIKE '%.sh'  OR te.file_path ILIKE '%.bash')
+             ) u
+             WHERE canonical IS NOT NULL
+             GROUP BY canonical, path
+             ORDER BY 1, 2`,
             [userId],
         );
         const byCanonical = new Map<string, string[]>();

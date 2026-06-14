@@ -63,6 +63,31 @@ function resolveCodeCanonical(
     return null;
 }
 
+/**
+ * Code files for any canonical NAMED in a transferable bridge — the interchangeable
+ * alternatives the candidate actually uses (e.g. a vendor-provenance bridge "…uses an
+ * interchangeable alternative (aws bedrock, anthropic claude, amazon titan)"). Lets a
+ * vendor-transferable skill (OpenAI/Codex) cite the Bedrock/Claude code that proves it.
+ * Deduped; preserves canonicalToFiles ordering.
+ */
+function filesFromBridge(
+    bridge: string,
+    canonicalToFiles: LedgerEvidenceDeps['canonicalToFiles'],
+    reverse: Map<string, string[]>,
+): string[] {
+    if (!bridge) return [];
+    const hay = padded(bridge);
+    const files: string[] = [];
+    const seen = new Set<string>();
+    for (const [canonical, paths] of canonicalToFiles) {
+        if (!mentionsCanonical(canonical, hay, reverse)) continue;
+        for (const p of paths) {
+            if (!seen.has(p)) { seen.add(p); files.push(p); }
+        }
+    }
+    return files;
+}
+
 // ---------------------------------------------------------------------------
 // attachCodeEvidence
 // ---------------------------------------------------------------------------
@@ -91,6 +116,14 @@ export function attachCodeEvidence(
 
         const canonical = resolveCodeCanonical(entry.tool, deps.canonicalToFiles, reverse);
         if (!canonical) {
+            // VENDOR-TRANSFERABLE: the named tool itself isn't in code (e.g. "OpenAI API"),
+            // but the candidate uses an interchangeable alternative that IS (Bedrock/Claude).
+            // The transferable bridge names those alternatives — cite THEIR real code files so
+            // the skill links repo proof like a verified one, instead of showing nothing.
+            if (entry.status === 'transferable') {
+                const altFiles = filesFromBridge(entry.transferableBridge, deps.canonicalToFiles, reverse);
+                if (altFiles.length > 0) return { ...entry, evidenceFiles: altFiles.slice(0, topN) };
+            }
             // SOFT / experience skill (no code canonical, e.g. "complex technical
             // communication"): its proof is the career citation, NOT a repo file. Strip
             // any repo files the matcher attached by lexical similarity — that is how a

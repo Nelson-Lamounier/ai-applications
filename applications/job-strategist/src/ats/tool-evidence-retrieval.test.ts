@@ -72,4 +72,26 @@ describe('attachCodeEvidence', () => {
         expect(r[0].evidenceFiles[0]).toMatch(/lambda-stack\.ts$/);
         expect(r[0].evidenceFiles.filter((f) => f.endsWith('.md'))).toHaveLength(0);
     });
+
+    // ── C: vendor-transferable skills cite the ALTERNATIVE's real code ──────
+    const BEDROCK_DEPS = {
+        canonicalToFiles: new Map<string, string[]>([['aws_bedrock', ['Nelson-Lamounier/ai-applications/src/bedrock/agent.ts']]]),
+        aliasToCanonical: new Map<string, string>([['bedrock', 'aws_bedrock'], ['aws bedrock', 'aws_bedrock']]),
+    };
+
+    it('attaches the alternative\'s code files to a vendor-transferable skill (OpenAI → Bedrock)', () => {
+        const r = attachCodeEvidence([entry({
+            tool: 'OpenAI API', status: 'transferable', evidenceFiles: [],
+            transferableBridge: 'Hands-on experience with interchangeable alternatives in the same technology family (aws bedrock).',
+        })], BEDROCK_DEPS);
+        expect(r[0].evidenceFiles).toEqual(['Nelson-Lamounier/ai-applications/src/bedrock/agent.ts']);
+    });
+
+    it('does NOT invent code for a transferable SOFT skill whose bridge names no code tech', () => {
+        const r = attachCodeEvidence([entry({
+            tool: 'problem solving', status: 'transferable', evidenceFiles: [],
+            transferableBridge: 'Implied by the role\'s verified competencies — the matcher did not flag this as a gap.',
+        })], BEDROCK_DEPS);
+        expect(r[0].evidenceFiles).toEqual([]);
+    });
 });
