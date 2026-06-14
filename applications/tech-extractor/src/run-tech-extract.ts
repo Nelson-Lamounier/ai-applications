@@ -108,7 +108,10 @@ function iacExtractor(rootDir: string, files: string[], proseSafeAliases: Readon
 
 async function main(): Promise<void> {
     const env = parseEnv();
-    const sha = env.commitSha ?? 'HEAD';
+    // Provisional until the tarball fetch resolves the real HEAD SHA (below). Evidence
+    // is NEVER persisted under the literal 'HEAD' — that placeholder, being the newest
+    // by created_at, would shadow real per-commit evidence in the code-truth loaders.
+    let sha = env.commitSha ?? 'HEAD';
     log.info({ userId: env.userId, repo: env.repoFullName, sha }, 'tech-extract.start');
 
     const pool = new Pool({ ...env.pg, max: 3 });
@@ -139,7 +142,12 @@ async function main(): Promise<void> {
         const extractDir = path.join(env.workDir, 'tree');
         await fs.mkdir(extractDir, { recursive: true });
         try {
-            await fetchTarball(env.repoFullName, env.commitSha, env.githubToken, tarPath, MAX_TARBALL_BYTES);
+            const resolvedSha = await fetchTarball(env.repoFullName, env.commitSha, env.githubToken, tarPath, MAX_TARBALL_BYTES);
+            // Persist under the real SHA the redirect resolved to, never 'HEAD'.
+            if (!env.commitSha && resolvedSha) {
+                sha = resolvedSha;
+                log.info({ repo: env.repoFullName, sha }, 'tech-extract.resolved-head-sha');
+            }
         } catch (e) {
             if (String(e).includes('repo_too_large')) { log.warn({ repo: env.repoFullName }, 'repo_too_large'); return; }
             throw e;

@@ -5,10 +5,21 @@ export function tarballUrl(repoFullName: string, ref = 'HEAD'): string {
     return `https://api.github.com/repos/${repoFullName}/tarball/${ref}`;
 }
 
+/** The 40-hex commit SHA from a post-redirect codeload URL's last segment, else undefined. */
+export function shaFromCodeloadUrl(url: string): string | undefined {
+    const last = url.split('/').pop() ?? '';
+    return /^[0-9a-f]{40}$/i.test(last) ? last.toLowerCase() : undefined;
+}
+
 /**
  * Download a repo tarball to `outPath`. One request per repo; fetch follows the
  * 302 to codeload automatically. Enforces a max-size cap (Content-Length) to
  * defend against runaway repos; throws `repo_too_large` past the cap.
+ *
+ * Returns the RESOLVED commit SHA (or undefined if it can't be parsed). GitHub
+ * redirects `tarball/HEAD` to `codeload.github.com/.../legacy.tar.gz/<sha>`, so the
+ * final URL's last segment is the real commit — letting callers persist a true SHA
+ * instead of the literal 'HEAD' placeholder (which shadows real evidence downstream).
  */
 export async function fetchTarball(
     repoFullName: string,
@@ -16,7 +27,7 @@ export async function fetchTarball(
     token: string,
     outPath: string,
     maxBytes: number,
-): Promise<void> {
+): Promise<string | undefined> {
     const res = await fetch(tarballUrl(repoFullName, ref ?? 'HEAD'), {
         headers: {
             Authorization: `Bearer ${token}`,
@@ -46,4 +57,5 @@ export async function fetchTarball(
         }
     }
     await fs.writeFile(outPath, Buffer.concat(chunks));
+    return shaFromCodeloadUrl(res.url);
 }

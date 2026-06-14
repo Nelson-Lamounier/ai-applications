@@ -89,9 +89,18 @@ export function attachCodeEvidence(
     return ledger.map((entry) => {
         if (entry.status === 'gap') return entry;                       // honesty invariant
 
-        const experienceGrounded = entry.evidenceFiles.length === 0;    // (b) matcher grounded in career
-        const canonical = resolveCodeCanonical(entry.tool, deps.canonicalToFiles, reverse); // (a)
-        if (!canonical || experienceGrounded) return entry;             // BOTH conditions required
+        const canonical = resolveCodeCanonical(entry.tool, deps.canonicalToFiles, reverse);
+        if (!canonical) {
+            // SOFT / experience skill (no code canonical, e.g. "complex technical
+            // communication"): its proof is the career citation, NOT a repo file. Strip
+            // any repo files the matcher attached by lexical similarity — that is how a
+            // résumé-data file (tucaken-app/src/lib/resumes/resume-data.ts) ended up
+            // "proving" communication. Already-empty entries are returned untouched.
+            return entry.evidenceFiles.length === 0 ? entry : { ...entry, evidenceFiles: [] };
+        }
+
+        // CODE skill grounded purely in experience (matcher cited nothing): leave as-is.
+        if (entry.evidenceFiles.length === 0) return entry;
 
         const codeFiles = deps.canonicalToFiles.get(canonical) ?? [];
         if (codeFiles.length === 0) return entry;                       // no code proof → keep matcher files

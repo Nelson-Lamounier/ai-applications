@@ -57,11 +57,20 @@ export class TechnologyOntologyRepository {
     }
 
     /**
-     * Load each repo's CURRENT code-derived technology set for a user — the
-     * deterministic-from-code evidence (Syft SBOM, TreeSitter AST, IaC manifests,
-     * Dockerfiles) at the LATEST extracted commit per repo, resolved to ontology
-     * canonical names. README/code-prose layers are EXCLUDED: prose mentions can be
-     * as stale as the docs being checked, so they are not code ground-truth.
+     * Load each repo's code-derived technology set for a user — the deterministic
+     * -from-code evidence (Syft SBOM, TreeSitter AST, IaC manifests, Dockerfiles),
+     * resolved to ontology canonical names. README/code-prose layers are EXCLUDED:
+     * prose mentions can be as stale as the docs being checked, so they are not code
+     * ground-truth.
+     *
+     * Aggregated across ALL extracted commits, NOT a single "latest" commit. The
+     * tech-extractor runs incrementally, so no single commit_sha holds the complete
+     * canonical set — and a partial/placeholder run (e.g. commit_sha='HEAD') as the
+     * newest would otherwise SHADOW the real evidence, silently emptying the code set
+     * (observed in prod: aws_eks present in 12 files but 0 under the latest commit).
+     * Code presence is cumulative truth ("the repo uses aws_eks"), so the union is
+     * correct; predecessors removed in a migration (kubeadm/self-hosted) are not
+     * code-detectable anyway, so this does not weaken the doc-vs-code reconciliation.
      *
      * Returns repoFullName -> Set of lowercased canonical names. This is the truth a
      * doc claim is reconciled against: if a `.md` says "self-hosted Kubernetes" but a
@@ -70,16 +79,8 @@ export class TechnologyOntologyRepository {
      */
     async loadRepoCodeTech(userId: string): Promise<Map<string, Set<string>>> {
         const { rows } = await this.pool.query<{ repo_full_name: string; canonical: string }>(
-            `WITH latest_commit AS (
-                 SELECT DISTINCT ON (repo_full_name) repo_full_name, commit_sha
-                   FROM technology_evidence
-                  WHERE user_id = $1
-                  ORDER BY repo_full_name, created_at DESC
-             )
-             SELECT te.repo_full_name, lower(o.canonical_name) AS canonical
+            `SELECT DISTINCT te.repo_full_name, lower(o.canonical_name) AS canonical
                FROM technology_evidence te
-               JOIN latest_commit lc
-                 ON lc.repo_full_name = te.repo_full_name AND lc.commit_sha = te.commit_sha
                JOIN technology_ontology o ON o.id = te.technology_id
               WHERE te.user_id = $1
                 AND te.source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')`,
@@ -103,23 +104,20 @@ export class TechnologyOntologyRepository {
      * "which authored code files demonstrate this technology?" — unlike cosine retrieval,
      * which surfaces prose docs and lexically-similar-but-irrelevant files.
      *
-     * Code layers only (syft/treesitter/iac/dockerfile — never README/code-prose), latest
-     * commit per repo, paths as `${repo}/${file}`. Returns canonical(lower) → ordered
-     * unique paths. Empty map when no code evidence exists (callers fail-safe).
+     * Code layers only (syft/treesitter/iac/dockerfile — never README/code-prose), paths
+     * as `${repo}/${file}`. Returns canonical(lower) → ordered unique paths. Empty map
+     * when no code evidence exists (callers fail-safe).
+     *
+     * Aggregated across ALL commits (not a single "latest"): the tech-extractor extracts
+     * incrementally, so the complete file set for a canonical spans commits, and a
+     * partial/placeholder newest run (commit_sha='HEAD') would otherwise shadow it and
+     * empty the proof lane. Code presence is cumulative, so the union is the right model.
      */
     async loadCanonicalToCodeFiles(userId: string): Promise<Map<string, string[]>> {
         const { rows } = await this.pool.query<{ canonical: string; path: string }>(
-            `WITH latest_commit AS (
-                 SELECT DISTINCT ON (repo_full_name) repo_full_name, commit_sha
-                   FROM technology_evidence
-                  WHERE user_id = $1
-                  ORDER BY repo_full_name, created_at DESC
-             )
-             SELECT lower(o.canonical_name) AS canonical,
+            `SELECT lower(o.canonical_name) AS canonical,
                     te.repo_full_name || '/' || te.file_path AS path
                FROM technology_evidence te
-               JOIN latest_commit lc
-                 ON lc.repo_full_name = te.repo_full_name AND lc.commit_sha = te.commit_sha
                JOIN technology_ontology o ON o.id = te.technology_id
               WHERE te.user_id = $1
                 AND te.source_layer IN ('syft', 'treesitter', 'iac', 'dockerfile')

@@ -40,6 +40,16 @@ describe('attachCodeEvidence', () => {
         expect(r[0].evidenceFiles).toEqual([]);
     });
 
+    it('STRIPS matcher repo files from a soft skill (the résumé-data pollution)', () => {
+        // The matcher lexically attached a frontend résumé-data file to a soft skill.
+        // A soft skill resolves to no code canonical → repo files cleared (career-grounded).
+        const r = attachCodeEvidence(
+            [entry({ tool: 'Complex technical communication', evidenceFiles: ['Nelson-Lamounier/tucaken-app/src/lib/resumes/resume-data.ts'] })],
+            DEPS,
+        );
+        expect(r[0].evidenceFiles).toEqual([]);
+    });
+
     it('does NOT enrich a tech skill grounded purely in experience (no matcher files)', () => {
         // BOTH conditions required: resolves to a canonical AND not experience-grounded.
         const r = attachCodeEvidence([entry({ tool: 'Python', evidenceFiles: [] })], DEPS);
