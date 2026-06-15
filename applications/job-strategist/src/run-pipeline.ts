@@ -579,7 +579,6 @@ export async function main(): Promise<void> {
         // terms are the exact company + job-title strings from the résumé.
         const careerTerms = careerEntries.flatMap((e) => [e.company, e.title]).filter(Boolean);
         const skillEvidenceLedger = attachSourceLanes(ledgerWithCode, {
-            projectRepos: projectLaneIndex.projectRepos,
             projectNames: projectLaneIndex.projectNames,
             careerTerms,
         });

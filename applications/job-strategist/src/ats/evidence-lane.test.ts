@@ -12,7 +12,6 @@ const entry = (over: Partial<SkillEvidenceEntry>): SkillEvidenceEntry => ({
 });
 
 const index = (over: Partial<LaneIndex> = {}): LaneIndex => ({
-    projectRepos: new Set<string>(),
     projectNames: [],
     careerTerms: [],
     ...over,
@@ -29,15 +28,19 @@ describe('repoOfFile', () => {
 });
 
 describe('classifyLanes', () => {
-    it('credits PROJECT when a cited repo belongs to a documented project', () => {
+    it('credits REPO for any file-backed evidence (code leads, regardless of project linkage)', () => {
         const e = entry({ evidenceFiles: ['me/proj-repo/src/a.ts'] });
-        const lanes = classifyLanes(e, index({ projectRepos: new Set(['me/proj-repo']) }));
-        expect(lanes).toEqual(['project']);
+        expect(classifyLanes(e, index({ projectNames: ['Some Project'] }))).toEqual(['repo']);
     });
 
-    it('credits REPO when a cited repo is standalone (not in any project)', () => {
+    it('credits REPO for a standalone repo file just the same', () => {
         const e = entry({ evidenceFiles: ['me/standalone/src/a.ts'] });
-        expect(classifyLanes(e, index({ projectRepos: new Set(['me/other']) }))).toEqual(['repo']);
+        expect(classifyLanes(e, index())).toEqual(['repo']);
+    });
+
+    it('credits REPO + PROJECT when code is also described in a documented case study', () => {
+        const e = entry({ evidenceFiles: ['me/proj-repo/src/a.ts'], evidence: 'Built in the Tucaken Quota project' });
+        expect(classifyLanes(e, index({ projectNames: ['Tucaken Quota'] }))).toEqual(['repo', 'project']);
     });
 
     it('credits CAREER when file-less evidence names a career company/title', () => {
@@ -54,10 +57,10 @@ describe('classifyLanes', () => {
     it('returns multiple lanes in stable order (repo, project, career)', () => {
         const e = entry({
             evidenceFiles: ['me/proj-repo/a.ts', 'me/standalone/b.ts'],
-            evidence: 'Also corroborated at AWS',
+            evidence: 'Built in the Tucaken Quota project, also corroborated at AWS',
         });
         const lanes = classifyLanes(e, index({
-            projectRepos: new Set(['me/proj-repo']),
+            projectNames: ['Tucaken Quota'],
             careerTerms: ['AWS'],
         }));
         expect(lanes).toEqual(['repo', 'project', 'career']);
@@ -79,8 +82,8 @@ describe('attachSourceLanes', () => {
             entry({ tool: 'a', evidenceFiles: ['me/proj/a.ts'] }),
             entry({ tool: 'b', status: 'gap' }),
         ];
-        const out = attachSourceLanes(ledger, index({ projectRepos: new Set(['me/proj']) }));
-        expect(out[0].sourceLanes).toEqual(['project']);
+        const out = attachSourceLanes(ledger, index());
+        expect(out[0].sourceLanes).toEqual(['repo']);
         expect(out[1].sourceLanes).toBeUndefined();
         expect(ledger[0].sourceLanes).toBeUndefined(); // input untouched
     });
