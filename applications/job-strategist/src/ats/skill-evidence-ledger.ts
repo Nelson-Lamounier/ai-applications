@@ -151,43 +151,37 @@ function resolveLedgerEntry(tool: string, matching: Matching, opts?: LedgerOpts)
 }
 
 /**
- * Build the Skill Evidence Ledger as the UNION of the JD's named tools and the
- * matcher's assessed skills (verified + partial + gaps), deduped so each
- * underlying assessment yields exactly one row.
+ * Build the Skill Evidence Ledger from the canonical JD skill list (`tools`).
  *
- * JD tools are processed FIRST (clean, JD-faithful row labels + ATS keyword
- * coverage). Then every matcher-assessed skill not already represented by a JD
- * tool is appended (using the matcher's own wording). The result therefore
- * covers EVERYTHING the matcher assessed — the ledger reconciles with the
- * matcher's verified/partial/gap counts instead of being a narrower JD-tool-only
- * slice — while JD-named tools that hit nothing are still dropped.
+ * Since the matcher is now ASSESSMENT-ONLY over this same canonical list (it
+ * emits one verdict per skill, and unassessed skills are filled as gaps), the
+ * matcher's verified/partial/gap universe IS the canonical list — so iterating
+ * `tools` once covers everything the matcher assessed. (The earlier JD-tools ∪
+ * matcher-skills union was needed only while the matcher invented its own skill
+ * set; that dual interpretation is gone, so the union collapses to one pass.)
  *
- * Per-label resolution order: verified → gap(bridgeable) → transferable(group)
- * → transferable(partial) → (JD tool only) drop. Pure + deterministic.
+ * The matched-skill dedupe is retained: two canonical entries that fuzzy-match
+ * the SAME underlying assessment (e.g. "OpenAI" and "OpenAI API") yield one row.
+ *
+ * Per-skill resolution order: verified → gap(bridgeable) → transferable(group)
+ * → transferable(partial) → drop (matched nothing). Pure + deterministic.
  */
 export function buildSkillEvidenceLedger(tools: string[], matching: Matching, opts?: LedgerOpts): SkillEvidenceEntry[] {
-    const seenLabels = new Set<string>();   // exact label dedupe
-    const coveredSkills = new Set<string>(); // matcher skills already represented (identity dedupe)
+    const seenLabels = new Set<string>();    // exact label dedupe
+    const coveredSkills = new Set<string>(); // matched-assessment dedupe (fuzzy siblings)
     const ledger: SkillEvidenceEntry[] = [];
 
-    const add = (label: string): void => {
-        const key = label.toLowerCase();
-        if (!label || seenLabels.has(key)) return;
+    for (const tool of tools) {
+        const key = tool.toLowerCase();
+        if (!tool || seenLabels.has(key)) continue;
         seenLabels.add(key);
-        const res = resolveLedgerEntry(label, matching, opts);
-        if (!res) return;
+        const res = resolveLedgerEntry(tool, matching, opts);
+        if (!res) continue;
         const skillKey = res.matchedSkill.toLowerCase();
-        if (coveredSkills.has(skillKey)) return; // same assessment already has a row
+        if (coveredSkills.has(skillKey)) continue; // same assessment already has a row
         coveredSkills.add(skillKey);
         ledger.push(res.entry);
-    };
-
-    // 1. JD-named tools first (clean labels + ATS coverage).
-    for (const tool of tools) add(tool);
-    // 2. Every matcher-assessed skill not yet represented (covers all 18 assessed).
-    for (const m of matching.verifiedMatches) add(m.skill);
-    for (const m of matching.partialMatches) add(m.skill);
-    for (const g of matching.gaps) add(g.skill);
+    }
 
     return ledger;
 }

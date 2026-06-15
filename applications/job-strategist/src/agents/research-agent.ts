@@ -28,6 +28,8 @@ import {
 } from '@bedrock/shared';
 import { loadCareerHistory, formatCareerHistory, type CareerEntry } from './career-history.js';
 import { jdRetrievalQueries, formatJdExtraction } from './jd-extractor.js';
+import { assessmentsToMatching } from './research-assessment.js';
+import { canonicalJdSkills } from '../ats/canonical-jd-skills.js';
 import { computeKbStats } from '../lib/kb-stats.js';
 import type { Pool } from 'pg';
 import type {
@@ -44,7 +46,6 @@ import type {
     SimilarityResult,
     StructuredResumeData,
     StrategistPipelineContext,
-    StrategistResearchResult,
 } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
@@ -390,17 +391,16 @@ interface ResearchMessageOptions {
 /**
  * Build the user message for the Research Agent.
  *
- * Assembles the job description, KB context, and structured resume data into
- * a prompt with clearly delimited sections for analysis.
+ * Assembles the extracted JD Signal block, KB context, and structured resume
+ * data into a prompt with clearly delimited sections. The raw JD is NOT included
+ * (single-read contract — only jd-extractor reads the JD).
  *
- * @param jobDescription - Sanitised job description text
  * @param kbContext - Concatenated KB passages
  * @param resumeData - Structured resume data from pipeline context (may be null)
  * @param opts - Optional named sections (career history, DSA catalog, etc.)
  * @returns Formatted user message
  */
 function buildResearchMessage(
-    jobDescription: string,
     kbContext: string,
     resumeData: StructuredResumeData | null,
     opts: ResearchMessageOptions = {},
@@ -418,13 +418,10 @@ function buildResearchMessage(
         codeStackContext = '',
     } = opts;
 
-    const sections: string[] = [
-        '## Job Description',
-        '--- BEGIN JOB DESCRIPTION ---',
-        jobDescription,
-        '--- END JOB DESCRIPTION ---',
-        '',
-    ];
+    // Single-read contract: the matcher works from the extracted JD Signal block,
+    // NOT the raw JD text — only jd-extractor reads the JD, so there is no second
+    // interpretation that could diverge from the canonical skill list.
+    const sections: string[] = [];
 
     if (jdSignalBlock) {
         sections.push(jdSignalBlock, '');
@@ -555,17 +552,6 @@ function buildResearchMessage(
 // STRUCTURED OUTPUT — tool schema + Zod safety-net
 // =============================================================================
 
-const JOB_REQUIREMENT_SCHEMA = {
-    type: 'object',
-    properties: {
-        skill:        { type: 'string' },
-        context:      { type: 'string' },
-        disqualifying: { type: 'boolean' },
-    },
-    required: ['skill', 'context'],
-    additionalProperties: false,
-};
-
 const STR_ARRAY = { type: 'array', items: { type: 'string' } };
 
 /** Tool the research model is forced to call. Non-model fields (resumeData,
@@ -575,51 +561,33 @@ const STR_ARRAY = { type: 'array', items: { type: 'string' } };
  *  matching fields. */
 const RESEARCH_TOOL = {
     name: 'emit_research_brief',
-    description: 'Emit the structured candidate↔JD matching brief. Do NOT re-derive JD requirements — they are given in the JD Signal block.',
+    description: 'Emit the structured candidate↔JD matching brief. Do NOT re-derive or invent JD requirements — assess EXACTLY the skills listed in the "JD SKILLS TO ASSESS" block, one assessment per skill.',
     inputSchema: {
         type: 'object',
         properties: {
-            verifiedMatches: {
+            assessments: {
                 type: 'array',
+                description: 'Exactly one entry per skill in the JD SKILLS TO ASSESS list (echo the skill verbatim). Fill only the fields relevant to the chosen verdict.',
                 items: {
                     type: 'object',
                     properties: {
-                        skill:          { type: 'string' },
-                        sourceCitation: { type: 'string' },
-                        depth:          { type: 'string', enum: ['surface', 'working', 'expert'] },
-                        recency:        { type: 'string' },
-                        evidenceFiles:  { type: 'array', items: { type: 'string' } },
+                        skill:   { type: 'string', description: 'The JD skill being assessed — echo it verbatim from the provided list.' },
+                        verdict: { type: 'string', enum: ['verified', 'partial', 'gap'], description: 'verified = clearly demonstrated; partial = related/transferable foundation; gap = not demonstrated.' },
+                        // verified fields
+                        sourceCitation: { type: 'string', description: '(verified) where it is demonstrated — project/role/repo.' },
+                        depth:          { type: 'string', enum: ['surface', 'working', 'expert'], description: '(verified) depth of demonstrated expertise.' },
+                        recency:        { type: 'string', description: '(verified) how recently used.' },
+                        evidenceFiles:  { type: 'array', items: { type: 'string' }, description: '(verified/partial) backing KB file paths.' },
+                        // partial fields
+                        gapDescription:         { type: 'string', description: '(partial) what is missing vs the full requirement.' },
+                        transferableFoundation: { type: 'string', description: '(partial) the adjacent capability that bridges the gap.' },
+                        framingSuggestion:      { type: 'string', description: '(partial) how to frame it honestly in an application.' },
+                        // gap fields
+                        gapType:                 { type: 'string', enum: ['hard', 'soft'], description: '(gap) hard = disqualifying-class requirement; soft = nice-to-have.' },
+                        impactSeverity:          { type: 'string', enum: ['blocking', 'significant', 'minor'], description: '(gap) impact on viability.' },
+                        disqualifyingAssessment: { type: 'string', description: '(gap) honest assessment of whether this blocks candidacy.' },
                     },
-                    required: ['skill', 'sourceCitation', 'depth', 'recency'],
-                    additionalProperties: false,
-                },
-            },
-            partialMatches: {
-                type: 'array',
-                items: {
-                    type: 'object',
-                    properties: {
-                        skill:                  { type: 'string' },
-                        gapDescription:         { type: 'string' },
-                        transferableFoundation: { type: 'string' },
-                        framingSuggestion:      { type: 'string' },
-                        evidenceFiles:          { type: 'array', items: { type: 'string' } },
-                    },
-                    required: ['skill', 'gapDescription', 'transferableFoundation', 'framingSuggestion'],
-                    additionalProperties: false,
-                },
-            },
-            gaps: {
-                type: 'array',
-                items: {
-                    type: 'object',
-                    properties: {
-                        skill:                   { type: 'string' },
-                        gapType:                 { type: 'string', enum: ['hard', 'soft'] },
-                        impactSeverity:          { type: 'string', enum: ['blocking', 'significant', 'minor'] },
-                        disqualifyingAssessment: { type: 'string' },
-                    },
-                    required: ['skill', 'gapType', 'impactSeverity', 'disqualifyingAssessment'],
+                    required: ['skill', 'verdict'],
                     additionalProperties: false,
                 },
             },
@@ -662,7 +630,7 @@ const RESEARCH_TOOL = {
             },
         },
         required: [
-            'verifiedMatches', 'partialMatches', 'gaps',
+            'assessments',
             'overallFitRating', 'fitSummary',
         ],
         additionalProperties: false,
@@ -672,26 +640,20 @@ const RESEARCH_TOOL = {
 /** Runtime safety-net for the model-produced matching fields only.
  *  JD-signal fields are NOT produced by this model — they come from JdSignal. */
 const ResearchModelSchema = z.object({
-    verifiedMatches: z.array(z.object({
+    assessments: z.array(z.object({
         skill: z.string(),
-        sourceCitation: z.string(),
-        depth: z.enum(['surface', 'working', 'expert']),
-        recency: z.string(),
+        verdict: z.enum(['verified', 'partial', 'gap']),
+        sourceCitation: z.string().optional(),
+        depth: z.enum(['surface', 'working', 'expert']).optional(),
+        recency: z.string().optional(),
         evidenceFiles: z.array(z.string()).default([]),
-    })),
-    partialMatches: z.array(z.object({
-        skill: z.string(),
-        gapDescription: z.string(),
-        transferableFoundation: z.string(),
-        framingSuggestion: z.string(),
-        evidenceFiles: z.array(z.string()).default([]),
-    })),
-    gaps: z.array(z.object({
-        skill: z.string(),
-        gapType: z.enum(['hard', 'soft']),
-        impactSeverity: z.enum(['blocking', 'significant', 'minor']),
-        disqualifyingAssessment: z.string(),
-    }).strict()),
+        gapDescription: z.string().optional(),
+        transferableFoundation: z.string().optional(),
+        framingSuggestion: z.string().optional(),
+        gapType: z.enum(['hard', 'soft']).optional(),
+        impactSeverity: z.enum(['blocking', 'significant', 'minor']).optional(),
+        disqualifyingAssessment: z.string().optional(),
+    }).strict()).default([]),
     overallFitRating: z.enum(['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH']),
     fitSummary: z.string(),
     pillarClassification: z.object({
@@ -728,6 +690,9 @@ export function validateResearchResult(
         resumeData: StructuredResumeData | null;
         kbContext: string;
         resumeConstraints: string;
+        /** Canonical JD skill list — the fixed universe the matcher assessed.
+         *  Any skill the model failed to assess is filled as an honest gap. */
+        jdSkills?: string[];
     },
 ): ResearchMatching {
     const validated = ResearchModelSchema.safeParse(raw);
@@ -736,9 +701,18 @@ export function validateResearchResult(
             `strategist-research: research brief failed schema validation: ${validated.error.message}`,
         );
     }
+    const { assessments, ...rest } = validated.data;
+    // The matcher emits one verdict per canonical JD skill; derive the legacy
+    // verified/partial/gap buckets so every downstream consumer is unchanged.
+    const { verifiedMatches, partialMatches, gaps } = assessmentsToMatching(assessments, injected.jdSkills ?? []);
     return {
-        ...validated.data,
-        ...injected,
+        ...rest,
+        verifiedMatches,
+        partialMatches,
+        gaps,
+        resumeData: injected.resumeData,
+        kbContext: injected.kbContext,
+        resumeConstraints: injected.resumeConstraints,
         kbRetrievalStats: computeKbStats(injected.kbContext, MIN_COSINE),
         // Default empty ledger — run-pipeline builds the real ledger deterministically
         // from the assembled JdSignal + this matching result and overwrites this field.
@@ -776,6 +750,27 @@ const RESEARCH_CONFIG: AgentConfig = {
  * @param ctx - Pipeline context with job description, resumeData, and userId
  * @returns Research result with verified/partial/gap skill classification
  */
+/**
+ * The JD-signal prompt block: the already-extracted requirement summary PLUS the
+ * fixed "JD SKILLS TO ASSESS" list. The matcher matches against this rather than
+ * re-deriving requirements. Empty string when no JD signal is available.
+ */
+function buildJdSignalBlock(jdSignal: JdSignal | null, jdSkills: readonly string[]): string {
+    if (!jdSignal) return '';
+    const ti = jdSignal.technologyInventory;
+    return [
+        '## JD Signal (the SINGLE extracted read of the JD — MATCH the candidate against this; the raw JD is intentionally not provided)',
+        `Target role: ${jdSignal.targetRole} · Seniority: ${jdSignal.seniority} · Domain: ${jdSignal.domain}`,
+        jdSignal.companyProblem ? `The problem this role solves: ${jdSignal.companyProblem}` : '',
+        `Hard requirements: ${jdSignal.hardRequirements.map(r => `${r.skill}${r.disqualifying ? ' [disqualifying]' : ''}`).join(', ') || 'none'}`,
+        `Technology: languages ${ti.languages.join(', ') || 'none'} · tools ${ti.tools.join(', ') || 'none'} · methodologies ${ti.methodologies.join(', ') || 'none'} · infrastructure ${ti.infrastructure.join(', ') || 'none'} · frameworks ${ti.frameworks.join(', ') || 'none'}`,
+        `Experience signals: years ${jdSignal.experienceSignals.yearsExpected} · scale ${jdSignal.experienceSignals.scaleIndicators} · leadership ${jdSignal.experienceSignals.leadershipExpectation}`,
+        '',
+        '## JD SKILLS TO ASSESS (emit EXACTLY one assessment per skill, echoing it verbatim — do not add, merge, split, or rename)',
+        ...jdSkills.map((s, i) => `${i + 1}. ${s}`),
+    ].join('\n');
+}
+
 export async function executeResearchAgent(
     ctx: StrategistPipelineContext,
     pool?: Pool,
@@ -905,17 +900,16 @@ export async function executeResearchAgent(
     // 6. Build user message
     const jdExtractionSummary = jdSignal ? formatJdExtraction(jdSignal) : '';
 
+    // Canonical JD skill list — the FIXED universe the matcher assesses (derived
+    // once from the JD signal, identical to the ledger/ATS list). The matcher
+    // emits exactly one verdict per skill; it never invents its own skill set.
+    const jdSkills = jdSignal ? canonicalJdSkills(jdSignal) : [];
+
     // Build the JD signal block injected into the prompt so the model can
     // match against given requirements rather than re-deriving them.
-    const jdSignalBlock = jdSignal ? [
-        '## JD Signal (already extracted — MATCH the candidate against this; do not re-derive)',
-        `Target role: ${jdSignal.targetRole} · Seniority: ${jdSignal.seniority} · Domain: ${jdSignal.domain}`,
-        `Hard requirements: ${jdSignal.hardRequirements.map(r => `${r.skill}${r.disqualifying ? ' [disqualifying]' : ''}`).join(', ') || 'none'}`,
-        `Technology: languages ${jdSignal.technologyInventory.languages.join(', ') || 'none'} · tools ${jdSignal.technologyInventory.tools.join(', ') || 'none'} · methodologies ${jdSignal.technologyInventory.methodologies.join(', ') || 'none'} · infrastructure ${jdSignal.technologyInventory.infrastructure.join(', ') || 'none'} · frameworks ${jdSignal.technologyInventory.frameworks.join(', ') || 'none'}`,
-        `Experience signals: years ${jdSignal.experienceSignals.yearsExpected} · scale ${jdSignal.experienceSignals.scaleIndicators} · leadership ${jdSignal.experienceSignals.leadershipExpectation}`,
-    ].join('\n') : '';
+    const jdSignalBlock = buildJdSignalBlock(jdSignal, jdSkills);
 
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData, {
+    const userMessage = buildResearchMessage(kbContext, resumeData, {
         careerHistorySection,
         dsaCatalog,
         projectEvidenceSection: projectEvidenceBlock,
@@ -937,7 +931,7 @@ export async function executeResearchAgent(
             // unwraps it; validateResearchResult fails fast on any schema
             // deviation instead of papering over it with defaults.
             const raw = parseJsonResponse<unknown>(text, 'strategist-research');
-            return validateResearchResult(raw, { resumeData, kbContext, resumeConstraints });
+            return validateResearchResult(raw, { resumeData, kbContext, resumeConstraints, jdSkills });
         },
         pipelineContext: {
             pipelineId: ctx.pipelineId,
