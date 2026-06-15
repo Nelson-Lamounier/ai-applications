@@ -412,4 +412,55 @@ describe('buildSkillEvidenceLedger — token-overlap bridging + matcher-aligned 
         expect(ledger[0]!.status).toBe('verified');
         expect(ledger[0]!.evidenceFiles).toEqual(['rca.md']);
     });
+
+    it('bridgeable gap: a tool matching BOTH a partialMatch and a matcher gap resolves to GAP, keeping the foundation as the bridge', () => {
+        const matching = {
+            verifiedMatches: [],
+            // The matcher (often Haiku) listed the SAME skill in both partial AND gap.
+            partialMatches: [
+                makePartial({
+                    skill: 'OpenAI API (explicit mention in JD)',
+                    transferableFoundation: 'LLM API patterns are fungible — your Bedrock/Claude work transfers',
+                    evidenceFiles: ['me/repo/invoke-claude.ts'],
+                }),
+            ],
+            gaps: [makeGap({ skill: 'OpenAI API, ChatGPT (explicit named technologies in JD)' })],
+        };
+        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching);
+        expect(ledger).toHaveLength(1);
+        expect(ledger[0]).toEqual({
+            tool: 'OpenAI API',
+            status: 'gap', // gap wins — the matcher flagged it missing
+            evidenceFiles: [], // honest empty: no direct evidence
+            evidence: '',
+            transferableBridge: 'LLM API patterns are fungible — your Bedrock/Claude work transfers',
+        });
+    });
+
+    it('bridgeable gap uses a group-sibling foundation when there is no partial', () => {
+        const matching = {
+            verifiedMatches: [makeVerified({ skill: 'aws bedrock', evidenceFiles: ['me/repo/bedrock.ts'] })],
+            partialMatches: [],
+            gaps: [makeGap({ skill: 'openai api' })],
+        };
+        const ledger = buildSkillEvidenceLedger(['openai api'], matching, {
+            techGroups: [['openai api', 'aws bedrock']],
+            techAliasMap: new Map([['openai api', 'openai api'], ['aws bedrock', 'aws bedrock']]),
+        });
+        expect(ledger[0]!.status).toBe('gap');
+        expect(ledger[0]!.evidenceFiles).toEqual([]);
+        expect(ledger[0]!.transferableBridge).toMatch(/same technology group — aws bedrock is transferable/);
+    });
+
+    it('hard years-bar gap is never downgraded to transferable even with a matching partial', () => {
+        const matching = {
+            verifiedMatches: [],
+            partialMatches: [
+                makePartial({ skill: '8+ years in user operations (literal years requirement)', transferableFoundation: '~5 relevant years' }),
+            ],
+            gaps: [makeGap({ skill: '8+ years of relevant experience', gapType: 'hard', impactSeverity: 'significant' })],
+        };
+        const ledger = buildSkillEvidenceLedger(['8+ years user operations or support engineering experience'], matching);
+        expect(ledger[0]!.status).toBe('gap');
+    });
 });

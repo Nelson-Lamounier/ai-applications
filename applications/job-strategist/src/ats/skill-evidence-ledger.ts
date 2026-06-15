@@ -76,10 +76,18 @@ function findVerifiedSiblingByGroup(
  * research matching result.
  *
  * Status resolution order (per unique tool, preserving input order, case-insensitive dedupe):
- *  1. verified           — combined-match to a verifiedMatch
- *  2. transferable (group)— verified sibling in the same tech group (when opts provided)
- *  3. transferable (partial) — combined-match to a partialMatch
- *  4. gap                — combined-match to a matcher GAP (the ONLY path to gap)
+ *  1. verified           — combined-match to a verifiedMatch (direct evidence wins)
+ *  2. gap (bridgeable)   — combined-match to a matcher GAP. The matcher's gaps are
+ *                          the authoritative "what's missing", so a gap is honoured
+ *                          even when a transferable foundation ALSO matches — a skill
+ *                          the matcher flagged as missing must not read as a clean
+ *                          positive. When a foundation exists it is kept as the
+ *                          `transferableBridge` (a "bridgeable gap"): still a gap,
+ *                          but the adjacent foundation is shown. This also stops the
+ *                          deterministic hard years-bar (years-gap-reconcile) from
+ *                          being silently downgraded to "transferable".
+ *  3. transferable (group)— verified sibling in the same tech group (when opts provided)
+ *  4. transferable (partial) — combined-match to a partialMatch
  *  5. (none)             — matched nothing the matcher assessed → DROPPED (no contentless row)
  *
  * @param tools    - JD-required tools/skills
@@ -87,6 +95,78 @@ function findVerifiedSiblingByGroup(
  * @param opts     - Optional tech-group resolution config
  * @returns Ordered, deduped list of evidence entries
  */
+/** A JD requirement expressing a years-of-experience bar (e.g. "8+ years …"). */
+const YEARS_REQUIREMENT = /\b\d{1,2}\s*\+?\s*years?\b/i;
+function isYearsRequirement(s: string): boolean {
+    return YEARS_REQUIREMENT.test(s);
+}
+
+/** The transferable foundation (group sibling or partial) to keep on a bridgeable gap. */
+function gapBridge(
+    tool: string,
+    matching: Pick<{ verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[] }, 'verifiedMatches' | 'partialMatches'>,
+    opts?: LedgerOpts,
+): string {
+    const sibling = opts?.techGroups && opts.techAliasMap
+        ? findVerifiedSiblingByGroup(tool, matching.verifiedMatches, opts.techGroups, opts.techAliasMap)
+        : undefined;
+    if (sibling) return `same technology group — ${sibling.skill} is transferable to ${tool}`;
+    return findPartialMatch(tool, matching.partialMatches)?.transferableFoundation ?? '';
+}
+
+/**
+ * Resolve one JD tool to a ledger entry (or null = DROP). Resolution order
+ * documented on {@link buildSkillEvidenceLedger}. Extracted to keep the builder
+ * loop trivial.
+ */
+function resolveLedgerEntry(
+    tool: string,
+    matching: Pick<
+        { verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[]; gaps: SkillGap[] },
+        'verifiedMatches' | 'partialMatches' | 'gaps'
+    >,
+    opts?: LedgerOpts,
+): SkillEvidenceEntry | null {
+    // 1. verified — direct evidence wins.
+    const vm = findVerifiedMatch(tool, matching.verifiedMatches);
+    if (vm) {
+        return { tool, status: 'verified', evidenceFiles: vm.evidenceFiles, evidence: vm.sourceCitation, transferableBridge: '' };
+    }
+
+    // 2. gap (bridgeable) — the matcher's gaps are the authoritative "what's missing",
+    // so a gap wins over any transferable foundation; the foundation is kept as the
+    // bridge. A years-of-experience tool ALSO maps to a years gap even when the exact
+    // wording differs (the #227 hard years-bar must never read as transferable).
+    const gap = findGapMatch(tool, matching.gaps)
+        ?? (isYearsRequirement(tool) ? matching.gaps.find((g) => isYearsRequirement(g.skill)) : undefined);
+    if (gap) {
+        return { tool, status: 'gap', evidenceFiles: [], evidence: '', transferableBridge: gapBridge(tool, matching, opts) };
+    }
+
+    // 3. transferable — verified sibling in the same tech group.
+    if (opts?.techGroups && opts.techAliasMap) {
+        const sibling = findVerifiedSiblingByGroup(tool, matching.verifiedMatches, opts.techGroups, opts.techAliasMap);
+        if (sibling) {
+            return {
+                tool, status: 'transferable', evidenceFiles: sibling.evidenceFiles, evidence: sibling.sourceCitation,
+                transferableBridge: `same technology group — ${sibling.skill} is transferable to ${tool}`,
+            };
+        }
+    }
+
+    // 4. transferable — partial match.
+    const pm = findPartialMatch(tool, matching.partialMatches);
+    if (pm) {
+        return { tool, status: 'transferable', evidenceFiles: pm.evidenceFiles, evidence: pm.gapDescription, transferableBridge: pm.transferableFoundation };
+    }
+
+    // 5. DROP — matched nothing the matcher verified/partial'd/gapped. Emitting a
+    // contentless row would read as a weak positive while proving nothing (and is
+    // often a false miss where the matcher assessed an equivalent skill phrased
+    // differently); the JD requirement still surfaces in the matcher's gaps/analysis.
+    return null;
+}
+
 export function buildSkillEvidenceLedger(
     tools: string[],
     matching: Pick<
@@ -103,68 +183,8 @@ export function buildSkillEvidenceLedger(
         if (seen.has(key)) continue;
         seen.add(key);
 
-        // 1. verified
-        const vm = findVerifiedMatch(tool, matching.verifiedMatches);
-        if (vm) {
-            ledger.push({
-                tool,
-                status: 'verified',
-                evidenceFiles: vm.evidenceFiles,
-                evidence: vm.sourceCitation,
-                transferableBridge: '',
-            });
-            continue;
-        }
-
-        // 2. transferable — verified sibling in the same tech group
-        if (opts?.techGroups && opts.techAliasMap) {
-            const sibling = findVerifiedSiblingByGroup(tool, matching.verifiedMatches, opts.techGroups, opts.techAliasMap);
-            if (sibling) {
-                ledger.push({
-                    tool,
-                    status: 'transferable',
-                    evidenceFiles: sibling.evidenceFiles,
-                    evidence: sibling.sourceCitation,
-                    transferableBridge: `same technology group — ${sibling.skill} is transferable to ${tool}`,
-                });
-                continue;
-            }
-        }
-
-        // 3. transferable — partial match
-        const pm = findPartialMatch(tool, matching.partialMatches);
-        if (pm) {
-            ledger.push({
-                tool,
-                status: 'transferable',
-                evidenceFiles: pm.evidenceFiles,
-                evidence: pm.gapDescription,
-                transferableBridge: pm.transferableFoundation,
-            });
-            continue;
-        }
-
-        // 4. gap — ONLY when the tool matches one of the matcher's actual gaps
-        const gap = findGapMatch(tool, matching.gaps);
-        if (gap) {
-            ledger.push({
-                tool,
-                status: 'gap',
-                evidenceFiles: [],
-                evidence: '',
-                transferableBridge: '',
-            });
-            continue;
-        }
-
-        // 5. DROP — the tool matched nothing the matcher verified/partial'd/gapped.
-        // It would otherwise become a contentless "transferable (implied)" row (no
-        // evidence, no files) that reads as a weak positive while proving nothing —
-        // and is often a false miss where the matcher DID assess an equivalent skill
-        // phrased differently (e.g. "Complex technical problem-solving" vs the verified
-        // "Critical thinking and root-cause analysis"). "What your repos prove" should
-        // not list a skill the repos don't prove; the JD requirement still surfaces in
-        // the matcher's gaps/analysis. So we omit it from the ledger entirely.
+        const entry = resolveLedgerEntry(tool, matching, opts);
+        if (entry) ledger.push(entry);
     }
 
     return ledger;
