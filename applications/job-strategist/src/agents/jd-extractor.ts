@@ -20,7 +20,12 @@ import { PiiScrubber, runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, JdSignal } from '@bedrock/shared';
 
 const piiScrubber = new PiiScrubber();
-const MODEL_ID = process.env['JD_EXTRACTOR_MODEL_ID'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+// jd-extractor is now the SINGLE source of truth for the JD: its canonical skill
+// list drives the matcher (assessment-only), the skill-evidence ledger, the fit
+// donut, and ATS coverage. A miss here can't be recovered downstream, so default
+// to Sonnet — same reasoning the matcher + coach + profile-synthesis agents use.
+// Overridable via JD_EXTRACTOR_MODEL_ID (not set by deploy → this default governs).
+const MODEL_ID = process.env['JD_EXTRACTOR_MODEL_ID'] ?? 'eu.anthropic.claude-sonnet-4-6';
 const MAX_JD_CHARS = 20_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
