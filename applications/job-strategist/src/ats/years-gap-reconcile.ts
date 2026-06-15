@@ -12,12 +12,14 @@
  * non-enforcement is what made the fit verdict (and the downstream résumé
  * structure) swing between runs.
  *
- * This closes it: when the years bar is disqualifying, force a single hard
- * gap entry for it AND cap the fit rating so it can never read as STRONG /
- * REASONABLE fit. Pure + idempotent; a no-op when there's no disqualifying
- * years gap.
+ * This closes it: when the years bar is disqualifying, (1) DEMOTE any verified/
+ * partial match that claims a years-of-experience requirement (else the Skill
+ * Evidence Ledger shows "8+ years — VERIFIED" citing ~2 years, contradicting the
+ * gap), (2) force a single hard gap entry for it, and (3) cap the fit rating to
+ * REACH (a disqualifying hard-bar miss cannot read better than REACH). Pure +
+ * idempotent; a no-op when there's no disqualifying years gap.
  */
-import type { SkillGap, FitRating } from '@bedrock/shared';
+import type { SkillGap, FitRating, VerifiedMatch, PartialMatch } from '@bedrock/shared';
 
 /** The subset of YearsGap this guard reads (kept structural to avoid an agent import cycle). */
 export interface YearsGapSignal {
@@ -39,15 +41,24 @@ function isYearsGap(g: SkillGap): boolean {
 }
 
 /**
- * A disqualifying hard-bar miss cannot honestly read as STRONG / REASONABLE
- * fit. Cap at REACH (the rating the internally-consistent run produced); a
- * rating already at STRETCH / REACH is left as the agent judged it.
+ * A skill phrase that claims a years-of-experience requirement, e.g.
+ * "8+ years user operations", "5 years of relevant experience". Used to demote
+ * any verified/partial match the matcher created for the years bar — the
+ * candidate misses it, so it cannot stand as verified next to the hard gap.
+ * Requires a NUMBER adjacent to "year(s)" so plain skills ("Python") never match.
  */
-function capFitRating(current: FitRating): FitRating {
-    return current === 'STRONG FIT' || current === 'REASONABLE FIT' ? 'REACH' : current;
+function claimsYearsRequirement(skill: string): boolean {
+    return /\b\d{1,2}\s*\+?\s*years?\b/i.test(skill);
 }
 
-export function applyYearsGapReconcile<M extends { gaps: SkillGap[]; overallFitRating: FitRating }>(
+export function applyYearsGapReconcile<
+    M extends {
+        gaps: SkillGap[];
+        overallFitRating: FitRating;
+        verifiedMatches: VerifiedMatch[];
+        partialMatches: PartialMatch[];
+    },
+>(
     matching: M,
     yearsGap: YearsGapSignal | null | undefined,
 ): YearsGapReconcileOutcome<M> {
@@ -65,10 +76,18 @@ export function applyYearsGapReconcile<M extends { gaps: SkillGap[]; overallFitR
             `as disqualifying — lead with demonstrated capability (project scope, ownership, depth) to offset it; ` +
             `do not present the candidate as meeting the stated experience minimum.`,
     };
-    const gaps = matching.gaps.filter((g) => !isYearsGap(g));
-    gaps.push(gap);
     return {
-        matching: { ...matching, gaps, overallFitRating: capFitRating(matching.overallFitRating) },
+        matching: {
+            ...matching,
+            // Demote any years-experience claim the matcher verified/partial'd — the
+            // candidate misses the bar, so it must not show as met (ledger contradiction).
+            verifiedMatches: matching.verifiedMatches.filter((v) => !claimsYearsRequirement(v.skill)),
+            partialMatches:  matching.partialMatches.filter((p) => !claimsYearsRequirement(p.skill)),
+            // Replace any prior years gap with the deterministic one.
+            gaps: [...matching.gaps.filter((g) => !isYearsGap(g)), gap],
+            // A disqualifying hard-bar miss cannot read better than REACH.
+            overallFitRating: 'REACH',
+        },
         applied: true,
     };
 }
