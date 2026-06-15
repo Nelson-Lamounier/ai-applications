@@ -23,7 +23,7 @@ import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription } fr
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
-import { loadProjectEvidenceBlock } from './agents/project-evidence-block.js';
+import { loadProjectEvidenceBlock, loadProjectLaneIndex } from './agents/project-evidence-block.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
 import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { extractJobDescription } from './agents/jd-extractor.js';
@@ -56,6 +56,7 @@ import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
+import { attachSourceLanes } from './ats/evidence-lane.js';
 import { applyDegreeReconcile } from './ats/education-reconcile.js';
 import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
 
@@ -402,8 +403,9 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction] = await Promise.all([
+        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
+            loadProjectLaneIndex(pool, ctx.userId),
             loadProfileIntelligenceBlock(pool, ctx.userId),
             loadEducation(pool, ctx.userId).catch(() => []),
             loadCertifications(pool, ctx.userId).catch(() => []),
@@ -569,7 +571,18 @@ export async function main(): Promise<void> {
         // soft skill (e.g. "complex technical communication") resolves to no code canonical
         // → keeps its honest career grounding. GAP entries untouched. Pure + deterministic
         // (no I/O), so it is called directly — it never reaches out and cannot block.
-        const skillEvidenceLedger = attachCodeEvidence(baseLedger, { canonicalToFiles: canonicalToCodeFiles, aliasToCanonical });
+        const ledgerWithCode = attachCodeEvidence(baseLedger, { canonicalToFiles: canonicalToCodeFiles, aliasToCanonical });
+
+        // Tag each row's source lane(s) — repo (standalone code) / project (a
+        // documented project or its repos) / career (résumé). Deterministic +
+        // fail-open: an empty lane index simply yields no sourceLanes. Career
+        // terms are the exact company + job-title strings from the résumé.
+        const careerTerms = careerEntries.flatMap((e) => [e.company, e.title]).filter(Boolean);
+        const skillEvidenceLedger = attachSourceLanes(ledgerWithCode, {
+            projectRepos: projectLaneIndex.projectRepos,
+            projectNames: projectLaneIndex.projectNames,
+            careerTerms,
+        });
 
         const researchData: StrategistResearchResult = {
             ...jdExtraction,

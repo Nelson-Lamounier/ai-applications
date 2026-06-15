@@ -168,6 +168,7 @@ export type {
     // Skill Evidence Ledger
     EvidenceStatus,
     SkillEvidenceEntry,
+    SkillEvidenceLane,
 
     // Phase 0 Archetype Selection
     ArchetypeId,

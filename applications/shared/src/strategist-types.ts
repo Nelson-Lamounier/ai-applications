@@ -298,6 +298,16 @@ export interface PartialMatch {
 export type EvidenceStatus = 'verified' | 'transferable' | 'gap';
 
 /**
+ * Which source lane an evidence row was drawn from. The matcher sees three
+ * distinct evidence lanes — code repositories, documented project case studies,
+ * and résumé/career history — so a row's provenance is one or more of:
+ *   - `repo`    — a standalone code repository (not part of a documented project)
+ *   - `project` — a documented portfolio project (or code in a project's repos)
+ *   - `career`  — the candidate's résumé / career history
+ */
+export type SkillEvidenceLane = 'repo' | 'project' | 'career';
+
+/**
  * A single row in the Skill Evidence Ledger — per-tool, file-cited evidence.
  *
  * Built deterministically by `buildSkillEvidenceLedger` from JD tools + matching.
@@ -314,6 +324,12 @@ export interface SkillEvidenceEntry {
     readonly evidence: string;
     /** How the transferable skill bridges the gap (status='transferable'), else '' */
     readonly transferableBridge: string;
+    /**
+     * Source lane(s) this evidence was drawn from (repo / project / career).
+     * Classified deterministically at assembly. Optional — absent on runs
+     * produced before source-lane provenance shipped.
+     */
+    readonly sourceLanes?: SkillEvidenceLane[];
 }
 
 /**
