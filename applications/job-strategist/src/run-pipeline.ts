@@ -44,6 +44,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
 import type { AtsCheckResult } from './ats/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
+import { canonicalJdSkills } from './ats/canonical-jd-skills.js';
 import { splitAttainable } from './ats/attainable.js';
 import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
@@ -556,11 +557,11 @@ export async function main(): Promise<void> {
         // Assemble StrategistResearchResult from jdExtraction (JdSignal) + guarded matching.
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
         // JD tool list and the matching result, so it belongs in the pipeline orchestrator, not the agent.
-        const ledgerTools = [
-            ...jdExtraction.technologyInventory.tools,
-            ...jdExtraction.technologyInventory.languages,
-            ...jdExtraction.requiredSkills,
-        ];
+        // Canonical JD skill list — the single authoritative "what the JD needs",
+        // derived once from the jd-extractor signal. The ledger + ATS coverage (and,
+        // in the centralisation refactor, the matcher) all key off this same list so
+        // their counts reconcile instead of diverging per LLM re-read.
+        const ledgerTools = canonicalJdSkills(jdExtraction);
         const baseLedger = buildSkillEvidenceLedger(ledgerTools, guardedResearch.data, { techGroups, techAliasMap });
 
         // Attach STRUCTURED code-file evidence: the actual code files using each skill's
