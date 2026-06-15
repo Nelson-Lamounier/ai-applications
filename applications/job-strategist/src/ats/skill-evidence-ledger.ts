@@ -71,30 +71,6 @@ function findVerifiedSiblingByGroup(
     );
 }
 
-/**
- * Build a per-tool Skill Evidence Ledger from the JD tool list and the
- * research matching result.
- *
- * Status resolution order (per unique tool, preserving input order, case-insensitive dedupe):
- *  1. verified           — combined-match to a verifiedMatch (direct evidence wins)
- *  2. gap (bridgeable)   — combined-match to a matcher GAP. The matcher's gaps are
- *                          the authoritative "what's missing", so a gap is honoured
- *                          even when a transferable foundation ALSO matches — a skill
- *                          the matcher flagged as missing must not read as a clean
- *                          positive. When a foundation exists it is kept as the
- *                          `transferableBridge` (a "bridgeable gap"): still a gap,
- *                          but the adjacent foundation is shown. This also stops the
- *                          deterministic hard years-bar (years-gap-reconcile) from
- *                          being silently downgraded to "transferable".
- *  3. transferable (group)— verified sibling in the same tech group (when opts provided)
- *  4. transferable (partial) — combined-match to a partialMatch
- *  5. (none)             — matched nothing the matcher assessed → DROPPED (no contentless row)
- *
- * @param tools    - JD-required tools/skills
- * @param matching - Research matching result (verifiedMatches + partialMatches + gaps)
- * @param opts     - Optional tech-group resolution config
- * @returns Ordered, deduped list of evidence entries
- */
 /** A JD requirement expressing a years-of-experience bar (e.g. "8+ years …"). */
 const YEARS_REQUIREMENT = /\b\d{1,2}\s*\+?\s*years?\b/i;
 function isYearsRequirement(s: string): boolean {
@@ -114,23 +90,31 @@ function gapBridge(
     return findPartialMatch(tool, matching.partialMatches)?.transferableFoundation ?? '';
 }
 
+type Matching = Pick<
+    { verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[]; gaps: SkillGap[] },
+    'verifiedMatches' | 'partialMatches' | 'gaps'
+>;
+
 /**
- * Resolve one JD tool to a ledger entry (or null = DROP). Resolution order
- * documented on {@link buildSkillEvidenceLedger}. Extracted to keep the builder
- * loop trivial.
+ * A resolved entry plus the matcher skill it resolved against (`matchedSkill`).
+ * The latter lets the builder dedupe: a JD tool and a matcher-assessed skill that
+ * resolve to the SAME underlying assessment produce ONE row, not two.
  */
-function resolveLedgerEntry(
-    tool: string,
-    matching: Pick<
-        { verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[]; gaps: SkillGap[] },
-        'verifiedMatches' | 'partialMatches' | 'gaps'
-    >,
-    opts?: LedgerOpts,
-): SkillEvidenceEntry | null {
+interface Resolved {
+    readonly entry: SkillEvidenceEntry;
+    readonly matchedSkill: string;
+}
+
+/**
+ * Resolve one label (a JD tool OR a matcher skill) to a ledger entry, reporting
+ * the matcher skill it matched. null = DROP. Resolution order documented on
+ * {@link buildSkillEvidenceLedger}.
+ */
+function resolveLedgerEntry(tool: string, matching: Matching, opts?: LedgerOpts): Resolved | null {
     // 1. verified — direct evidence wins.
     const vm = findVerifiedMatch(tool, matching.verifiedMatches);
     if (vm) {
-        return { tool, status: 'verified', evidenceFiles: vm.evidenceFiles, evidence: vm.sourceCitation, transferableBridge: '' };
+        return { matchedSkill: vm.skill, entry: { tool, status: 'verified', evidenceFiles: vm.evidenceFiles, evidence: vm.sourceCitation, transferableBridge: '' } };
     }
 
     // 2. gap (bridgeable) — the matcher's gaps are the authoritative "what's missing",
@@ -140,7 +124,7 @@ function resolveLedgerEntry(
     const gap = findGapMatch(tool, matching.gaps)
         ?? (isYearsRequirement(tool) ? matching.gaps.find((g) => isYearsRequirement(g.skill)) : undefined);
     if (gap) {
-        return { tool, status: 'gap', evidenceFiles: [], evidence: '', transferableBridge: gapBridge(tool, matching, opts) };
+        return { matchedSkill: gap.skill, entry: { tool, status: 'gap', evidenceFiles: [], evidence: '', transferableBridge: gapBridge(tool, matching, opts) } };
     }
 
     // 3. transferable — verified sibling in the same tech group.
@@ -148,8 +132,8 @@ function resolveLedgerEntry(
         const sibling = findVerifiedSiblingByGroup(tool, matching.verifiedMatches, opts.techGroups, opts.techAliasMap);
         if (sibling) {
             return {
-                tool, status: 'transferable', evidenceFiles: sibling.evidenceFiles, evidence: sibling.sourceCitation,
-                transferableBridge: `same technology group — ${sibling.skill} is transferable to ${tool}`,
+                matchedSkill: sibling.skill,
+                entry: { tool, status: 'transferable', evidenceFiles: sibling.evidenceFiles, evidence: sibling.sourceCitation, transferableBridge: `same technology group — ${sibling.skill} is transferable to ${tool}` },
             };
         }
     }
@@ -157,35 +141,53 @@ function resolveLedgerEntry(
     // 4. transferable — partial match.
     const pm = findPartialMatch(tool, matching.partialMatches);
     if (pm) {
-        return { tool, status: 'transferable', evidenceFiles: pm.evidenceFiles, evidence: pm.gapDescription, transferableBridge: pm.transferableFoundation };
+        return { matchedSkill: pm.skill, entry: { tool, status: 'transferable', evidenceFiles: pm.evidenceFiles, evidence: pm.gapDescription, transferableBridge: pm.transferableFoundation } };
     }
 
-    // 5. DROP — matched nothing the matcher verified/partial'd/gapped. Emitting a
-    // contentless row would read as a weak positive while proving nothing (and is
-    // often a false miss where the matcher assessed an equivalent skill phrased
-    // differently); the JD requirement still surfaces in the matcher's gaps/analysis.
+    // 5. DROP — matched nothing the matcher verified/partial'd/gapped. A JD tool that
+    // hits nothing the matcher assessed is omitted (no contentless row); the matcher's
+    // OWN skills are added separately below so nothing assessed is lost.
     return null;
 }
 
-export function buildSkillEvidenceLedger(
-    tools: string[],
-    matching: Pick<
-        { verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[]; gaps: SkillGap[] },
-        'verifiedMatches' | 'partialMatches' | 'gaps'
-    >,
-    opts?: LedgerOpts,
-): SkillEvidenceEntry[] {
-    const seen = new Set<string>();
+/**
+ * Build the Skill Evidence Ledger as the UNION of the JD's named tools and the
+ * matcher's assessed skills (verified + partial + gaps), deduped so each
+ * underlying assessment yields exactly one row.
+ *
+ * JD tools are processed FIRST (clean, JD-faithful row labels + ATS keyword
+ * coverage). Then every matcher-assessed skill not already represented by a JD
+ * tool is appended (using the matcher's own wording). The result therefore
+ * covers EVERYTHING the matcher assessed — the ledger reconciles with the
+ * matcher's verified/partial/gap counts instead of being a narrower JD-tool-only
+ * slice — while JD-named tools that hit nothing are still dropped.
+ *
+ * Per-label resolution order: verified → gap(bridgeable) → transferable(group)
+ * → transferable(partial) → (JD tool only) drop. Pure + deterministic.
+ */
+export function buildSkillEvidenceLedger(tools: string[], matching: Matching, opts?: LedgerOpts): SkillEvidenceEntry[] {
+    const seenLabels = new Set<string>();   // exact label dedupe
+    const coveredSkills = new Set<string>(); // matcher skills already represented (identity dedupe)
     const ledger: SkillEvidenceEntry[] = [];
 
-    for (const tool of tools) {
-        const key = tool.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
+    const add = (label: string): void => {
+        const key = label.toLowerCase();
+        if (!label || seenLabels.has(key)) return;
+        seenLabels.add(key);
+        const res = resolveLedgerEntry(label, matching, opts);
+        if (!res) return;
+        const skillKey = res.matchedSkill.toLowerCase();
+        if (coveredSkills.has(skillKey)) return; // same assessment already has a row
+        coveredSkills.add(skillKey);
+        ledger.push(res.entry);
+    };
 
-        const entry = resolveLedgerEntry(tool, matching, opts);
-        if (entry) ledger.push(entry);
-    }
+    // 1. JD-named tools first (clean labels + ATS coverage).
+    for (const tool of tools) add(tool);
+    // 2. Every matcher-assessed skill not yet represented (covers all 18 assessed).
+    for (const m of matching.verifiedMatches) add(m.skill);
+    for (const m of matching.partialMatches) add(m.skill);
+    for (const g of matching.gaps) add(g.skill);
 
     return ledger;
 }
