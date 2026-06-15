@@ -25,8 +25,6 @@ const makeGap = (overrides: Partial<SkillGap> & Pick<SkillGap, 'skill'>): SkillG
     ...overrides,
 });
 
-/** The implied-transferable bridge used when a tool matches nothing the matcher flagged. */
-const IMPLIED_BRIDGE = 'Implied by the role\'s verified competencies — the matcher did not flag this as a gap.';
 
 describe('buildSkillEvidenceLedger', () => {
     it('tool with a verifiedMatch → status verified + sourceCitation as evidence + evidenceFiles', () => {
@@ -100,14 +98,8 @@ describe('buildSkillEvidenceLedger', () => {
             gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['Rust'], matching);
-        expect(ledger).toHaveLength(1);
-        expect(ledger[0]).toEqual({
-            tool: 'Rust',
-            status: 'transferable',
-            evidenceFiles: [],
-            evidence: '',
-            transferableBridge: IMPLIED_BRIDGE,
-        });
+        // Matched nothing the matcher assessed → DROPPED (no contentless row).
+        expect(ledger).toHaveLength(0);
     });
 
     it('deduplicates tools case-insensitively — first occurrence wins', () => {
@@ -134,7 +126,8 @@ describe('buildSkillEvidenceLedger', () => {
             gaps: [],
         };
         const ledger = buildSkillEvidenceLedger(['AWS CDK', 'TypeScript', 'Rust'], matching);
-        expect(ledger.map((e) => e.tool)).toEqual(['AWS CDK', 'TypeScript', 'Rust']);
+        // 'Rust' matched nothing → dropped; order of the rest preserved.
+        expect(ledger.map((e) => e.tool)).toEqual(['AWS CDK', 'TypeScript']);
     });
 
     it('Python matches a verifiedMatch skill "Scripting and automation (Python/Bash)"', () => {
@@ -295,7 +288,7 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
         expect(ledger[0]!.status).toBe('gap');
     });
 
-    it('omitting opts: tool matching NOTHING (no group, no matcher gap) → transferable (implied)', () => {
+    it('omitting opts: tool matching NOTHING (no group, no matcher gap) → DROPPED', () => {
         const matching = {
             verifiedMatches: [
                 makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock project', evidenceFiles: ['f.ts'] }),
@@ -303,10 +296,9 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
             partialMatches: [],
             gaps: [],
         };
-        // Without opts and with no matching matcher gap, OpenAI API → transferable (implied), NOT a false gap
+        // Without opts and with no matching matcher gap, OpenAI API matches nothing → dropped.
         const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching);
-        expect(ledger[0]!.status).toBe('transferable');
-        expect(ledger[0]!.transferableBridge).toBe(IMPLIED_BRIDGE);
+        expect(ledger).toHaveLength(0);
     });
 
     it('group-transferable picks the first verified sibling match when multiple exist', () => {
@@ -391,7 +383,7 @@ describe('buildSkillEvidenceLedger — token-overlap bridging + matcher-aligned 
         });
     });
 
-    it('"Problem solving" with NO verified/partial/gap match → transferable (implied), empty files, implied bridge', () => {
+    it('"Problem solving" with NO verified/partial/gap match → DROPPED (no contentless row)', () => {
         const matching = {
             verifiedMatches: [
                 makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock', evidenceFiles: ['b.ts'] }),
@@ -400,13 +392,7 @@ describe('buildSkillEvidenceLedger — token-overlap bridging + matcher-aligned 
             gaps: [makeGap({ skill: '8+ years user operations experience' })],
         };
         const ledger = buildSkillEvidenceLedger(['Problem solving'], matching);
-        expect(ledger[0]).toEqual({
-            tool: 'Problem solving',
-            status: 'transferable',
-            evidenceFiles: [],
-            evidence: '',
-            transferableBridge: IMPLIED_BRIDGE,
-        });
+        expect(ledger).toHaveLength(0);
     });
 
     it('a tool matching BOTH a verified and a matcher gap resolves to verified (verified checked first)', () => {
