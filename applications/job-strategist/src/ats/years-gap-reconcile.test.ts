@@ -1,14 +1,16 @@
 /** @format */
 import { applyYearsGapReconcile, type YearsGapSignal } from './years-gap-reconcile.js';
-import type { SkillGap, FitRating } from '@bedrock/shared';
+import type { SkillGap, FitRating, VerifiedMatch, PartialMatch } from '@bedrock/shared';
 
-const base = (over: Partial<{ gaps: SkillGap[]; overallFitRating: FitRating }> = {}) => ({
+interface M { verifiedMatches: VerifiedMatch[]; partialMatches: PartialMatch[]; gaps: SkillGap[]; overallFitRating: FitRating }
+const base = (over: Partial<M> = {}): M => ({
     verifiedMatches: [],
     partialMatches: [],
-    gaps: [] as SkillGap[],
-    overallFitRating: 'STRONG FIT' as FitRating,
+    gaps: [],
+    overallFitRating: 'STRONG FIT',
     ...over,
 });
+const vm = (skill: string): VerifiedMatch => ({ skill, sourceCitation: 'x', depth: 'working', recency: '2025', evidenceFiles: [] } as VerifiedMatch);
 
 const disqualifying: YearsGapSignal = { relevantYears: 5, requiredYears: 8, gapYears: 3, disqualifying: true };
 
@@ -28,9 +30,22 @@ describe('applyYearsGapReconcile', () => {
         expect(matching.overallFitRating).toBe('REACH');
     });
 
-    it('leaves an already-honest rating (STRETCH / REACH) unchanged', () => {
-        expect(applyYearsGapReconcile(base({ overallFitRating: 'STRETCH' }), disqualifying).matching.overallFitRating).toBe('STRETCH');
+    it('caps EVERY rating above REACH down to REACH (STRETCH no longer slips through)', () => {
+        expect(applyYearsGapReconcile(base({ overallFitRating: 'STRETCH' }), disqualifying).matching.overallFitRating).toBe('REACH');
         expect(applyYearsGapReconcile(base({ overallFitRating: 'REACH' }), disqualifying).matching.overallFitRating).toBe('REACH');
+    });
+
+    it('demotes a verified/partial match that claims the years requirement (ledger contradiction)', () => {
+        const m = base({
+            verifiedMatches: [vm('8+ years user operations or support engineering experience'), vm('Python')],
+            partialMatches: [{ skill: '5 years of relevant experience', gapDescription: 'g', transferableFoundation: 'f', framingSuggestion: 's', evidenceFiles: [] } as PartialMatch],
+        });
+        const { matching } = applyYearsGapReconcile(m, disqualifying);
+        // The years claims are gone from verified/partial; the real skill (Python) stays.
+        expect(matching.verifiedMatches.map((v) => v.skill)).toEqual(['Python']);
+        expect(matching.partialMatches).toHaveLength(0);
+        // …and the hard years gap is present instead.
+        expect(matching.gaps.some((g) => /8\+ years/.test(g.skill) && g.gapType === 'hard')).toBe(true);
     });
 
     it('is idempotent — replaces a prior years gap rather than duplicating it', () => {
