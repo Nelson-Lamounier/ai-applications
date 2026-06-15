@@ -250,16 +250,16 @@ describe('Strategist Research Agent — PII redaction before retrieval and Bedro
 
         const queryText = captured.queryArgs.join(' ');
 
-        // Retrieval queries must NOT contain raw PII.
+        // Retrieval queries must NOT contain raw PII — and the scrub fired (tokens present).
         expect(queryText).not.toContain('recruiter@acme.com');
         expect(queryText).not.toContain('415-555-2671');
+        expect(queryText).toContain('[EMAIL]');
+        expect(queryText).toContain('[PHONE]');
 
-        // Bedrock user message must NOT contain raw PII.
+        // Single-read contract: the matcher prompt no longer embeds the raw JD at all,
+        // so no JD content (PII or otherwise) reaches Bedrock via the prompt.
         expect(captured.bedrockUserMessage).not.toContain('recruiter@acme.com');
         expect(captured.bedrockUserMessage).not.toContain('415-555-2671');
-
-        // Bedrock user message MUST contain the redaction tokens.
-        expect(captured.bedrockUserMessage).toContain('[EMAIL]');
-        expect(captured.bedrockUserMessage).toContain('[PHONE]');
+        expect(captured.bedrockUserMessage).not.toContain('Contact recruiter');
     });
 });

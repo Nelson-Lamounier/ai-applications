@@ -152,13 +152,18 @@ describe('buildSkillEvidenceLedger', () => {
         expect(buildSkillEvidenceLedger([], { verifiedMatches: [], partialMatches: [], gaps: [] })).toEqual([]);
     });
 
-    it('union: empty JD tools but a matcher-assessed skill → the matcher skill still gets a row', () => {
+    it('single-list: the ledger keys ONLY off the canonical tools (matcher-only skills are not added)', () => {
+        // After centralisation the matcher assesses the canonical list, so the
+        // ledger iterates `tools` alone — a matcher skill absent from `tools`
+        // (would only happen pre-assessment-only) does not create a row.
         const matching = {
             verifiedMatches: [makeVerified({ skill: 'Python', sourceCitation: 'pipeline', evidenceFiles: ['x.py'] })],
             partialMatches: [],
             gaps: [],
         };
-        const ledger = buildSkillEvidenceLedger([], matching);
+        expect(buildSkillEvidenceLedger([], matching)).toEqual([]);
+        // when Python IS in the canonical list, it resolves normally:
+        const ledger = buildSkillEvidenceLedger(['Python'], matching);
         expect(ledger).toHaveLength(1);
         expect(ledger[0]).toMatchObject({ tool: 'Python', status: 'verified' });
     });
@@ -234,16 +239,15 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
             // The matcher flagged Salesforce as a real gap — so it stays gap.
             gaps: [makeGap({ skill: 'Salesforce' })],
         };
-        // Salesforce is NOT in the aiProviderGroup
+        // Salesforce is NOT in the aiProviderGroup; only the canonical tool is rowed.
         const ledger = buildSkillEvidenceLedger(['Salesforce'], matching, { techGroups, techAliasMap });
-        // union: Salesforce (gap) + the matcher's AWS Bedrock verified skill.
-        expect(ledger).toHaveLength(2);
-        const entry = ledger.find((e) => e.tool === 'Salesforce')!;
+        expect(ledger).toHaveLength(1);
+        const entry = ledger[0]!;
+        expect(entry.tool).toBe('Salesforce');
         expect(entry.status).toBe('gap');
         expect(entry.evidenceFiles).toEqual([]);
         expect(entry.evidence).toBe('');
         expect(entry.transferableBridge).toBe('');
-        expect(ledger.find((e) => e.tool === 'AWS Bedrock')?.status).toBe('verified');
     });
 
     it('verified direct match always wins over group-based transferable', () => {
@@ -296,7 +300,7 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
         expect(ledger[0]!.status).toBe('gap');
     });
 
-    it('omitting opts: a JD tool matching NOTHING is DROPPED (but matcher skills still appear via union)', () => {
+    it('omitting opts: a JD tool matching NOTHING is DROPPED (single-list — matcher-only skills are not added)', () => {
         const matching = {
             verifiedMatches: [
                 makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock project', evidenceFiles: ['f.ts'] }),
@@ -304,10 +308,8 @@ describe('buildSkillEvidenceLedger — tech-group transferable (A4)', () => {
             partialMatches: [],
             gaps: [],
         };
-        // The JD tool OpenAI API matches nothing → dropped; the matcher's own AWS Bedrock is unioned in.
-        const ledger = buildSkillEvidenceLedger(['OpenAI API'], matching);
-        expect(ledger.some((e) => e.tool === 'OpenAI API')).toBe(false);
-        expect(ledger.map((e) => e.tool)).toEqual(['AWS Bedrock']);
+        // OpenAI API matches nothing → dropped; AWS Bedrock isn't a canonical tool here → no row.
+        expect(buildSkillEvidenceLedger(['OpenAI API'], matching)).toEqual([]);
     });
 
     it('group-transferable picks the first verified sibling match when multiple exist', () => {
@@ -392,7 +394,7 @@ describe('buildSkillEvidenceLedger — token-overlap bridging + matcher-aligned 
         });
     });
 
-    it('a JD tool with NO verified/partial/gap match is DROPPED, but the matcher\'s own skills are unioned in', () => {
+    it('a canonical tool matching NOTHING is DROPPED (single-list — no contentless row)', () => {
         const matching = {
             verifiedMatches: [
                 makeVerified({ skill: 'AWS Bedrock', sourceCitation: 'bedrock', evidenceFiles: ['b.ts'] }),
@@ -400,13 +402,10 @@ describe('buildSkillEvidenceLedger — token-overlap bridging + matcher-aligned 
             partialMatches: [],
             gaps: [makeGap({ skill: '8+ years user operations experience' })],
         };
-        const ledger = buildSkillEvidenceLedger(['Problem solving'], matching);
-        // "Problem solving" matches nothing → dropped; the matcher's AWS Bedrock (verified)
-        // and the 8+ years gap are unioned in so nothing assessed is lost.
-        expect(ledger.some((e) => e.tool === 'Problem solving')).toBe(false);
-        expect(ledger.map((e) => e.tool).sort()).toEqual(['8+ years user operations experience', 'AWS Bedrock']);
-        expect(ledger.find((e) => e.tool === 'AWS Bedrock')?.status).toBe('verified');
-        expect(ledger.find((e) => /8\+ years/.test(e.tool))?.status).toBe('gap');
+        // "Problem solving" matches nothing in the matching → dropped. AWS Bedrock / the
+        // years gap are NOT in the canonical list here, so they don't appear (the matcher
+        // assesses the canonical list in production, so this loss can't happen there).
+        expect(buildSkillEvidenceLedger(['Problem solving'], matching)).toEqual([]);
     });
 
     it('a tool matching BOTH a verified and a matcher gap resolves to verified (verified checked first)', () => {

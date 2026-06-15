@@ -391,17 +391,16 @@ interface ResearchMessageOptions {
 /**
  * Build the user message for the Research Agent.
  *
- * Assembles the job description, KB context, and structured resume data into
- * a prompt with clearly delimited sections for analysis.
+ * Assembles the extracted JD Signal block, KB context, and structured resume
+ * data into a prompt with clearly delimited sections. The raw JD is NOT included
+ * (single-read contract — only jd-extractor reads the JD).
  *
- * @param jobDescription - Sanitised job description text
  * @param kbContext - Concatenated KB passages
  * @param resumeData - Structured resume data from pipeline context (may be null)
  * @param opts - Optional named sections (career history, DSA catalog, etc.)
  * @returns Formatted user message
  */
 function buildResearchMessage(
-    jobDescription: string,
     kbContext: string,
     resumeData: StructuredResumeData | null,
     opts: ResearchMessageOptions = {},
@@ -419,13 +418,10 @@ function buildResearchMessage(
         codeStackContext = '',
     } = opts;
 
-    const sections: string[] = [
-        '## Job Description',
-        '--- BEGIN JOB DESCRIPTION ---',
-        jobDescription,
-        '--- END JOB DESCRIPTION ---',
-        '',
-    ];
+    // Single-read contract: the matcher works from the extracted JD Signal block,
+    // NOT the raw JD text — only jd-extractor reads the JD, so there is no second
+    // interpretation that could diverge from the canonical skill list.
+    const sections: string[] = [];
 
     if (jdSignalBlock) {
         sections.push(jdSignalBlock, '');
@@ -763,8 +759,9 @@ function buildJdSignalBlock(jdSignal: JdSignal | null, jdSkills: readonly string
     if (!jdSignal) return '';
     const ti = jdSignal.technologyInventory;
     return [
-        '## JD Signal (already extracted — MATCH the candidate against this; do not re-derive)',
+        '## JD Signal (the SINGLE extracted read of the JD — MATCH the candidate against this; the raw JD is intentionally not provided)',
         `Target role: ${jdSignal.targetRole} · Seniority: ${jdSignal.seniority} · Domain: ${jdSignal.domain}`,
+        jdSignal.companyProblem ? `The problem this role solves: ${jdSignal.companyProblem}` : '',
         `Hard requirements: ${jdSignal.hardRequirements.map(r => `${r.skill}${r.disqualifying ? ' [disqualifying]' : ''}`).join(', ') || 'none'}`,
         `Technology: languages ${ti.languages.join(', ') || 'none'} · tools ${ti.tools.join(', ') || 'none'} · methodologies ${ti.methodologies.join(', ') || 'none'} · infrastructure ${ti.infrastructure.join(', ') || 'none'} · frameworks ${ti.frameworks.join(', ') || 'none'}`,
         `Experience signals: years ${jdSignal.experienceSignals.yearsExpected} · scale ${jdSignal.experienceSignals.scaleIndicators} · leadership ${jdSignal.experienceSignals.leadershipExpectation}`,
@@ -912,7 +909,7 @@ export async function executeResearchAgent(
     // match against given requirements rather than re-deriving them.
     const jdSignalBlock = buildJdSignalBlock(jdSignal, jdSkills);
 
-    const userMessage = buildResearchMessage(jd, kbContext, resumeData, {
+    const userMessage = buildResearchMessage(kbContext, resumeData, {
         careerHistorySection,
         dsaCatalog,
         projectEvidenceSection: projectEvidenceBlock,
