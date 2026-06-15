@@ -167,9 +167,7 @@ async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
             const parsed = opts.parseResponse?.(JSON.stringify({
                 overallFitRating: 'STRONG FIT',
                 fitSummary: 'Good fit.',
-                verifiedMatches: [],
-                partialMatches: [],
-                gaps: [],
+                assessments: [],
             }));
             return { ...STUB_AGENT_RESULT, data: parsed ?? STUB_AGENT_RESULT.data };
         },

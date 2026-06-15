@@ -20,9 +20,11 @@ beforeAll(async () => {
 // JD fields (targetRole, seniority, domain, hardRequirements, etc.) are no
 // longer produced by the research model — they come from JdSignal.
 const VALID = {
-    verifiedMatches: [{ skill: 'K8s', sourceCitation: 'self-healing', depth: 'expert', recency: '2026' }],
-    partialMatches: [{ skill: 'TF', gapDescription: 'uses CDK', transferableFoundation: 'IaC', framingSuggestion: 'frame CDK' }],
-    gaps: [{ skill: 'Go', gapType: 'hard', impactSeverity: 'minor', disqualifyingAssessment: 'not blocking' }],
+    assessments: [
+        { skill: 'K8s', verdict: 'verified', sourceCitation: 'self-healing', depth: 'expert', recency: '2026' },
+        { skill: 'TF', verdict: 'partial', gapDescription: 'uses CDK', transferableFoundation: 'IaC', framingSuggestion: 'frame CDK' },
+        { skill: 'Go', verdict: 'gap', gapType: 'hard', impactSeverity: 'minor', disqualifyingAssessment: 'not blocking' },
+    ],
     overallFitRating: 'STRONG FIT',
     fitSummary: 'Strong alignment.',
 };
@@ -109,7 +111,7 @@ describe('validateResearchResult', () => {
 // =============================================================================
 
 const BASE = {
-    verifiedMatches: [], partialMatches: [], gaps: [],
+    assessments: [],
     overallFitRating: 'STRONG FIT', fitSummary: 'ok',
 };
 const INJECTED_BASE = { resumeData: null, kbContext: '', resumeConstraints: '' };
@@ -148,9 +150,11 @@ describe('executeResearchAgent KB-matcher contract', () => {
     it('accepts jdSignal and returns only ResearchMatching fields', async () => {
         // A ResearchMatching-shaped tool response — no JD fields.
         const MATCHING_RESPONSE = {
-            verifiedMatches: [{ skill: 'K8s', sourceCitation: 'ai-applications/k8s-setup', depth: 'expert', recency: '2026' }],
-            partialMatches: [{ skill: 'Terraform', gapDescription: 'uses CDK instead', transferableFoundation: 'IaC expertise', framingSuggestion: 'frame CDK as modern IaC' }],
-            gaps: [{ skill: 'Go', gapType: 'hard', impactSeverity: 'minor', disqualifyingAssessment: 'not blocking' }],
+            assessments: [
+                { skill: 'K8s', verdict: 'verified', sourceCitation: 'ai-applications/k8s-setup', depth: 'expert', recency: '2026' },
+                { skill: 'Terraform', verdict: 'partial', gapDescription: 'uses CDK instead', transferableFoundation: 'IaC expertise', framingSuggestion: 'frame CDK as modern IaC' },
+                { skill: 'Go', verdict: 'gap', gapType: 'hard', impactSeverity: 'minor', disqualifyingAssessment: 'not blocking' },
+            ],
             overallFitRating: 'STRONG FIT',
             fitSummary: 'Strong match against given JD signal.',
         };
