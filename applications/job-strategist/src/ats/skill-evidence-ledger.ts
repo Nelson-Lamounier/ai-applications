@@ -10,18 +10,16 @@
  *
  * HONESTY MODEL: a tool is `gap` ONLY when it matches a real matcher gap (the
  * authoritative "what's missing"). A verified competency phrased differently is
- * bridged to `verified` via token-overlap. A generic/implied competency the
- * matcher did NOT flag as missing is `transferable` (implied), never a false gap.
+ * bridged to `verified` via token-overlap. A tool that matches NOTHING the matcher
+ * assessed is DROPPED — it has no evidence to show in a "what your repos prove"
+ * panel, and is often a false miss where the matcher assessed an equivalent skill
+ * under different wording (the JD requirement still surfaces in the matcher's gaps).
  *
  * Pure + deterministic + unit-tested. No LLM involved.
  */
 
 import type { SkillEvidenceEntry, VerifiedMatch, PartialMatch, SkillGap } from '@bedrock/shared';
 import { matchTier1, matchTechTransfer, tokenOverlapMatch } from './keyword-match.js';
-
-/** The implied-transferable bridge used when a tool matches nothing the matcher flagged. */
-const IMPLIED_BRIDGE =
-    'Implied by the role\'s verified competencies — the matcher did not flag this as a gap.';
 
 /**
  * Combined "semantic-ish" match: literal (bidirectional matchTier1) OR significant
@@ -82,7 +80,7 @@ function findVerifiedSiblingByGroup(
  *  2. transferable (group)— verified sibling in the same tech group (when opts provided)
  *  3. transferable (partial) — combined-match to a partialMatch
  *  4. gap                — combined-match to a matcher GAP (the ONLY path to gap)
- *  5. transferable (implied) — matched nothing the matcher flagged → implied competency
+ *  5. (none)             — matched nothing the matcher assessed → DROPPED (no contentless row)
  *
  * @param tools    - JD-required tools/skills
  * @param matching - Research matching result (verifiedMatches + partialMatches + gaps)
@@ -159,15 +157,14 @@ export function buildSkillEvidenceLedger(
             continue;
         }
 
-        // 5. transferable (implied) — matched nothing the matcher flagged as missing.
-        // A generic/implied competency the matcher did NOT gap → transferable, NOT a false gap.
-        ledger.push({
-            tool,
-            status: 'transferable',
-            evidenceFiles: [],
-            evidence: '',
-            transferableBridge: IMPLIED_BRIDGE,
-        });
+        // 5. DROP — the tool matched nothing the matcher verified/partial'd/gapped.
+        // It would otherwise become a contentless "transferable (implied)" row (no
+        // evidence, no files) that reads as a weak positive while proving nothing —
+        // and is often a false miss where the matcher DID assess an equivalent skill
+        // phrased differently (e.g. "Complex technical problem-solving" vs the verified
+        // "Critical thinking and root-cause analysis"). "What your repos prove" should
+        // not list a skill the repos don't prove; the JD requirement still surfaces in
+        // the matcher's gaps/analysis. So we omit it from the ledger entirely.
     }
 
     return ledger;
