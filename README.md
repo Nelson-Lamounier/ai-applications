@@ -2,8 +2,8 @@
 
 # ai-applications
 
-**The AI/ML backend for Tucaken — a SaaS that turns a developer's real code into
-a job-tailored, evidence-backed resume.** A job-seeker connects their GitHub
+**The AI/ML backend for [Tucaken](https://tucaken.io) — a SaaS that turns a
+developer's real code into a job-tailored, evidence-backed resume.** A job-seeker connects their GitHub
 account; Tucaken verifies which skills they can actually prove from their
 repositories, then — given a specific job description — generates a resume
 tailored to that role using only skills the candidate can defend in an interview.
@@ -39,7 +39,7 @@ The repository is a Yarn 4 workspace monorepo of **14 services** built
 on a shared TypeScript foundation. The services share one Bedrock
 account, one RDS PostgreSQL instance (`k8s-dev-platform-rds`), one Redis
 cluster, and one managed Amazon EKS cluster (`k8s-eks-development`;
-provisioned by the `cdk-monitoring` repo, with in-cluster GitOps
+provisioned by the `tucaken-infra` repo, with in-cluster GitOps
 manifests in `kubernetes-bootstrap`).
 
 The platform answers two questions: *"what's in this engineer's
@@ -114,7 +114,8 @@ than re-implementing them.
 ```mermaid
 flowchart TD
     subgraph "Public surface"
-        Web["nelsonlamounier.com<br/>Next.js"]
+        Tucaken["tucaken.io<br/>Tucaken app (tucaken-app)"]
+        Web["nelsonlamounier.com<br/>portfolio + chatbot"]
     end
 
     subgraph "API + chatbots (Lambda)"
@@ -149,6 +150,8 @@ flowchart TD
         DDBDedup[(DynamoDB<br/>self-healing dedup)]
     end
 
+    Tucaken --> Strat
+    Tucaken --> Ingest
     Web --> API
     Web --> ChatbotPub
     Web --> ChatbotAuth
@@ -315,7 +318,7 @@ K8s Jobs (ingestion, tech-extractor, ontology-importer, etc.) read
 their image URI from SSM at deploy time, so a code push to `develop`
 re-tags the image and the next ArgoCD sync rolls the change forward
 in the cluster — a managed Amazon EKS cluster provisioned by the
-`cdk-monitoring` repo, with in-cluster GitOps manifests in
+`tucaken-infra` repo, with in-cluster GitOps manifests in
 `kubernetes-bootstrap`.
 
 Lambda services (chatbot, public-api, self-healing) deploy directly
@@ -324,16 +327,19 @@ documented in [docs/projects/self-healing.md](docs/projects/self-healing.md).
 
 ## Related projects
 
+All private, under the [`Nelson-Lamounier`](https://github.com/Nelson-Lamounier) org.
+
 | Repository | Role |
 | :- | :- |
-| `tucaken-app` (private) | The Next.js front-end + authenticated API for Tucaken; dispatches jobs to this backend and renders the results. |
-| `cdk-monitoring` (private) | Provisions the managed Amazon EKS cluster (Karpenter, Pod Identity, Argo Rollouts) plus the cross-account CloudWatch + Grafana observability stack. |
-| `kubernetes-bootstrap` (private) | In-cluster GitOps manifests, Helm values, and Grafana dashboards for the EKS cluster the long-running Jobs run in. |
-| `tucaken-quota-app` (private) | Stripe-backed billing + quota enforcement for the public chatbot path. |
+| [`tucaken-app`](https://github.com/Nelson-Lamounier/tucaken-app) | **Product front-end** — the Next.js web app + authenticated API for [Tucaken](https://tucaken.io); dispatches jobs to this backend and renders the results. |
+| [`tucaken-infra`](https://github.com/Nelson-Lamounier/tucaken-infra) | **Infrastructure (AWS CDK)** — provisions the managed Amazon EKS cluster (Karpenter, Pod Identity, Argo Rollouts) plus the cross-account CloudWatch + Grafana observability stack. *(formerly `cdk-monitoring`)* |
+| [`kubernetes-bootstrap`](https://github.com/Nelson-Lamounier/kubernetes-bootstrap) | **GitOps (in-cluster)** — Argo CD manifests, Helm values, and Grafana dashboards for the EKS cluster the long-running Jobs run in. |
+| [`tucaken-quota-app`](https://github.com/Nelson-Lamounier/tucaken-quota-app) | **Billing / quota** — Stripe-backed billing + quota enforcement for the public chatbot path. |
 
 Cross-repo migration artefacts that have landed in this repo's
-[docs/incoming/](docs/incoming/) but originate from `cdk-monitoring`
-are marked with `<!-- Migrated from cdk-monitoring -->` headers.
+[docs/incoming/](docs/incoming/) but originate from `tucaken-infra`
+(formerly `cdk-monitoring`) are marked with the literal
+`<!-- Migrated from cdk-monitoring -->` header they were stamped with.
 
 ## Documentation
 
