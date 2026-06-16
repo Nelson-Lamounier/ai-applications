@@ -42,6 +42,10 @@ const GENERATE = process.env.RAG_EVAL_GENERATE === '1';
 /** RAG_EVAL_PERSIST=1 → also write the run + per-query rows to RDS
  *  (rag_eval_runs / rag_eval_results) so Grafana can chart quality over time. */
 const PERSIST = process.env.RAG_EVAL_PERSIST === '1';
+/** RAG_EVAL_HYBRID=0 → pure-vector (cosine) retrieval; default = hybrid
+ *  (vector + BM25 RRF). Toggle to run a cosine-vs-hybrid A/B on the same golden
+ *  set: run once with RAG_EVAL_HYBRID=0, once with =1, compare meanRecallAtK. */
+const HYBRID = process.env.RAG_EVAL_HYBRID !== '0';
 
 interface ToolUseResponse { content?: Array<{ type: string; input?: unknown }> }
 
@@ -125,11 +129,12 @@ async function persistEvalRun(report: RagEvalReport, datasetVersion: number | nu
             `INSERT INTO rag_eval_runs
                (tool, dataset_version, generate_answers, k, min_cosine,
                 query_count, positive_count, negative_count,
-                mean_recall_at_k, mean_relevance_positive, mean_relevance_negative, mean_max_cosine)
-             VALUES ('ts-native', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+                mean_recall_at_k, mean_relevance_positive, mean_relevance_negative, mean_max_cosine, notes)
+             VALUES ('ts-native', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
             [datasetVersion, GENERATE, K, MIN_COSINE,
              report.queryCount, report.positiveCount, report.negativeCount,
-             report.meanRecallAtK, report.meanRelevancePositive, report.meanRelevanceNegative, report.meanMaxCosine],
+             report.meanRecallAtK, report.meanRelevancePositive, report.meanRelevanceNegative, report.meanMaxCosine,
+             `retrieval_mode=${HYBRID ? 'hybrid' : 'vector'}`],
         );
         const runId = run.rows[0]?.id;
         if (!runId) throw new Error('rag_eval_runs insert returned no id');
@@ -160,12 +165,13 @@ async function main(): Promise<void> {
     const bedrock  = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
     const { version: datasetVersion, queries: golden } = loadGolden();
+    console.log(`==> retrieval mode: ${HYBRID ? 'hybrid (vector + BM25 RRF)' : 'vector (cosine only)'} | k=${K}`);
     const results: QueryEvalResult[] = [];
     const jsonl: string[] = [];
 
     for (const g of golden) {
         const queryEmbedding = await embedder.embed(g.query);
-        const hits = await store.querySimilar({ userId, queryEmbedding, queryText: g.query, useHybrid: true, limit: K });
+        const hits = await store.querySimilar({ userId, queryEmbedding, queryText: g.query, useHybrid: HYBRID, limit: K });
         const contexts: RetrievedContext[] = hits
             .filter(h => h.cosine >= MIN_COSINE)
             .map(h => ({ source: `${h.repoFullName}/${h.filePath}`, cosine: h.cosine, snippet: h.content.slice(0, SNIPPET_CHARS) }));
