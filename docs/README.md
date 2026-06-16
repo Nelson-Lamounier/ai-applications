@@ -10,10 +10,10 @@ Documentation index for the ai-applications monorepo. See the root
 
 | Folder | Count | Highlight |
 | :- | -: | :- |
-| [concepts/](concepts/) | 30 | [skill-evidence-ledger](concepts/skill-evidence-ledger.md), [jd-read-centralisation](concepts/jd-read-centralisation.md), [ats-resume-generation](concepts/ats-resume-generation.md), [case-study-generation](concepts/case-study-generation.md), [coach-stages](concepts/coach-stages.md), [filter-then-rank-retrieval](concepts/filter-then-rank-retrieval.md), [per-phase-evals](concepts/per-phase-evals.md), [profile-intelligence](concepts/profile-intelligence.md), [repository-profile-and-evidence-topology](concepts/repository-profile-and-evidence-topology.md), [project-clustering](concepts/project-clustering.md), [system-tour](concepts/system-tour.md), [source-lane-provenance](concepts/source-lane-provenance.md) |
-| [decisions/](decisions/) | 6 | [ADR 0007 — assessment-only matcher](decisions/0007-assessment-only-matcher.md), [ADR 0001 — deterministic over LLM extraction](decisions/0001-deterministic-over-llm-extraction.md), [ADR 0004 — Bedrock Batch over realtime](decisions/0004-bedrock-batch-over-realtime.md) |
-| [projects/](projects/) | 2 | [self-healing](projects/self-healing.md), [tech-extractor](projects/tech-extractor.md) |
-| [runbooks/](runbooks/) | 5 | [run-live-evals](runbooks/run-live-evals.md), [self-healing-token-budget](runbooks/self-healing-token-budget.md), [bedrock-kb-reindex](runbooks/bedrock-kb-reindex.md), [redis-cache-eviction](runbooks/redis-cache-eviction.md) |
+| [concepts/](concepts/) | 34 | [skill-evidence-ledger](concepts/skill-evidence-ledger.md), [github-app-connection](concepts/github-app-connection.md), [file-ingestion-strategy](concepts/file-ingestion-strategy.md), [ingestion-storage-schema](concepts/ingestion-storage-schema.md), [resync-strategy](concepts/resync-strategy.md), [jd-read-centralisation](concepts/jd-read-centralisation.md), [ats-resume-generation](concepts/ats-resume-generation.md), [case-study-generation](concepts/case-study-generation.md), [coach-stages](concepts/coach-stages.md), [filter-then-rank-retrieval](concepts/filter-then-rank-retrieval.md), [per-phase-evals](concepts/per-phase-evals.md), [profile-intelligence](concepts/profile-intelligence.md) |
+| [decisions/](decisions/) | 8 | [ADR 0008 — OAuth token envelope encryption](decisions/0008-oauth-token-envelope-encryption.md), [ADR 0007 — assessment-only matcher](decisions/0007-assessment-only-matcher.md), [ADR 0001 — deterministic over LLM extraction](decisions/0001-deterministic-over-llm-extraction.md) |
+| [projects/](projects/) | 6 | [self-healing](projects/self-healing.md), [tech-extractor](projects/tech-extractor.md), [ingestion](projects/ingestion.md), [job-strategist](projects/job-strategist.md), [article-pipeline](projects/article-pipeline.md), [ontology-importer](projects/ontology-importer.md) |
+| [runbooks/](runbooks/) | 7 | [run-live-evals](runbooks/run-live-evals.md), [self-healing-token-budget](runbooks/self-healing-token-budget.md), [bedrock-kb-reindex](runbooks/bedrock-kb-reindex.md), [redis-cache-eviction](runbooks/redis-cache-eviction.md) |
 | [troubleshooting/](troubleshooting/) | 4 | [grounding-verifier-blocks-good-answer](troubleshooting/grounding-verifier-blocks-good-answer.md), [self-healing-stuck-remediation](troubleshooting/self-healing-stuck-remediation.md), [semantic-cache-stale-responses](troubleshooting/semantic-cache-stale-responses.md), [tech-extractor-stuck-extraction](troubleshooting/tech-extractor-stuck-extraction.md) |
 | [tools/](tools/) | 0 | (planned — specific technology integration notes) |
 | [patterns/](patterns/) | 7 | [anti-hallucination-guards](patterns/anti-hallucination-guards.md), [hexagonal-rds-architecture](patterns/hexagonal-rds-architecture.md), [zod-tool-use](patterns/zod-tool-use.md), [must-not-throw-orchestrator](patterns/must-not-throw-orchestrator.md), [fail-open-cache](patterns/fail-open-cache.md), [composition-root](patterns/composition-root.md), [per-transaction-rls](patterns/per-transaction-rls.md) |
@@ -22,14 +22,14 @@ Documentation index for the ai-applications monorepo. See the root
 
 | Folder | Count | Contents |
 | :- | -: | :- |
-| [reviews/](reviews/) | 6 | Design and implementation reviews per subsystem (ingestion, RAG sub-projects, dataset/model) |
+| [reviews/](reviews/) | 9 | Design and implementation reviews per subsystem (ingestion, RAG sub-projects, dataset/model) |
 | [plans/](plans/) | 4 | RAG sub-project implementation plans + tier-2 ontology auto-import |
 | [guides/](guides/) | 1 | Operator guides — KB source-repository setup |
 | [checklists/](checklists/) | 2 | Deployment + structured-output checklists |
-| [superpowers/](superpowers/) | 38 | Engineering-process artefacts — dated plans + design specs |
+| [superpowers/](superpowers/) | 107 | Engineering-process artefacts — dated plans + design specs |
 | [skills/](skills/) | 1 bundle | Skill bundles consumed by tooling ([self-healing-updater](skills/self-healing-updater/SKILL.md)) |
 | [projects-migration/](projects-migration/) | 1 | Phase-0 audit snapshot for the `projects` table migration |
-| [incoming/](incoming/) | 3 | Cross-repo docs awaiting `kb-doc create` integration — do not link from elsewhere |
+| [incoming/](incoming/) | 0 | Staging for cross-repo docs awaiting `kb-doc create` integration (currently empty) |
 | [repo-structure.md](repo-structure.md) | — | Generated repository tree snapshot |
 
 ## Adjacent (non-`docs/`) documentation surfaces
