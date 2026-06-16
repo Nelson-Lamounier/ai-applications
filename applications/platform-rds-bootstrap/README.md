@@ -8,11 +8,31 @@ into a container whose entrypoint (`dist/index.js` → `runBootstrap`) connects
    `pipeline_runs`, the `tucaken_app` role, the `set_updated_at` trigger fn, …),
 2. every numbered file in [`migrations/`](migrations/).
 
-Everything is guarded (`CREATE … IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`,
-`DROP … IF EXISTS` + recreate). There is **no `schema_migrations` tracking
-table** — the runner re-applies every `.sql` on every boot, relying on the
-guards for idempotency. Adding a migration = drop a new `NNN_*.sql` in
-`migrations/`; it ships in the image and runs on the next bootstrap.
+Adding a migration = drop a new `NNN_*.sql` in `migrations/`; it ships in the
+image and applies on the next bootstrap.
+
+## Migration ledger
+
+The runner tracks applied migrations in a checksummed `schema_migrations`
+ledger (`name` PRIMARY KEY + SHA-256 `checksum`), so each migration runs
+**exactly once** — see [ADR 0010](../../docs/decisions/0010-checksummed-migration-ledger.md).
+Per migration, `applyMigrations` either:
+
+- **applies** it (never seen before) and records `(name, checksum)`,
+- **skips** it (already applied, same checksum), or
+- **rejects** it (already applied, **different** checksum).
+
+> **Historical migrations are immutable.** Editing a migration that has already
+> been applied changes its checksum and **fails the bootstrap**. To change
+> behaviour, add a *new* `NNN_*.sql` — never edit a shipped one. (Migrations are
+> still written idempotently — `CREATE … IF NOT EXISTS`, etc. — as defence in
+> depth.)
+
+**Adoption / baseline:** the first ledgered run against a database the old
+re-apply runner already populated **baselines** — it records every current
+migration as applied *without re-running it* (a non-idempotent historical
+migration must never re-run). Existing-vs-fresh is detected via a `users`
+sentinel before the base DDL. A truly fresh DB applies everything normally.
 
 ## How it runs in-cluster (canonical path)
 
@@ -91,6 +111,15 @@ See [ROLLBACK.md](ROLLBACK.md). All migrations must follow expand/contract so a
 re-run of any prior image is safe.
 
 ## Local testing
+
+Unit tests cover the ledger logic (apply / skip / reject / baseline) with a mock
+client — no database needed:
+
+```bash
+yarn workspace @bedrock/platform-rds-bootstrap test
+```
+
+End-to-end migration test against a real Postgres:
 
 ```bash
 PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres PGSSL=disable \
