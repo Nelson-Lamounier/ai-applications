@@ -107,6 +107,9 @@ export interface ChunkEnricherCostContext {
     pool:     Pool;
     userId:   string;
     repoName: string;
+    // 'initial' | 'full_reindex' | 'incremental' — distinguishes an initial
+    // repo ingest from a resync on the per-repo Cost breakdown (migration 082).
+    syncKind?: string;
 }
 
 export class BedrockChunkEnricher implements IChunkEnricher {
@@ -172,6 +175,7 @@ export class BedrockChunkEnricher implements IChunkEnricher {
                 inputTokens:  parsed.usage?.input_tokens  ?? 0,
                 outputTokens: parsed.usage?.output_tokens ?? 0,
                 repoName:     this.costCtx.repoName,
+                syncKind:     this.costCtx.syncKind,
             }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
         }
 

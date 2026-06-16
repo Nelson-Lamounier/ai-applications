@@ -282,7 +282,7 @@ async function main(): Promise<void> {
         (process.env.EMBEDDING_DIMENSION
             ? (parseInt(process.env.EMBEDDING_DIMENSION, 10) as 256 | 512 | 1024)
             : 1024),
-        { pool: pgPool, userId: env.userId, repoName: env.repoFullName },
+        { pool: pgPool, userId: env.userId, repoName: env.repoFullName, syncKind: syncType },
     );
     const repoAdapter  = new GitHubAdapter(env.githubToken);
     const fileFilter   = new FileFilter();
@@ -300,6 +300,7 @@ async function main(): Promise<void> {
             pool:     pgPool,
             userId:   env.userId,
             repoName: env.repoFullName,
+            syncKind: syncType,
         });
 
     const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);

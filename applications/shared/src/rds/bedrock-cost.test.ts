@@ -72,8 +72,22 @@ describe('recordInvocationToRds', () => {
     expect(insert!.params[1]).toBe('research');             // $2  agent (real name, not __direct_invoke__)
     expect(insert!.params[3]).toBe('h');                    // $4  system_prompt_hash (real hash)
     expect(insert!.params[7]).toBe(1);                      // $8  latency_ms (from log.latencyMs)
-    expect(insert!.params[11]).toBe(100);                   // $12 user_message_tokens = 80 + 20
-    expect(insert!.params[12]).toBe(50);                    // $13 output_tokens
+    expect(insert!.params[11]).toBeNull();                  // $12 application_id (no context supplied)
+    expect(insert!.params[12]).toBeNull();                  // $13 project_id
+    expect(insert!.params[13]).toBeNull();                  // $14 sync_kind
+    expect(insert!.params[14]).toBe(100);                   // $15 user_message_tokens = 80 + 20
+    expect(insert!.params[15]).toBe(50);                    // $16 output_tokens
+  });
+
+  it('threads applicationId/projectId/syncKind from the context into the INSERT', async () => {
+    const { pool, queries } = fakePool();
+    await recordInvocationToRds(pool, 'job-strategist', {
+      applicationId: 'app-1', projectId: 'proj-1', syncKind: 'initial',
+    })(baseLog);
+    const insert = queries.find((q) => /INSERT INTO prompt_invocations/.test(q.sql));
+    expect(insert!.params[11]).toBe('app-1');               // $12 application_id
+    expect(insert!.params[12]).toBe('proj-1');              // $13 project_id
+    expect(insert!.params[13]).toBe('initial');             // $14 sync_kind
   });
 
   it('skips recording (no query) when the log has no userId', async () => {

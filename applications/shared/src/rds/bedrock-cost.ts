@@ -44,6 +44,13 @@ export interface CostRecord {
   outputTokens: number;
   importId?:    string;
   repoName?:    string;
+  // Granular attribution (migration 082). Populated only where the id is in
+  // scope at the call site: applicationId by the job-strategist pipeline,
+  // projectId by the project-case-study pipeline, and syncKind by repo-sync
+  // rows ('initial' | 'full_reindex' | 'incremental'). NULL otherwise.
+  applicationId?: string;
+  projectId?:     string;
+  syncKind?:      string;
   // Converse agents (via recordInvocationToRds) supply their real agent name,
   // system-prompt hash, and measured latency. Raw InvokeModel callers
   // (embeddings, chunk enrichment) omit them and fall back to the
@@ -115,8 +122,9 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
     `INSERT INTO prompt_invocations
        (pipeline, agent, model_id, system_prompt_hash, input_cost_cents, output_cost_cents,
         total_cost_cents, latency_ms, user_id, import_id, repo_name,
+        application_id, project_id, sync_kind,
         system_prompt_tokens, user_message_tokens, output_tokens)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, 0, $12, $13)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, 0, $15, $16)`,
     [
       record.pipeline,                            // $1  pipeline
       record.agent ?? '__direct_invoke__',        // $2  agent
@@ -129,8 +137,11 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
       record.userId,                              // $9  user_id
       record.importId ?? null,                    // $10 import_id
       record.repoName ?? null,                    // $11 repo_name
-      record.inputTokens,                         // $12 user_message_tokens
-      record.outputTokens,                        // $13 output_tokens
+      record.applicationId ?? null,               // $12 application_id
+      record.projectId ?? null,                   // $13 project_id
+      record.syncKind ?? null,                    // $14 sync_kind
+      record.inputTokens,                         // $15 user_message_tokens
+      record.outputTokens,                        // $16 output_tokens
     ],
   );
 
@@ -171,6 +182,7 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
 export function recordInvocationToRds(
   pool: Pool,
   pipeline: CostRecord['pipeline'],
+  context?: { applicationId?: string; projectId?: string; syncKind?: string },
 ): (log: AgentInvocationLog) => Promise<void> {
   return async (log) => {
     if (!log.userId) {
@@ -186,6 +198,9 @@ export function recordInvocationToRds(
       agent:            log.agent,
       systemPromptHash: log.systemPromptHash,
       latencyMs:        log.latencyMs,
+      applicationId:    context?.applicationId,
+      projectId:        context?.projectId,
+      syncKind:         context?.syncKind,
       // Converse reports a single input figure; the runner stores it under
       // systemPromptTokens with userMessageTokens = 0.
       inputTokens:  log.systemPromptTokens + log.userMessageTokens,

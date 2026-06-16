@@ -56,6 +56,9 @@ export interface TitanCostContext {
     pool:     Pool;
     userId:   string;
     repoName: string;
+    // 'initial' | 'full_reindex' | 'incremental' — distinguishes an initial
+    // repo ingest from a resync on the per-repo Cost breakdown (migration 082).
+    syncKind?: string;
 }
 
 export class TitanEmbeddingProvider implements IEmbeddingProvider {
@@ -142,6 +145,7 @@ export class TitanEmbeddingProvider implements IEmbeddingProvider {
                 inputTokens:  parsed.inputTextTokenCount ?? 0,
                 outputTokens: 0,
                 repoName:     this.costCtx.repoName,
+                syncKind:     this.costCtx.syncKind,
             }).catch((err) => console.warn('[TitanEmbeddingProvider] cost record failed (non-fatal)', err));
         }
 
