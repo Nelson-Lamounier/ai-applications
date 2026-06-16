@@ -10,13 +10,13 @@ Documentation index for the ai-applications monorepo. See the root
 
 | Folder | Count | Highlight |
 | :- | -: | :- |
-| [concepts/](concepts/) | 13 | [self-healing-agent](concepts/self-healing-agent.md), [tech-extractor-architecture](concepts/tech-extractor-architecture.md), [bedrock-rag-surface](concepts/bedrock-rag-surface.md), [caching-tiers](concepts/caching-tiers.md), [profile-synthesis-chain](concepts/profile-synthesis-chain.md) |
-| [decisions/](decisions/) | 2 | [ADR 0001 — deterministic over LLM extraction](decisions/0001-deterministic-over-llm-extraction.md), [ADR 0002 — pgvector over Pinecone for cache](decisions/0002-pgvector-over-pinecone-for-cache.md) |
+| [concepts/](concepts/) | 27 | [skill-evidence-ledger](concepts/skill-evidence-ledger.md), [jd-read-centralisation](concepts/jd-read-centralisation.md), [ats-resume-generation](concepts/ats-resume-generation.md), [case-study-generation](concepts/case-study-generation.md), [coach-stages](concepts/coach-stages.md), [filter-then-rank-retrieval](concepts/filter-then-rank-retrieval.md), [per-phase-evals](concepts/per-phase-evals.md), [profile-intelligence](concepts/profile-intelligence.md), [repository-profile-and-evidence-topology](concepts/repository-profile-and-evidence-topology.md), [project-clustering](concepts/project-clustering.md), [system-tour](concepts/system-tour.md), [source-lane-provenance](concepts/source-lane-provenance.md) |
+| [decisions/](decisions/) | 6 | [ADR 0007 — assessment-only matcher](decisions/0007-assessment-only-matcher.md), [ADR 0001 — deterministic over LLM extraction](decisions/0001-deterministic-over-llm-extraction.md), [ADR 0004 — Bedrock Batch over realtime](decisions/0004-bedrock-batch-over-realtime.md) |
 | [projects/](projects/) | 2 | [self-healing](projects/self-healing.md), [tech-extractor](projects/tech-extractor.md) |
-| [runbooks/](runbooks/) | 4 | [self-healing-token-budget](runbooks/self-healing-token-budget.md), [bedrock-kb-reindex](runbooks/bedrock-kb-reindex.md), [redis-cache-eviction](runbooks/redis-cache-eviction.md), [tech-extractor-rerun](runbooks/tech-extractor-rerun.md) |
+| [runbooks/](runbooks/) | 5 | [run-live-evals](runbooks/run-live-evals.md), [self-healing-token-budget](runbooks/self-healing-token-budget.md), [bedrock-kb-reindex](runbooks/bedrock-kb-reindex.md), [redis-cache-eviction](runbooks/redis-cache-eviction.md) |
 | [troubleshooting/](troubleshooting/) | 4 | [grounding-verifier-blocks-good-answer](troubleshooting/grounding-verifier-blocks-good-answer.md), [self-healing-stuck-remediation](troubleshooting/self-healing-stuck-remediation.md), [semantic-cache-stale-responses](troubleshooting/semantic-cache-stale-responses.md), [tech-extractor-stuck-extraction](troubleshooting/tech-extractor-stuck-extraction.md) |
 | [tools/](tools/) | 0 | (planned — specific technology integration notes) |
-| [patterns/](patterns/) | 0 | (planned — reusable design patterns) |
+| [patterns/](patterns/) | 7 | [anti-hallucination-guards](patterns/anti-hallucination-guards.md), [hexagonal-rds-architecture](patterns/hexagonal-rds-architecture.md), [zod-tool-use](patterns/zod-tool-use.md), [must-not-throw-orchestrator](patterns/must-not-throw-orchestrator.md), [fail-open-cache](patterns/fail-open-cache.md), [composition-root](patterns/composition-root.md), [per-transaction-rls](patterns/per-transaction-rls.md) |
 
 ## Map — legacy + adjacent
 
