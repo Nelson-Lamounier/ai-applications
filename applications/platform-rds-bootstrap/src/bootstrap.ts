@@ -383,10 +383,14 @@ async function recordMigration(client: QueryClient, name: string, sum: string): 
  * Apply base DDL + numbered migrations against `client`, using the ledger.
  *
  * Adoption: when the ledger table does not yet exist but the database already has
- * application schema (the pre-ledger re-apply runner populated it), the existing
- * migrations are BASELINED — recorded as applied without re-running them, since a
- * historical non-idempotent migration could error on re-run. A truly fresh DB
- * (no schema) applies every migration normally.
+ * application schema (the pre-ledger re-apply runner populated it), every migration
+ * is RUN then recorded. The pre-ledger model re-ran every migration on every boot
+ * relying on each file being idempotent (ADR 0009), so running them here is safe —
+ * and it is necessary: a migration shipped in the SAME deploy that first introduces
+ * the ledger was never applied by the old runner, so baselining it without running
+ * would record it as applied while its DDL never executed, and the checksum match
+ * would then skip it forever. A truly fresh DB (no schema) also applies every
+ * migration normally via the path below.
  *
  * Separated from `runBootstrap` so tests can drive it with a mock client and an
  * injected migration list.
@@ -404,9 +408,10 @@ export async function applyMigrations(
 
     if (!ledgerExisted && dbPreExisting) {
         for (const { name, sql } of migrations) {
+            await client.query(sql);
             await recordMigration(client, name, checksum(sql));
         }
-        console.log(`  baselined ${migrations.length} migrations (adopted ledger on existing database)`);
+        console.log(`  adopted ledger — ran + recorded ${migrations.length} idempotent migrations`);
         return;
     }
 
