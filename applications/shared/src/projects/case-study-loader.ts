@@ -63,14 +63,15 @@ export interface PullRequestLoader {
 }
 
 interface ProjectRow {
-    id:             string;
-    user_id:        string;
-    name:           string;
-    tagline:        string | null;
-    pitch:          string | null;
-    user_overrides: Record<string, unknown> | null;
-    type:           string;
-    shape:          string;
+    id:                  string;
+    user_id:            string;
+    name:               string;
+    tagline:            string | null;
+    pitch:              string | null;
+    product_description: string | null;
+    user_overrides:     Record<string, unknown> | null;
+    type:               string;
+    shape:              string;
 }
 
 interface ComponentRow {
@@ -82,6 +83,7 @@ interface ComponentRow {
 interface RepoRow {
     id:               string;
     full_name:        string;
+    description:      string | null;
     primary_language: string | null;
     topics:           string[] | null;
     tech_stack:       string[] | null;
@@ -97,6 +99,55 @@ interface KbRow {
 
 /** Number of KB chunks fed to the prompt. Hard cap to bound input cost. */
 const KB_CHUNK_CAP = 24;
+/** Max chars of root-README prose taken per repo for product context. */
+const README_CHARS_PER_REPO = 1_400;
+/** Global cap on the assembled productContext string. */
+const PRODUCT_CONTEXT_CHARS = 4_000;
+
+interface ReadmeRow {
+    repo_full_name: string;
+    content:        string;
+}
+
+/** Reassemble root-README prose per repo (rows arrive ordered by chunk_index),
+ *  capped per repo. Extracted to keep the loader's complexity bounded. */
+function assembleReadmeMap(rows: readonly ReadmeRow[]): Map<string, string> {
+    const byRepo = new Map<string, string>();
+    for (const row of rows) {
+        const existing = byRepo.get(row.repo_full_name) ?? '';
+        if (existing.length >= README_CHARS_PER_REPO) continue;
+        byRepo.set(row.repo_full_name, (existing + '\n' + row.content).slice(0, README_CHARS_PER_REPO));
+    }
+    return byRepo;
+}
+
+/**
+ * Assemble the ground-truth product-purpose context, in precedence order:
+ *   1. the user's product_description override (authoritative, verbatim)
+ *   2. otherwise: each repo's GitHub description + the head of its root README
+ *
+ * Returns null when no source carries any product prose — the agent then keeps
+ * today's code-only framing rather than inventing a purpose. Pure given inputs.
+ */
+function buildProductContext(
+    override: string | null,
+    repos: ReadonlyArray<{ fullName: string; description: string | null }>,
+    readmeByRepo: ReadonlyMap<string, string>,
+): string | null {
+    const trimmed = override?.trim();
+    if (trimmed) return trimmed.slice(0, PRODUCT_CONTEXT_CHARS);
+
+    const parts: string[] = [];
+    for (const r of repos) {
+        const desc = r.description?.trim();
+        const readme = readmeByRepo.get(r.fullName)?.trim();
+        if (!desc && !readme) continue;
+        const block = [`### ${r.fullName}`, desc, readme].filter(Boolean).join('\n');
+        parts.push(block);
+    }
+    if (parts.length === 0) return null;
+    return parts.join('\n\n').slice(0, PRODUCT_CONTEXT_CHARS);
+}
 /**
  * Global ceiling (estimated tokens) for the serialised context. Sonnet's
  * window is ~200k; budgeting context to 120k leaves generous headroom for
@@ -116,7 +167,7 @@ export async function loadCaseStudyContext(
     projectId: string,
 ): Promise<LoadCaseStudyContextResult> {
     const project = await pool.query<ProjectRow>(
-        `SELECT id, user_id, name, tagline, pitch, user_overrides, type, shape
+        `SELECT id, user_id, name, tagline, pitch, product_description, user_overrides, type, shape
          FROM projects WHERE id = $1`,
         [projectId],
     );
@@ -135,6 +186,7 @@ export async function loadCaseStudyContext(
         `SELECT
             r.id              AS id,
             r.full_name       AS full_name,
+            r.description     AS description,
             r.primary_language AS primary_language,
             r.topics          AS topics,
             COALESCE(
@@ -186,6 +238,25 @@ export async function loadCaseStudyContext(
         [p.user_id, repoNames, KB_CHUNK_CAP],
     )).rows;
 
+    // Root-README prose per repo — the human "what/why/who" the code evidence
+    // can't carry. Ordered by chunk_index so the intro (chunk 0) leads; capped
+    // per repo. file_path is the repo-root README (no directory prefix).
+    const readmeRows = (await pool.query<ReadmeRow>(
+        `SELECT repo_full_name, content
+           FROM document_embeddings
+          WHERE user_id::text = $1::text
+            AND repo_full_name = ANY($2::text[])
+            AND lower(file_path) IN ('readme.md', 'readme')
+          ORDER BY repo_full_name, chunk_index ASC`,
+        [p.user_id, repoNames],
+    )).rows;
+    const readmeByRepo = assembleReadmeMap(readmeRows);
+    const productContext = buildProductContext(
+        p.product_description,
+        repos.map((r) => ({ fullName: r.full_name, description: r.description })),
+        readmeByRepo,
+    );
+
     // Commit evidence now lives in RDS (`repo_commits`, populated by
     // ingestion). Newest first across all member repos.
     const commitRows = (await pool.query<{ repo_full_name: string; sha: string; author_name: string; authored_at: Date | string; message: string }>(
@@ -227,6 +298,7 @@ export async function loadCaseStudyContext(
         projectName:   p.name,
         tagline:       p.tagline,
         pitch:         p.pitch,
+        productContext,
         userOverrides: p.user_overrides ?? {},
         components,
         repositories: repos.map((r) => ({

@@ -252,6 +252,15 @@ export interface CaseStudyContext {
         readonly content:      string;
     }>;
 
+    // ── Product purpose (optional, additive) ─────────────────────────────
+    // Ground-truth "what the product is / who it's for / what problem it
+    // solves", assembled by the loader in precedence order: the user's
+    // product_description override → repo descriptions → the root READMEs.
+    // Fed to the agent as AUTHORITATIVE context: the pitch must open with it,
+    // and it is EXEMPT from the commit-grounding rule (a given, not a claim).
+    // Absent → the pitch falls back to today's code-only framing.
+    readonly productContext?: string | null;
+
     // ── Archetype/stage calibration (optional, additive) ──────────────────
     // Populated by the loader when classification succeeds. Absent → the
     // agent prompt is unchanged (today's behavior).

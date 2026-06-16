@@ -89,6 +89,7 @@ export function computeInputHash(context: LoadCaseStudyContextResult): string {
     h.update(c.projectName);
     h.update(c.tagline ?? '');
     h.update(c.pitch ?? '');
+    h.update(c.productContext ?? '');
     for (const comp of c.components) h.update(`${comp.kind}:${comp.name}`);
     for (const repo of c.repositories) {
         h.update(repo.fullName);

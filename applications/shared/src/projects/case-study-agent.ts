@@ -64,6 +64,13 @@ The project may span multiple repositories. Your output is read by
 recruiters and engineers; treat every claim as something the author may
 be asked about in an interview.
 
+Lead with the PRODUCT, then the engineering. A recruiter must understand
+what the thing IS, who it's for, and what problem it solves BEFORE any
+stack or architecture detail. A pitch that opens with infrastructure
+("a platform spanning four repositories running 14 microservices…") and
+never says what the product does has failed, no matter how impressive the
+internals.
+
 Rules:
   1. Every decision / challenge / stack item MUST cite at least one
      concrete piece of evidence in \`sourceSignals.commits\`,
@@ -72,30 +79,43 @@ Rules:
      decision, prefer it over a commit. If you cannot cite evidence,
      do not include the row. Loose hand-waving is worse than omitting
      the section.
-  2. The \`tagline\` is a single sentence under 200 characters.
-     The \`pitch\` is at most three short paragraphs. Both are written
-     in the candidate's voice, first-person plural avoided ("I built" /
-     "I designed", never "we built").
-  3. \`decisions\` are ADR-style: title, context (problem), decision
+  2. PRODUCT CONTEXT: when a <productContext> block is supplied, it is
+     GROUND TRUTH about what the product is, who it serves, and the
+     problem it solves. Treat it as authoritative — it is a given, NOT a
+     claim, so it is EXEMPT from the evidence-citation rule above. Use it
+     to frame the tagline and the FIRST paragraph of the pitch. Never
+     contradict it or invent product purpose beyond it. If no
+     <productContext> is supplied, infer the product's purpose from the
+     repositories/components and README-style KB passages — still lead
+     with what it does, not how it's built.
+  3. The \`tagline\` is a single sentence under 200 characters that says
+     what the product is and who it's for (not a tech-stack summary).
+     The \`pitch\` is at most three short paragraphs: paragraph 1 = what
+     it does + who it's for + the problem it solves (from productContext);
+     paragraphs 2–3 = the engineering approach and depth. Written in the
+     candidate's voice ("I built" / "I designed", never "we built").
+  4. \`decisions\` are ADR-style: title, context (problem), decision
      (what was chosen), consequences (tradeoff). At most 5.
-  4. \`challenges\` answer "tell me about a hard problem you solved" —
+  5. \`challenges\` answer "tell me about a hard problem you solved" —
      each is a problem / solution pair grounded in real commits or
      issues. At most 5.
-  5. \`highlights\` are 3–5 things a recruiter could point to in 5
+  6. \`highlights\` are 3–5 things a recruiter could point to in 5
      seconds: shipped features, scale numbers, public outcomes.
-  6. \`resumeBullets\`: one set per relevant angle. Bullets are
+  7. \`resumeBullets\`: one set per relevant angle. Bullets are
      past-tense, quantified where possible, never longer than 250
      characters. Omit angles that don't apply to this project.
-  7. \`depthMarkers\` is an HONEST assessment of engineering maturity.
+  8. \`depthMarkers\` is an HONEST assessment of engineering maturity.
      "comprehensive" documentation means a docs/ folder with multiple
      files plus a thorough README — do not inflate.
-  8. \`architecture\` is a Mermaid graph (graph LR or graph TD).
+  9. \`architecture\` is a Mermaid graph (graph LR or graph TD).
      Rectangles for services, cylinders for datastores, clouds for
      external services. Keep it readable in 5 seconds.
 
 The input is a compact JSON envelope describing the project, its
-components, its repositories, recent commits, and selected KB passages.
-Use commits + KB passages as evidence for every grounded claim.`;
+components, its repositories, recent commits, and selected KB passages,
+plus an optional <productContext> block. Use <productContext> for the
+product framing (tagline + first pitch paragraph) and commits + KB
+passages as evidence for every grounded engineering claim.`;
 
 /**
  * Build the system prompt, appending an archetype/stage calibration block
@@ -364,10 +384,19 @@ export function buildUserMessage(ctx: CaseStudyContext): string {
         '<project>',
         JSON.stringify(envelope),
         '</project>',
+    ];
+    if (ctx.productContext && ctx.productContext.trim().length > 0) {
+        lines.push(
+            '<productContext>',
+            ctx.productContext,
+            '</productContext>',
+        );
+    }
+    lines.push(
         '<kbChunks>',
         JSON.stringify(ctx.kbChunks),
         '</kbChunks>',
-    ];
+    );
     if (ctx.priorCaseStudy) {
         lines.push(
             '<priorCaseStudy>',
