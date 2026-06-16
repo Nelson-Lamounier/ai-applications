@@ -3,7 +3,7 @@
 # Repository Profile Strategy
 
 **Goal.** Give the resume pipeline a **repo-level identity** — what each ingested repo *is* and
-*provisions/implements* — so generation reasons about "cdk-monitoring **is** the EKS-via-CDK
+*provisions/implements* — so generation reasons about "tucaken-infra **is** the EKS-via-CDK
 infrastructure repo", not just isolated tech names. This is the root fix for the
 self-hosted/kubeadm drift: the EKS truth was extracted as names but never assembled into a repo
 identity the matcher could prefer over a stale career narrative.

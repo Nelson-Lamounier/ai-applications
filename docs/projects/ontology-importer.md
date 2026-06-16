@@ -49,12 +49,12 @@ flowchart TD
     Batch --> Bedrock[Bedrock Batch<br/>Claude Haiku 4.5]
     Bedrock --> Categorize[Categorizer]
     Categorize --> Write[OntologyWriteRepository]
-    Write --> Aurora[(technology_ontology<br/>+ technology_aliases)]
+    Write --> RDS[(technology_ontology<br/>+ technology_aliases)]
     Importer --> Deactivate[DeactivationDetector]
-    Deactivate --> Aurora
+    Deactivate --> RDS
     Importer --> Review[OntologyReviewQueueRepository]
     Importer --> Summary[ImportRunSummary]
-    Summary --> Aurora2[(technology_import_runs)]
+    Summary --> RDS2[(technology_import_runs)]
 ```
 
 The flow is **two-pass**: source-fetched entries that the
@@ -71,7 +71,7 @@ land on the `OntologyReviewQueueRepository` for human review.
 
 | Variable | Default | Purpose |
 | :- | :- | :- |
-| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | Aurora connection |
+| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | RDS connection |
 | `AWS_REGION` | `eu-west-1` | Bedrock + S3 region |
 | `BEDROCK_MODEL_ID` | `anthropic.claude-haiku-4-5-20251001-v1:0` | Batch classifier model |
 | `BATCH_S3_BUCKET` | — (required) | S3 bucket for JSONL batch inputs |
@@ -86,7 +86,7 @@ land on the `OntologyReviewQueueRepository` for human review.
 
 - **External package registries + cloud APIs.** Each `Source`
   implementation handles its own auth, pagination, rate limiting.
-- **Aurora reference data.** Existing `technology_ontology`
+- **RDS reference data.** Existing `technology_ontology`
   rows for diff + dedupe; `technology_aliases` for prose-safe
   tagging.
 

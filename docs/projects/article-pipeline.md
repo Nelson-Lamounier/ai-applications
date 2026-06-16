@@ -85,7 +85,7 @@ silently discarding. Compare to
 | `MODE` | `standard` | PipelineMode-compatible mode flag |
 | `PIPELINE_ID` | `PIPELINE_RUN_ID` | Logical pipeline id |
 | `ENVIRONMENT` | `production` | Environment label |
-| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | Aurora Postgres connection |
+| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | RDS PostgreSQL connection |
 
 ### Inputs
 

@@ -2,48 +2,50 @@
 
 # ai-applications
 
-Production AI/ML platform on AWS Bedrock — TypeScript, AWS CDK, Aurora
-Postgres + pgvector, Pinecone, Redis cluster, Kubernetes (self-managed),
-and a multi-agent synthesis pipeline. Powers the chatbot, job
-strategist, article pipeline, ingestion, self-healing agent, and
-deterministic tech extractor that back
-[nelsonlamounier.com](https://nelsonlamounier.com).
-
-## The product it powers — Tucaken
-
-This is the AI/ML backend for **Tucaken, a SaaS that turns a developer's real
-code into a job-tailored, evidence-backed résumé.** A job-seeker connects their
-GitHub account; Tucaken verifies which skills they can actually prove from their
-repositories, then — given a specific job description — generates a résumé
+**The AI/ML backend for [Tucaken](https://tucaken.io) — a SaaS that turns a
+developer's real code into a job-tailored, evidence-backed resume.** A job-seeker connects their GitHub
+account; Tucaken verifies which skills they can actually prove from their
+repositories, then — given a specific job description — generates a resume
 tailored to that role using only skills the candidate can defend in an interview.
 
-**Who it's for:** software engineers applying for jobs who want a résumé that is
+**Who it's for:** software engineers applying for jobs who want a resume that is
 tailored per posting *and* honest — grounded in what their code shows, not
 keyword stuffing.
 
-**The problem it solves:** résumés claim skills candidates can't prove, tailoring
+**The problem it solves:** resumes claim skills candidates can't prove, tailoring
 to each job is slow and manual, and candidates can't see how they truly match a
 role. Tucaken grounds every skill in concrete repository evidence (files,
 commits, PRs), reads each job description into a canonical required-skill list,
 assesses the candidate's verified evidence against it (verified / partial / gap),
-and writes a tailored résumé through a multi-agent Bedrock pipeline.
+and writes a tailored resume through a multi-agent Bedrock pipeline.
 
-The user-facing web app, dashboard, and authenticated API live in the sibling
-**`tucaken-app`** repo; this repo runs the ingestion, skill-evidence extraction,
-JD-strategist, résumé synthesis, and project case-study generation it dispatches.
+**This repo's role:** the AI/ML backend — GitHub ingestion, skill-evidence
+extraction, the JD-strategist, multi-agent resume synthesis, and project
+case-study generation. The user-facing web app, dashboard, and authenticated API
+live in the sibling **`tucaken-app`** repo, which dispatches jobs to this backend
+and renders the results.
+
+## Under the hood
+
+Production AI/ML platform on AWS Bedrock — TypeScript, AWS CDK, RDS PostgreSQL +
+pgvector, Redis cluster, managed Amazon EKS, and a multi-agent synthesis
+pipeline. Powers the chatbot, job strategist, article pipeline, ingestion,
+self-healing agent, and deterministic tech extractor that also back
+[nelsonlamounier.com](https://nelsonlamounier.com).
 
 ## What it does
 
 The repository is a Yarn 4 workspace monorepo of **14 services** built
 on a shared TypeScript foundation. The services share one Bedrock
-account, one Aurora cluster, one Redis cluster, and one Kubernetes
-cluster (self-managed; the cluster definition lives in sibling repos
-`kubernetes-platform` / `kubernetes-bootstrap`).
+account, one RDS PostgreSQL instance (`k8s-dev-platform-rds`), one Redis
+cluster, and one managed Amazon EKS cluster (`k8s-eks-development`;
+provisioned by the `tucaken-infra` repo, with in-cluster GitOps
+manifests in `kubernetes-bootstrap`).
 
 The platform answers two questions: *"what's in this engineer's
 portfolio?"* (chatbot + RAG + per-user embeddings) and *"how does the
-portfolio compare against the engineer's stated résumé?"* (multi-agent
-synthesis pipeline producing identity, role-archetype fit, résumé
+portfolio compare against the engineer's stated resume?"* (multi-agent
+synthesis pipeline producing identity, role-archetype fit, resume
 reconciliation, and a resume-readiness diagnostic).
 
 ## Why this exists
@@ -71,8 +73,8 @@ than re-implementing them.
 
 ## Highlights
 
-+ **39 versioned SQL migrations** across the platform's ontology,
-  user, billing, and observability schemas — Aurora Postgres + pgvector
++ **80 versioned SQL migrations** across the platform's ontology,
+  user, billing, and observability schemas — RDS PostgreSQL + pgvector
   + Postgres RLS for user-scoped data
   ([applications/platform-rds-bootstrap/migrations/](applications/platform-rds-bootstrap/migrations/)).
 + **Self-healing Bedrock agent** with a native MCP tool-use loop,
@@ -112,7 +114,8 @@ than re-implementing them.
 ```mermaid
 flowchart TD
     subgraph "Public surface"
-        Web["nelsonlamounier.com<br/>Next.js"]
+        Tucaken["tucaken.io<br/>Tucaken app (tucaken-app)"]
+        Web["nelsonlamounier.com<br/>portfolio + chatbot"]
     end
 
     subgraph "API + chatbots (Lambda)"
@@ -132,7 +135,7 @@ flowchart TD
     end
 
     subgraph "Bedrock"
-        KB[(Knowledge Base<br/>Pinecone)]
+        KB[(Bedrock Knowledge Base)]
         Sonnet[Claude Sonnet 4.6]
         Haiku[Claude Haiku 4.5]
         Titan[Titan Embeddings v2<br/>1024-dim]
@@ -140,13 +143,15 @@ flowchart TD
     end
 
     subgraph "Data"
-        Aurora[(Aurora Postgres<br/>+ pgvector)]
+        RDS[(RDS PostgreSQL<br/>+ pgvector)]
         Redis[(Redis cluster<br/>exact + read cache)]
         S3KB[(S3 KB bucket<br/>versioned)]
         S3Mem[(S3 session memory)]
         DDBDedup[(DynamoDB<br/>self-healing dedup)]
     end
 
+    Tucaken --> Strat
+    Tucaken --> Ingest
     Web --> API
     Web --> ChatbotPub
     Web --> ChatbotAuth
@@ -154,22 +159,22 @@ flowchart TD
     ChatbotMgd --> Guardrail
     ChatbotMgd --> KB
     KB --> Titan
-    ChatbotPub --> Aurora
+    ChatbotPub --> RDS
     ChatbotPub --> Sonnet
-    ChatbotAuth --> Aurora
+    ChatbotAuth --> RDS
     ChatbotAuth --> Sonnet
     ChatbotPub & ChatbotAuth --> Haiku
     Ingest --> Sonnet
-    Ingest --> Aurora
-    TechE --> Aurora
+    Ingest --> RDS
+    TechE --> RDS
     Ont --> Sonnet
     Art & Strat --> Sonnet
     SelfHeal --> Sonnet
     SelfHeal --> DDBDedup
     SelfHeal --> S3Mem
-    Aurora -.cost ledger.- Sonnet
-    Aurora -.cost ledger.- Haiku
-    Aurora -.cost ledger.- Titan
+    RDS -.cost ledger.- Sonnet
+    RDS -.cost ledger.- Haiku
+    RDS -.cost ledger.- Titan
     S3KB --> KB
     ChatbotPub & ChatbotAuth & Ingest --> Redis
 ```
@@ -186,20 +191,20 @@ Pushgateway), and the per-user `recordBedrockCost` ledger.
 + **Runtime**: Node 22 (Lambda + K8s Jobs)
 + **AI**: AWS Bedrock — Claude Sonnet 4.6 (generation), Claude Haiku
   4.5 (verifier + low-cost classification), Amazon Titan Embeddings
-  v2 (1024-dim, pgvector + Pinecone-compatible)
-+ **Database**: Aurora Postgres + pgvector (HNSW indexes); Postgres
-  RLS for user-scoped data; 39 numbered migrations with
+  v2 (1024-dim, pgvector)
++ **Database**: RDS PostgreSQL + pgvector (HNSW indexes); Postgres
+  RLS for user-scoped data; 80 numbered migrations with
   [ROLLBACK](applications/platform-rds-bootstrap/ROLLBACK.md)
   documentation
-+ **Vector stores**: Pinecone (Bedrock KB integration; managed) +
-  pgvector (semantic cache + per-user embeddings); see
++ **Vector store**: pgvector (semantic cache + per-user embeddings +
+  skill-evidence retrieval), colocated with the relational data; see
   [ADR 0002](docs/decisions/0002-pgvector-over-pinecone-for-cache.md)
 + **Cache**: Redis cluster shared between `RedisExactCache` and
   `RedisReadCache` (key-prefix isolated); pgvector semantic cache
 + **Compute**: AWS Lambda (Bedrock + chatbot + outcome tracker) +
   Kubernetes Jobs (long-running extraction + synthesis pipelines)
 + **Infrastructure**: AWS CDK with `@cdklabs/generative-ai-cdk-constructs`
-  for Bedrock + Pinecone; cdk-nag aspects; hexagonal project factory
+  for Bedrock; cdk-nag aspects; hexagonal project factory
   pattern
 + **Orchestration**: EventBridge → SQS FIFO → Lambda (self-healing);
   Step Functions (bootstrap remediation); ArgoCD (workload sync from
@@ -221,10 +226,10 @@ Pushgateway), and the per-user `recordBedrockCost` ledger.
 1. **Deterministic over LLM where structural** — [ADR 0001](docs/decisions/0001-deterministic-over-llm-extraction.md)
    records the 6-iteration parity engagement that decommissioned the
    `BedrockChunkEnricher.technologies` role.
-2. **pgvector for cache, Pinecone for the KB** — [ADR 0002](docs/decisions/0002-pgvector-over-pinecone-for-cache.md)
-   formalises the asymmetric split: managed vector store where
-   required (Bedrock KB integration), self-hosted where cheaper
-   (cache colocated with relational data).
+2. **Self-hosted pgvector over a managed vector store** — [ADR 0002](docs/decisions/0002-pgvector-over-pinecone-for-cache.md)
+   records choosing pgvector, colocated with the relational data, for
+   the semantic cache + per-user embeddings rather than a separate
+   managed vector service.
 3. **MCP tool-use for self-healing, not Bedrock action groups** —
    [self-healing concept](docs/concepts/self-healing-agent.md)
    documents the trade. Action groups bake the catalogue into the
@@ -256,7 +261,7 @@ Pushgateway), and the per-user `recordBedrockCost` ledger.
 │   ├── synthetic-monitor/     — E2E probe runner
 │   ├── platform-job-watcher/  — cross-platform job-source poller
 │   ├── resume-import-processor/
-│   └── platform-rds-bootstrap/migrations/  — 39 numbered SQL migrations
+│   └── platform-rds-bootstrap/migrations/  — 80 numbered SQL migrations
 ├── infra/                     — AWS CDK (aspects, constructs, factories, stacks)
 ├── packages/script-utils/     — shared CLI tooling
 ├── scripts/smoke/             — E2E smoke tests against deployed env
@@ -312,8 +317,9 @@ share two reusable building blocks:
 K8s Jobs (ingestion, tech-extractor, ontology-importer, etc.) read
 their image URI from SSM at deploy time, so a code push to `develop`
 re-tags the image and the next ArgoCD sync rolls the change forward
-in the cluster (cluster definition is in sibling
-`kubernetes-platform` / `kubernetes-bootstrap` repos).
+in the cluster — a managed Amazon EKS cluster provisioned by the
+`tucaken-infra` repo, with in-cluster GitOps manifests in
+`kubernetes-bootstrap`.
 
 Lambda services (chatbot, public-api, self-healing) deploy directly
 via CDK. The self-healing agent uses a four-stack composition
@@ -321,16 +327,18 @@ documented in [docs/projects/self-healing.md](docs/projects/self-healing.md).
 
 ## Related projects
 
+All private, under the [`Nelson-Lamounier`](https://github.com/Nelson-Lamounier) org.
+
 | Repository | Role |
 | :- | :- |
-| `kubernetes-platform` / `kubernetes-bootstrap` (private) | Self-managed K8s cluster the long-running Jobs run in. Defines node groups, Traefik, ArgoCD, cert-manager, monitoring stack. |
-| `tucaken-app` (private) | The Next.js front-end at [nelsonlamounier.com](https://nelsonlamounier.com); consumes the chatbots and the API. |
-| `tucaken-quota-app` (private) | Stripe-backed billing + quota enforcement for the public chatbot path. |
-| `cdk-monitoring` (private) | Cross-account CloudWatch + Grafana stack; observability data plane for everything above. |
+| [`tucaken-app`](https://github.com/Nelson-Lamounier/tucaken-app) | **Product front-end** — the Next.js web app + authenticated API for [Tucaken](https://tucaken.io); dispatches jobs to this backend and renders the results. |
+| [`tucaken-infra`](https://github.com/Nelson-Lamounier/tucaken-infra) | **Infrastructure (AWS CDK)** — provisions the managed Amazon EKS cluster (Karpenter, Pod Identity, Argo Rollouts) plus the cross-account CloudWatch + Grafana observability stack. *(formerly `cdk-monitoring`)* |
+| [`kubernetes-bootstrap`](https://github.com/Nelson-Lamounier/kubernetes-bootstrap) | **GitOps (in-cluster)** — Argo CD manifests, Helm values, and Grafana dashboards for the EKS cluster the long-running Jobs run in. |
 
 Cross-repo migration artefacts that have landed in this repo's
-[docs/incoming/](docs/incoming/) but originate from `cdk-monitoring`
-are marked with `<!-- Migrated from cdk-monitoring -->` headers.
+[docs/incoming/](docs/incoming/) but originate from `tucaken-infra`
+(formerly `cdk-monitoring`) are marked with the literal
+`<!-- Migrated from cdk-monitoring -->` header they were stamped with.
 
 ## Documentation
 

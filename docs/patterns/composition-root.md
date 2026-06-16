@@ -32,7 +32,7 @@ in-memory stubs into the same orchestrator.
 **Use this pattern when:**
 
 - A service has more than one persistence or external-IO dependency
-  (e.g. Aurora + Bedrock + Redis + S3 in a single Lambda).
+  (e.g. RDS + Bedrock + Redis + S3 in a single Lambda).
 - Some dependencies are **module-scoped for warm-instance reuse**
   (Lambda) vs **per-invocation** (K8s Job).
 - Different environments need different wiring (dev/staging/prod

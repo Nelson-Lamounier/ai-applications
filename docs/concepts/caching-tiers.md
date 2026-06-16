@@ -43,7 +43,7 @@ flowchart LR
     Chat[chatbot RAG<br/>job-strategist research] -->|embedding| Semantic
     Exact --> Redis[(Redis cluster<br/>redis-cache)]
     Read --> Redis
-    Semantic --> PG[(Aurora Postgres<br/>+ pgvector HNSW)]
+    Semantic --> PG[(RDS PostgreSQL<br/>+ pgvector HNSW)]
 ```
 
 ## How it works
@@ -217,7 +217,7 @@ so a slow secondary write cannot delay the cache return.
 
 The Redis caches share the cluster but key-prefix isolation keeps
 the bills cleanly attributable. The semantic cache lives in the
-*same* Aurora Postgres as the application data (the
+*same* RDS PostgreSQL as the application data (the
 [platform-rds-bootstrap](../../applications/platform-rds-bootstrap/)
 schema) — pgvector enabled by migration 022. There is no separate
 vector-store ops surface for the semantic cache; same SLA, same
