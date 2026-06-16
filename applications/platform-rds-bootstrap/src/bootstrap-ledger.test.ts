@@ -74,13 +74,25 @@ describe('applyMigrations', () => {
         expect(c.recorded.get('002_b.sql')).toBe(checksum('SQL_B'));
     });
 
-    it('existing database without a ledger — BASELINES (records without running)', async () => {
+    it('existing database without a ledger — adopts by RUNNING + recording each', async () => {
         const c = new FakeClient(new Set(['users'])); // schema present, ledger absent
         await applyMigrations(c, MIGRATIONS);
-        expect(c.ranSql('SQL_A')).toBe(false); // never re-runs a historical migration
-        expect(c.ranSql('SQL_B')).toBe(false);
-        expect(c.recorded.get('001_a.sql')).toBe(checksum('SQL_A')); // but recorded as applied
+        // Migrations are idempotent (ADR 0009), so re-running on adoption is safe and
+        // guarantees a migration new to this image actually executes before recording.
+        expect(c.ranSql('SQL_A')).toBe(true);
+        expect(c.ranSql('SQL_B')).toBe(true);
+        expect(c.recorded.get('001_a.sql')).toBe(checksum('SQL_A'));
         expect(c.recorded.get('002_b.sql')).toBe(checksum('SQL_B'));
+    });
+
+    it('adoption runs a migration that shipped in the same deploy as the ledger', async () => {
+        // Regression: a new migration landing in the deploy that first creates the
+        // ledger must RUN, not be baselined-not-run (which would skip it forever).
+        const c = new FakeClient(new Set(['users'])); // pre-existing schema, no ledger
+        const withNew = [...MIGRATIONS, { name: '003_new.sql', sql: 'SQL_NEW' }];
+        await applyMigrations(c, withNew);
+        expect(c.ranSql('SQL_NEW')).toBe(true);
+        expect(c.recorded.get('003_new.sql')).toBe(checksum('SQL_NEW'));
     });
 
     it('already-applied migrations are skipped on a normal run', async () => {
