@@ -73,11 +73,19 @@ jobs:
           provenance: false
           outputs: type=docker,dest=/tmp/platform-rds-bootstrap-image.tar
 
-      - name: Cache Bootstrap Image
-        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      # Hand the built image to the push job via an ARTIFACT, not actions/cache.
+      # actions/cache is LRU-evicted under the 10GB repo cache cap — the ~62MB
+      # image tar can be evicted before the push job restores it, so the restore
+      # fails on fail-on-cache-miss and the migration step is SKIPPED (migrations
+      # silently never apply). Artifacts have a separate quota and are not evicted
+      # mid-run. Mirrors _build-push-image.yml, which fixed this same bug.
+      - name: Upload Image Artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: platform-rds-bootstrap-image-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/platform-rds-bootstrap-image.tar
-          key: platform-rds-bootstrap-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Build Summary
         env:
@@ -110,12 +118,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Restore Bootstrap Image from Cache
-        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
         with:
-          path: /tmp/platform-rds-bootstrap-image.tar
-          key: platform-rds-bootstrap-image-${{ env.ENVIRONMENT }}-${{ github.run_id }}-${{ github.run_attempt }}
-          fail-on-cache-miss: true
+          name: platform-rds-bootstrap-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp
 
       - name: Load Docker Image
         run: docker load -i /tmp/platform-rds-bootstrap-image.tar
