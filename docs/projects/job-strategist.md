@@ -12,7 +12,7 @@ updated: 2026-05-27
 ## What it does
 
 The `job-strategist` is a Kubernetes Job that turns a job
-description (`job_applications` row) into a tailored résumé +
+description (`job_applications` row) into a tailored resume +
 case-study + coach plan for one of the platform's users. Three
 Bedrock-backed agents run in sequence (`Research → Strategist →
 Coach`), with state persisted to the RDS `pipeline_runs` state
@@ -76,7 +76,7 @@ the same JD share the embedding + retrieval. The Strategist's
 output passes through the
 [BedrockGroundingVerifier](../concepts/bedrock-rag-surface.md#grounding-verifier-haiku-second-pass)
 in `block` mode; a NOT_GROUNDED verdict replaces the tailored
-résumé with a fallback rather than letting a hallucination reach
+resume with a fallback rather than letting a hallucination reach
 the user.
 
 ## Runtime contract
@@ -94,12 +94,12 @@ the user.
 | `TARGET_COMPANY` | — (required) | Company name (free text) |
 | `TARGET_ROLE` | — (required) | Role title (free text) |
 | `JOB_DESCRIPTION` | — (required) | Raw JD; scrubbed via `PiiScrubber` before any embedding |
-| `RESUME_ID` | empty | Optional starting résumé to tailor |
+| `RESUME_ID` | empty | Optional starting resume to tailor |
 | `MODE` | `standard` | `PipelineMode`-compatible mode flag |
 | `PIPELINE_ID` | `PIPELINE_RUN_ID` | Logical pipeline id (e.g. `job-strategist-v2`) |
 | `PIPELINE_VERSION` | `1` | Integer version for output schema migrations |
 | `ENVIRONMENT` | `production` | Environment label |
-| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | Aurora Postgres connection |
+| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | RDS PostgreSQL connection |
 
 ### Inputs
 

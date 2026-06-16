@@ -13,9 +13,9 @@ updated: 2026-05-27
 
 The `ingestion` service is a Kubernetes Job that runs once per
 `(userId, repoFullName)` pair. It pulls a GitHub repository's
-metadata, embeds the content into Aurora pgvector for retrieval, and
+metadata, embeds the content into RDS pgvector for retrieval, and
 runs the [profile synthesis chain](../concepts/profile-synthesis-chain.md)
-to produce identity / archetype-fit / résumé-reconciliation /
+to produce identity / archetype-fit / resume-reconciliation /
 diagnostic outputs for the user's portfolio rollup.
 
 Two distinct outputs:
@@ -52,15 +52,15 @@ flowchart TD
     Chunk --> Enrich[BedrockChunkEnricher<br/>skills only post ADR-0001]
     Embed --> VS
     Enrich --> VS
-    VS --> Aurora[(pgvector<br/>document_embeddings)]
+    VS --> RDS[(pgvector<br/>document_embeddings)]
     Orch --> Refresh[refreshUserProfileRollup]
     Refresh --> ProfileExt[ProfileExtractor]
-    ProfileExt --> Aurora
+    ProfileExt --> RDS
     Refresh --> Synth[4 synthesizers<br/>+ DiagnosticNarrator]
-    Synth --> Aurora2[(user_profile_rollup)]
+    Synth --> RDS2[(user_profile_rollup)]
     Orch --> Probe[RetrievalProbe]
     Probe --> Sync
-    Sync --> Aurora
+    Sync --> RDS
 ```
 
 The orchestrator + synthesizer chain are the load-bearing pieces.
@@ -83,7 +83,7 @@ Set by the K8s Job spec (sibling `kubernetes-platform`)
 | `FORCE_REINDEX` | `false` | Skip the `repo_sync_state` short-circuit |
 | `GITHUB_TOKEN` | — (required) | Bearer token for GitHub API + archive |
 | `PROFILE_EXTRACTOR_MODEL_ID` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model for the `ProfileExtractor` step |
-| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | Aurora Postgres connection |
+| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | RDS PostgreSQL connection |
 | `MIRROR_REVEAL_MODEL_ID` | falls back to `PROFILE_EXTRACTOR_MODEL_ID` | Synthesis disabled when neither is set |
 | `DIRECTION_MODEL_ID` | falls back to `PROFILE_EXTRACTOR_MODEL_ID` | Synthesis disabled when neither is set |
 | `RECONCILIATION_MODEL_ID` | falls back to `PROFILE_EXTRACTOR_MODEL_ID` | Synthesis disabled when neither is set |
@@ -95,7 +95,7 @@ Set by the K8s Job spec (sibling `kubernetes-platform`)
 
 - **GitHub REST API.** Repository metadata, file contents, recent
   commit messages.
-- **Aurora reference data.** Reads existing `repo_sync_state` for
+- **RDS reference data.** Reads existing `repo_sync_state` for
   short-circuit deduplication; reads existing `user_profile_rollup`
   for synthesizer COALESCE preservation.
 
@@ -128,7 +128,7 @@ applications/ingestion/
 │   │   ├── ProfileInputCollector.ts      ← PII-scrubbed bundle
 │   │   ├── MirrorRevealSynthesizer.ts    ← SP2 — identity + reveals
 │   │   ├── DirectionSynthesizer.ts       ← SP3 — archetype fit
-│   │   ├── ReconciliationSynthesizer.ts  ← SP4 — résumé↔GitHub gap
+│   │   ├── ReconciliationSynthesizer.ts  ← SP4 — resume↔GitHub gap
 │   │   ├── DiagnosticNarrator.ts         ← SP5 — explanation only
 │   │   └── RetrievalProbe.ts             ← RAG canary
 │   ├── repositories/
@@ -155,7 +155,7 @@ yarn workspace @bedrock/ingestion build
 yarn workspace @bedrock/ingestion test
 ```
 
-A live local ingestion run requires a real Aurora cluster + GitHub
+A live local ingestion run requires a real RDS PostgreSQL instance + GitHub
 token; the development environment's K8s Job is the practical
 local test surface. The `__tests__/` suites cover the orchestration
 + synthesizer contracts in isolation with in-memory stubs.

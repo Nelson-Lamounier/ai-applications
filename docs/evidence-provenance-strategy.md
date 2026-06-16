@@ -49,7 +49,7 @@ Written at end of each run by flattening data already in `metadata` + the guard 
 Table **`repo_evidence_quality`** (per user+repo, per run/ingest): `passages_ingested`,
 `passages_ever_cited`, `cite_rate`, `drift_count`, `stale_files[]`, `jd_tools_requested/matched/gap`,
 `extraction_confidence_dist`, `last_synced_at` vs `last_code_commit`. The "is the extracted data
-correct & fit-for-JD" signal — cdk-monitoring's stale docs become a standing `drift_count`.
+correct & fit-for-JD" signal — tucaken-infra's stale docs become a standing `drift_count`.
 
 ### Phase 3 — Dashboards + alerts (Grafana / Prometheus)
 

@@ -115,7 +115,7 @@ so a user's retrieval cannot leak into another user's data.
 
 A single `expandQuery`-driven invocation therefore runs **6 pgvector
 queries in parallel** (3 framings × 2 layers), all from one
-Lambda invocation. Aurora absorbs the load comfortably at the
+Lambda invocation. RDS absorbs the load comfortably at the
 platform's scale; the latency floor is the slowest of the six.
 
 ### Deduplication

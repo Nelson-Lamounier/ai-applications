@@ -60,7 +60,7 @@ flowchart TD
     subgraph "Custom-retrieval paths"
         PublicLambda[chatbot-public Lambda] --> Embed[Titan v2 embed]
         Embed --> PgRetriever[PgVectorRetriever<br/>multi-query top-K=8]
-        PgRetriever --> PG[(Aurora + pgvector<br/>per-user embeddings)]
+        PgRetriever --> PG[(RDS + pgvector<br/>per-user embeddings)]
         PgRetriever --> Converse[Bedrock Converse<br/>Sonnet 4.6]
         AuthLambda[chatbot-authenticated Lambda] --> Session[chat_sessions<br/>RLS-bound]
         AuthLambda --> Embed

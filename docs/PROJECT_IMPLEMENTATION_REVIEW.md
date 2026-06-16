@@ -11,7 +11,7 @@
 1. **`repository` ≠ `project`.** A *repository* is one raw git repo. A *project* is the **interview / case-study unit** that sits **above** repositories and can span several of them. The bridge is `project → project_components → project_repositories → repositories` (many-to-many).
 2. **Two repos in one project** are modelled as **two `project_components`** (e.g. `frontend`, `backend`), each linked to its repository through a `project_repositories` row. A repo can also contribute a **subpath** (monorepo subset), so the link carries a `subpath` column.
 3. **The feature is code-complete and merged to `develop`** — schema (030-033), the Phase 2A *Clustering Service*, the Phase 2B *Case-Study Generation Service*, and the Phase 3 public share route all exist.
-4. **✅ The `projects` tables ARE deployed to dev RDS** (fixed 2026-05-30). All 41 migrations (`003`–`043`) now apply cleanly end-to-end; the `031` backfill created one `single_repo` project (`nelson-lamounier-cdk-monitoring`). The fix required making early migrations idempotent — see §7 for the (two-layered) root cause and the permanent fix.
+4. **✅ The `projects` tables ARE deployed to dev RDS** (fixed 2026-05-30). All 41 migrations (`003`–`043`) now apply cleanly end-to-end; the `031` backfill created one `single_repo` project (`nelson-lamounier-tucaken-infra`). The fix required making early migrations idempotent — see §7 for the (two-layered) root cause and the permanent fix.
 5. **The UI contract you build against is the JSON returned by `GET /public/projects/:username/:slug`** — fully denormalised, JSON-stable, designed to be rendered as-is. Exact shape in §6.
 6. **Authenticated (owner) project CRUD ALREADY EXISTS** — in `tucaken-app/admin-api` (a separate Cognito-JWT + RLS Hono service), **not** in `ai-applications/api/public-api`. Full CRUD + confirm/merge/split/regenerate, already wired to frontend server functions and React Query hooks. **Do not rebuild it** — see §8.
 
@@ -263,7 +263,7 @@ The **public renderer already exists** in the sibling app: `tucaken-app/src/feat
 
 ## 7. Live dev-RDS state — RESOLVED 2026-05-30
 
-**Status:** all 41 migrations (`003`–`043`) now apply cleanly to dev and the schema is fully live — verified by running the complete sequence end-to-end (`ALL_MIGRATIONS_APPLIED_OK`) and spot-checking column markers: `projects.case_study_status` (033), `technology_aliases.prose_safe` (037), `technology_evidence` `code-prose` constraint (038), `pending_subscriptions` (039), `users.cancel_at_period_end` (040), `users.deleted_at` (041), `repo_sync_state.embedded_count`/`phase` (042/043). 11 `project_*` tables present; `031` backfill created one `single_repo` project (`nelson-lamounier-cdk-monitoring`). **You can now read real project rows from dev.**
+**Status:** all 41 migrations (`003`–`043`) now apply cleanly to dev and the schema is fully live — verified by running the complete sequence end-to-end (`ALL_MIGRATIONS_APPLIED_OK`) and spot-checking column markers: `projects.case_study_status` (033), `technology_aliases.prose_safe` (037), `technology_evidence` `code-prose` constraint (038), `pending_subscriptions` (039), `users.cancel_at_period_end` (040), `users.deleted_at` (041), `repo_sync_state.embedded_count`/`phase` (042/043). 11 `project_*` tables present; `031` backfill created one `single_repo` project (`nelson-lamounier-tucaken-infra`). **You can now read real project rows from dev.**
 
 ### Root cause — two layers
 
@@ -288,11 +288,11 @@ The **public renderer already exists** in the sibling app: `tucaken-app/src/feat
 |-------|-----:|-------|
 | `users` | 4 | `lamounierleao@gmail.com`, `lamleao@icloud.com`, `smoke-e2e@tucaken.dev`, `lamounier_88@hotmail.com` |
 | `oauth_connections` | 1 | only 1 GitHub identity → only 1 user can have a *public* URL |
-| `repositories` | **1** | `Nelson-Lamounier/cdk-monitoring` (user `1d4c645a…`), `index_status=complete`, indexed 2026-05-29 |
-| `repository_profiles` | 2 | `cdk-monitoring` (quality **1.00**), `sindresorhus/is` (quality 0.55) — both `classification=project`, `completed` |
+| `repositories` | **1** | `Nelson-Lamounier/tucaken-infra` (user `1d4c645a…`), `index_status=complete`, indexed 2026-05-29 |
+| `repository_profiles` | 2 | `tucaken-infra` (quality **1.00**), `sindresorhus/is` (quality 0.55) — both `classification=project`, `completed` |
 | `repository_profile_embeddings` | 45 | |
-| `document_embeddings` | 2846 | all from cdk-monitoring (327 files) |
-| `repo_sync_state` | 1 | cdk-monitoring: kb_quality 0.80, retrieval 0.92, phase `finalizing` |
+| `document_embeddings` | 2846 | all from tucaken-infra (327 files) |
+| `repo_sync_state` | 1 | tucaken-infra: kb_quality 0.80, retrieval 0.92, phase `finalizing` |
 | `pipeline_runs` | 0 | no clustering/case-study run has executed |
 
 **Consequence for multi-repo:** the only fully-ingested user has **1 repository**. Clustering needs ≥2 repos with overlapping signals, so **no `multi_repo` project can be proposed in dev as-is**. To exercise the multi-repo UI you'll need to ingest ≥2 related repos for one user (or seed `projects`/`project_components`/`project_repositories` rows manually after the schema is bootstrapped).

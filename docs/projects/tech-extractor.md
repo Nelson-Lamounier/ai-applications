@@ -34,7 +34,7 @@ flowchart LR
     Fetch --> Extract[safeExtract<br/>tar w/ symlink+path guard]
     Extract --> Orch[TechExtractOrchestrator]
     Orch --> Resolver[OntologyResolver]
-    Resolver --> PG[(Aurora Postgres<br/>technology_evidence +<br/>technology_candidates)]
+    Resolver --> PG[(RDS PostgreSQL<br/>technology_evidence +<br/>technology_candidates)]
     Orch --> Metrics[Pushgateway<br/>l1_recall, extractor_failed]
     PG -.->|read| Importer[ontology-importer]
 ```
@@ -57,7 +57,7 @@ Set by the K8s Job spec (sibling repos:
 | `COMMIT_SHA` | `HEAD` | Tarball ref; recorded on every evidence row |
 | `GITHUB_TOKEN` | — (required) | Bearer token for the archive request |
 | `WORK_DIR` | `/work` | Working directory for tarball + extract |
-| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | Aurora Postgres connection |
+| `PG_HOST` / `PG_PORT` / `PG_DATABASE` / `PG_USER` / `PG_PASSWORD` | — (required) | RDS PostgreSQL connection |
 | `MAX_TARBALL_BYTES` | `209715200` (200 MB) | Refuses tarballs above the cap |
 
 ### Inputs (system boundary)

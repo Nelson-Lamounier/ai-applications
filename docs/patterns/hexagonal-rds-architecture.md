@@ -16,7 +16,7 @@ Decouple the platform's business logic from the persistence engine
 behind a set of **typed contracts**. Application code calls an
 `I<Domain>Repository` interface; the running process injects an
 `Rds<Domain>Repository` implementation that knows how to talk to
-Aurora Postgres. Tests inject in-memory stubs of the same interface.
+RDS PostgreSQL. Tests inject in-memory stubs of the same interface.
 The pattern lives under
 [applications/shared/src/rds/](../../applications/shared/src/rds/)
 and is the load-bearing piece behind every user-scoped data access
@@ -42,7 +42,7 @@ and `set_config` make mocks brittle.
   would have to replicate. The hexagonal split lets tests stub the
   interface rather than reproduce the RLS choreography.
 - The contract has **multiple plausible implementations** — today
-  Aurora Postgres, tomorrow potentially a different backend or a
+  RDS PostgreSQL, tomorrow potentially a different backend or a
   read-replica with relaxed consistency
   ([IEmbeddingProvider](../../applications/shared/src/rds/interfaces/IEmbeddingProvider.ts)
   comments explicitly call this out: *"The pipeline never imports a
@@ -80,13 +80,13 @@ flowchart LR
     end
 
     subgraph "Backing store"
-        Aurora[(Aurora Postgres<br/>+ pgvector)]
+        RDS[(RDS PostgreSQL<br/>+ pgvector)]
     end
 
     Caller -->|"injected via constructor"| Port
     Port -.->|"prod: production wiring"| Adapter
     Port -.->|"test: in-memory stub"| Stub["{ listProfilesForRollup, upsert, getRollup }"]
-    Adapter -->|"BEGIN + SET LOCAL"| Aurora
+    Adapter -->|"BEGIN + SET LOCAL"| RDS
 ```
 
 ### Naming convention
@@ -105,7 +105,7 @@ The convention is **mechanical**, deliberately so:
 | Chunk enricher | `IChunkEnricher` | `BedrockChunkEnricher` |
 
 `I` prefix on interfaces; **vendor-or-backend prefix** on
-implementations (`Rds` for Aurora, `Titan` for the Bedrock embedding
+implementations (`Rds` for RDS, `Titan` for the Bedrock embedding
 model, `Bedrock` for the chunk-enrichment Bedrock client). The
 prefix carries the swap point — `Rds` says "swappable with a
 different RDS-backed adapter or a non-RDS backend at all."
@@ -221,7 +221,7 @@ with corresponding `Rds*` adapters under
 | :- | :- | :- |
 | `IUserProfileRollupRepository` | `RdsUserProfileRollupRepository` | Profile synthesis (5 synth steps) |
 | `IOAuthConnectionsRepository` | `RdsOAuthConnectionsRepository` | GitHub App + envelope-encrypted tokens |
-| `ICareerHistoryReadRepository` | `RdsCareerHistoryReadRepository` | Read résumé for reconciliation |
+| `ICareerHistoryReadRepository` | `RdsCareerHistoryReadRepository` | Read resume for reconciliation |
 | `IDiagnosticInputsReadRepository` | `RdsDiagnosticInputsReadRepository` | Read inputs for the diagnostic score |
 | `ISyncStateRepository` | `RdsSyncStateRepository` | Ingestion journal `repo_sync_state` |
 | `IEmbeddingProvider` | `TitanEmbeddingProvider` | Text → 1024-dim vector |

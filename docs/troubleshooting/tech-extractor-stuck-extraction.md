@@ -56,7 +56,7 @@ Five distinct failure modes share the surface symptoms:
    on this path.
 5. **Postgres unavailable** — every error other than the above is
    typically a `pg` connection failure (max=3 pool exhausted, network
-   timeout, Aurora failover). Throws from `evidenceRepo.insertMany`
+   timeout, RDS reboot/maintenance). Throws from `evidenceRepo.insertMany`
    or `candidateRepo.upsert` and aborts the Job.
 
 ## How to diagnose
@@ -205,11 +205,12 @@ extractor for that run. Steps:
 
 - Verify `pg.max=3` (set in
   [run-tech-extract.ts](../../applications/tech-extractor/src/run-tech-extract.ts))
-  is consistent with the cluster-wide RDS max connections. Aurora
-  serverless can scale connections out, but provisioned tiers cap
-  hard.
-- Check Aurora reader/writer health
-  (`aws rds describe-db-clusters --db-cluster-identifier <id>`).
+  is consistent with the RDS instance `max_connections`. The platform
+  runs a single provisioned RDS PostgreSQL instance
+  (`k8s-dev-platform-rds`), so the connection ceiling is fixed by the
+  instance class — sum the `pg.max` of every concurrent Job against it.
+- Check RDS instance health
+  (`aws rds describe-db-instances --db-instance-identifier k8s-dev-platform-rds`).
 - A Postgres timeout during `insertMany` aborts the Job
   mid-flush — the candidates and matched evidence already inserted
   *do* commit (one transaction per `insertMany` call,

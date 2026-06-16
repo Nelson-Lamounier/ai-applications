@@ -53,7 +53,7 @@ sequenceDiagram
     participant App as Caller<br/>(repository method)
     participant Pool as pg.Pool
     participant Client as pg.PoolClient
-    participant PG as Aurora Postgres<br/>(RLS policy active)
+    participant PG as RDS PostgreSQL<br/>(RLS policy active)
     App->>Pool: pool.connect()
     Pool-->>App: client (possibly recycled)
     App->>Client: BEGIN
