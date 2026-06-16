@@ -9,6 +9,29 @@ strategist, article pipeline, ingestion, self-healing agent, and
 deterministic tech extractor that back
 [nelsonlamounier.com](https://nelsonlamounier.com).
 
+## The product it powers — Tucaken
+
+This is the AI/ML backend for **Tucaken, a SaaS that turns a developer's real
+code into a job-tailored, evidence-backed résumé.** A job-seeker connects their
+GitHub account; Tucaken verifies which skills they can actually prove from their
+repositories, then — given a specific job description — generates a résumé
+tailored to that role using only skills the candidate can defend in an interview.
+
+**Who it's for:** software engineers applying for jobs who want a résumé that is
+tailored per posting *and* honest — grounded in what their code shows, not
+keyword stuffing.
+
+**The problem it solves:** résumés claim skills candidates can't prove, tailoring
+to each job is slow and manual, and candidates can't see how they truly match a
+role. Tucaken grounds every skill in concrete repository evidence (files,
+commits, PRs), reads each job description into a canonical required-skill list,
+assesses the candidate's verified evidence against it (verified / partial / gap),
+and writes a tailored résumé through a multi-agent Bedrock pipeline.
+
+The user-facing web app, dashboard, and authenticated API live in the sibling
+**`tucaken-app`** repo; this repo runs the ingestion, skill-evidence extraction,
+JD-strategist, résumé synthesis, and project case-study generation it dispatches.
+
 ## What it does
 
 The repository is a Yarn 4 workspace monorepo of **14 services** built
