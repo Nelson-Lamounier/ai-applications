@@ -18,6 +18,7 @@
  * created out-of-band on the dev cluster.
  */
 import { Pool } from 'pg';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -320,15 +321,115 @@ export function createPool(overrides: Partial<ConstructorParameters<typeof Pool>
     });
 }
 
+// ─── Migration ledger ────────────────────────────────────────────────────────
+//
+// A checksummed `schema_migrations` ledger makes the runner apply each migration
+// exactly once and reject a changed historical migration, instead of re-applying
+// every file on every boot (which made non-idempotent migrations re-run and could
+// halt the whole bootstrap). See docs/decisions/0009-idempotent-re-apply-bootstrap.md.
+
+/** The ledger table. Idempotent so the bootstrap can always ensure it. */
+export const SCHEMA_MIGRATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    name        TEXT        PRIMARY KEY,
+    checksum    TEXT        NOT NULL,
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`;
+
+/** SHA-256 of a migration's SQL — the identity used to detect edited history. */
+export function checksum(sql: string): string {
+    return createHash('sha256').update(sql).digest('hex');
+}
+
+export type MigrationDecision = 'skip' | 'apply' | 'reject';
+
+/**
+ * Decide what to do with a migration given the checksum recorded in the ledger
+ * (or undefined when it has never been applied). Pure + unit-tested.
+ *   - never applied            → apply
+ *   - applied, same checksum   → skip
+ *   - applied, diff checksum   → reject (the historical migration was edited)
+ */
+export function decideMigration(currentChecksum: string, recordedChecksum: string | undefined): MigrationDecision {
+    if (recordedChecksum === undefined) return 'apply';
+    return recordedChecksum === currentChecksum ? 'skip' : 'reject';
+}
+
+/** The subset of `pg`'s client this runner needs — keeps it mockable in tests. */
+export interface QueryClient {
+    query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+}
+
+async function tableExists(client: QueryClient, table: string): Promise<boolean> {
+    const r = await client.query('SELECT to_regclass($1) AS reg', [table]);
+    return r.rows[0]?.reg != null;
+}
+
+async function loadLedger(client: QueryClient): Promise<Map<string, string>> {
+    const r = await client.query('SELECT name, checksum FROM schema_migrations');
+    return new Map(r.rows.map((row) => [String(row.name), String(row.checksum)]));
+}
+
+async function recordMigration(client: QueryClient, name: string, sum: string): Promise<void> {
+    await client.query(
+        `INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)
+         ON CONFLICT (name) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()`,
+        [name, sum],
+    );
+}
+
+/**
+ * Apply base DDL + numbered migrations against `client`, using the ledger.
+ *
+ * Adoption: when the ledger table does not yet exist but the database already has
+ * application schema (the pre-ledger re-apply runner populated it), the existing
+ * migrations are BASELINED — recorded as applied without re-running them, since a
+ * historical non-idempotent migration could error on re-run. A truly fresh DB
+ * (no schema) applies every migration normally.
+ *
+ * Separated from `runBootstrap` so tests can drive it with a mock client and an
+ * injected migration list.
+ */
+export async function applyMigrations(
+    client: QueryClient,
+    migrations: { name: string; sql: string }[] = loadMigrations(),
+): Promise<void> {
+    // Detect adoption BEFORE any DDL runs (the DDL itself creates `users`).
+    const ledgerExisted  = await tableExists(client, 'schema_migrations');
+    const dbPreExisting  = await tableExists(client, 'users');
+
+    await client.query(DDL);
+    await client.query(SCHEMA_MIGRATIONS_DDL);
+
+    if (!ledgerExisted && dbPreExisting) {
+        for (const { name, sql } of migrations) {
+            await recordMigration(client, name, checksum(sql));
+        }
+        console.log(`  baselined ${migrations.length} migrations (adopted ledger on existing database)`);
+        return;
+    }
+
+    const ledger = await loadLedger(client);
+    for (const { name, sql } of migrations) {
+        const decision = decideMigration(checksum(sql), ledger.get(name));
+        if (decision === 'skip') continue;
+        if (decision === 'reject') {
+            throw new Error(
+                `Migration ${name} was edited after it was applied (checksum mismatch). ` +
+                `Historical migrations are immutable — add a NEW migration instead of changing this one.`,
+            );
+        }
+        console.log(`  → ${name}`);
+        await client.query(sql);
+        await recordMigration(client, name, checksum(sql));
+    }
+}
+
 export async function runBootstrap(pool: Pool): Promise<void> {
     const client = await pool.connect();
     try {
-        await client.query(DDL);
-        const migrations = loadMigrations();
-        for (const { name, sql } of migrations) {
-            console.log(`  → ${name}`);
-            await client.query(sql);
-        }
+        await applyMigrations(client);
     } finally {
         client.release();
     }
