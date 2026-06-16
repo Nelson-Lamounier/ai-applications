@@ -27,26 +27,24 @@ export async function loadProjectEvidenceBlock(pool: Pool, userId: string): Prom
 }
 
 /**
- * Documented-project index for source-lane classification: the `owner/repo`
- * full-names that belong to a project, plus the project names. Used to credit
- * skill-evidence rows to the PROJECT lane (vs standalone REPO). Fail-open to an
- * empty index — lane provenance is additive and must never block the pipeline.
+ * Documented-project index for source-lane classification: the project names,
+ * matched against evidence prose to credit the PROJECT lane (written case-study
+ * context corroborating code-grounded REPO evidence). Fail-open to an empty
+ * index — lane provenance is additive and must never block the pipeline.
  */
 export async function loadProjectLaneIndex(
     pool: Pool,
     userId: string,
-): Promise<{ projectRepos: Set<string>; projectNames: string[] }> {
+): Promise<{ projectNames: string[] }> {
     try {
         const evidence = await new RdsProjectEvidenceRepository(pool).load(userId);
-        const projectRepos = new Set<string>();
         const projectNames: string[] = [];
         for (const p of evidence.projects) {
             if (p.name) projectNames.push(p.name);
-            for (const repo of p.repos ?? []) projectRepos.add(repo);
         }
-        return { projectRepos, projectNames };
+        return { projectNames };
     } catch (e) {
         log('WARN', 'project lane index load failed (non-fatal)', { agent: 'strategist', error: (e as Error).message });
-        return { projectRepos: new Set<string>(), projectNames: [] };
+        return { projectNames: [] };
     }
 }
