@@ -334,7 +334,6 @@ All private, under the [`Nelson-Lamounier`](https://github.com/Nelson-Lamounier)
 | [`tucaken-app`](https://github.com/Nelson-Lamounier/tucaken-app) | **Product front-end** — the Next.js web app + authenticated API for [Tucaken](https://tucaken.io); dispatches jobs to this backend and renders the results. |
 | [`tucaken-infra`](https://github.com/Nelson-Lamounier/tucaken-infra) | **Infrastructure (AWS CDK)** — provisions the managed Amazon EKS cluster (Karpenter, Pod Identity, Argo Rollouts) plus the cross-account CloudWatch + Grafana observability stack. *(formerly `cdk-monitoring`)* |
 | [`kubernetes-bootstrap`](https://github.com/Nelson-Lamounier/kubernetes-bootstrap) | **GitOps (in-cluster)** — Argo CD manifests, Helm values, and Grafana dashboards for the EKS cluster the long-running Jobs run in. |
-| [`tucaken-quota-app`](https://github.com/Nelson-Lamounier/tucaken-quota-app) | **Billing / quota** — Stripe-backed billing + quota enforcement for the public chatbot path. |
 
 Cross-repo migration artefacts that have landed in this repo's
 [docs/incoming/](docs/incoming/) but originate from `tucaken-infra`
