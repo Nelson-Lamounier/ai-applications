@@ -187,10 +187,15 @@ export class RetrievalProbe implements IRetrievalProbe {
                     const source = sample[q.sourceIndex];
                     if (!source) continue;
                     const embedding = await args.embedder.embed(q.question);
+                    // Hybrid (vector + BM25 RRF) mirrors the live chatbot chunk
+                    // layer, so this score reflects real retrieval quality rather
+                    // than pure cosine. queryText drives the BM25 leg.
                     const results = await args.vectorStore.querySimilar({
                         userId:         args.userId,
                         repoFullName:   args.repoFullName,
                         queryEmbedding: embedding,
+                        queryText:      q.question,
+                        useHybrid:      true,
                         limit:          this.opts.topK,
                     });
                     const candidates: RankCandidate[] = results.map(r => ({
