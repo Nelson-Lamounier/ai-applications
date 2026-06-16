@@ -11,6 +11,44 @@
 - Before deleting any branch, confirm nothing is lost: `git rev-list --count <branch> --not --remotes` must be `0`. If it has unpushed commits, push them to a same-named remote branch first, then delete.
 - When a feature used a git worktree, `git worktree remove` it after the PR merges, then `git worktree prune`. Periodically `git remote prune origin` to drop stale remote-tracking refs.
 
+## Language and writing style
+
+- Write **all** prose in **English (UK)** — documentation, README files, code
+  comments, commit bodies, PR descriptions, and user-facing copy.
+- Use UK spelling: `-ise`/`-isation` (organise, optimise), `-our` (colour,
+  behaviour), `-re` (centre), doubled `-ll-` (modelled, labelled). Not US forms.
+- **No non-ASCII diacritics** in prose or identifiers. Write `resume`, not
+  `résumé`; `cafe`, not `café`. The codebase term for the generated job document
+  is **`resume`** (matches `resumeBullets`, `tailoredResumeData`,
+  `resume-import-processor`) — keep docs consistent with it.
+- Never assert a technical fact you have not verified. Check the code and, for
+  infrastructure claims (DB engine, cluster type, vector store, region,
+  resource names), the **live AWS account** before writing it. Do not copy
+  forward stale claims from existing docs.
+
+## README.md authoring (root files)
+
+The project case-study generator reads each repo's **root `README.md`** as
+ground-truth `productContext` (`applications/shared/src/projects/case-study-loader.ts`).
+It takes only the **first ~1,400 characters per repo, top-down** (ordered by
+`chunk_index`, no section search) and uses them for the case study's tagline +
+first pitch paragraph. Position beats completeness — write root READMEs for that.
+
+- **Lead with the product, above the fold.** The first ~800 characters must
+  answer: **what** the product is, **who** it's for, **the problem** it solves,
+  and **this repo's role** in the product. Everything a recruiter needs to
+  understand the product belongs here, before any stack or architecture detail.
+- **Tech depth goes below the fold.** Stack, decisions, challenges, and
+  architecture are grounded by the generator from commits/PRs/code — they do not
+  need to be in the README head and do not shape the pitch. Keep them for human
+  readers, lower down.
+- **Multi-repo projects:** each member repo's root README head must state *that
+  repo's role in the product* (the heads are concatenated), e.g. "the AWS
+  infrastructure for X — EKS, observability, delivery".
+- **Verify every claim** in the README against the code and the live account
+  (see the language section). A README that misstates the stack poisons the
+  generated case study.
+
 ## Security and processing guardrails
 
 - Enforce `DRY_RUN` at the tool-dispatch boundary. Prompt wording is not a safety control; any write tool must be listed in `WRITE_TOOLS` and blocked before the MCP Gateway is called.
