@@ -2,18 +2,9 @@
 
 # ai-applications
 
-Production AI/ML platform on AWS Bedrock — TypeScript, AWS CDK, Aurora
-Postgres + pgvector, Pinecone, Redis cluster, Kubernetes (self-managed),
-and a multi-agent synthesis pipeline. Powers the chatbot, job
-strategist, article pipeline, ingestion, self-healing agent, and
-deterministic tech extractor that back
-[nelsonlamounier.com](https://nelsonlamounier.com).
-
-## The product it powers — Tucaken
-
-This is the AI/ML backend for **Tucaken, a SaaS that turns a developer's real
-code into a job-tailored, evidence-backed résumé.** A job-seeker connects their
-GitHub account; Tucaken verifies which skills they can actually prove from their
+**The AI/ML backend for Tucaken — a SaaS that turns a developer's real code into
+a job-tailored, evidence-backed résumé.** A job-seeker connects their GitHub
+account; Tucaken verifies which skills they can actually prove from their
 repositories, then — given a specific job description — generates a résumé
 tailored to that role using only skills the candidate can defend in an interview.
 
@@ -28,9 +19,19 @@ commits, PRs), reads each job description into a canonical required-skill list,
 assesses the candidate's verified evidence against it (verified / partial / gap),
 and writes a tailored résumé through a multi-agent Bedrock pipeline.
 
-The user-facing web app, dashboard, and authenticated API live in the sibling
-**`tucaken-app`** repo; this repo runs the ingestion, skill-evidence extraction,
-JD-strategist, résumé synthesis, and project case-study generation it dispatches.
+**This repo's role:** the AI/ML backend — GitHub ingestion, skill-evidence
+extraction, the JD-strategist, multi-agent résumé synthesis, and project
+case-study generation. The user-facing web app, dashboard, and authenticated API
+live in the sibling **`tucaken-app`** repo, which dispatches jobs to this backend
+and renders the results.
+
+## Under the hood
+
+Production AI/ML platform on AWS Bedrock — TypeScript, AWS CDK, Aurora Postgres +
+pgvector, Pinecone, Redis cluster, Kubernetes (self-managed), and a multi-agent
+synthesis pipeline. Powers the chatbot, job strategist, article pipeline,
+ingestion, self-healing agent, and deterministic tech extractor that also back
+[nelsonlamounier.com](https://nelsonlamounier.com).
 
 ## What it does
 
