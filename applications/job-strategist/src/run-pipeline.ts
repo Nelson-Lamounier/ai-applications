@@ -329,7 +329,7 @@ export async function main(): Promise<void> {
         cumulativeCostUsd: 0,
         startedAt:         new Date().toISOString(),
         userId:            env.userId,
-        onInvocationComplete: recordInvocationToRds(pool, 'job-strategist'),
+        onInvocationComplete: recordInvocationToRds(pool, 'job-strategist', { applicationId: env.applicationId }),
     };
 
     try {

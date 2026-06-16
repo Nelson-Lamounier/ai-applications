@@ -103,7 +103,7 @@ async function main(): Promise<void> {
             cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
             cumulativeCostUsd: 0,
             userId:            env.userId,
-            onInvocationComplete: recordInvocationToRds(pool, 'project-case-study'),
+            onInvocationComplete: recordInvocationToRds(pool, 'project-case-study', { projectId: env.projectId }),
         };
 
         const verifier = new BedrockGroundingVerifier({ mode: 'flag' });
