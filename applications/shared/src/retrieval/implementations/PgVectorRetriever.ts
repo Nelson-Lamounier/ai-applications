@@ -51,7 +51,7 @@ export class PgVectorRetriever {
 
         const [profilePassages, chunkPassages] = await Promise.all([
             this.queryProfileLayer(userId, vectorStr, maxProfiles, profileWeight, filterByDomain, filterByTechStack),
-            this.queryChunkLayer(userId, vectorStr, maxChunks),
+            this.queryChunkLayer(userId, vectorStr, query, maxChunks),
         ]);
 
         return [...profilePassages, ...chunkPassages].sort((a, b) => b.score - a.score);
@@ -135,8 +135,15 @@ export class PgVectorRetriever {
     private async queryChunkLayer(
         userId:    string,
         vectorStr: string,
+        queryText: string,
         limit:     number,
     ): Promise<RetrievedPassage[]> {
+        // Fuse a wider candidate pool (vector + BM25) via Reciprocal Rank Fusion,
+        // then cut to `limit`. RRF picks WHICH chunks return (recall); the reported
+        // score stays cosine so chunk/profile layers remain comparable on merge.
+        // BM25 (content_tsv) is empty-query tolerant: a non-matching plainto_tsquery
+        // yields no text rows, so it degrades to pure vector — never worse.
+        const candidatePool = Math.min(limit * 4, 50);
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
@@ -149,17 +156,41 @@ export class PgVectorRetriever {
                 metadata:       Record<string, unknown>;
                 score:          number | string;
             }>(
-                `SELECT
+                `WITH vector_ranked AS (
+                    SELECT d.id, ROW_NUMBER() OVER (ORDER BY d.embedding <=> $2::vector) AS vrank
+                    FROM document_embeddings d
+                    WHERE d.user_id = $1::uuid
+                    ORDER BY d.embedding <=> $2::vector
+                    LIMIT $4
+                ),
+                text_ranked AS (
+                    SELECT d.id, ROW_NUMBER() OVER (
+                        ORDER BY ts_rank(d.content_tsv, plainto_tsquery('english', $3)) DESC
+                    ) AS trank
+                    FROM document_embeddings d
+                    WHERE d.user_id = $1::uuid
+                      AND d.content_tsv @@ plainto_tsquery('english', $3)
+                    ORDER BY ts_rank(d.content_tsv, plainto_tsquery('english', $3)) DESC
+                    LIMIT $4
+                ),
+                rrf AS (
+                    SELECT COALESCE(v.id, t.id) AS id,
+                           COALESCE(1.0 / (60 + v.vrank), 0.0)
+                             + COALESCE(1.0 / (60 + t.trank), 0.0) AS rrf_score
+                    FROM vector_ranked v
+                    FULL OUTER JOIN text_ranked t ON v.id = t.id
+                )
+                SELECT
                     d.content,
                     d.repo_full_name,
                     d.file_path,
                     d.metadata,
                     1 - (d.embedding <=> $2::vector) AS score
-                 FROM document_embeddings d
-                WHERE d.user_id = $1::uuid
-                ORDER BY d.embedding <=> $2::vector
-                LIMIT $3`,
-                [userId, vectorStr, limit],
+                 FROM rrf r
+                 JOIN document_embeddings d ON d.id = r.id
+                ORDER BY r.rrf_score DESC
+                LIMIT $5`,
+                [userId, vectorStr, queryText, candidatePool, limit],
             );
 
             await client.query('COMMIT');

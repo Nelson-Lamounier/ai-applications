@@ -124,7 +124,9 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
             allowedOrigins: ['http://localhost:3000', 'https://nelsonlamounier.com'],
             rdsSsmPrefix: '/k8s/development/platform-rds',
             rdsCredentialsSecretName: 'k8s-development/platform-rds/credentials',
-            chatbotRetrievalSource: 'bedrock-agent',
+            // Pinecone-backed Bedrock Agent KB decommissioned — dev now reads the
+            // same RDS pgvector store as staging/production (returns chunk text, not refs).
+            chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
         },
         logRetention: logs.RetentionDays.ONE_WEEK,
