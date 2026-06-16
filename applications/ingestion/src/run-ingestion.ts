@@ -464,6 +464,29 @@ async function main(): Promise<void> {
             [env.userId, env.repoFullName, syncType],
         ).catch(() => { /* non-fatal — metric still carries sync_type */ });
 
+        // Append this probe run to history (repo_sync_state only keeps the latest,
+        // overwriting each sync). Copies the just-written breakdown so retrieval
+        // quality is longitudinal — enables same-repo comparison across syncs
+        // without re-running an eval. retrieval_mode reflects the probe strategy
+        // ('hybrid' since the probe queries vector+BM25 RRF). Best-effort.
+        await pgPool.query(
+            `INSERT INTO retrieval_probe_history
+               (user_id, repo_full_name, sync_type, retrieval_mode, sampled,
+                recall_at_3, mrr, mean_top_similarity, score, breakdown)
+             SELECT $1::uuid, $2, $3, 'hybrid',
+                    (retrieval_breakdown->>'sampled')::int,
+                    (retrieval_breakdown->>'recallAt3')::numeric,
+                    (retrieval_breakdown->>'mrr')::numeric,
+                    (retrieval_breakdown->>'meanTopSimilarity')::numeric,
+                    retrieval_score,
+                    retrieval_breakdown
+               FROM repo_sync_state
+              WHERE user_id = $1::uuid AND repo_full_name = $2
+                AND retrieval_breakdown IS NOT NULL
+                AND retrieval_breakdown->>'status' = 'ok'`,
+            [env.userId, env.repoFullName, syncType],
+        ).catch(() => { /* non-fatal — history is best-effort analytics */ });
+
         // The repo is already searchable above. In defer mode, fill `skills` off
         // the critical path now (in-process, no re-embedding). Best-effort.
         if (deferEnrichment && enricher) {

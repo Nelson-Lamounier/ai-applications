@@ -201,7 +201,10 @@ export class RetrievalProbe implements IRetrievalProbe {
                     const candidates: RankCandidate[] = results.map(r => ({
                         filePath:   r.filePath,
                         chunkIndex: r.chunkIndex,
-                        similarity: r.similarity,
+                        // Hybrid puts the RRF score in `similarity`; use the raw
+                        // `cosine` field so meanTopSimilarity stays an absolute
+                        // [0,1] magnitude. Order (hence rank/recall) is unaffected.
+                        similarity: r.cosine,
                     }));
                     perQuestion.push({
                         sourceIndex:   q.sourceIndex,
