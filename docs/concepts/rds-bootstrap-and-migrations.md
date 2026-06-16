@@ -15,25 +15,31 @@ updated: 2026-06-16
 All RDS PostgreSQL schema is created by the `platform-rds-bootstrap` service — a
 one-shot Kubernetes Job that applies a base DDL block and then every numbered
 migration file in order. It is the single source of truth for the database schema.
-The model is **re-apply-every-boot, idempotent** — there is no migration ledger;
-see [ADR 0009](../decisions/0009-idempotent-re-apply-bootstrap.md) for that
-decision and its trade-offs.
+Each migration is applied **exactly once**, tracked by a checksummed
+`schema_migrations` ledger
+([ADR 0010](../decisions/0010-checksummed-migration-ledger.md)). The earlier
+re-apply-every-boot model and why it was replaced are recorded in
+[ADR 0009](../decisions/0009-idempotent-re-apply-bootstrap.md) (superseded).
 
 ## How tables are created
 
-`runBootstrap(pool)` does two things, in order
-([bootstrap.ts:323-335](../../applications/platform-rds-bootstrap/src/bootstrap.ts#L323-L335)):
+`runBootstrap(pool)` delegates to `applyMigrations(client)`, which
+([bootstrap.ts](../../applications/platform-rds-bootstrap/src/bootstrap.ts)):
 
 1. Applies a single base **DDL** string that creates the core tables, extensions
    (`pgvector`, `uuid-ossp`), and the `tucaken_app` role
-   ([bootstrap.ts:24-293](../../applications/platform-rds-bootstrap/src/bootstrap.ts#L24-L293)).
-2. Loads every `.sql` in `migrations/` and applies each:
+   ([bootstrap.ts:24-293](../../applications/platform-rds-bootstrap/src/bootstrap.ts#L24-L293)),
+   and ensures the `schema_migrations` ledger table.
+2. Loads every `.sql` in `migrations/` and, for each, consults the ledger:
 
 ```ts
-await client.query(DDL);
-const migrations = loadMigrations();      // readdir + .sql + .sort()
+const ledger = await loadLedger(client);              // name → checksum
 for (const { name, sql } of migrations) {
-    await client.query(sql);              // applied in lexical order, no ledger
+    const decision = decideMigration(checksum(sql), ledger.get(name));
+    if (decision === 'skip')   continue;              // already applied, unchanged
+    if (decision === 'reject') throw new Error(...);  // edited historical migration
+    await client.query(sql);                          // apply once…
+    await recordMigration(client, name, checksum(sql)); // …then record
 }
 ```
 
@@ -41,18 +47,17 @@ for (const { name, sql } of migrations) {
 so the numeric prefix (`001_…`, `002_…`, … `081_…`) defines apply order
 ([bootstrap.ts:295-307](../../applications/platform-rds-bootstrap/src/bootstrap.ts#L295-L307)).
 
-## Idempotence is in the SQL, not the runner
+## The ledger — apply once, reject edited history
 
-There is no `schema_migrations` table and no checksum tracking — every migration is
-applied on every boot. Correctness depends entirely on each file being idempotent:
-`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `DROP POLICY IF EXISTS` +
-`CREATE POLICY`, and `DO $$ … IF EXISTS … END$$` guards. Two migrations record the
-model explicitly
-([030_projects.sql:22](../../applications/platform-rds-bootstrap/migrations/030_projects.sql#L22),
-[044_enable_project_features.sql:10](../../applications/platform-rds-bootstrap/migrations/044_enable_project_features.sql#L10)).
-The risk this carries (a non-idempotent migration re-running, a changed historical
-migration going undetected) is the subject of
-[ADR 0009](../decisions/0009-idempotent-re-apply-bootstrap.md).
+`schema_migrations(name PRIMARY KEY, checksum, applied_at)` records every applied
+migration by name + SHA-256 of its SQL. The pure `decideMigration()` decides per
+file: never-applied → **apply**; applied with the same checksum → **skip**; applied
+with a different checksum → **reject** (a historical migration was edited — add a
+new one instead). When the ledger is adopted on a database the old runner already
+populated, the existing migrations are **baselined** (recorded as applied without
+re-running them), so a non-idempotent historical migration never re-runs — see
+[ADR 0010](../decisions/0010-checksummed-migration-ledger.md). Migrations remain
+written idempotently (`CREATE TABLE IF NOT EXISTS`, etc.) as defence in depth.
 
 ## Where the schema lives
 
@@ -89,17 +94,19 @@ the run is idempotent, re-running it is safe.
 
 ## Tradeoffs
 
-A re-apply-every-boot runner has zero ledger state to drift or repair, and a fresh
-DB and an existing DB take the identical code path. The cost is that every
-migration must stay perfectly idempotent forever, boot time grows with the file
-count, and an accidental edit to an old migration is re-applied silently — the
-trade [ADR 0009](../decisions/0009-idempotent-re-apply-bootstrap.md) records.
+The checksummed ledger applies each migration once, makes data-only migrations
+safe, and turns an accidental edit to a shipped migration into a clear error
+instead of a silent re-apply. The cost is ledger state to keep with the DB and a
+one-time baseline on adoption — both handled by the runner. The full trade is in
+[ADR 0010](../decisions/0010-checksummed-migration-ledger.md); the prior
+no-ledger model it replaced is [ADR 0009](../decisions/0009-idempotent-re-apply-bootstrap.md).
 
 ## Related concepts
 
 - [user-scoped-tables](user-scoped-tables.md) — what the schema contains
 - [per-transaction-rls](../patterns/per-transaction-rls.md) — how user isolation is enforced
-- [ADR 0009 — idempotent re-apply bootstrap](../decisions/0009-idempotent-re-apply-bootstrap.md)
+- [ADR 0010 — checksummed migration ledger](../decisions/0010-checksummed-migration-ledger.md)
+- [ADR 0009 — idempotent re-apply bootstrap](../decisions/0009-idempotent-re-apply-bootstrap.md) (superseded)
 
 <!--
 Evidence trail (auto-generated):

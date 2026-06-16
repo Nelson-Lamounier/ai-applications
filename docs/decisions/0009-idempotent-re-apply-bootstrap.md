@@ -12,12 +12,11 @@ updated: 2026-06-16
 
 ## Status
 
-**Accepted (as-is) — remediation recommended.** The bootstrap re-applies every
-migration on every run with no ledger; correctness rests on per-file idempotence
-([bootstrap.ts:323-335](../../applications/platform-rds-bootstrap/src/bootstrap.ts#L323-L335)).
-This **diverges from the repository rule** ("Numbered SQL migration runners must
-use a ledger with checksums and must reject changed historical migrations").
-See *Consequences* for the recommended move to a checksummed ledger.
+**Superseded by [ADR 0010 — checksummed migration ledger](0010-checksummed-migration-ledger.md).**
+This ADR records the original no-ledger, re-apply-every-boot model and why it was a
+risk (it diverged from the repository rule requiring a checksummed ledger). The
+remediation described below has been implemented — the runner now uses a
+`schema_migrations` ledger. Kept for the historical record.
 
 ## Context
 
