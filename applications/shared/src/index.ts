@@ -560,3 +560,15 @@ export {
     buildEvidenceStamp,
 } from './projects/index.js';
 export type { EvidenceStamp, RepoSignals } from './projects/index.js';
+
+// Code-grounded project component kinds + confirmed-project refresh.
+export {
+    classifyComponentKind,
+    componentNameFor,
+    regroupComponentsByKind,
+    applyGroundedComponentKinds,
+    loadRepoRoleSignals,
+    extractRoleSignals,
+    recomputeConfirmedProjectComponents,
+} from './projects/index.js';
+export type { RepoRoleSignals, ConfirmedRefreshSummary } from './projects/index.js';

@@ -30,14 +30,23 @@ export async function recomputeConfirmedProjectComponents(
     client: PoolClient,
     userId: string,
     signalsById: ReadonlyMap<string, RepoRoleSignals>,
+    opts: { projectId?: string } = {},
 ): Promise<ConfirmedRefreshSummary> {
+    // Scope to one project when given (e.g. a single-project regenerate), else
+    // refresh every confirmed project for the user.
+    const params: unknown[] = [userId];
+    let scope = '';
+    if (opts.projectId) {
+        params.push(opts.projectId);
+        scope = ` AND p.id = $${params.length}`;
+    }
     const links = await client.query<{ project_id: string; repository_id: string }>(
         `SELECT p.id AS project_id, pr.repository_id
            FROM projects p
            JOIN project_components pc  ON pc.project_id = p.id
            JOIN project_repositories pr ON pr.project_component_id = pc.id
-          WHERE p.user_id = $1 AND p.is_user_confirmed = TRUE`,
-        [userId],
+          WHERE p.user_id = $1 AND p.is_user_confirmed = TRUE${scope}`,
+        params,
     );
 
     const repoIdsByProject = new Map<string, string[]>();
