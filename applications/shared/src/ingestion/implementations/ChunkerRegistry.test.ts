@@ -213,20 +213,45 @@ describe('ChunkerRegistry', () => {
             expect(chunks[0].heading).toBe('# Heading');
         });
 
-        it('handles .ts files with DefaultChunker', () => {
+        it('handles .ts files with the structure-aware CodeChunker', () => {
             const chunks = registry.chunk(
                 'export const x = 1;\nexport const y = 2;',
                 'src/index.ts',
             );
             expect(chunks.length).toBeGreaterThan(0);
             expect(chunks[0].fileType).toBe('ts');
-            // DefaultChunker does not set heading
+            expect(chunks[0].metadata?.chunkStrategy).toBe('code-structure');
+            // CodeChunker does not set heading
             expect(chunks[0].heading).toBeUndefined();
         });
 
-        it('handles .json files with DefaultChunker', () => {
+        it('handles .py files with the structure-aware CodeChunker', () => {
+            const chunks = registry.chunk(
+                'def foo():\n    return 1\n',
+                'scripts/run.py',
+            );
+            expect(chunks[0].fileType).toBe('py');
+            expect(chunks[0].metadata?.chunkStrategy).toBe('code-structure');
+        });
+
+        it('handles .json files with DefaultChunker (not code-aware)', () => {
             const chunks = registry.chunk('{ "name": "portfolio" }', 'package.json');
             expect(chunks[0].fileType).toBe('json');
+            expect(chunks[0].metadata?.chunkStrategy).toBeUndefined();
+        });
+
+        it('stamps metadata.fileClass on every chunk regardless of chunker', () => {
+            const src = registry.chunk('export const x = 1;', 'src/index.ts');
+            expect(src[0].metadata?.fileClass).toBe('source');
+
+            const test = registry.chunk('export const x = 1;', 'src/index.test.ts');
+            expect(test[0].metadata?.fileClass).toBe('test');
+
+            const iac = registry.chunk('resource "aws_s3_bucket" "b" {}', 'infra/main.tf');
+            expect(iac[0].metadata?.fileClass).toBe('iac');
+
+            const doc = registry.chunk('# Title\n\nBody long enough to chunk.', 'README.md');
+            expect(doc[0].metadata?.fileClass).toBe('docs');
         });
 
         it('handles .mdx files with MarkdownChunker', () => {

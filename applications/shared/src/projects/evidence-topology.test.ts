@@ -40,6 +40,46 @@ describe('deriveEvidenceTopology — package.json scripts (manifest evidence)', 
     });
 });
 
+describe('deriveEvidenceTopology — primary language', () => {
+    it('picks the dominant source language by file count', () => {
+        const t = deriveEvidenceTopology(
+            files('src/a.ts', 'src/b.ts', 'src/c.ts', 'scripts/x.py', 'README.md'),
+            [null],
+        );
+        expect(t.primary_language).toBe('TypeScript');
+        expect(t.language_breakdown).toMatchObject({ TypeScript: 3, Python: 1 });
+    });
+
+    it('ignores docs/config/data files when choosing the language', () => {
+        const t = deriveEvidenceTopology(
+            files('main.go', 'go.mod', 'README.md', 'config.yaml', 'data/seed.csv'),
+            [null],
+        );
+        expect(t.primary_language).toBe('Go');
+        expect(t.language_breakdown.Go).toBe(1);
+    });
+
+    it('maps several ecosystems (Rust, Java, C#, HCL, SQL)', () => {
+        const t = deriveEvidenceTopology(
+            files('lib.rs', 'lib2.rs', 'App.java', 'Program.cs', 'main.tf', 'q.sql'),
+            [null],
+        );
+        expect(t.primary_language).toBe('Rust');
+        expect(t.language_breakdown).toMatchObject({ Rust: 2, Java: 1, 'C#': 1, HCL: 1, SQL: 1 });
+    });
+
+    it('returns null primary_language for a docs-only repo', () => {
+        const t = deriveEvidenceTopology(files('README.md', 'docs/x.md'), [null]);
+        expect(t.primary_language).toBeNull();
+        expect(t.language_breakdown).toEqual({});
+    });
+
+    it('breaks ties deterministically (alphabetical)', () => {
+        const t = deriveEvidenceTopology(files('a.go', 'b.py'), [null]);
+        expect(t.primary_language).toBe('Go'); // Go < Python
+    });
+});
+
 describe('deriveEvidenceTopology — migrations across ALL DB ecosystems', () => {
     const cases: Array<[string, ReturnType<typeof files>, Manifest, string]> = [
         ['raw SQL', files('db/migrations/001_init.sql'), null, 'sql-migrations'],
