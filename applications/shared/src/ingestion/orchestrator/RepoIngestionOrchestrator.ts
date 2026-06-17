@@ -25,7 +25,7 @@
 import type { IngestionReport, RawChunk } from '../../rds/types.js';
 import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
 import type { IFileFilter }   from '../interfaces/IFileFilter.js';
-import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoFile }  from '../interfaces/IRepoAdapter.js';
+import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoFile, CommitDetail }  from '../interfaces/IRepoAdapter.js';
 import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
 import { deriveRepoSignals }  from '../../projects/repo-signals.js';
@@ -33,6 +33,14 @@ import { deriveEvidenceTopology } from '../../projects/evidence-topology.js';
 
 /** Cap on package.json manifests fetched per repo for evidence-topology (monorepo-safe). */
 const MAX_PACKAGE_JSON_FETCHES = 25;
+
+/** Hard cap on per-commit detail (diff) fetches per ingestion run. */
+const MAX_COMMIT_DETAILS = (() => {
+    const n = parseInt(process.env.MAX_COMMIT_DETAILS ?? '', 10);
+    return Number.isFinite(n) && n >= 0 ? n : 500;
+})();
+/** Bounded concurrency for per-commit detail fetches (GitHub secondary-limit safe). */
+const COMMIT_DETAIL_CONCURRENCY = 6;
 
 /**
  * Bounded concurrency for GitHub file fetches. Override via
@@ -69,6 +77,10 @@ export interface CommitWatermarkStore {
 export interface RepoActivityStore {
     upsertCommits(userId: string, repositoryId: string, repoFullName: string, commits: readonly RepoCommit[]): Promise<number>;
     upsertPullRequests(userId: string, repositoryId: string, repoFullName: string, pulls: readonly RepoPullRequest[]): Promise<number>;
+    /** Of the given shas, those still needing a per-commit detail fetch. Optional. */
+    selectShasMissingStats?(userId: string, repoFullName: string, shas: string[]): Promise<string[]>;
+    /** Persist per-commit stats + per-file diffs. Optional. */
+    upsertCommitDetails?(userId: string, repositoryId: string, repoFullName: string, details: readonly CommitDetail[]): Promise<number>;
 }
 
 export interface OrchestratorOptions {
@@ -330,6 +342,8 @@ export class RepoIngestionOrchestrator {
             );
             if (this.activityStore && this.repositoryId) {
                 await this.activityStore.upsertCommits(userId, this.repositoryId, repoFullName, commits);
+                // Per-commit diffs/stats — best-effort, never aborts the run.
+                await this.fetchAndPersistCommitDetails(userId, repoFullName, commits);
             }
             const chunks = this.commitChunker.chunkWeekly(commits);
             console.info(
@@ -344,6 +358,76 @@ export class RepoIngestionOrchestrator {
             );
             return [];
         }
+    }
+
+    /**
+     * Fetch per-commit detail (stats + diffs) for the commits this run that do
+     * not yet have stats, and persist it. Bounded concurrency + a hard cap keep
+     * GitHub API cost predictable; already-detailed commits are skipped so a
+     * resync never re-pulls diffs. Best-effort throughout — a missing adapter
+     * capability, a store without the optional methods, or a per-commit failure
+     * logs and continues; file/commit ingestion is never aborted.
+     */
+    private async fetchAndPersistCommitDetails(
+        userId:       string,
+        repoFullName: string,
+        commits:      readonly RepoCommit[],
+    ): Promise<void> {
+        const store = this.activityStore;
+        if (!store || !this.repositoryId) return;
+        if (typeof this.repoAdapter.getCommitDetail !== 'function') return;
+        if (!store.selectShasMissingStats || !store.upsertCommitDetails) return;
+
+        try {
+            const missing = await store.selectShasMissingStats(
+                userId, repoFullName, commits.map((c) => c.sha),
+            );
+            const targets = missing.slice(0, MAX_COMMIT_DETAILS);
+            if (missing.length > targets.length) {
+                console.info(
+                    `[RepoIngestionOrchestrator] ${repoFullName}: commit-detail fetch capped at ` +
+                    `${MAX_COMMIT_DETAILS} (${missing.length - targets.length} deferred to a later sync)`,
+                );
+            }
+            if (targets.length === 0) return;
+
+            const details = await this.fetchDetailsBounded(repoFullName, targets);
+            if (details.length > 0) {
+                await store.upsertCommitDetails(userId, this.repositoryId, repoFullName, details);
+            }
+        } catch (err) {
+            console.warn(
+                `[RepoIngestionOrchestrator] commit-detail ingestion skipped for ${repoFullName}:`,
+                err,
+            );
+        }
+    }
+
+    /** Fetch commit detail for each sha through a bounded worker pool (order-free). */
+    private async fetchDetailsBounded(
+        repoFullName: string,
+        shas:         string[],
+    ): Promise<CommitDetail[]> {
+        const getDetail = this.repoAdapter.getCommitDetail;
+        if (!getDetail) return [];
+
+        const out: (CommitDetail | null)[] = new Array(shas.length).fill(null);
+        let next = 0;
+        const worker = async (): Promise<void> => {
+            for (let i = next++; i < shas.length; i = next++) {
+                try {
+                    out[i] = await getDetail.call(this.repoAdapter, repoFullName, shas[i]);
+                } catch (err) {
+                    console.error(
+                        `[RepoIngestionOrchestrator] commit detail ${shas[i]} failed:`, err,
+                    );
+                }
+            }
+        };
+        await Promise.all(
+            Array.from({ length: Math.min(COMMIT_DETAIL_CONCURRENCY, shas.length) }, worker),
+        );
+        return out.filter((d): d is CommitDetail => d !== null);
     }
 
     /**

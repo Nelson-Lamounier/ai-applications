@@ -33,6 +33,9 @@ import type {
     RepoCommit,
     RepoFile,
     RepoPullRequest,
+    CommitDetail,
+    CommitFileChange,
+    GetCommitDetailOptions,
 } from '../interfaces/IRepoAdapter.js';
 
 import { RepoNotFoundError, GitHubResponseShapeError } from './github-errors.js';
@@ -80,6 +83,21 @@ interface GitHubCommitListItem {
     };
 }
 
+/** Subset of GitHub's commit-detail (`/commits/{sha}`) shape we consume. */
+interface GitHubCommitDetail {
+    sha?:   string;
+    stats?: { additions?: number; deletions?: number; total?: number };
+    files?: Array<{
+        filename:           string;
+        status:             string;
+        previous_filename?: string;
+        additions?:         number;
+        deletions?:         number;
+        changes?:           number;
+        patch?:             string;
+    }>;
+}
+
 /** Subset of GitHub's pull-request-list-item shape we consume. */
 interface GitHubPullRequestListItem {
     number:       number;
@@ -113,6 +131,15 @@ const SKIP_DIRS = new Set([
     'coverage',
     '.git',
 ]);
+
+/** Default per-file patch cap (64 KiB) — larger diffs are dropped, stats kept. */
+const DEFAULT_MAX_PATCH_BYTES = 64 * 1024;
+/** Default per-commit total kept-patch budget (512 KiB). */
+const DEFAULT_MAX_TOTAL_PATCH_BYTES = 512 * 1024;
+/** Per-request timeout — a hung GitHub socket must not stall the Job. */
+const REQUEST_TIMEOUT_MS = 20_000;
+/** Hard cap on a single buffered response body (25 MiB) — abort pathological payloads. */
+const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 
 /** Max redirect hops `get` will follow before giving up (GitHub renames 301 once). */
 const MAX_REDIRECTS = 3;
@@ -429,6 +456,61 @@ export class GitHubAdapter implements IRepoAdapter {
     }
 
     // =========================================================================
+    // IRepoAdapter.getCommitDetail
+    // =========================================================================
+
+    /**
+     * Fetch one commit's detail (`/commits/{sha}`) — the endpoint that carries
+     * aggregate stats and per-file diffs the list endpoint omits. Patches are
+     * size-capped: a single patch over `maxPatchBytes`, or any patch that would
+     * push the commit's kept patches past `maxTotalPatchBytes`, is dropped
+     * (stored null + `patchTruncated`). Stats are always kept.
+     */
+    async getCommitDetail(
+        repoFullName: string,
+        sha:          string,
+        opts:         GetCommitDetailOptions = {},
+    ): Promise<CommitDetail> {
+        const maxPatch = opts.maxPatchBytes ?? DEFAULT_MAX_PATCH_BYTES;
+        const maxTotal = opts.maxTotalPatchBytes ?? DEFAULT_MAX_TOTAL_PATCH_BYTES;
+
+        const detail = await this.get<GitHubCommitDetail>(
+            `/repos/${repoFullName}/commits/${sha}`,
+        );
+
+        let totalKept = 0;
+        const files: CommitFileChange[] = (detail.files ?? []).map((f) => {
+            let patch: string | null = f.patch ?? null;
+            let patchTruncated = false;
+            if (patch !== null) {
+                const bytes = Buffer.byteLength(patch, 'utf-8');
+                if (bytes > maxPatch || totalKept + bytes > maxTotal) {
+                    patch = null;
+                    patchTruncated = true;
+                } else {
+                    totalKept += bytes;
+                }
+            }
+            return {
+                filePath:         f.filename,
+                status:           f.status,
+                previousFilename: f.previous_filename,
+                additions:        f.additions ?? 0,
+                deletions:        f.deletions ?? 0,
+                changes:          f.changes ?? 0,
+                patch,
+                patchTruncated,
+            };
+        });
+
+        // Prefer the commit's own stats; fall back to summing file stats.
+        const additions = detail.stats?.additions ?? files.reduce((n, f) => n + f.additions, 0);
+        const deletions = detail.stats?.deletions ?? files.reduce((n, f) => n + f.deletions, 0);
+
+        return { sha: detail.sha ?? sha, additions, deletions, filesChanged: files.length, files };
+    }
+
+    // =========================================================================
     // GitHubAdapter.getRepoMeta (not part of IRepoAdapter — profile-specific)
     // =========================================================================
 
@@ -537,9 +619,17 @@ export class GitHubAdapter implements IRepoAdapter {
 
             const req = https.request(options, res => {
                 const chunks: Buffer[] = [];
+                let received = 0;
 
                 res.on('error', reject);
-                res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                res.on('data', (chunk: Buffer) => {
+                    received += chunk.length;
+                    if (received > MAX_RESPONSE_BYTES) {
+                        req.destroy(new Error(`GitHub API ${path}: response exceeded ${MAX_RESPONSE_BYTES} bytes`));
+                        return;
+                    }
+                    chunks.push(chunk);
+                });
                 res.on('end', () => {
                     const status = res.statusCode ?? 0;
                     const body = Buffer.concat(chunks).toString('utf-8');
@@ -578,6 +668,9 @@ export class GitHubAdapter implements IRepoAdapter {
             });
 
             req.on('error', reject);
+            req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+                req.destroy(new Error(`GitHub API ${path}: request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+            });
             req.end();
         });
     }

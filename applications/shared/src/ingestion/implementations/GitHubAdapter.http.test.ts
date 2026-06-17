@@ -34,7 +34,14 @@ jest.mock('https', () => ({
             const next = responseQueue.shift() ?? { statusCode: 500, headers: {}, body: '' };
             res.statusCode = next.statusCode;
             res.headers = next.headers;
-            const req = new EventEmitter() as EventEmitter & { end: () => void };
+            const req = new EventEmitter() as EventEmitter & {
+                end: () => void;
+                setTimeout: (ms: number, cb?: () => void) => typeof req;
+                destroy: (err?: Error) => typeof req;
+            };
+            // Model the real ClientRequest surface the adapter uses.
+            req.setTimeout = () => req;
+            req.destroy = (err?: Error) => { if (err) req.emit('error', err); return req; };
             req.end = () => {
                 // Emit asynchronously, like the real socket.
                 setImmediate(() => {

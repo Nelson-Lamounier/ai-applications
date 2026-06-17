@@ -79,6 +79,41 @@ export interface ListPullRequestsOptions {
     readonly since?: string;
 }
 
+/** One file's change within a commit (from the per-commit detail endpoint). */
+export interface CommitFileChange {
+    readonly filePath:          string;
+    /** GitHub status: added|removed|modified|renamed|copied|changed|unchanged. */
+    readonly status:            string;
+    /** Prior path when the file was renamed. */
+    readonly previousFilename?: string;
+    readonly additions:         number;
+    readonly deletions:         number;
+    readonly changes:           number;
+    /**
+     * Unified diff hunk. `null` when GitHub omitted it (binary/too large) OR
+     * when our own size cap dropped it — distinguished by `patchTruncated`.
+     */
+    readonly patch:             string | null;
+    /** True only when WE dropped a patch GitHub provided (over the size cap). */
+    readonly patchTruncated:    boolean;
+}
+
+/** Per-commit detail: aggregate stats + per-file changes. */
+export interface CommitDetail {
+    readonly sha:          string;
+    readonly additions:    number;
+    readonly deletions:    number;
+    readonly filesChanged: number;
+    readonly files:        CommitFileChange[];
+}
+
+export interface GetCommitDetailOptions {
+    /** Drop any single file's patch larger than this. Default 64 KiB. */
+    readonly maxPatchBytes?:      number;
+    /** Stop storing patches once a commit's kept patches exceed this. Default 512 KiB. */
+    readonly maxTotalPatchBytes?: number;
+}
+
 export interface IRepoAdapter {
     /**
      * List all files in a repository at the default branch.
@@ -109,4 +144,11 @@ export interface IRepoAdapter {
      * empty array if the source has no concept of pull requests.
      */
     listPullRequests?(repoFullName: string, opts?: ListPullRequestsOptions): Promise<RepoPullRequest[]>;
+
+    /**
+     * Fetch per-commit detail (stats + per-file diffs) from the source's
+     * detail endpoint. Optional — adapters without a concept of diffs omit it.
+     * Patches are size-capped per {@link GetCommitDetailOptions}.
+     */
+    getCommitDetail?(repoFullName: string, sha: string, opts?: GetCommitDetailOptions): Promise<CommitDetail>;
 }
