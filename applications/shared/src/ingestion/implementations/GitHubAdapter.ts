@@ -331,16 +331,14 @@ export class GitHubAdapter implements IRepoAdapter {
             ];
             if (since) qs.push(`since=${encodeURIComponent(since)}`);
 
-            const batch = await this.get<GitHubCommitListItem[]>(
-                `/repos/${repoFullName}/commits?${qs.join('&')}`,
+            const batch = this.assertArray<GitHubCommitListItem>(
+                await this.get<GitHubCommitListItem[]>(
+                    `/repos/${repoFullName}/commits?${qs.join('&')}`,
+                ),
+                `/repos/${repoFullName}/commits`,
+                'expected an array of commits (repo may be renamed or moved)',
             );
 
-            if (!Array.isArray(batch)) {
-                throw new GitHubResponseShapeError(
-                    `/repos/${repoFullName}/commits`,
-                    'expected an array of commits (repo may be renamed or moved)',
-                );
-            }
             if (batch.length === 0) break;
 
             for (const c of batch) {
@@ -477,8 +475,20 @@ export class GitHubAdapter implements IRepoAdapter {
     }
 
     // =========================================================================
-    // Private — HTTPS request helper
+    // Private — response-shape + HTTPS helpers
     // =========================================================================
+
+    /**
+     * Narrow a GitHub list response to an array, throwing a typed shape error
+     * otherwise. A renamed/moved repo can surface a `{ message, url }` body where
+     * an array was expected; without this guard the caller crashes on iteration.
+     */
+    private assertArray<T>(value: unknown, endpoint: string, detail: string): T[] {
+        if (!Array.isArray(value)) {
+            throw new GitHubResponseShapeError(endpoint, detail);
+        }
+        return value as T[];
+    }
 
     private get<T>(path: string): Promise<T> {
         return this.getWithHops<T>(path, 0);
