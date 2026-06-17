@@ -12,8 +12,10 @@
 
 import type { RawChunk } from '../../rds/types.js';
 import type { IChunker } from '../interfaces/IChunker.js';
+import { CodeChunker } from './CodeChunker.js';
 import { DefaultChunker } from './DefaultChunker.js';
 import { MarkdownChunker } from './MarkdownChunker.js';
+import { classifyFile } from './file-classifier.js';
 
 export class ChunkerRegistry {
     private readonly chunkers: IChunker[];
@@ -39,7 +41,14 @@ export class ChunkerRegistry {
                 `ChunkerRegistry: no chunker registered for file: ${filePath}`,
             );
         }
-        return chunker.chunk(content, filePath);
+        // Stamp the semantic role on every chunk here — the single point all
+        // file chunks pass through — so retrieval can filter/weight by role
+        // without each chunker re-deriving it.
+        const fileClass = classifyFile(filePath);
+        return chunker.chunk(content, filePath).map(c => ({
+            ...c,
+            metadata: { ...c.metadata, fileClass },
+        }));
     }
 
     /** Check whether any registered chunker can handle this path. */
@@ -52,7 +61,9 @@ export class ChunkerRegistry {
      *
      * Registration order is load-bearing:
      *   1. MarkdownChunker — handles .md / .mdx with heading-aware splitting
-     *   2. DefaultChunker  — catch-all, accepts everything else
+     *   2. CodeChunker     — handles source code (.ts/.tsx/.js/.py …) with
+     *                        structure-aware splitting on symbol boundaries
+     *   3. DefaultChunker  — catch-all, accepts everything else
      *
      * DefaultChunker MUST be last. Because its canHandle() always returns true,
      * placing it earlier would prevent any subsequent chunker from being reached.
@@ -60,6 +71,7 @@ export class ChunkerRegistry {
     static withDefaults(): ChunkerRegistry {
         return new ChunkerRegistry([
             new MarkdownChunker(),
+            new CodeChunker(),
             new DefaultChunker(),  // catch-all — must be last
         ]);
     }

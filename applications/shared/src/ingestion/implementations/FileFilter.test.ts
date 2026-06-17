@@ -89,7 +89,6 @@ describe('FileFilter', () => {
             expect(filter.shouldInclude('.agents/workflows/commit-and-deploy.md')).toBe(false);
             expect(filter.shouldInclude('.claude/settings.json')).toBe(false);
             expect(filter.shouldInclude('.codex/config.yaml')).toBe(false);
-            expect(filter.shouldInclude('.github/workflows/ci.yml')).toBe(false);
             expect(filter.shouldInclude('CLAUDE.md')).toBe(false);
             expect(filter.shouldInclude('packages/api/AGENTS.md')).toBe(false);
         });
@@ -105,6 +104,57 @@ describe('FileFilter', () => {
             expect(filter.shouldInclude('applications/shared/src/rds/RdsVectorStore.ts')).toBe(true);
             expect(filter.shouldInclude('README.md')).toBe(true);
             expect(filter.shouldInclude('docs/concepts/architecture.md')).toBe(true);
+        });
+    });
+
+    // =========================================================================
+    // shouldInclude — expanded production-repo coverage (fileClass-laned)
+    // =========================================================================
+    describe('shouldInclude — expanded coverage', () => {
+        const filter = new FileFilter(DEFAULT_FILTER_CONFIG);
+
+        it('includes CI/CD workflows', () => {
+            expect(filter.shouldInclude('.github/workflows/ci.yml')).toBe(true);
+            expect(filter.shouldInclude('.github/workflows/deploy.yaml')).toBe(true);
+        });
+
+        it('still excludes non-workflow .github noise (issue/PR templates)', () => {
+            expect(filter.shouldInclude('.github/ISSUE_TEMPLATE/bug.md')).toBe(false);
+            expect(filter.shouldInclude('.github/PULL_REQUEST_TEMPLATE.md')).toBe(false);
+        });
+
+        it('includes IaC: terraform, Dockerfile, compose', () => {
+            expect(filter.shouldInclude('infra/main.tf')).toBe(true);
+            expect(filter.shouldInclude('env/prod.tfvars')).toBe(true);
+            expect(filter.shouldInclude('Dockerfile')).toBe(true);
+            expect(filter.shouldInclude('docker-compose.yaml')).toBe(true);
+        });
+
+        it('includes database and migration files', () => {
+            expect(filter.shouldInclude('migrations/084_add_index.sql')).toBe(true);
+            expect(filter.shouldInclude('prisma/schema.prisma')).toBe(true);
+        });
+
+        it('includes shell scripts and Makefile', () => {
+            expect(filter.shouldInclude('scripts/deploy.sh')).toBe(true);
+            expect(filter.shouldInclude('Makefile')).toBe(true);
+        });
+
+        it('includes additional source languages', () => {
+            expect(filter.shouldInclude('cmd/server/main.go')).toBe(true);
+            expect(filter.shouldInclude('src/lib.rs')).toBe(true);
+            expect(filter.shouldInclude('app/Service.java')).toBe(true);
+        });
+
+        it('includes test files (now lane-separated by fileClass)', () => {
+            expect(filter.shouldInclude('src/index.test.ts')).toBe(true);
+            expect(filter.shouldInclude('pkg/handler_test.go')).toBe(true);
+        });
+
+        it('still excludes dependencies, build output, and lockfiles', () => {
+            expect(filter.shouldInclude('node_modules/x/index.js')).toBe(false);
+            expect(filter.shouldInclude('dist/index.js')).toBe(false);
+            expect(filter.shouldInclude('yarn.lock')).toBe(false);
         });
     });
 
@@ -232,12 +282,14 @@ describe('FileFilter', () => {
             expect(filter.shouldInclude('src/prompts/strategist-persona.ts')).toBe(false);
         });
 
-        it('excludes build and test artifacts', () => {
+        it('excludes build artifacts and coverage (but not test source)', () => {
             expect(filter.shouldInclude('dist/index.js')).toBe(false);
             expect(filter.shouldInclude('.next/server/app.js')).toBe(false);
-            expect(filter.shouldInclude('src/foo.test.ts')).toBe(false);
             expect(filter.shouldInclude('yarn.lock')).toBe(false);
             expect(filter.shouldInclude('coverage/lcov.info')).toBe(false);
+            // Test SOURCE is now ingested (fileClass='test'); mocks/coverage stay out.
+            expect(filter.shouldInclude('src/foo.test.ts')).toBe(true);
+            expect(filter.shouldInclude('src/__mocks__/db.ts')).toBe(false);
         });
 
         it('excludes type declaration files', () => {

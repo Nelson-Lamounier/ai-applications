@@ -23,10 +23,16 @@ export { DEFAULT_FILTER_CONFIG }       from './implementations/FileFilter.js';
 export { MarkdownChunker }             from './implementations/MarkdownChunker.js';
 export type { MarkdownChunkerConfig }  from './implementations/MarkdownChunker.js';
 
+export { CodeChunker }                 from './implementations/CodeChunker.js';
+export type { CodeChunkerConfig }      from './implementations/CodeChunker.js';
+
 export { DefaultChunker }              from './implementations/DefaultChunker.js';
 export type { DefaultChunkerConfig }   from './implementations/DefaultChunker.js';
 
 export { ChunkerRegistry }             from './implementations/ChunkerRegistry.js';
+
+export { classifyFile }                from './implementations/file-classifier.js';
+export type { FileClass }              from './implementations/file-classifier.js';
 
 export { GitHubAdapter }               from './implementations/GitHubAdapter.js';
 

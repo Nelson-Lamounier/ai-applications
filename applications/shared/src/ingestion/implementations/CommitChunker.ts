@@ -153,6 +153,7 @@ export class CommitChunker {
                 tags,
                 metadata: {
                     ...baseMetadata,
+                    fileClass:                'history',
                     chunk_first_committed_at: bufferStart,
                     chunk_last_committed_at:  lastAt,
                     chunk_shas:               bufferShas,

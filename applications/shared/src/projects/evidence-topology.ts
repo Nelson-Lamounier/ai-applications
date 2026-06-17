@@ -25,6 +25,52 @@ export interface EvidenceTopology {
     readonly migration_tools: string[];
     /** Workspaces/nested-manifest monorepo. */
     readonly is_monorepo: boolean;
+    /**
+     * Dominant source language by file count (Linguist-style, path-only). null
+     * when the repo has no recognised source files (e.g. docs-only). Lets
+     * retrieval weight/filter by a repo's primary language.
+     */
+    readonly primary_language: string | null;
+    /** File-count per recognised source language (excludes docs/config/data). */
+    readonly language_breakdown: Record<string, number>;
+}
+
+/**
+ * Extension → language. Source-bearing files only — docs, manifests, lockfiles,
+ * and data are intentionally excluded so they cannot dominate the language vote.
+ */
+const EXT_LANGUAGE: Record<string, string> = {
+    ts: 'TypeScript', tsx: 'TypeScript', mts: 'TypeScript', cts: 'TypeScript',
+    js: 'JavaScript', jsx: 'JavaScript', mjs: 'JavaScript', cjs: 'JavaScript',
+    py: 'Python', go: 'Go', rs: 'Rust', java: 'Java', kt: 'Kotlin', kts: 'Kotlin',
+    scala: 'Scala', cs: 'C#', cpp: 'C++', cc: 'C++', cxx: 'C++', hpp: 'C++',
+    c: 'C', h: 'C', swift: 'Swift', php: 'PHP', rb: 'Ruby',
+    sh: 'Shell', bash: 'Shell', tf: 'HCL', tfvars: 'HCL', sql: 'SQL',
+};
+
+function extensionOf(filePath: string): string {
+    const base = filePath.split('/').pop() ?? '';
+    const dot = base.lastIndexOf('.');
+    return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
+
+/** Count source files per language and pick the dominant one (ties → alphabetical). */
+function deriveLanguages(paths: readonly string[]): {
+    primary_language: string | null;
+    language_breakdown: Record<string, number>;
+} {
+    const counts: Record<string, number> = {};
+    for (const p of paths) {
+        const lang = EXT_LANGUAGE[extensionOf(p)];
+        if (lang) counts[lang] = (counts[lang] ?? 0) + 1;
+    }
+    const ranked = Object.entries(counts).sort(
+        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+    );
+    return {
+        primary_language: ranked.length > 0 ? ranked[0][0] : null,
+        language_breakdown: counts,
+    };
 }
 
 /** A migration ecosystem: detected by file-path patterns and/or package.json deps. */
@@ -142,6 +188,7 @@ export function deriveEvidenceTopology(
     const migrationTools = detectMigrationTools(paths, unionDepNames(packageJsons));
     const nestedPkgCount = paths.filter((p) => NESTED_PKG_RE.test(p)).length;
     const hasWorkspaceField = packageJsons.some((p) => p?.workspaces != null);
+    const languages = deriveLanguages(paths);
 
     return {
         has_test_script: anyRealScript(packageJsons, 'test'),
@@ -151,5 +198,7 @@ export function deriveEvidenceTopology(
         has_migrations: migrationTools.length > 0,
         migration_tools: migrationTools.toSorted((a, b) => a.localeCompare(b)),
         is_monorepo: nestedPkgCount >= 2 || hasWorkspaceField || paths.some((p) => WORKSPACE_FILE_RE.test(p)),
+        primary_language: languages.primary_language,
+        language_breakdown: languages.language_breakdown,
     };
 }

@@ -98,15 +98,47 @@ export interface FileFilterConfig {
 /** Sensible defaults for a TypeScript/documentation repository. */
 export const DEFAULT_FILTER_CONFIG: FileFilterConfig = {
     include: [
+        // Docs + prose
         '**/*.md',
         '**/*.mdx',
+        // JS/TS family
         '**/*.ts',
         '**/*.tsx',
         '**/*.js',
         '**/*.jsx',
+        '**/*.mts',
+        '**/*.cts',
+        // Other source languages (structure-aware via CodeChunker)
         '**/*.py',
+        '**/*.go',
+        '**/*.rs',
+        '**/*.java',
+        '**/*.kt',
+        '**/*.scala',
+        '**/*.cs',
+        '**/*.cpp',
+        '**/*.cc',
+        '**/*.c',
+        '**/*.h',
+        '**/*.hpp',
+        '**/*.swift',
+        '**/*.php',
+        '**/*.rb',
+        // Config + IaC + CI (lane-separated downstream by fileClass)
         '**/*.yaml',
         '**/*.yml',
+        '**/*.toml',
+        '**/*.tf',
+        '**/*.tfvars',
+        // Database
+        '**/*.sql',
+        '**/*.prisma',
+        // Scripts + containers (extensionless — matched by exact basename)
+        '**/*.sh',
+        '**/*.bash',
+        '**/Dockerfile',
+        '**/*.Dockerfile',
+        '**/Makefile',
         // NOTE: *.json is deliberately NOT embedded — config/manifest JSON is
         // structured noise for prose retrieval (tsconfig, package, eslint). The
         // tech-stack signal from manifests is read directly by the ProfileExtractor,
@@ -127,13 +159,10 @@ export const DEFAULT_FILTER_CONFIG: FileFilterConfig = {
         '**/*.d.ts',
         '**/*.js.map',
 
-        // Test artifacts
+        // Test artifacts. Test SOURCE is now ingested (lane-separated by
+        // fileClass='test' and down-weighted at retrieval) — only coverage
+        // reports and mock fixtures are dropped as noise.
         'coverage/**',
-        '**/*.test.ts',
-        '**/*.test.tsx',
-        '**/*.spec.ts',
-        '**/*.spec.tsx',
-        '**/__tests__/**',
         '**/__mocks__/**',
 
         // Lock files and generated content
@@ -152,7 +181,12 @@ export const DEFAULT_FILTER_CONFIG: FileFilterConfig = {
         '**/.codex/**',
         '**/CLAUDE.md',
         '**/AGENTS.md',
-        '**/.github/**',
+        // .github: keep CI workflows (real delivery evidence), drop the prose
+        // noise (issue/PR templates) that would otherwise read as docs.
+        '**/.github/ISSUE_TEMPLATE/**',
+        '**/.github/PULL_REQUEST_TEMPLATE**',
+        '**/.github/**/*.md',
+        '**/.github/*.md',
         '**/*.plan.md',
         '**/specs/**',
         '**/plans/**',
