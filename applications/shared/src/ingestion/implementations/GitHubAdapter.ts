@@ -395,8 +395,12 @@ export class GitHubAdapter implements IRepoAdapter {
                 `page=${page}`,
             ];
 
-            const batch = await this.get<GitHubPullRequestListItem[]>(
-                `/repos/${repoFullName}/pulls?${qs.join('&')}`,
+            const batch = this.assertArray<GitHubPullRequestListItem>(
+                await this.get<GitHubPullRequestListItem[]>(
+                    `/repos/${repoFullName}/pulls?${qs.join('&')}`,
+                ),
+                `/repos/${repoFullName}/pulls`,
+                'expected an array of pull requests (repo may be renamed or moved)',
             );
 
             if (batch.length === 0) break;
@@ -511,6 +515,7 @@ export class GitHubAdapter implements IRepoAdapter {
             const req = https.request(options, res => {
                 const chunks: Buffer[] = [];
 
+                res.on('error', reject);
                 res.on('data', (chunk: Buffer) => chunks.push(chunk));
                 res.on('end', () => {
                     const status = res.statusCode ?? 0;

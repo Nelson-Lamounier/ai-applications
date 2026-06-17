@@ -101,6 +101,16 @@ describe('GitHubAdapter.listCommits shape guard', () => {
   });
 });
 
+describe('GitHubAdapter.listPullRequests shape guard', () => {
+  it('throws GitHubResponseShapeError when the pulls response is not an array', async () => {
+    const adapter = routedAdapter({
+      '/repos/o/r/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1': { message: 'Moved Permanently', url: 'https://api.github.com/repositories/42' },
+    });
+
+    await expect(adapter.listPullRequests('o/r')).rejects.toBeInstanceOf(GitHubResponseShapeError);
+  });
+});
+
 describe('GitHubAdapter.resolveById', () => {
   it('resolves a repo by immutable GitHub id to its current full_name', async () => {
     const adapter = routedAdapter({
