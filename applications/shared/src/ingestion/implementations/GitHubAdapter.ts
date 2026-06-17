@@ -114,6 +114,20 @@ const SKIP_DIRS = new Set([
     '.git',
 ]);
 
+/** Max redirect hops `get` will follow before giving up (GitHub renames 301 once). */
+const MAX_REDIRECTS = 3;
+
+/** Reduce a redirect Location (absolute api.github.com URL or relative path) to a request path. */
+function redirectPath(location: string): string | null {
+    try {
+        const u = new URL(location);
+        if (u.hostname !== 'api.github.com') return null; // never follow off-host
+        return u.pathname + u.search;
+    } catch {
+        return location.startsWith('/') ? location : `/${location}`;
+    }
+}
+
 // =============================================================================
 // PUBLIC TYPES — GitHubAdapter-specific (not part of IRepoAdapter)
 // =============================================================================
@@ -467,6 +481,10 @@ export class GitHubAdapter implements IRepoAdapter {
     // =========================================================================
 
     private get<T>(path: string): Promise<T> {
+        return this.getWithHops<T>(path, 0);
+    }
+
+    private getWithHops<T>(path: string, hops: number): Promise<T> {
         return new Promise((resolve, reject) => {
             const options = {
                 hostname: this.apiBase,
@@ -485,12 +503,31 @@ export class GitHubAdapter implements IRepoAdapter {
 
                 res.on('data', (chunk: Buffer) => chunks.push(chunk));
                 res.on('end', () => {
+                    const status = res.statusCode ?? 0;
                     const body = Buffer.concat(chunks).toString('utf-8');
 
-                    if (!res.statusCode || res.statusCode >= 400) {
-                        reject(new Error(
-                            `GitHub API ${path} returned ${res.statusCode}: ${body}`,
+                    // GitHub 301s a renamed/moved repo to /repositories/{id}.
+                    if (status >= 300 && status < 400) {
+                        const location = res.headers.location;
+                        const nextPath = location ? redirectPath(location) : null;
+                        if (nextPath && hops < MAX_REDIRECTS) {
+                            resolve(this.getWithHops<T>(nextPath, hops + 1));
+                            return;
+                        }
+                        reject(new GitHubResponseShapeError(
+                            path,
+                            `redirect (${status}) not followed (no usable Location or hop cap reached)`,
                         ));
+                        return;
+                    }
+
+                    if (status === 404) {
+                        reject(new RepoNotFoundError(path));
+                        return;
+                    }
+
+                    if (status >= 400) {
+                        reject(new Error(`GitHub API ${path} returned ${status}: ${body}`));
                         return;
                     }
 
