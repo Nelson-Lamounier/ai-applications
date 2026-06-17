@@ -1,0 +1,37 @@
+-- =============================================================================
+-- 086_drop_legacy_name_unique.sql
+-- =============================================================================
+-- FINAL cutover step of the GitHub repo-rename re-key. Drops the legacy
+-- `(user_id, provider, full_name)` unique on `repositories` now that
+-- `github_repo_id` is the canonical anchor (NOT NULL + unique, set in 085).
+-- After this, full_name is a pure denormalised display label.
+--
+-- *** DEPLOY ORDERING — DESTRUCTIVE, READ BEFORE APPLYING ***
+-- The admin-api connect path (tucaken-app
+-- admin-api/src/routes/github.ts -> connectRepoWithDefaultProject) uses
+-- `INSERT ... ON CONFLICT (user_id, provider, full_name)`. That clause REQUIRES
+-- this constraint. Dropping it before admin-api is flipped to
+-- `ON CONFLICT (user_id, github_repo_id)` makes every repo-connect / resync
+-- INSERT fail at runtime with:
+--   "there is no unique or exclusion constraint matching the ON CONFLICT specification".
+--
+-- Required order:
+--   1. Ship admin-api with the ON CONFLICT target changed to
+--      (user_id, github_repo_id) (the unique index uq_repositories_user_ghid
+--      created in 085 is the replacement target — it exists by the time this runs).
+--   2. THEN apply this migration (086).
+-- Do not deploy 086 until step 1 is live. See the end-to-end runbook.
+--
+-- `repositories_user_id_provider_full_name_key` is Postgres's auto-generated name
+-- for the inline `UNIQUE (user_id, provider, full_name)` on CREATE TABLE
+-- repositories (src/bootstrap.ts) — no migration renames it. IF EXISTS keeps this
+-- idempotent; CONFIRM this exact name against `\d repositories` on the live DB
+-- before deploy in case a manual change diverged the live schema.
+--
+-- Reversible:
+--   ALTER TABLE repositories
+--     ADD CONSTRAINT repositories_user_id_provider_full_name_key
+--     UNIQUE (user_id, provider, full_name);
+-- =============================================================================
+
+ALTER TABLE repositories DROP CONSTRAINT IF EXISTS repositories_user_id_provider_full_name_key;
