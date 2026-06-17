@@ -146,3 +146,68 @@ describe('GitHubAdapter.resolveByName', () => {
     await expect(adapter.resolveByName('o/r')).rejects.toBeInstanceOf(GitHubResponseShapeError);
   });
 });
+
+describe('GitHubAdapter.getCommitDetail', () => {
+    const route = (sha: string, body: unknown) => ({ [`/repos/o/r/commits/${sha}`]: body });
+
+    it('maps commit stats and per-file changes', async () => {
+        const adapter = routedAdapter(route('abc', {
+            sha: 'abc',
+            stats: { additions: 10, deletions: 3, total: 13 },
+            files: [
+                { filename: 'src/a.ts', status: 'modified', additions: 8, deletions: 3, changes: 11, patch: '@@ -1 +1 @@\n-old\n+new' },
+                { filename: 'src/b.ts', status: 'added', additions: 2, deletions: 0, changes: 2, patch: '@@ +1 @@\n+x' },
+            ],
+        }));
+        const d = await adapter.getCommitDetail('o/r', 'abc');
+        expect(d).toMatchObject({ sha: 'abc', additions: 10, deletions: 3, filesChanged: 2 });
+        expect(d.files[0]).toMatchObject({
+            filePath: 'src/a.ts', status: 'modified', additions: 8, deletions: 3, changes: 11, patchTruncated: false,
+        });
+        expect(d.files[0].patch).toContain('+new');
+    });
+
+    it('caps an oversized per-file patch (drops patch, flags truncated)', async () => {
+        const adapter = routedAdapter(route('big', {
+            sha: 'big', stats: { additions: 1, deletions: 0 },
+            files: [{ filename: 'f.ts', status: 'modified', additions: 1, deletions: 0, changes: 1, patch: 'x'.repeat(200) }],
+        }));
+        const d = await adapter.getCommitDetail('o/r', 'big', { maxPatchBytes: 100 });
+        expect(d.files[0].patch).toBeNull();
+        expect(d.files[0].patchTruncated).toBe(true);
+    });
+
+    it('enforces a per-commit total patch budget', async () => {
+        const p = 'y'.repeat(60);
+        const adapter = routedAdapter(route('tot', {
+            sha: 'tot', stats: {},
+            files: [
+                { filename: 'a', status: 'modified', additions: 1, deletions: 0, changes: 1, patch: p },
+                { filename: 'b', status: 'modified', additions: 1, deletions: 0, changes: 1, patch: p },
+            ],
+        }));
+        const d = await adapter.getCommitDetail('o/r', 'tot', { maxPatchBytes: 100, maxTotalPatchBytes: 100 });
+        expect(d.files[0].patch).not.toBeNull();   // 60 bytes fits
+        expect(d.files[1].patch).toBeNull();        // 60 + 60 > 100 → dropped
+        expect(d.files[1].patchTruncated).toBe(true);
+    });
+
+    it('treats a GitHub-omitted patch (binary/large) as null, not truncated', async () => {
+        const adapter = routedAdapter(route('bin', {
+            sha: 'bin', stats: { additions: 0, deletions: 0 },
+            files: [{ filename: 'img.png', status: 'added', additions: 0, deletions: 0, changes: 0 }],
+        }));
+        const d = await adapter.getCommitDetail('o/r', 'bin');
+        expect(d.files[0].patch).toBeNull();
+        expect(d.files[0].patchTruncated).toBe(false);
+    });
+
+    it('falls back to summing file stats when commit stats are absent', async () => {
+        const adapter = routedAdapter(route('nostats', {
+            sha: 'nostats',
+            files: [{ filename: 'a', status: 'modified', additions: 4, deletions: 1, changes: 5, patch: '+a' }],
+        }));
+        const d = await adapter.getCommitDetail('o/r', 'nostats');
+        expect(d).toMatchObject({ additions: 4, deletions: 1, filesChanged: 1 });
+    });
+});
