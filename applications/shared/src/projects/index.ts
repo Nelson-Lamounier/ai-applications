@@ -55,6 +55,14 @@ export type {
     RunClusteringOutput,
 } from './clustering-orchestrator.js';
 
+// Code-grounded component kinds (replaces md-based LLM guessing of repo role).
+export { classifyComponentKind, componentNameFor } from './component-kind.js';
+export type { RepoRoleSignals } from './component-kind.js';
+export { regroupComponentsByKind, applyGroundedComponentKinds } from './grounded-components.js';
+export { loadRepoRoleSignals, extractRoleSignals } from './repo-role-signals.js';
+export { recomputeConfirmedProjectComponents } from './confirmed-project-refresh.js';
+export type { ConfirmedRefreshSummary } from './confirmed-project-refresh.js';
+
 // ─── Case study (Phase 2B) ──────────────────────────────────────────────────
 export {
     SourceSignalSchema,

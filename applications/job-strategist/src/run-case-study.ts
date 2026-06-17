@@ -33,6 +33,8 @@ import {
     runCaseStudyOrchestration,
     runSystemTour,
     RdsSystemTourRepository,
+    loadRepoRoleSignals,
+    recomputeConfirmedProjectComponents,
 } from '@bedrock/shared';
 import type { BasePipelineContext } from '@bedrock/shared';
 
@@ -79,6 +81,36 @@ const cacheEnabled = new Gauge({
 });
 for (const result of ['hit', 'miss', 'error'] as const) cacheRequests.inc({ cache: CACHE_NAME, result }, 0);
 
+/**
+ * Refresh a confirmed project's components from current code-grounded signals,
+ * inside its own transaction with RLS context. Best-effort — logs and returns
+ * on any failure so it can never fail the case-study generation.
+ */
+async function refreshProjectComponentsBestEffort(
+    pool: Awaited<ReturnType<typeof getPool>>,
+    userId: string,
+    projectId: string,
+): Promise<void> {
+    try {
+        const roleSignals = await loadRepoRoleSignals(pool, userId);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+            const refreshed = await recomputeConfirmedProjectComponents(client, userId, roleSignals, { projectId });
+            await client.query('COMMIT');
+            log.info({ projectId, ...refreshed }, 'refreshed components from grounded signals');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+    } catch (err) {
+        log.warn({ err: err instanceof Error ? err.message : String(err), projectId }, 'component refresh skipped');
+    }
+}
+
 async function main(): Promise<void> {
     const env  = parseCaseStudyEnv();
     const pool = getPool(env.pg);
@@ -121,6 +153,12 @@ async function main(): Promise<void> {
         const kbTag = `${env.environment}:${env.kbVersion}:${env.model}`;
 
         await updatePipelineRun(pool, env.pipelineRunId, 'generating');
+
+        // Refresh THIS project's components from current code-grounded signals
+        // (archetype/fileClass) before generating — so the case study reads
+        // role-correct structure (e.g. a GitOps-infra repo no longer filed as
+        // 'shared'). Best-effort: a refresh failure must not fail the case study.
+        await refreshProjectComponentsBestEffort(pool, env.userId, env.projectId);
 
         // Incremental refine by default: when the project already has a
         // completed case study, the agent updates it (preserving grounded rows)

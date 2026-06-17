@@ -29,6 +29,8 @@ import {
 } from './clustering-persistence.js';
 import { buildClusteringSignals } from './clustering-signals.js';
 import { ClusteringResultSchema } from './types.js';
+import { loadRepoRoleSignals } from './repo-role-signals.js';
+import { applyGroundedComponentKinds } from './grounded-components.js';
 import type { ClusteringResult, ClusteringSignals, RepoClusteringDigest } from './types.js';
 
 const CACHE_SCOPE_PREFIX = 'clustering';
@@ -142,6 +144,12 @@ export async function runClusteringOrchestration(
         const agentResult = await input.agent.invoke(digests, signals, input.ctx);
         result = agentResult.data;
     }
+
+    // 2b. Override component kinds/names with code-grounded classification, so the
+    // agent's md-influenced guesses (e.g. a GitOps-infra repo filed as 'shared')
+    // can never persist. Idempotent — safe to apply to cached results too.
+    const roleSignals = await loadRepoRoleSignals(pool, input.userId);
+    result = applyGroundedComponentKinds(result, roleSignals);
 
     const client = await pool.connect();
     let persisted: PersistClusteringSummary;
