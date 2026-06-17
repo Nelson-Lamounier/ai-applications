@@ -156,7 +156,9 @@ export type AgentName =
     // ATS feedback loop — surface attainable-but-missing keywords.
     | 'surface-keywords'
     // doc-vs-code drift — reframe a superseded-tech bullet as a migration narrative.
-    | 'migration-reframe';
+    | 'migration-reframe'
+    // grounded change-impact narration over a commit's diff facts.
+    | 'change-impact';
 
 /**
  * Model-agnostic configuration for a single agent.

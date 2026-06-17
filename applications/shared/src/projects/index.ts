@@ -158,3 +158,21 @@ export type {
 export { stampUserEvidenceMetadata } from './stamp-evidence-metadata.js';
 export { buildEvidenceStamp } from './evidence-metadata-stamp.js';
 export type { EvidenceStamp, RepoSignals } from './evidence-metadata-stamp.js';
+
+// Grounded change-impact (commit diffs → deterministic facts → measured % → gated narration).
+export {
+    summariseCommitChange,
+    cyclomaticComplexityDelta,
+    buildFileChangeImpact,
+    percentChange,
+    buildChangeImpactReport,
+} from './change-metrics.js';
+export type {
+    CommitChangeMetrics,
+    FileChangeImpact,
+    PerfComparison,
+    ChangeImpactReport,
+} from './change-metrics.js';
+export { allowedNumbersFor, findUngroundedNumbers, isGrounded } from './change-impact-grounding.js';
+export { narrateChangeImpact, buildDeterministicNarration } from './change-impact-narrator.js';
+export type { ChangeImpactNarration } from './change-impact-narrator.js';
