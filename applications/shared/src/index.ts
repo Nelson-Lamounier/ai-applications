@@ -327,6 +327,7 @@ export {
     RdsOAuthConnectionsRepository,
     RdsRepoActivityStore,
     RdsRepoFileStateRepository,
+    reconcileRepoName,
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
