@@ -186,3 +186,6 @@ export { narrateChangeImpact, buildDeterministicNarration } from './change-impac
 export type { ChangeImpactNarration } from './change-impact-narrator.js';
 export { narrateFileChangeImpact } from './change-impact-service.js';
 export type { ChangeImpactStore, FileChangeImpactResult } from './change-impact-service.js';
+
+export { deriveDepthMarkers } from './case-study-depth.js';
+export type { DepthSignals } from './case-study-depth.js';

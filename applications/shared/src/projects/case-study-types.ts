@@ -280,4 +280,21 @@ export interface CaseStudyContext {
     // crowded out of the capped sections. Set by the orchestrator alongside
     // priorCaseStudy; empty/absent when the prior already covers every repo.
     readonly refineNewRepos?: readonly string[];
+
+    // ── Code-grounded evidence (additive) ─────────────────────────────────
+    // DepthMarkers computed deterministically from fileClass lane counts +
+    // archetype signals (test/CI/deploy/docs maturity) — the orchestrator
+    // OVERRIDES the model's depthMarkers with these so depth is measured, not
+    // guessed. Absent → the model's own assessment stands.
+    readonly depthMarkers?: DepthMarkers | null;
+    // The most-changed files across member repos (from repo_commit_files diffs)
+    // — real file-level evidence the agent can cite in sourceSignals.files for
+    // challenges / highlights / decisions. Capped + newest-churn first.
+    readonly fileChangeEvidence?: ReadonlyArray<{
+        readonly repoFullName: string;
+        readonly filePath:     string;
+        readonly additions:    number;
+        readonly deletions:    number;
+        readonly changes:      number;
+    }>;
 }

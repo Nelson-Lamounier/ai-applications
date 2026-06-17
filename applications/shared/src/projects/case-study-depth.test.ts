@@ -1,0 +1,53 @@
+/** @format */
+import { describe, it, expect } from '@jest/globals';
+import { deriveDepthMarkers } from './case-study-depth.js';
+import type { DepthSignals } from './case-study-depth.js';
+
+const sig = (over: Partial<DepthSignals> = {}): DepthSignals => ({
+    laneCounts: {}, archetype: {}, ...over,
+});
+
+describe('deriveDepthMarkers', () => {
+    it('grounds test coverage from the test/source ratio', () => {
+        expect(deriveDepthMarkers(sig({ laneCounts: { source: 100, test: 640 } })).testCoverageSignal).toBe('strong');
+        expect(deriveDepthMarkers(sig({ laneCounts: { source: 100, test: 30 } })).testCoverageSignal).toBe('moderate');
+        expect(deriveDepthMarkers(sig({ laneCounts: { source: 100, test: 5 } })).testCoverageSignal).toBe('light');
+        expect(deriveDepthMarkers(sig({ laneCounts: { source: 100, test: 0 } })).testCoverageSignal).toBe('none');
+        expect(deriveDepthMarkers(sig({ laneCounts: { source: 100, test: 640 } })).hasTests).toBe(true);
+    });
+
+    it('grades CI maturity from archetype signals (argocd → multi_env)', () => {
+        expect(deriveDepthMarkers(sig({ archetype: { has_ci: true, has_argocd_apps: true } })).ciMaturity).toBe('multi_env');
+        expect(deriveDepthMarkers(sig({ archetype: { has_ci: true, has_deployment_workflow: true } })).ciMaturity).toBe('deploys_to_prod');
+        expect(deriveDepthMarkers(sig({ archetype: { has_ci: true } })).ciMaturity).toBe('basic');
+        expect(deriveDepthMarkers(sig({})).ciMaturity).toBe('none');
+        expect(deriveDepthMarkers(sig({ laneCounts: { ci: 57 } })).hasCi).toBe(true); // ci lane implies CI
+    });
+
+    it('flags deployment evidence from IaC / argocd / docker / iac lane', () => {
+        expect(deriveDepthMarkers(sig({ archetype: { has_argocd_apps: true } })).hasDeploymentEvidence).toBe(true);
+        expect(deriveDepthMarkers(sig({ laneCounts: { iac: 45 } })).hasDeploymentEvidence).toBe(true);
+        expect(deriveDepthMarkers(sig({})).hasDeploymentEvidence).toBe(false);
+    });
+
+    it('derives documentation density', () => {
+        expect(deriveDepthMarkers(sig({ archetype: { has_docs_site_config: true } })).documentationDensity).toBe('comprehensive');
+        expect(deriveDepthMarkers(sig({ laneCounts: { docs: 40 } })).documentationDensity).toBe('docs_dir');
+        expect(deriveDepthMarkers(sig({ laneCounts: { docs: 2 } })).documentationDensity).toBe('readme_only');
+        expect(deriveDepthMarkers(sig({})).documentationDensity).toBe('none');
+    });
+
+    it('carries refactorCount + deploymentUrl, clamped', () => {
+        const d = deriveDepthMarkers(sig({ refactorCount: 7.9, deploymentUrl: 'https://x.dev' }));
+        expect(d.refactorCount).toBe(7);
+        expect(d.deploymentUrl).toBe('https://x.dev');
+    });
+
+    it('the live project (ai-applications) reads strong tests + GitOps CI + deploy evidence', () => {
+        const d = deriveDepthMarkers(sig({
+            laneCounts: { source: 141, test: 640, ci: 36, iac: 45, docs: 30 },
+            archetype: { has_ci: true, has_argocd_apps: true, has_iac: true, has_dockerfile: true },
+        }));
+        expect(d).toMatchObject({ hasTests: true, testCoverageSignal: 'strong', hasCi: true, ciMaturity: 'multi_env', hasDeploymentEvidence: true });
+    });
+});

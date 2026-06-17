@@ -78,7 +78,10 @@ Rules:
      are the strongest form of evidence — when one is available for a
      decision, prefer it over a commit. If you cannot cite evidence,
      do not include the row. Loose hand-waving is worse than omitting
-     the section.
+     the section. A <fileChanges> block, when present, lists the
+     most-changed files with their churn — cite those paths in
+     \`sourceSignals.files\` to ground a challenge or highlight in WHAT
+     changed, not just the commit message.
   2. PRODUCT CONTEXT: when a <productContext> block is supplied, it is
      GROUND TRUTH about what the product is, who it serves, and the
      problem it solves. Treat it as authoritative — it is a given, NOT a
@@ -397,6 +400,16 @@ export function buildUserMessage(ctx: CaseStudyContext): string {
         JSON.stringify(ctx.kbChunks),
         '</kbChunks>',
     );
+    // Real file-level change evidence (from ingested commit diffs). The agent may
+    // cite these paths in sourceSignals.files to ground challenges/highlights in
+    // WHAT changed, not just commit messages.
+    if (ctx.fileChangeEvidence && ctx.fileChangeEvidence.length > 0) {
+        lines.push(
+            '<fileChanges>',
+            JSON.stringify(ctx.fileChangeEvidence),
+            '</fileChanges>',
+        );
+    }
     if (ctx.priorCaseStudy) {
         lines.push(
             '<priorCaseStudy>',

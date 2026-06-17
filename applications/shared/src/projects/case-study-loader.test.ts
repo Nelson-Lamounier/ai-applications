@@ -20,6 +20,8 @@ function makePool(canned: {
     overlays?: unknown[];
     rollup?: unknown[];
     syncState?: unknown[];
+    fileChanges?: unknown[];
+    laneCounts?: unknown[];
 }) {
     return {
         async query(sql: string): Promise<QueryResult> {
@@ -28,6 +30,8 @@ function makePool(canned: {
                 return { rows: canned.components ?? [] };
             }
             if (/FROM project_repositories/.test(sql)) return { rows: canned.repositories ?? [] };
+            if (/FROM repo_commit_files/.test(sql))   return { rows: canned.fileChanges ?? [] };
+            if (/document_embeddings/.test(sql) && /fileClass/.test(sql)) return { rows: canned.laneCounts ?? [] };
             if (/FROM document_embeddings/.test(sql)) return { rows: canned.embeddings ?? [] };
             if (/FROM repo_sync_state/.test(sql))     return { rows: canned.syncState ?? [] };
             if (/FROM repo_commits/.test(sql))        return { rows: canned.commits ?? [] };
@@ -95,6 +99,31 @@ describe('loadCaseStudyContext', () => {
         expect(out.context.pulls).toHaveLength(1);
         expect(out.context.pulls[0].number).toBe(42);
         expect(out.context.pulls[0].state).toBe('merged');
+    });
+
+    it('attaches grounded depthMarkers (from fileClass + archetype) and file-change evidence', async () => {
+        const pool = makePool({
+            projects:     [projectRow],
+            components:   [],
+            repositories: [repoRow],
+            embeddings:   [],
+            syncState:    [{ archetype_signals: { has_ci: true, has_argocd_apps: true, has_iac: true } }],
+            laneCounts:   [{ fc: 'test', cnt: '640' }, { fc: 'source', cnt: '141' }, { fc: 'iac', cnt: '45' }],
+            fileChanges:  [{ repo_full_name: 'owner/repo', file_path: 'infra/main.tf', additions: '120', deletions: '10', changes: '130' }],
+            commits:      [{ repo_full_name: 'owner/repo', sha: 'r1', author_name: 'N', authored_at: '2026-01-01T00:00:00.000Z', message: 'refactor: tidy loop' }],
+            pulls:        [],
+        });
+
+        const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
+
+        // depthMarkers are measured, not guessed.
+        expect(out.context.depthMarkers).toMatchObject({
+            hasTests: true, testCoverageSignal: 'strong', hasCi: true, ciMaturity: 'multi_env', hasDeploymentEvidence: true, refactorCount: 1,
+        });
+        // real file-level evidence is surfaced for the agent to cite.
+        expect(out.context.fileChangeEvidence).toEqual([
+            { repoFullName: 'owner/repo', filePath: 'infra/main.tf', additions: 120, deletions: 10, changes: 130 },
+        ]);
     });
 
     it('returns empty commits + pulls when the tables have no matching rows', async () => {
