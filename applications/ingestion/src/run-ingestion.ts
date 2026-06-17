@@ -41,6 +41,7 @@ import {
     RdsRepoActivityStore,
     RdsRepoFileStateRepository,
     stampUserEvidenceMetadata,
+    reconcileRepoName,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
@@ -219,8 +220,54 @@ async function withTimeout(p: Promise<unknown>, ms: number, label: string): Prom
     }
 }
 
+/**
+ * Self-heal a stale stored repo name before the run touches GitHub. When the
+ * dispatcher supplied the immutable `github_repo_id`, resolve the repo's CURRENT
+ * full_name by id (rename-proof — `GET /repositories/{id}` always returns the
+ * live name) and, if it differs from the stored name, re-stamp the denormalised
+ * label everywhere via reconcileRepoName. Returns the name the rest of the run
+ * should use (the current one on a rename, otherwise the unchanged input).
+ *
+ * Legacy/pre-backfill runs (no id on the job spec) skip self-heal entirely and
+ * keep the supplied name. A RepoNotFoundError (deleted/revoked) is routed to the
+ * same error sink as any other failure — markError + friendly message + raw
+ * detail on repositories — then rethrown so the run terminates as a clean sync
+ * error rather than crashing.
+ */
+async function selfHealRepoName(deps: {
+    pool:    Pool;
+    adapter: GitHubAdapter;
+    syncState: RdsSyncStateRepository;
+    userId:  string;
+    githubRepoId: number | null;
+    storedFullName: string;
+}): Promise<string> {
+    const { pool, adapter, syncState, userId, githubRepoId, storedFullName } = deps;
+    if (githubRepoId === null) return storedFullName;
+
+    try {
+        const ref = await adapter.resolveById(githubRepoId);
+        if (ref.fullName === storedFullName) return storedFullName;
+
+        await reconcileRepoName(pool, userId, githubRepoId, ref.fullName);
+        log.info(
+            { event: 'repo_rename.self_healed', githubRepoId, from: storedFullName, to: ref.fullName, userId },
+            'repo renamed since last sync — re-stamped label and continuing under the current name',
+        );
+        return ref.fullName;
+    } catch (err) {
+        const friendly = friendlyIngestionError(err);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await syncState.markError(userId, storedFullName, friendly).catch(() => {});
+        await syncRepositoryIndexStatus(
+            pool, userId, storedFullName, 'error', errMsg.slice(0, 500),
+        ).catch(() => {});
+        throw err;
+    }
+}
+
 async function main(): Promise<void> {
-    const env = parseEnv();
+    let env = parseEnv();
     const start = process.hrtime.bigint();
     let outcome: 'success' | 'failed' = 'failed';
 
@@ -260,8 +307,32 @@ async function main(): Promise<void> {
         if ((prior.rows[0]?.c ?? 0) === 0) syncType = 'initial';
     } catch { /* keep the FORCE_REINDEX-derived default if the probe fails */ }
 
-    const vectorStore  = new RdsVectorStore(rdsConfig);
-    const syncState    = new RdsSyncStateRepository(rdsConfig);
+    // Dual-write the immutable github_repo_id onto every repo-scoped upsert (null
+    // pre-backfill — the column is nullable and a later id-bearing run / the
+    // backfill fills it). The id is constant for the whole run, so it is injected
+    // once at construction rather than threaded through each writer call.
+    const githubRepoId = env.githubRepoId;
+    const vectorStore  = new RdsVectorStore(rdsConfig, undefined, githubRepoId);
+    const syncState    = new RdsSyncStateRepository(rdsConfig, githubRepoId);
+    const repoAdapter  = new GitHubAdapter(env.githubToken);
+
+    // Rename self-heal — BEFORE any object captures repoFullName and before the
+    // first GitHub fetch. If the dispatcher supplied GITHUB_REPO_ID and the repo
+    // was renamed since the last sync, resolve the current name by id, re-stamp
+    // the denormalised label everywhere, and continue under the current name by
+    // reassigning `env`. RepoNotFoundError is sunk + rethrown inside the helper.
+    const healedName = await selfHealRepoName({
+        pool:    pgPool,
+        adapter: repoAdapter,
+        syncState,
+        userId:  env.userId,
+        githubRepoId:   env.githubRepoId,
+        storedFullName: env.repoFullName,
+    });
+    if (healedName !== env.repoFullName) {
+        env = { ...env, repoFullName: healedName };
+    }
+
     const embedder     = new TitanEmbeddingProvider(
         process.env.AWS_REGION ?? 'eu-west-1',
         (process.env.EMBEDDING_DIMENSION
@@ -269,7 +340,6 @@ async function main(): Promise<void> {
             : 1024),
         { pool: pgPool, userId: env.userId, repoName: env.repoFullName, syncKind: syncType },
     );
-    const repoAdapter  = new GitHubAdapter(env.githubToken);
     const fileFilter   = new FileFilter();
     const chunkerReg   = ChunkerRegistry.withDefaults();
 
@@ -302,8 +372,8 @@ async function main(): Promise<void> {
     if (!repositoryId) {
         console.warn(`[run-ingestion] no repositories row for ${env.repoFullName}; structured commit/PR persistence will be skipped`);
     }
-    const activityStore  = new RdsRepoActivityStore(pgPool);
-    const fileStateStore = new RdsRepoFileStateRepository(pgPool);
+    const activityStore  = new RdsRepoActivityStore(pgPool, githubRepoId);
+    const fileStateStore = new RdsRepoFileStateRepository(pgPool, githubRepoId);
 
     const orchestrator = new RepoIngestionOrchestrator(
         repoAdapter, fileFilter, chunkerReg, pipeline,
