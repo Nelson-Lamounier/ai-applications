@@ -12,10 +12,16 @@
  *   stale label on the anchor, and propagate `(id, currentName)` to every
  *   denormalised table keyed on `(user_id, oldName)`.
  *
- * Idempotency:
+ * Idempotency & atomicity:
  *   Every denormalised UPDATE is guarded by `github_repo_id IS NULL`, so a
  *   second run is a no-op for rows already backfilled. The anchor SELECT only
  *   returns rows where `github_repo_id IS NULL`, so resolved repos are skipped.
+ *   Each repo's propagation runs inside a single transaction on ONE pooled
+ *   connection (`pool.connect()` → BEGIN → all UPDATEs → COMMIT/ROLLBACK), so
+ *   the writes are all-or-nothing. This prevents partial-commit orphaning: if
+ *   the process dies mid-repo, the anchor `UPDATE repositories` (issued LAST)
+ *   never commits without its label-table UPDATEs, so the recovery SELECT
+ *   (`WHERE github_repo_id IS NULL`) still returns that repo on the next run.
  *
  * Failure semantics:
  *   A `RepoNotFoundError` (deleted/inaccessible repo) is recorded in
@@ -131,9 +137,13 @@ async function resolveOrFlag(
 }
 
 /**
- * Write the resolved id (and refreshed name) to the anchor, then to every
- * denormalised table keyed on the OLD name. user_id is bound un-cast so the same
- * query works for both UUID and TEXT `user_id` columns (see file header).
+ * Write the resolved id (and refreshed name) to every denormalised table keyed
+ * on the OLD name, then to the anchor LAST, all inside a single transaction on
+ * one dedicated connection so the propagation is all-or-nothing (see file
+ * header). A Pool hands each `pool.query` an arbitrary connection, so BEGIN /
+ * COMMIT MUST be issued on a single `client` from `pool.connect()` to form a
+ * real transaction. user_id is bound un-cast so the same query works for both
+ * UUID and TEXT `user_id` columns (see file header).
  */
 async function propagate(
     pool: Pool,
@@ -142,28 +152,45 @@ async function propagate(
     userId: string,
     oldName: string,
 ): Promise<void> {
-    // Anchor: set id AND refresh the (possibly stale) label, matched on old name.
-    await pool.query(
-        `UPDATE repositories
-         SET github_repo_id = $1, full_name = $2
-         WHERE user_id = $3 AND provider = 'github' AND full_name = $4`,
-        [id, newName, userId, oldName],
-    );
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
 
-    // Denormalised tables keyed on repo_full_name. The `github_repo_id IS NULL`
-    // guard makes re-runs no-ops (idempotent).
-    for (const table of LABEL_TABLES) {
-        await pool.query(
-            `UPDATE ${table} SET github_repo_id = $1, repo_full_name = $2
-             WHERE user_id = $3 AND repo_full_name = $4 AND github_repo_id IS NULL`,
+        // Denormalised tables keyed on repo_full_name. The `github_repo_id IS
+        // NULL` guard makes re-runs no-ops (idempotent).
+        for (const table of LABEL_TABLES) {
+            await client.query(
+                `UPDATE ${table} SET github_repo_id = $1, repo_full_name = $2
+                 WHERE user_id = $3 AND repo_full_name = $4 AND github_repo_id IS NULL`,
+                [id, newName, userId, oldName],
+            );
+        }
+
+        // prompt_invocations labels the repo with repo_name, not repo_full_name.
+        await client.query(
+            `UPDATE prompt_invocations SET github_repo_id = $1, repo_name = $2
+             WHERE user_id = $3 AND repo_name = $4 AND github_repo_id IS NULL`,
             [id, newName, userId, oldName],
         );
-    }
 
-    // prompt_invocations labels the repo with repo_name, not repo_full_name.
-    await pool.query(
-        `UPDATE prompt_invocations SET github_repo_id = $1, repo_name = $2
-         WHERE user_id = $3 AND repo_name = $4 AND github_repo_id IS NULL`,
-        [id, newName, userId, oldName],
-    );
+        // Anchor LAST: set id AND refresh the (possibly stale) label, matched on
+        // the old name, guarded by `github_repo_id IS NULL` for consistency with
+        // the label tables and concurrent-run safety. Setting the anchor only
+        // after all labels are done means the recovery SELECT still finds this
+        // repo if a (non-transactional) re-run ever sees a half-done state.
+        await client.query(
+            `UPDATE repositories
+             SET github_repo_id = $1, full_name = $2
+             WHERE user_id = $3 AND provider = 'github' AND full_name = $4
+               AND github_repo_id IS NULL`,
+            [id, newName, userId, oldName],
+        );
+
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
