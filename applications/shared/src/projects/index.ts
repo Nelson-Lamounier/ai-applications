@@ -176,3 +176,5 @@ export type {
 export { allowedNumbersFor, findUngroundedNumbers, isGrounded } from './change-impact-grounding.js';
 export { narrateChangeImpact, buildDeterministicNarration } from './change-impact-narrator.js';
 export type { ChangeImpactNarration } from './change-impact-narrator.js';
+export { narrateFileChangeImpact } from './change-impact-service.js';
+export type { ChangeImpactStore, FileChangeImpactResult } from './change-impact-service.js';
