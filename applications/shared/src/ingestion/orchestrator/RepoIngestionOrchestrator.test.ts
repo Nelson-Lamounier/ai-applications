@@ -9,7 +9,7 @@
 
 import { RepoIngestionOrchestrator } from './RepoIngestionOrchestrator.js';
 import type { RepoActivityStore } from './RepoIngestionOrchestrator.js';
-import type { IRepoAdapter, RepoFile, RepoCommit, RepoPullRequest } from '../interfaces/IRepoAdapter.js';
+import type { IRepoAdapter, RepoFile, RepoCommit, RepoPullRequest, CommitDetail } from '../interfaces/IRepoAdapter.js';
 import type { IFileFilter } from '../interfaces/IFileFilter.js';
 import type { ChunkerRegistry } from '../implementations/ChunkerRegistry.js';
 import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
@@ -267,6 +267,74 @@ describe('RepoIngestionOrchestrator activity persistence', () => {
         expect(store.upsertCommits).toHaveBeenCalledWith(
             'user-uuid', 'repo-uuid', 'o/a', [SAMPLE_COMMIT],
         );
+    });
+});
+
+describe('RepoIngestionOrchestrator commit-detail (diff) ingestion', () => {
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    const detail: CommitDetail = {
+        sha: SAMPLE_COMMIT.sha, additions: 5, deletions: 2, filesChanged: 1,
+        files: [{ filePath: 'a.ts', status: 'modified', additions: 5, deletions: 2, changes: 7, patch: '@@', patchTruncated: false }],
+    };
+
+    function detailStore(missing: string[]) {
+        return {
+            upsertCommits:          jest.fn(async () => 1),
+            upsertPullRequests:     jest.fn(async () => 0),
+            selectShasMissingStats: jest.fn(async () => missing),
+            upsertCommitDetails:    jest.fn(async () => 1),
+        };
+    }
+
+    it('fetches per-commit detail for missing shas and persists it', async () => {
+        const getCommitDetail = jest.fn(async () => detail);
+        const adapter = Object.assign(new ActivityAdapter(), { getCommitDetail });
+        const store = detailStore([SAMPLE_COMMIT.sha]);
+        const { pipeline } = fakePipeline();
+        jest.spyOn(console, 'info').mockImplementation(() => {});
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), {} as never, pipeline,
+            { activityStore: store as unknown as RepoActivityStore, repositoryId: 'repo-uuid' },
+        );
+
+        await orch.ingestRepo('user-uuid', 'o/a');
+
+        expect(store.selectShasMissingStats).toHaveBeenCalledWith('user-uuid', 'o/a', [SAMPLE_COMMIT.sha]);
+        expect(getCommitDetail).toHaveBeenCalledWith('o/a', SAMPLE_COMMIT.sha);
+        expect(store.upsertCommitDetails).toHaveBeenCalledWith('user-uuid', 'repo-uuid', 'o/a', [detail]);
+    });
+
+    it('skips detail fetch when no shas are missing stats', async () => {
+        const getCommitDetail = jest.fn(async () => detail);
+        const adapter = Object.assign(new ActivityAdapter(), { getCommitDetail });
+        const store = detailStore([]);   // nothing missing
+        const { pipeline } = fakePipeline();
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), {} as never, pipeline,
+            { activityStore: store as unknown as RepoActivityStore, repositoryId: 'repo-uuid' },
+        );
+
+        await orch.ingestRepo('user-uuid', 'o/a');
+
+        expect(getCommitDetail).not.toHaveBeenCalled();
+        expect(store.upsertCommitDetails).not.toHaveBeenCalled();
+    });
+
+    it('does not abort the run when a detail fetch throws', async () => {
+        const getCommitDetail = jest.fn(async () => { throw new Error('boom: detail'); });
+        const adapter = Object.assign(new ActivityAdapter(), { getCommitDetail });
+        const store = detailStore([SAMPLE_COMMIT.sha]);
+        const { pipeline } = fakePipeline();
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), {} as never, pipeline,
+            { activityStore: store as unknown as RepoActivityStore, repositoryId: 'repo-uuid' },
+        );
+
+        await expect(orch.ingestRepo('user-uuid', 'o/a')).resolves.toBeDefined();
+        // detail failed → nothing valid to persist
+        expect(store.upsertCommitDetails).not.toHaveBeenCalled();
     });
 });
 

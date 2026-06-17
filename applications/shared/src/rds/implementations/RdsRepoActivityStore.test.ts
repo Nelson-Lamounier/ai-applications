@@ -1,7 +1,7 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
 import { RdsRepoActivityStore } from './RdsRepoActivityStore.js';
-import type { RepoCommit, RepoPullRequest } from '../../ingestion/interfaces/IRepoAdapter.js';
+import type { RepoCommit, RepoPullRequest, CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
 
 interface RecordedQuery {
     sql: string;
@@ -151,5 +151,68 @@ describe('RdsRepoActivityStore', () => {
 
         const sqls = pool.client.queries.map(q => q.sql);
         expect(sqls).toContain('ROLLBACK');
+    });
+});
+
+const DETAIL: CommitDetail = {
+    sha: 'abc123', additions: 10, deletions: 3, filesChanged: 1,
+    files: [{
+        filePath: 'src/a.ts', status: 'modified', additions: 8, deletions: 3, changes: 11,
+        patch: '@@ -1 +1 @@\n-old\n+new', patchTruncated: false,
+    }],
+};
+
+describe('RdsRepoActivityStore.upsertCommitDetails', () => {
+    it('updates repo_commits stats and inserts repo_commit_files', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any, 999);
+
+        await store.upsertCommitDetails('user-1', 'repo-uuid', 'o/r', [DETAIL]);
+
+        const sqls = pool.client.queries.map(q => q.sql).join('\n');
+        expect(sqls).toContain('UPDATE repo_commits');
+        expect(sqls).toContain('INSERT INTO repo_commit_files');
+        expect(sqls).toContain('COMMIT');
+        const fileInsert = pool.client.queries.find(q => /INSERT INTO repo_commit_files/.test(q.sql))!;
+        expect(fileInsert.params).toEqual(expect.arrayContaining(['src/a.ts', 'abc123', '@@ -1 +1 @@\n-old\n+new']));
+    });
+
+    it('is a no-op for an empty list', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any);
+        await store.upsertCommitDetails('user-1', 'repo-uuid', 'o/r', []);
+        expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('rolls back and rethrows when the file insert fails', async () => {
+        const pool = fakePool({ throwOn: /INSERT INTO repo_commit_files/ });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any);
+        await expect(store.upsertCommitDetails('user-1', 'repo-uuid', 'o/r', [DETAIL])).rejects.toThrow('insert failed');
+        expect(pool.client.queries.map(q => q.sql)).toContain('ROLLBACK');
+    });
+});
+
+describe('RdsRepoActivityStore.selectShasMissingStats', () => {
+    it('returns only the candidate shas that have no stats yet', async () => {
+        const client = {
+            queries: [] as { sql: string; params?: unknown[] }[],
+            query: jest.fn(async (sql: string, params?: unknown[]) => {
+                client.queries.push({ sql, params });
+                if (/SELECT sha/.test(sql)) return { rowCount: 1, rows: [{ sha: 'need1' }] };
+                return { rowCount: 0, rows: [] };
+            }),
+            release: jest.fn(),
+        };
+        const pool = { client, connect: jest.fn(async () => client) };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any);
+
+        const missing = await store.selectShasMissingStats('user-1', 'o/r', ['need1', 'have1']);
+        expect(missing).toEqual(['need1']);
+        const sel = client.queries.find(q => /SELECT sha/.test(q.sql))!;
+        expect(sel.params).toEqual(expect.arrayContaining([['need1', 'have1']]));
     });
 });
