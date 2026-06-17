@@ -2,6 +2,16 @@
 import type { Pool } from 'pg';
 import type { RepoCommit, RepoPullRequest, CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
 
+/** A measured performance metric recorded at a commit SHA (never LLM-produced). */
+export interface PerfMetric {
+    readonly commitSha:  string;
+    readonly metricName: string;
+    readonly value:      number;
+    readonly unit:       string;
+    readonly source:     string;
+    readonly measuredAt: string;
+}
+
 /** One stored per-file change, joined with its commit — the "diffs touching file X" row. */
 export interface FileChange {
     readonly commitSha:      string;
@@ -149,6 +159,90 @@ export class RdsRepoActivityStore {
 
             await client.query('COMMIT');
             return pulls.length;
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    /**
+     * Persist measured performance metrics for commits. Idempotent via
+     * UNIQUE (repository_id, commit_sha, metric_name). Source is the measurement
+     * provenance (e.g. 'ci-benchmark') — never an LLM. Returns rows written.
+     */
+    async upsertCommitPerf(
+        userId:       string,
+        repositoryId: string,
+        repoFullName: string,
+        metrics:      readonly PerfMetric[],
+    ): Promise<number> {
+        if (metrics.length === 0) return 0;
+
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+
+            for (const m of metrics) {
+                await client.query(
+                    `INSERT INTO repo_commit_perf
+                        (user_id, repository_id, repo_full_name, github_repo_id, commit_sha,
+                         metric_name, value, unit, source, measured_at)
+                     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz)
+                     ON CONFLICT (repository_id, commit_sha, metric_name) DO UPDATE
+                         SET value          = EXCLUDED.value,
+                             unit           = EXCLUDED.unit,
+                             source         = EXCLUDED.source,
+                             measured_at    = EXCLUDED.measured_at,
+                             github_repo_id = COALESCE(EXCLUDED.github_repo_id, repo_commit_perf.github_repo_id)`,
+                    [userId, repositoryId, repoFullName, this.githubRepoId, m.commitSha,
+                     m.metricName, m.value, m.unit, m.source, m.measuredAt],
+                );
+            }
+
+            await client.query('COMMIT');
+            return metrics.length;
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    /** Read measured performance metrics recorded at a commit SHA. */
+    async getMeasuredPerf(
+        userId:       string,
+        repoFullName: string,
+        sha:          string,
+    ): Promise<PerfMetric[]> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+
+            const result = await client.query<{
+                commit_sha: string; metric_name: string; value: number | string;
+                unit: string; source: string; measured_at: string;
+            }>(
+                `SELECT commit_sha, metric_name, value, unit, source, measured_at
+                   FROM repo_commit_perf
+                  WHERE user_id = $1::uuid AND repo_full_name = $2 AND commit_sha = $3
+                  ORDER BY metric_name`,
+                [userId, repoFullName, sha],
+            );
+
+            await client.query('COMMIT');
+            return result.rows.map((r) => ({
+                commitSha:  r.commit_sha,
+                metricName: r.metric_name,
+                value:      Number(r.value),
+                unit:       r.unit,
+                source:     r.source,
+                measuredAt: r.measured_at,
+            }));
         } catch (err) {
             await client.query('ROLLBACK');
             throw err;

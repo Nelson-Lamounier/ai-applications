@@ -1,8 +1,8 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { summariseCommitChange, cyclomaticComplexityDelta, buildFileChangeImpact } from './change-metrics.js';
+import { summariseCommitChange, cyclomaticComplexityDelta, buildFileChangeImpact, percentChange, buildChangeImpactReport } from './change-metrics.js';
 import type { CommitDetail } from '../ingestion/interfaces/IRepoAdapter.js';
-import type { FileChange } from '../rds/implementations/RdsRepoActivityStore.js';
+import type { FileChange, PerfMetric } from '../rds/implementations/RdsRepoActivityStore.js';
 
 const detail = (over: Partial<CommitDetail> = {}): CommitDetail => ({
     sha: 'abc', additions: 0, deletions: 0, filesChanged: 0, files: [], ...over,
@@ -108,5 +108,42 @@ describe('buildFileChangeImpact', () => {
         const impact = buildFileChangeImpact('src/none.ts', []);
         expect(impact).toMatchObject({ filePath: 'src/none.ts', changeCount: 0, churn: 0, netLoc: 0, complexityDelta: 0 });
         expect(impact.lastChangedAt).toBeNull();
+    });
+});
+
+describe('percentChange', () => {
+    it('computes a signed percentage from before/after', () => {
+        expect(percentChange(1200, 400)).toBeCloseTo(-66.67, 2);  // latency improved
+        expect(percentChange(100, 150)).toBeCloseTo(50, 5);        // throughput up
+        expect(percentChange(50, 50)).toBe(0);
+    });
+
+    it('returns null when the baseline is zero (no honest percentage possible)', () => {
+        expect(percentChange(0, 10)).toBeNull();
+    });
+});
+
+describe('buildChangeImpactReport', () => {
+    const impact = buildFileChangeImpact('src/loop.ts', []);
+    const perf = (over: Partial<PerfMetric>): PerfMetric => ({
+        commitSha: 's', metricName: 'p95_latency_ms', value: 0, unit: 'ms', source: 'ci-benchmark', measuredAt: '2026-01-01T00:00:00Z', ...over,
+    });
+
+    it('computes percentages only for metrics measured at BOTH shas', () => {
+        const report = buildChangeImpactReport(impact,
+            [perf({ metricName: 'p95_latency_ms', value: 1200 }), perf({ metricName: 'throughput_rps', value: 100 })],
+            [perf({ metricName: 'p95_latency_ms', value: 400 })],  // throughput not re-measured
+        );
+        expect(report.hasMeasuredPerf).toBe(true);
+        expect(report.performance).toHaveLength(1);
+        expect(report.performance[0]).toMatchObject({ metric: 'p95_latency_ms', unit: 'ms', before: 1200, after: 400 });
+        expect(report.performance[0].percentChange).toBeCloseTo(-66.67, 2);
+    });
+
+    it('emits NO percentage when there is no measured perf (honest fallback)', () => {
+        const report = buildChangeImpactReport(impact, [], []);
+        expect(report.hasMeasuredPerf).toBe(false);
+        expect(report.performance).toEqual([]);
+        expect(report.structural).toBe(impact);
     });
 });

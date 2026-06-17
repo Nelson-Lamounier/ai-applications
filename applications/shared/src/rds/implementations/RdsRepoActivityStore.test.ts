@@ -195,6 +195,52 @@ describe('RdsRepoActivityStore.upsertCommitDetails', () => {
     });
 });
 
+describe('RdsRepoActivityStore.upsertCommitPerf', () => {
+    it('inserts measured perf rows', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any, 7);
+        const n = await store.upsertCommitPerf('user-1', 'repo-uuid', 'o/r', [
+            { commitSha: 'abc', metricName: 'p95_latency_ms', value: 1200, unit: 'ms', source: 'ci-benchmark', measuredAt: '2026-01-01T00:00:00Z' },
+        ]);
+        expect(n).toBe(1);
+        const sqls = pool.client.queries.map(q => q.sql).join('\n');
+        expect(sqls).toContain('INSERT INTO repo_commit_perf');
+        const ins = pool.client.queries.find(q => /repo_commit_perf/.test(q.sql))!;
+        expect(ins.params).toEqual(expect.arrayContaining(['p95_latency_ms', 1200, 'ms', 'ci-benchmark']));
+    });
+
+    it('is a no-op for an empty list', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any);
+        await store.upsertCommitPerf('user-1', 'repo-uuid', 'o/r', []);
+        expect(pool.connect).not.toHaveBeenCalled();
+    });
+});
+
+describe('RdsRepoActivityStore.getMeasuredPerf', () => {
+    it('returns measured metrics for a sha', async () => {
+        const rows = [{ commit_sha: 'abc', metric_name: 'p95_latency_ms', value: '400', unit: 'ms', source: 'ci-benchmark', measured_at: '2026-02-01T00:00:00Z' }];
+        const client = {
+            queries: [] as { sql: string; params?: unknown[] }[],
+            query: jest.fn(async (sql: string, params?: unknown[]) => {
+                client.queries.push({ sql, params });
+                if (/FROM repo_commit_perf/.test(sql)) return { rowCount: 1, rows };
+                return { rowCount: 0, rows: [] };
+            }),
+            release: jest.fn(),
+        };
+        const pool = { client, connect: jest.fn(async () => client) };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any);
+        const out = await store.getMeasuredPerf('user-1', 'o/r', 'abc');
+        expect(out).toEqual([
+            { commitSha: 'abc', metricName: 'p95_latency_ms', value: 400, unit: 'ms', source: 'ci-benchmark', measuredAt: '2026-02-01T00:00:00Z' },
+        ]);
+    });
+});
+
 describe('RdsRepoActivityStore.getFileChanges', () => {
     it('returns the per-file change history for a path, newest first', async () => {
         const rows = [

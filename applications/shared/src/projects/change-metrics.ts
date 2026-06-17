@@ -9,7 +9,7 @@
  */
 
 import type { CommitDetail } from '../ingestion/interfaces/IRepoAdapter.js';
-import type { FileChange } from '../rds/implementations/RdsRepoActivityStore.js';
+import type { FileChange, PerfMetric } from '../rds/implementations/RdsRepoActivityStore.js';
 
 export interface CommitChangeMetrics {
     readonly sha: string;
@@ -98,4 +98,69 @@ export function buildFileChangeImpact(filePath: string, changes: readonly FileCh
         if (lastChangedAt === null || c.authoredAt > lastChangedAt) lastChangedAt = c.authoredAt;
     }
     return { filePath, changeCount: changes.length, churn, netLoc, complexityDelta, lastChangedAt };
+}
+
+/**
+ * Signed percentage change between two MEASURED values:
+ * ((after - before) / before) * 100, rounded to 2 dp. Returns null when the
+ * baseline is 0 (no honest percentage exists). Sign convention is raw — the
+ * caller knows whether lower is better (latency) or higher is (throughput).
+ */
+export function percentChange(before: number, after: number): number | null {
+    if (before === 0) return null;
+    return Math.round(((after - before) / before) * 10_000) / 100;
+}
+
+/** A before/after comparison for one measured metric. */
+export interface PerfComparison {
+    readonly metric: string;
+    readonly unit: string;
+    readonly before: number;
+    readonly after: number;
+    /** Signed % change, or null when the baseline was 0. */
+    readonly percentChange: number | null;
+}
+
+/** The fully grounded change-impact bundle for one file. */
+export interface ChangeImpactReport {
+    readonly filePath: string;
+    /** Deterministic structural facts (Layer 1). */
+    readonly structural: FileChangeImpact;
+    /** Per-metric measured comparisons — empty when nothing was measured. */
+    readonly performance: PerfComparison[];
+    /** True only when at least one metric was measured at both shas. */
+    readonly hasMeasuredPerf: boolean;
+}
+
+/**
+ * Assemble the grounded change-impact report from deterministic structural
+ * facts plus MEASURED perf at the before/after shas. A percentage is produced
+ * ONLY for a metric measured at both shas — never estimated. With no measured
+ * perf, `performance` is empty and `hasMeasuredPerf` is false: the honest
+ * "no number without measurement" fallback the grounding contract requires.
+ */
+export function buildChangeImpactReport(
+    structural: FileChangeImpact,
+    beforePerf: readonly PerfMetric[],
+    afterPerf:  readonly PerfMetric[],
+): ChangeImpactReport {
+    const afterByName = new Map(afterPerf.map((m) => [m.metricName, m]));
+    const performance: PerfComparison[] = [];
+    for (const b of beforePerf) {
+        const a = afterByName.get(b.metricName);
+        if (!a) continue;   // not re-measured → no honest comparison
+        performance.push({
+            metric:        b.metricName,
+            unit:          b.unit,
+            before:        b.value,
+            after:         a.value,
+            percentChange: percentChange(b.value, a.value),
+        });
+    }
+    return {
+        filePath:        structural.filePath,
+        structural,
+        performance,
+        hasMeasuredPerf: performance.length > 0,
+    };
 }
