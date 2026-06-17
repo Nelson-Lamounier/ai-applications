@@ -10,7 +10,16 @@
 -- anchor table). The repo-scoped child tables backfill independently; a stray
 -- NULL there must not abort the whole cutover, so they are left untouched here.
 --
--- Reversible: drop the unique index, re-add the old unique, drop NOT NULL.
+-- Reversible: drop the unique index, drop NOT NULL.
+--
+-- NON-DESTRUCTIVE BY DESIGN: this migration adds the canonical anchor key
+-- (NOT NULL + unique on github_repo_id) but does NOT drop the legacy
+-- `(user_id, provider, full_name)` unique. Both keys coexist so the system is
+-- fully testable end-to-end and admin-api's existing
+-- `ON CONFLICT (user_id, provider, full_name)` connect path keeps working.
+-- The legacy-unique DROP is split into 086_drop_legacy_name_unique.sql, which
+-- must be deployed together with / after the admin-api ON CONFLICT flip to
+-- (user_id, github_repo_id). See the end-to-end runbook for ordering.
 -- =============================================================================
 
 -- Hard guard: refuse to enforce NOT NULL if any github rows are still NULL,
@@ -27,11 +36,3 @@ ALTER TABLE repositories ALTER COLUMN github_repo_id SET NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_repositories_user_ghid
     ON repositories (user_id, github_repo_id);
-
--- Drop the old mutable-name unique now that the id is canonical.
--- `repositories_user_id_provider_full_name_key` is Postgres's auto-generated name
--- for the inline `UNIQUE (user_id, provider, full_name)` on CREATE TABLE
--- repositories (src/bootstrap.ts) — no migration renames it. IF EXISTS keeps this
--- idempotent; CONFIRM this exact name against `\d repositories` on the live DB
--- before deploy in case a manual change diverged the live schema.
-ALTER TABLE repositories DROP CONSTRAINT IF EXISTS repositories_user_id_provider_full_name_key;
