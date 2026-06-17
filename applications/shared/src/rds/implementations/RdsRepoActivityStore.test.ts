@@ -195,6 +195,33 @@ describe('RdsRepoActivityStore.upsertCommitDetails', () => {
     });
 });
 
+describe('RdsRepoActivityStore.getFileChanges', () => {
+    it('returns the per-file change history for a path, newest first', async () => {
+        const rows = [
+            { commit_sha: 'abc', status: 'modified', additions: 8, deletions: 3, changes: 11,
+              patch: '@@', patch_truncated: false, authored_at: '2026-01-02T00:00:00Z', message: 'tune' },
+        ];
+        const client = {
+            queries: [] as { sql: string; params?: unknown[] }[],
+            query: jest.fn(async (sql: string, params?: unknown[]) => {
+                client.queries.push({ sql, params });
+                if (/FROM repo_commit_files/.test(sql)) return { rowCount: 1, rows };
+                return { rowCount: 0, rows: [] };
+            }),
+            release: jest.fn(),
+        };
+        const pool = { client, connect: jest.fn(async () => client) };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any);
+
+        const out = await store.getFileChanges('user-1', 'o/r', 'src/a.ts', 10);
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({ commitSha: 'abc', status: 'modified', additions: 8, message: 'tune' });
+        const sel = client.queries.find(q => /FROM repo_commit_files/.test(q.sql))!;
+        expect(sel.params).toEqual(expect.arrayContaining(['src/a.ts', 10]));
+    });
+});
+
 describe('RdsRepoActivityStore.selectShasMissingStats', () => {
     it('returns only the candidate shas that have no stats yet', async () => {
         const client = {

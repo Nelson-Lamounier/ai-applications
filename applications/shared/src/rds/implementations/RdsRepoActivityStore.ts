@@ -2,6 +2,19 @@
 import type { Pool } from 'pg';
 import type { RepoCommit, RepoPullRequest, CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
 
+/** One stored per-file change, joined with its commit — the "diffs touching file X" row. */
+export interface FileChange {
+    readonly commitSha:      string;
+    readonly status:         string;
+    readonly additions:      number;
+    readonly deletions:      number;
+    readonly changes:        number;
+    readonly patch:          string | null;
+    readonly patchTruncated: boolean;
+    readonly authoredAt:     string;
+    readonly message:        string;
+}
+
 /**
  * RdsRepoActivityStore — persists structured git commits and pull requests
  * captured during ingestion.
@@ -136,6 +149,60 @@ export class RdsRepoActivityStore {
 
             await client.query('COMMIT');
             return pulls.length;
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    /**
+     * Read the change history for one file path — every stored per-file diff
+     * touching it, joined with its commit, newest first. The "old vs new"
+     * retrieval primitive: feed these patches + the current chunk to narration.
+     */
+    async getFileChanges(
+        userId:       string,
+        repoFullName: string,
+        filePath:     string,
+        limit         = 50,
+    ): Promise<FileChange[]> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+
+            const result = await client.query<{
+                commit_sha: string; status: string; additions: number; deletions: number;
+                changes: number; patch: string | null; patch_truncated: boolean;
+                authored_at: string; message: string;
+            }>(
+                `SELECT f.commit_sha, f.status, f.additions, f.deletions, f.changes,
+                        f.patch, f.patch_truncated, c.authored_at, c.message
+                   FROM repo_commit_files f
+                   JOIN repo_commits c
+                     ON c.repository_id = f.repository_id AND c.sha = f.commit_sha
+                  WHERE f.user_id = $1::uuid
+                    AND f.repo_full_name = $2
+                    AND f.file_path = $3
+                  ORDER BY c.authored_at DESC
+                  LIMIT $4`,
+                [userId, repoFullName, filePath, limit],
+            );
+
+            await client.query('COMMIT');
+            return result.rows.map((r) => ({
+                commitSha:      r.commit_sha,
+                status:         r.status,
+                additions:      r.additions,
+                deletions:      r.deletions,
+                changes:        r.changes,
+                patch:          r.patch,
+                patchTruncated: r.patch_truncated,
+                authoredAt:     r.authored_at,
+                message:        r.message,
+            }));
         } catch (err) {
             await client.query('ROLLBACK');
             throw err;
