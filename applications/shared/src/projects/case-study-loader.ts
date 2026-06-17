@@ -24,6 +24,7 @@ import { packContext } from './case-study-context-budget.js';
 import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectOntologyRepository.js';
 import { classifyArchetype } from './archetype-classifier.js';
 import { pickStage } from './derive-stage.js';
+import { deriveDepthMarkers } from './case-study-depth.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
 export interface CaseStudyCommit {
@@ -99,6 +100,8 @@ interface KbRow {
 
 /** Number of KB chunks fed to the prompt. Hard cap to bound input cost. */
 const KB_CHUNK_CAP = 24;
+/** Cap on most-changed files surfaced as file-level evidence to the agent. */
+const FILE_CHANGE_CAP = 30;
 /** Max chars of root-README prose taken per repo for product context. */
 const README_CHARS_PER_REPO = 1_400;
 /** Global cap on the assembled productContext string. */
@@ -160,6 +163,55 @@ const CONTEXT_TOKEN_BUDGET = 120_000;
 export interface LoadCaseStudyContextResult {
     readonly userId:  string;
     readonly context: CaseStudyContext;
+}
+
+/**
+ * Code-grounded evidence for the case study: deterministic DepthMarkers from
+ * fileClass lane counts + archetype signals, plus the most-changed files from
+ * the ingested commit diffs. Kept separate from the main loader to bound its
+ * complexity.
+ */
+async function loadCodeGroundedEvidence(
+    pool: Pool,
+    userId: string,
+    repoNames: string[],
+    archetype: Record<string, boolean>,
+    commits: ReadonlyArray<{ message: string }>,
+): Promise<Pick<CaseStudyContext, 'depthMarkers' | 'fileChangeEvidence'>> {
+    const laneRows = (await pool.query<{ fc: string; cnt: string }>(
+        `SELECT de.metadata->>'fileClass' AS fc, count(*) AS cnt
+           FROM document_embeddings de
+          WHERE de.user_id::text = $1::text
+            AND de.repo_full_name = ANY($2::text[])
+            AND de.metadata->>'fileClass' IS NOT NULL
+          GROUP BY de.metadata->>'fileClass'`,
+        [userId, repoNames],
+    )).rows;
+    const laneCounts: Record<string, number> = {};
+    for (const row of laneRows) laneCounts[row.fc] = Number(row.cnt);
+
+    const refactorCount = commits.filter((c) => /\brefactor/i.test(c.message)).length;
+    const depthMarkers = deriveDepthMarkers({ laneCounts, archetype, refactorCount });
+
+    const fileRows = (await pool.query<{ repo_full_name: string; file_path: string; additions: string; deletions: string; changes: string }>(
+        `SELECT repo_full_name, file_path,
+                sum(additions) AS additions, sum(deletions) AS deletions, sum(changes) AS changes
+           FROM repo_commit_files
+          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
+          GROUP BY repo_full_name, file_path
+          ORDER BY (sum(additions) + sum(deletions)) DESC
+          LIMIT $3`,
+        [userId, repoNames, FILE_CHANGE_CAP],
+    )).rows;
+    const fileChangeEvidence = fileRows.map((r) => ({
+        repoFullName: r.repo_full_name,
+        filePath:     r.file_path,
+        additions:    Number(r.additions),
+        deletions:    Number(r.deletions),
+        changes:      Number(r.changes),
+    }));
+
+    return { depthMarkers, fileChangeEvidence };
 }
 
 export async function loadCaseStudyContext(
@@ -293,6 +345,10 @@ export async function loadCaseStudyContext(
         htmlUrl:      r.html_url,
     }));
 
+    const { depthMarkers, fileChangeEvidence } = await loadCodeGroundedEvidence(
+        pool, p.user_id, repoNames, mergedSignals, commits,
+    );
+
     const rawContext: CaseStudyContext = {
         projectId:     p.id,
         projectName:   p.name,
@@ -317,6 +373,8 @@ export async function loadCaseStudyContext(
             chunkType:    row.chunk_type,
             content:      row.content,
         })),
+        depthMarkers,
+        fileChangeEvidence,
     };
 
     // Bound the prompt to a global token ceiling. Without this, a multi_repo

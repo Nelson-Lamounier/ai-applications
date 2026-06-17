@@ -183,6 +183,12 @@ export async function runCaseStudyOrchestration(
         caseStudy = await applyGrounding(agentResult.data, input.verifier);
     }
 
+    // 2b. Override depthMarkers with the deterministic, code-grounded values
+    // (test/CI/deploy/docs maturity from fileClass lanes + archetype) — depth is
+    // measured, not the model's guess. Applied to cached results too (idempotent).
+    const groundedDepth = contextLoaded.context.depthMarkers;
+    if (groundedDepth) caseStudy = { ...caseStudy, depthMarkers: groundedDepth };
+
     // 3. Persist.
     const client = await pool.connect();
     let persisted: PersistCaseStudySummary;
