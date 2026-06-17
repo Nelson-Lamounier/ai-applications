@@ -100,3 +100,20 @@ describe('GitHubAdapter.listCommits shape guard', () => {
     expect(commits[0]).toMatchObject({ sha: 'c1', authorLogin: 'me', message: 'init' });
   });
 });
+
+describe('GitHubAdapter.resolveById', () => {
+  it('resolves a repo by immutable GitHub id to its current full_name', async () => {
+    const adapter = routedAdapter({
+      '/repositories/42': { id: 42, full_name: 'o/renamed', default_branch: 'main' },
+    });
+
+    await expect(adapter.resolveById(42)).resolves.toEqual({
+      id: 42, fullName: 'o/renamed', defaultBranch: 'main',
+    });
+  });
+
+  it('throws GitHubResponseShapeError when full_name is missing', async () => {
+    const adapter = routedAdapter({ '/repositories/42': { id: 42 } });
+    await expect(adapter.resolveById(42)).rejects.toBeInstanceOf(GitHubResponseShapeError);
+  });
+});

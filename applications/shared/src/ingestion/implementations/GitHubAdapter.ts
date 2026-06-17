@@ -441,6 +441,28 @@ export class GitHubAdapter implements IRepoAdapter {
     }
 
     // =========================================================================
+    // GitHubAdapter.resolveById — current identity from the immutable repo id
+    // =========================================================================
+
+    /**
+     * Resolve a repo by its immutable GitHub numeric id. `GET /repositories/{id}`
+     * always returns the *current* full_name even after a rename/transfer, so this
+     * is the rename-proof way to discover where a connected repo now lives.
+     */
+    async resolveById(githubRepoId: number): Promise<{ id: number; fullName: string; defaultBranch: string }> {
+        const data = await this.get<{ id: number; full_name: string; default_branch: string }>(
+            `/repositories/${githubRepoId}`,
+        );
+        if (!data || typeof data.full_name !== 'string') {
+            throw new GitHubResponseShapeError(
+                `/repositories/${githubRepoId}`,
+                'response had no full_name',
+            );
+        }
+        return { id: data.id, fullName: data.full_name, defaultBranch: data.default_branch };
+    }
+
+    // =========================================================================
     // Private — HTTPS request helper
     // =========================================================================
 
