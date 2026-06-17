@@ -479,6 +479,29 @@ export class GitHubAdapter implements IRepoAdapter {
     }
 
     // =========================================================================
+    // GitHubAdapter.resolveByName — current identity from a (possibly stale) name
+    // =========================================================================
+
+    /**
+     * Resolve a repo by its `owner/name` full_name. Because `get` follows the 301
+     * GitHub issues for a renamed/moved repo (capped hops), a stale name resolves
+     * to the repo's *current* id + full_name automatically — the rename-proof
+     * counterpart to resolveById when only the old name is known (e.g. backfill).
+     */
+    async resolveByName(fullName: string): Promise<{ id: number; fullName: string; defaultBranch: string }> {
+        const data = await this.get<{ id: number; full_name: string; default_branch: string }>(
+            `/repos/${fullName}`,
+        );
+        if (!data || typeof data.full_name !== 'string') {
+            throw new GitHubResponseShapeError(
+                `/repos/${fullName}`,
+                'response had no full_name',
+            );
+        }
+        return { id: data.id, fullName: data.full_name, defaultBranch: data.default_branch };
+    }
+
+    // =========================================================================
     // Private — response-shape + HTTPS helpers
     // =========================================================================
 

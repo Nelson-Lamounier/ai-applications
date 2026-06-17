@@ -127,3 +127,22 @@ describe('GitHubAdapter.resolveById', () => {
     await expect(adapter.resolveById(42)).rejects.toBeInstanceOf(GitHubResponseShapeError);
   });
 });
+
+describe('GitHubAdapter.resolveByName', () => {
+  it('resolves /repos/o/r to its current id, full_name and default_branch', async () => {
+    // A renamed repo 301-redirects; `get` follows it, so even a stale name
+    // surfaces the current identity. Here the body is already the resolved repo.
+    const adapter = routedAdapter({
+      '/repos/o/r': { id: 99, full_name: 'o/renamed', default_branch: 'main' },
+    });
+
+    await expect(adapter.resolveByName('o/r')).resolves.toEqual({
+      id: 99, fullName: 'o/renamed', defaultBranch: 'main',
+    });
+  });
+
+  it('throws GitHubResponseShapeError when full_name is missing', async () => {
+    const adapter = routedAdapter({ '/repos/o/r': { id: 99 } });
+    await expect(adapter.resolveByName('o/r')).rejects.toBeInstanceOf(GitHubResponseShapeError);
+  });
+});
