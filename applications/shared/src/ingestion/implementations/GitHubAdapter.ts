@@ -321,6 +321,12 @@ export class GitHubAdapter implements IRepoAdapter {
                 `/repos/${repoFullName}/commits?${qs.join('&')}`,
             );
 
+            if (!Array.isArray(batch)) {
+                throw new GitHubResponseShapeError(
+                    `/repos/${repoFullName}/commits`,
+                    'expected an array of commits (repo may be renamed or moved)',
+                );
+            }
             if (batch.length === 0) break;
 
             for (const c of batch) {

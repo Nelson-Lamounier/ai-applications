@@ -77,3 +77,26 @@ describe('GitHubAdapter.listFiles shape guard', () => {
     await expect(adapter.listFiles('o/r')).rejects.toBeInstanceOf(GitHubResponseShapeError);
   });
 });
+
+describe('GitHubAdapter.listCommits shape guard', () => {
+  it('throws GitHubResponseShapeError when the commits response is not an array', async () => {
+    const adapter = routedAdapter({
+      '/repos/o/r': { default_branch: 'main' },
+      '/repos/o/r/commits?sha=main&per_page=100&page=1': { message: 'Moved Permanently', url: 'https://api.github.com/repositories/42' },
+    });
+
+    await expect(adapter.listCommits('o/r')).rejects.toBeInstanceOf(GitHubResponseShapeError);
+  });
+
+  it('still lists commits for a valid array response', async () => {
+    const adapter = routedAdapter({
+      '/repos/o/r': { default_branch: 'main' },
+      '/repos/o/r/commits?sha=main&per_page=100&page=1': [
+        { sha: 'c1', author: { login: 'me' }, commit: { message: 'init', author: { name: 'Me', date: '2026-01-01T00:00:00Z' } } },
+      ],
+    });
+
+    const commits = await adapter.listCommits('o/r');
+    expect(commits[0]).toMatchObject({ sha: 'c1', authorLogin: 'me', message: 'init' });
+  });
+});
