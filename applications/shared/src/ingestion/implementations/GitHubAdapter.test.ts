@@ -10,6 +10,7 @@
 import { describe, it, expect } from '@jest/globals';
 
 import { GitHubAdapter } from './GitHubAdapter.js';
+import { GitHubResponseShapeError } from './github-errors.js';
 
 /**
  * Build a GitHubAdapter whose private HTTPS `get` is replaced by a route map.
@@ -62,4 +63,17 @@ describe('GitHubAdapter.getHeadCommitSha', () => {
 
         await expect(adapter.getHeadCommitSha('o/r')).resolves.toBe('head123');
     });
+});
+
+describe('GitHubAdapter.listFiles shape guard', () => {
+  it('throws GitHubResponseShapeError when the tree response has no tree array', async () => {
+    // A renamed repo 301-redirects; if the body leaks through it looks like
+    // { message, url } — no `tree`. Must not crash on `.tree.filter`.
+    const adapter = routedAdapter({
+      '/repos/o/r': { default_branch: 'main' },
+      '/repos/o/r/git/trees/main?recursive=1': { message: 'Moved Permanently', url: 'https://api.github.com/repositories/42' },
+    });
+
+    await expect(adapter.listFiles('o/r')).rejects.toBeInstanceOf(GitHubResponseShapeError);
+  });
 });

@@ -35,6 +35,8 @@ import type {
     RepoPullRequest,
 } from '../interfaces/IRepoAdapter.js';
 
+import { RepoNotFoundError, GitHubResponseShapeError } from './github-errors.js';
+
 // =============================================================================
 // INTERNAL TYPES — GitHub API response shapes
 // =============================================================================
@@ -159,6 +161,13 @@ export class GitHubAdapter implements IRepoAdapter {
         const tree = await this.get<GitHubTreeResponse>(
             `/repos/${repoFullName}/git/trees/${repoInfo.default_branch}?recursive=1`,
         );
+
+        if (!tree || !Array.isArray(tree.tree)) {
+            throw new GitHubResponseShapeError(
+                `/repos/${repoFullName}/git/trees`,
+                'response had no tree array (repo may be renamed, moved, or empty)',
+            );
+        }
 
         if (!tree.truncated) {
             return tree.tree
