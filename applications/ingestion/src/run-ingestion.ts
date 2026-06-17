@@ -47,7 +47,7 @@ import { Pool } from 'pg';
 
 import { parseEnv } from './env.js';
 import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
-import { ProfileExtractor, ProfileExtractionError, sha256 } from './agents/ProfileExtractor.js';
+import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
 import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
 import { DirectionSynthesizer } from './agents/DirectionSynthesizer.js';
@@ -58,6 +58,7 @@ import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
 import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
 import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
+import { friendlyIngestionError } from './friendly-error.js';
 import type { RepoFile } from '@bedrock/shared';
 import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
 import { RepositoryProfileEmbeddingsRepository } from './repositories/RepositoryProfileEmbeddingsRepository.js';
@@ -196,22 +197,6 @@ async function syncRepositoryIndexStatus(
          WHERE user_id = $1::uuid AND full_name = $2`,
         [userId, repoFullName, status, errorMessage ?? null],
     );
-}
-
-/**
- * Short, non-technical sentence written to repo_sync_state.error_message — the
- * customer-facing field the dashboard/onboarding UI renders. Never leaks stack
- * traces, Zod dumps, or internal error codes; the raw detail stays in the logs
- * and in repositories.error_message for debugging.
- */
-function friendlyIngestionError(err: unknown): string {
-    if (err instanceof ProfileExtractionError) {
-        if (err.code === 'bedrock_error') {
-            return "We couldn't analyze this repository right now. Please try again in a few minutes.";
-        }
-        return "We couldn't build a profile for this repository. Please try again.";
-    }
-    return "Indexing didn't finish for this repository. Please try again.";
 }
 
 /**
