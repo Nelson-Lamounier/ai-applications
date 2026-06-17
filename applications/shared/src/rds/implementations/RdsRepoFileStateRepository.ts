@@ -8,7 +8,17 @@ export interface RepoFileEntry {
 }
 
 export class RdsRepoFileStateRepository {
-    constructor(private readonly pool: Pool) {}
+    /**
+     * @param pool         shared pg Pool
+     * @param githubRepoId immutable GitHub numeric repo id, dual-written onto
+     *   every repo_file_state insert so a rename heals via metadata update
+     *   (reconcileRepoName) rather than a re-ingest. Null on legacy/pre-backfill
+     *   runs — the column is nullable.
+     */
+    constructor(
+        private readonly pool: Pool,
+        private readonly githubRepoId: number | null = null,
+    ) {}
 
     async getFileState(userId: string, repoFullName: string): Promise<Map<string, string>> {
         const client = await this.pool.connect();
@@ -41,14 +51,14 @@ export class RdsRepoFileStateRepository {
             );
             if (files.length > 0) {
                 const placeholders = files.map((_, i) => {
-                    const b = i * 5;
-                    return `($${b + 1}::uuid, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}::int)`;
+                    const b = i * 6;
+                    return `($${b + 1}::uuid, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}::int, $${b + 6})`;
                 }).join(', ');
                 const values: unknown[] = [];
-                for (const f of files) values.push(userId, repoFullName, f.path, f.blobSha, f.sizeBytes);
+                for (const f of files) values.push(userId, repoFullName, f.path, f.blobSha, f.sizeBytes, this.githubRepoId);
                 await client.query(
                     `INSERT INTO repo_file_state
-                        (user_id, repo_full_name, file_path, blob_sha, size_bytes)
+                        (user_id, repo_full_name, file_path, blob_sha, size_bytes, github_repo_id)
                      VALUES ${placeholders}`,
                     values,
                 );

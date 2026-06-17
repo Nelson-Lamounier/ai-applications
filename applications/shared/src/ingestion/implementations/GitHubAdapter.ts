@@ -35,6 +35,8 @@ import type {
     RepoPullRequest,
 } from '../interfaces/IRepoAdapter.js';
 
+import { RepoNotFoundError, GitHubResponseShapeError } from './github-errors.js';
+
 // =============================================================================
 // INTERNAL TYPES — GitHub API response shapes
 // =============================================================================
@@ -112,6 +114,20 @@ const SKIP_DIRS = new Set([
     '.git',
 ]);
 
+/** Max redirect hops `get` will follow before giving up (GitHub renames 301 once). */
+const MAX_REDIRECTS = 3;
+
+/** Reduce a redirect Location (absolute api.github.com URL or relative path) to a request path. */
+function redirectPath(location: string): string | null {
+    try {
+        const u = new URL(location);
+        if (u.hostname !== 'api.github.com') return null; // never follow off-host
+        return u.pathname + u.search;
+    } catch {
+        return location.startsWith('/') ? location : `/${location}`;
+    }
+}
+
 // =============================================================================
 // PUBLIC TYPES — GitHubAdapter-specific (not part of IRepoAdapter)
 // =============================================================================
@@ -159,6 +175,13 @@ export class GitHubAdapter implements IRepoAdapter {
         const tree = await this.get<GitHubTreeResponse>(
             `/repos/${repoFullName}/git/trees/${repoInfo.default_branch}?recursive=1`,
         );
+
+        if (!tree || !Array.isArray(tree.tree)) {
+            throw new GitHubResponseShapeError(
+                `/repos/${repoFullName}/git/trees`,
+                'response had no tree array (repo may be renamed, moved, or empty)',
+            );
+        }
 
         if (!tree.truncated) {
             return tree.tree
@@ -308,8 +331,12 @@ export class GitHubAdapter implements IRepoAdapter {
             ];
             if (since) qs.push(`since=${encodeURIComponent(since)}`);
 
-            const batch = await this.get<GitHubCommitListItem[]>(
-                `/repos/${repoFullName}/commits?${qs.join('&')}`,
+            const batch = this.assertArray<GitHubCommitListItem>(
+                await this.get<GitHubCommitListItem[]>(
+                    `/repos/${repoFullName}/commits?${qs.join('&')}`,
+                ),
+                `/repos/${repoFullName}/commits`,
+                'expected an array of commits (repo may be renamed or moved)',
             );
 
             if (batch.length === 0) break;
@@ -368,8 +395,12 @@ export class GitHubAdapter implements IRepoAdapter {
                 `page=${page}`,
             ];
 
-            const batch = await this.get<GitHubPullRequestListItem[]>(
-                `/repos/${repoFullName}/pulls?${qs.join('&')}`,
+            const batch = this.assertArray<GitHubPullRequestListItem>(
+                await this.get<GitHubPullRequestListItem[]>(
+                    `/repos/${repoFullName}/pulls?${qs.join('&')}`,
+                ),
+                `/repos/${repoFullName}/pulls`,
+                'expected an array of pull requests (repo may be renamed or moved)',
             );
 
             if (batch.length === 0) break;
@@ -426,10 +457,71 @@ export class GitHubAdapter implements IRepoAdapter {
     }
 
     // =========================================================================
-    // Private — HTTPS request helper
+    // GitHubAdapter.resolveById — current identity from the immutable repo id
     // =========================================================================
 
+    /**
+     * Resolve a repo by its immutable GitHub numeric id. `GET /repositories/{id}`
+     * always returns the *current* full_name even after a rename/transfer, so this
+     * is the rename-proof way to discover where a connected repo now lives.
+     */
+    async resolveById(githubRepoId: number): Promise<{ id: number; fullName: string; defaultBranch: string }> {
+        const data = await this.get<{ id: number; full_name: string; default_branch: string }>(
+            `/repositories/${githubRepoId}`,
+        );
+        if (!data || typeof data.full_name !== 'string') {
+            throw new GitHubResponseShapeError(
+                `/repositories/${githubRepoId}`,
+                'response had no full_name',
+            );
+        }
+        return { id: data.id, fullName: data.full_name, defaultBranch: data.default_branch };
+    }
+
+    // =========================================================================
+    // GitHubAdapter.resolveByName — current identity from a (possibly stale) name
+    // =========================================================================
+
+    /**
+     * Resolve a repo by its `owner/name` full_name. Because `get` follows the 301
+     * GitHub issues for a renamed/moved repo (capped hops), a stale name resolves
+     * to the repo's *current* id + full_name automatically — the rename-proof
+     * counterpart to resolveById when only the old name is known (e.g. backfill).
+     */
+    async resolveByName(fullName: string): Promise<{ id: number; fullName: string; defaultBranch: string }> {
+        const data = await this.get<{ id: number; full_name: string; default_branch: string }>(
+            `/repos/${fullName}`,
+        );
+        if (!data || typeof data.full_name !== 'string') {
+            throw new GitHubResponseShapeError(
+                `/repos/${fullName}`,
+                'response had no full_name',
+            );
+        }
+        return { id: data.id, fullName: data.full_name, defaultBranch: data.default_branch };
+    }
+
+    // =========================================================================
+    // Private — response-shape + HTTPS helpers
+    // =========================================================================
+
+    /**
+     * Narrow a GitHub list response to an array, throwing a typed shape error
+     * otherwise. A renamed/moved repo can surface a `{ message, url }` body where
+     * an array was expected; without this guard the caller crashes on iteration.
+     */
+    private assertArray<T>(value: unknown, endpoint: string, detail: string): T[] {
+        if (!Array.isArray(value)) {
+            throw new GitHubResponseShapeError(endpoint, detail);
+        }
+        return value as T[];
+    }
+
     private get<T>(path: string): Promise<T> {
+        return this.getWithHops<T>(path, 0);
+    }
+
+    private getWithHops<T>(path: string, hops: number): Promise<T> {
         return new Promise((resolve, reject) => {
             const options = {
                 hostname: this.apiBase,
@@ -446,14 +538,34 @@ export class GitHubAdapter implements IRepoAdapter {
             const req = https.request(options, res => {
                 const chunks: Buffer[] = [];
 
+                res.on('error', reject);
                 res.on('data', (chunk: Buffer) => chunks.push(chunk));
                 res.on('end', () => {
+                    const status = res.statusCode ?? 0;
                     const body = Buffer.concat(chunks).toString('utf-8');
 
-                    if (!res.statusCode || res.statusCode >= 400) {
-                        reject(new Error(
-                            `GitHub API ${path} returned ${res.statusCode}: ${body}`,
+                    // GitHub 301s a renamed/moved repo to /repositories/{id}.
+                    if (status >= 300 && status < 400) {
+                        const location = res.headers.location;
+                        const nextPath = location ? redirectPath(location) : null;
+                        if (nextPath && hops < MAX_REDIRECTS) {
+                            resolve(this.getWithHops<T>(nextPath, hops + 1));
+                            return;
+                        }
+                        reject(new GitHubResponseShapeError(
+                            path,
+                            `redirect (${status}) not followed (no usable Location or hop cap reached)`,
                         ));
+                        return;
+                    }
+
+                    if (status === 404) {
+                        reject(new RepoNotFoundError(path));
+                        return;
+                    }
+
+                    if (status >= 400) {
+                        reject(new Error(`GitHub API ${path} returned ${status}: ${body}`));
                         return;
                     }
 

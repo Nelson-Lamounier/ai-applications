@@ -38,8 +38,16 @@ interface SyncStateRow {
 
 export class RdsSyncStateRepository implements ISyncStateRepository {
     private readonly pool: Pool;
+    /**
+     * Immutable GitHub numeric repo id, dual-written onto every repo_sync_state
+     * upsert so a rename is a metadata update (reconcileRepoName) rather than a
+     * re-ingest. Null on legacy/pre-backfill runs — the column is nullable and a
+     * later id-bearing run / the backfill fills it.
+     */
+    private readonly githubRepoId: number | null;
 
-    constructor(config: RdsClientConfig) {
+    constructor(config: RdsClientConfig, githubRepoId: number | null = null) {
+        this.githubRepoId = githubRepoId;
         this.pool = new Pool({
             host:               config.host,
             port:               config.port,
@@ -137,8 +145,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 user_id, repo_full_name, sync_status,
                 last_synced_at, file_count, chunk_count, error_message,
                 kb_quality_score, kb_quality_breakdown,
-                retrieval_score, retrieval_breakdown
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
+                retrieval_score, retrieval_breakdown, github_repo_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12)
             ON CONFLICT (user_id, repo_full_name)
             DO UPDATE SET
                 sync_status           = EXCLUDED.sync_status,
@@ -149,7 +157,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 kb_quality_score      = EXCLUDED.kb_quality_score,
                 kb_quality_breakdown  = EXCLUDED.kb_quality_breakdown,
                 retrieval_score       = EXCLUDED.retrieval_score,
-                retrieval_breakdown   = EXCLUDED.retrieval_breakdown`,
+                retrieval_breakdown   = EXCLUDED.retrieval_breakdown,
+                github_repo_id        = COALESCE(EXCLUDED.github_repo_id, repo_sync_state.github_repo_id)`,
             [
                 state.userId,
                 state.repoFullName,
@@ -166,6 +175,7 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 state.retrievalBreakdown == null
                     ? null
                     : JSON.stringify(state.retrievalBreakdown),
+                this.githubRepoId,
             ],
         );
     }

@@ -37,7 +37,30 @@ describe('RdsSyncStateRepository retrieval persistence', () => {
         (repo as unknown as { pool: typeof pool }).pool = pool;
         await repo.markComplete('u1', 'owner/repo', 1, 1, 0.5, { version: 1 });
         const upsert = pool.calls.find(c => c.sql.includes('INSERT INTO repo_sync_state'))!;
-        expect(upsert.params.slice(-2)).toEqual([null, null]);
+        // retrieval pair now precedes the trailing github_repo_id param.
+        expect(upsert.params.slice(-3, -1)).toEqual([null, null]);
+    });
+});
+
+describe('RdsSyncStateRepository github_repo_id dual-write', () => {
+    it('binds the injected github_repo_id as the trailing upsert param', async () => {
+        const pool = fakePool();
+        const repo = new RdsSyncStateRepository({} as never, 4242);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+        await repo.markComplete('u1', 'owner/repo', 1, 1);
+        const upsert = pool.calls.find(c => c.sql.includes('INSERT INTO repo_sync_state'))!;
+        expect(upsert.sql).toContain('github_repo_id');
+        expect(upsert.sql).toContain('COALESCE(EXCLUDED.github_repo_id, repo_sync_state.github_repo_id)');
+        expect(upsert.params.at(-1)).toBe(4242);
+    });
+
+    it('binds null when no github_repo_id is injected (pre-backfill run)', async () => {
+        const pool = fakePool();
+        const repo = new RdsSyncStateRepository({} as never);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+        await repo.markComplete('u1', 'owner/repo', 1, 1);
+        const upsert = pool.calls.find(c => c.sql.includes('INSERT INTO repo_sync_state'))!;
+        expect(upsert.params.at(-1)).toBeNull();
     });
 });
 

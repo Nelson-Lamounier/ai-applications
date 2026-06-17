@@ -107,6 +107,39 @@ describe('RdsRepoActivityStore', () => {
         expect(sqls.some(s => /ON CONFLICT \(repository_id, number\) DO UPDATE/.test(s))).toBe(true);
     });
 
+    it('dual-writes the injected github_repo_id on commits + PRs (COALESCE on conflict)', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any, 4242);
+
+        await store.upsertCommits('user-1', 'repo-1', 'owner/repo', commits);
+        await store.upsertPullRequests('user-1', 'repo-1', 'owner/repo', pulls);
+
+        const commitInsert = pool.client.queries.find(q => /INSERT INTO repo_commits/.test(q.sql))!;
+        expect(commitInsert.sql).toMatch(/github_repo_id/);
+        expect(commitInsert.sql).toMatch(/COALESCE\(EXCLUDED\.github_repo_id, repo_commits\.github_repo_id\)/);
+        // 9 params/commit × 2 commits; github_repo_id is each tuple's last.
+        expect(commitInsert.params).toHaveLength(18);
+        expect(commitInsert.params![8]).toBe(4242);
+        expect(commitInsert.params![17]).toBe(4242);
+
+        const prInsert = pool.client.queries.find(q => /INSERT INTO repo_pull_requests/.test(q.sql))!;
+        expect(prInsert.sql).toMatch(/COALESCE\(EXCLUDED\.github_repo_id, repo_pull_requests\.github_repo_id\)/);
+        expect(prInsert.params).toHaveLength(24); // 12 params/PR × 2
+        expect(prInsert.params![11]).toBe(4242);
+    });
+
+    it('binds null github_repo_id on a pre-backfill run', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const store = new RdsRepoActivityStore(pool as any);
+
+        await store.upsertCommits('user-1', 'repo-1', 'owner/repo', commits);
+
+        const commitInsert = pool.client.queries.find(q => /INSERT INTO repo_commits/.test(q.sql))!;
+        expect(commitInsert.params![8]).toBeNull();
+    });
+
     it('upsertCommits() rolls back and rethrows when the insert fails', async () => {
         const pool = fakePool({ throwOn: /INSERT INTO repo_commits/ });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

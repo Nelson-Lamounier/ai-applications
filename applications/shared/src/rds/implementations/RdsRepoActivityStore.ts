@@ -13,7 +13,18 @@ import type { RepoCommit, RepoPullRequest } from '../../ingestion/interfaces/IRe
  * transaction that first sets that GUC via set_config().
  */
 export class RdsRepoActivityStore {
-    constructor(private readonly pool: Pool) {}
+    /**
+     * @param pool         shared pg Pool
+     * @param githubRepoId immutable GitHub numeric repo id, dual-written onto
+     *   every repo_commits / repo_pull_requests upsert so a rename heals via a
+     *   metadata update (reconcileRepoName) rather than a re-ingest. Null on
+     *   legacy/pre-backfill runs — the column is nullable. The ON CONFLICT clause
+     *   COALESCEs so a NULL run never clobbers a known id.
+     */
+    constructor(
+        private readonly pool: Pool,
+        private readonly githubRepoId: number | null = null,
+    ) {}
 
     async upsertCommits(
         userId:       string,
@@ -29,8 +40,8 @@ export class RdsRepoActivityStore {
             await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
 
             const valuePlaceholders = commits.map((_, i) => {
-                const base = i * 8;
-                return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}::timestamptz, $${base + 8})`;
+                const base = i * 9;
+                return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}::timestamptz, $${base + 8}, $${base + 9})`;
             }).join(', ');
 
             const values: unknown[] = [];
@@ -44,18 +55,20 @@ export class RdsRepoActivityStore {
                     c.authorLogin ?? null,
                     c.authoredAt,
                     c.message,
+                    this.githubRepoId,
                 );
             }
 
             await client.query(
                 `INSERT INTO repo_commits
-                    (user_id, repository_id, repo_full_name, sha, author_name, author_login, authored_at, message)
+                    (user_id, repository_id, repo_full_name, sha, author_name, author_login, authored_at, message, github_repo_id)
                  VALUES ${valuePlaceholders}
                  ON CONFLICT (repository_id, sha) DO UPDATE
-                     SET author_name  = EXCLUDED.author_name,
-                         author_login = EXCLUDED.author_login,
-                         authored_at  = EXCLUDED.authored_at,
-                         message      = EXCLUDED.message`,
+                     SET author_name    = EXCLUDED.author_name,
+                         author_login   = EXCLUDED.author_login,
+                         authored_at    = EXCLUDED.authored_at,
+                         message        = EXCLUDED.message,
+                         github_repo_id = COALESCE(EXCLUDED.github_repo_id, repo_commits.github_repo_id)`,
                 values,
             );
 
@@ -83,8 +96,8 @@ export class RdsRepoActivityStore {
             await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
 
             const valuePlaceholders = pulls.map((_, i) => {
-                const base = i * 11;
-                return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}::int, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}::timestamptz, $${base + 10}::timestamptz, $${base + 11})`;
+                const base = i * 12;
+                return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}::int, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}::timestamptz, $${base + 10}::timestamptz, $${base + 11}, $${base + 12})`;
             }).join(', ');
 
             const values: unknown[] = [];
@@ -101,21 +114,23 @@ export class RdsRepoActivityStore {
                     p.createdAt,
                     p.mergedAt ?? null,
                     p.htmlUrl,
+                    this.githubRepoId,
                 );
             }
 
             await client.query(
                 `INSERT INTO repo_pull_requests
-                    (user_id, repository_id, repo_full_name, number, title, body, state, author_login, created_at_gh, merged_at, html_url)
+                    (user_id, repository_id, repo_full_name, number, title, body, state, author_login, created_at_gh, merged_at, html_url, github_repo_id)
                  VALUES ${valuePlaceholders}
                  ON CONFLICT (repository_id, number) DO UPDATE
-                     SET title         = EXCLUDED.title,
-                         body          = EXCLUDED.body,
-                         state         = EXCLUDED.state,
-                         author_login  = EXCLUDED.author_login,
-                         created_at_gh = EXCLUDED.created_at_gh,
-                         merged_at     = EXCLUDED.merged_at,
-                         html_url      = EXCLUDED.html_url`,
+                     SET title          = EXCLUDED.title,
+                         body           = EXCLUDED.body,
+                         state          = EXCLUDED.state,
+                         author_login   = EXCLUDED.author_login,
+                         created_at_gh  = EXCLUDED.created_at_gh,
+                         merged_at      = EXCLUDED.merged_at,
+                         html_url       = EXCLUDED.html_url,
+                         github_repo_id = COALESCE(EXCLUDED.github_repo_id, repo_pull_requests.github_repo_id)`,
                 values,
             );
 

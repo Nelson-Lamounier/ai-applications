@@ -80,6 +80,10 @@ export { RdsOAuthConnectionsRepository } from './implementations/RdsOAuthConnect
 export { RdsRepoActivityStore } from './implementations/RdsRepoActivityStore.js';
 export { RdsRepoFileStateRepository } from './implementations/RdsRepoFileStateRepository.js';
 
+// Rename self-heal — re-stamp the denormalised repo_full_name label everywhere
+// from the immutable github_repo_id (twin of the admin-api reconcile).
+export { reconcileRepoName } from './reconcileRepoName.js';
+
 // Diagnostic (pure deterministic formula)
 export { computeUserDiagnostic, WEIGHTS, KB_SCORE_THRESHOLD } from './diagnostic/computeUserDiagnostic.js';
 export type {

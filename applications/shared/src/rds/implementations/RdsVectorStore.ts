@@ -124,8 +124,17 @@ function stripNulFields(chunk: DocumentChunk): DocumentChunk {
 
 export class RdsVectorStore implements IVectorStore {
     private readonly pool: Pool;
+    /**
+     * Immutable GitHub numeric repo id, dual-written onto every
+     * document_embeddings upsert so a rename heals via a metadata update
+     * (reconcileRepoName) rather than a re-ingest. Null on legacy/pre-backfill
+     * runs — the column is nullable; the ON CONFLICT clause COALESCEs so a NULL
+     * run never clobbers a known id.
+     */
+    private readonly githubRepoId: number | null;
 
-    constructor(config: RdsClientConfig, pool?: Pool) {
+    constructor(config: RdsClientConfig, pool?: Pool, githubRepoId: number | null = null) {
+        this.githubRepoId = githubRepoId;
         this.pool = pool ?? new Pool({
             host:               config.host,
             port:               config.port,
@@ -253,7 +262,7 @@ export class RdsVectorStore implements IVectorStore {
     private async upsertMany(
         chunks: DocumentChunk[],
     ): Promise<{ inserted: number; updated: number; skipped: number }> {
-        const COLS = 14;
+        const COLS = 15;
         const tuples: string[] = [];
         const values: unknown[] = [];
 
@@ -262,7 +271,7 @@ export class RdsVectorStore implements IVectorStore {
             tuples.push(
                 `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},` +
                 `$${b + 7}::text[],$${b + 8}::jsonb,$${b + 9}::text[],$${b + 10}::text[],` +
-                `$${b + 11},$${b + 12},$${b + 13},$${b + 14}::vector,NOW())`,
+                `$${b + 11},$${b + 12},$${b + 13},$${b + 14}::vector,$${b + 15},NOW())`,
             );
             values.push(
                 chunk.userId,
@@ -279,6 +288,7 @@ export class RdsVectorStore implements IVectorStore {
                 chunk.totalChunks,
                 chunk.contentHash,
                 `[${chunk.embedding.join(',')}]`,
+                this.githubRepoId,
             );
         });
 
@@ -288,7 +298,7 @@ export class RdsVectorStore implements IVectorStore {
                 content, file_type, tags, metadata,
                 skills, technologies,
                 chunk_index, total_chunks, content_hash,
-                embedding, last_synced_at
+                embedding, github_repo_id, last_synced_at
             ) VALUES ${tuples.join(',')}
             ON CONFLICT (user_id, repo_full_name, file_path, chunk_index)
             DO UPDATE SET
@@ -302,6 +312,7 @@ export class RdsVectorStore implements IVectorStore {
                 total_chunks   = EXCLUDED.total_chunks,
                 content_hash   = EXCLUDED.content_hash,
                 embedding      = EXCLUDED.embedding,
+                github_repo_id = COALESCE(EXCLUDED.github_repo_id, document_embeddings.github_repo_id),
                 last_synced_at = NOW()
             WHERE document_embeddings.content_hash <> EXCLUDED.content_hash
             RETURNING (xmax = 0) AS was_inserted`,
@@ -324,13 +335,13 @@ export class RdsVectorStore implements IVectorStore {
                 content, file_type, tags, metadata,
                 skills, technologies,
                 chunk_index, total_chunks, content_hash,
-                embedding, last_synced_at
+                embedding, github_repo_id, last_synced_at
             ) VALUES (
                 $1, $2, $3, $4,
                 $5, $6, $7::text[], $8::jsonb,
                 $9::text[], $10::text[],
                 $11, $12, $13,
-                $14::vector, NOW()
+                $14::vector, $15, NOW()
             )
             ON CONFLICT (user_id, repo_full_name, file_path, chunk_index)
             DO UPDATE SET
@@ -344,6 +355,7 @@ export class RdsVectorStore implements IVectorStore {
                 total_chunks   = EXCLUDED.total_chunks,
                 content_hash   = EXCLUDED.content_hash,
                 embedding      = EXCLUDED.embedding,
+                github_repo_id = COALESCE(EXCLUDED.github_repo_id, document_embeddings.github_repo_id),
                 last_synced_at = NOW()
             WHERE document_embeddings.content_hash <> EXCLUDED.content_hash
             RETURNING (xmax = 0) AS was_inserted`,
@@ -362,6 +374,7 @@ export class RdsVectorStore implements IVectorStore {
                 chunk.totalChunks,
                 chunk.contentHash,
                 `[${chunk.embedding.join(',')}]`,
+                this.githubRepoId,
             ],
         );
 
