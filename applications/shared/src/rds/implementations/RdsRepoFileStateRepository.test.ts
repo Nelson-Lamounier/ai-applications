@@ -89,6 +89,32 @@ describe('RdsRepoFileStateRepository', () => {
         expect(sqls).toContain('COMMIT');
     });
 
+    it('upsertFileState() dual-writes the injected github_repo_id (6 params/row)', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const repo = new RdsRepoFileStateRepository(pool as any, 4242);
+
+        await repo.upsertFileState('user-1', 'owner/repo', files);
+
+        const insert = pool.client.queries.find(q => /INSERT INTO repo_file_state/.test(q.sql))!;
+        expect(insert.sql).toMatch(/github_repo_id/);
+        // 6 params/file × 2 files; github_repo_id is each tuple's 6th.
+        expect(insert.params).toHaveLength(12);
+        expect(insert.params![5]).toBe(4242);
+        expect(insert.params![11]).toBe(4242);
+    });
+
+    it('upsertFileState() binds null github_repo_id on a pre-backfill run', async () => {
+        const pool = fakePool();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const repo = new RdsRepoFileStateRepository(pool as any);
+
+        await repo.upsertFileState('user-1', 'owner/repo', files);
+
+        const insert = pool.client.queries.find(q => /INSERT INTO repo_file_state/.test(q.sql))!;
+        expect(insert.params![5]).toBeNull();
+    });
+
     it('upsertFileState() with an empty array deletes but does not insert', async () => {
         const pool = fakePool();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -26,8 +26,8 @@ describe('RdsVectorStore.upsertBatch (multi-row)', () => {
         expect(query).toHaveBeenCalledTimes(1);
         const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
         expect(sql).toMatch(/INSERT INTO document_embeddings/);
-        expect(sql).toMatch(/\$14::vector,NOW\(\)\),\(\$15/); // two value tuples
-        expect(values).toHaveLength(28); // 2 rows × 14 params
+        expect(sql).toMatch(/\$14::vector,\$15,NOW\(\)\),\(\$16/); // two value tuples (15 cols/row)
+        expect(values).toHaveLength(30); // 2 rows × 15 params
         expect(res).toEqual({ inserted: 1, updated: 1, skipped: 0, errors: 0 });
     });
 
@@ -44,9 +44,32 @@ describe('RdsVectorStore.upsertBatch (multi-row)', () => {
             chunk({ filePath: 'a.ts', chunkIndex: 0, contentHash: 'h2' }),
         ]);
         const [, values] = query.mock.calls[0] as unknown as [string, unknown[]];
-        expect(values).toHaveLength(14);     // one row after dedupe
+        expect(values).toHaveLength(15);     // one row after dedupe (15 cols)
         expect(values).toContain('h2');      // last wins
         expect(res.inserted + res.updated).toBe(1);
+    });
+
+    it('dual-writes the injected github_repo_id (COALESCE on conflict, last param/row)', async () => {
+        const query = jest.fn(async () => ({ rows: [{ was_inserted: true }] }));
+        const pool = { query } as unknown as Pool;
+        const vs = new RdsVectorStore(
+            { host: 'h', port: 5432, database: 'd', user: 'u', password: 'p' },
+            pool,
+            4242,
+        );
+        await vs.upsertBatch([chunk({ filePath: 'a.ts' })]);
+        const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(sql).toMatch(/github_repo_id/);
+        expect(sql).toMatch(/COALESCE\(EXCLUDED\.github_repo_id, document_embeddings\.github_repo_id\)/);
+        expect(values.at(-1)).toBe(4242); // github_repo_id is each tuple's last param
+    });
+
+    it('binds null github_repo_id on a pre-backfill run (default)', async () => {
+        const query = jest.fn(async () => ({ rows: [{ was_inserted: true }] }));
+        const res = await store(query).upsertBatch([chunk({ filePath: 'a.ts' })]);
+        const [, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(values.at(-1)).toBeNull();
+        expect(res.inserted).toBe(1);
     });
 
     it('splits into multiple INSERTs above UPSERT_BATCH_SIZE (200)', async () => {
