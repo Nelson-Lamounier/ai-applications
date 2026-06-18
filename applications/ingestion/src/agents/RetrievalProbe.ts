@@ -138,6 +138,15 @@ export class BedrockQuestionGenerator implements IProbeQuestionGenerator {
     }
 }
 
+/** Parse a positive-integer env var, clamped to [min, max]; falls back on any invalid value. */
+function envInt(name: string, fallback: number, min: number, max: number): number {
+    const raw = process.env[name];
+    if (raw === undefined) return fallback;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+}
+
 const ZERO = (status: RetrievalBreakdown['status']): RetrievalBreakdown => ({
     version: 1, status, sampled: 0, recallAt3: 0, mrr: 0,
     meanTopSimilarity: 0, score: 0, perQuestion: [], suggestions: [],
@@ -163,6 +172,13 @@ export class RetrievalProbe implements IRetrievalProbe {
         if (!modelId) return undefined;
         return new RetrievalProbe(
             new BedrockQuestionGenerator(modelId, pool, userId, repoFullName),
+            {
+                // Sample size + retrieval depth are operator-tunable without a
+                // rebuild. Defaults preserve historical behaviour (5 questions,
+                // top-3) so the score stays comparable across runs.
+                questionCount: envInt('RETRIEVAL_PROBE_QUESTIONS', 5, 1, 25),
+                topK:          envInt('RETRIEVAL_PROBE_TOPK', 3, 1, 20),
+            },
         );
     }
 
@@ -177,9 +193,15 @@ export class RetrievalProbe implements IRetrievalProbe {
                     return ZERO('skipped_no_chunks');
                 }
 
+                // The probe is the largest silent window in a run (question
+                // generation + N embed/query round-trips). Bracket it with
+                // progress logs so a stall here is visible in Loki instead of
+                // looking like a frozen pod between "embedded N/N" and complete.
+                console.info(`[RetrievalProbe] ${args.repoFullName}: generating ${sample.length} probe questions...`);
                 const questions = await this.generator.generate(
                     sample.map(c => c.content),
                 );
+                console.info(`[RetrievalProbe] ${args.repoFullName}: ${questions.length} questions; running retrieval queries...`);
 
                 const perQuestion: RetrievalQuestionResult[] = [];
                 for (const q of questions) {
@@ -214,6 +236,11 @@ export class RetrievalProbe implements IRetrievalProbe {
                 }
 
                 const scored = scoreRetrieval(perQuestion);
+                console.info(
+                    `[RetrievalProbe] ${args.repoFullName}: score=${scored.score.toFixed(2)} ` +
+                    `(recall@${this.opts.topK}=${scored.recallAt3.toFixed(2)}, mrr=${scored.mrr.toFixed(2)}, ` +
+                    `meanTopSim=${scored.meanTopSimilarity.toFixed(2)}) over ${perQuestion.length} questions`,
+                );
                 const suggestions = buildRetrievalSuggestions({
                     recallAt3:         scored.recallAt3,
                     mrr:               scored.mrr,

@@ -7,7 +7,7 @@
  * This keeps the tests hermetic and faithful to the adapter's real call shapes.
  */
 
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 
 import { GitHubAdapter } from './GitHubAdapter.js';
 import { GitHubResponseShapeError } from './github-errors.js';
@@ -98,6 +98,43 @@ describe('GitHubAdapter.listCommits shape guard', () => {
 
     const commits = await adapter.listCommits('o/r');
     expect(commits[0]).toMatchObject({ sha: 'c1', authorLogin: 'me', message: 'init' });
+  });
+
+  it('warns when history is truncated by the maxCommits cap', async () => {
+    // A full page (100) of commits available, but the caller caps at 2 → the
+    // cap is hit mid-page, so older history is dropped and must be flagged.
+    const fullPage = Array.from({ length: 100 }, (_v, i) => ({
+      sha: `c${i}`, author: { login: 'me' },
+      commit: { message: `m${i}`, author: { name: 'Me', date: '2026-01-01T00:00:00Z' } },
+    }));
+    const adapter = routedAdapter({
+      '/repos/o/r': { default_branch: 'main' },
+      '/repos/o/r/commits?sha=main&per_page=100&page=1': fullPage,
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const commits = await adapter.listCommits('o/r', { maxCommits: 2 });
+      expect(commits).toHaveLength(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('reached the 2-commit cap'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does NOT warn when commits are exhausted before the cap', async () => {
+    const adapter = routedAdapter({
+      '/repos/o/r': { default_branch: 'main' },
+      '/repos/o/r/commits?sha=main&per_page=100&page=1': [
+        { sha: 'c1', author: { login: 'me' }, commit: { message: 'init', author: { name: 'Me', date: '2026-01-01T00:00:00Z' } } },
+      ],
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await adapter.listCommits('o/r', { maxCommits: 500 });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

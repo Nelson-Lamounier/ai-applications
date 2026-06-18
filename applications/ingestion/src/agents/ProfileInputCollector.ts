@@ -1,5 +1,5 @@
 import type { GitHubAdapter, RepoFile } from '@bedrock/shared';
-import { PiiScrubber } from '@bedrock/shared';
+import { PiiScrubber, RepoNotFoundError } from '@bedrock/shared';
 import type { FileFetchCache } from '../util/FileFetchCache.js';
 
 const piiScrubber = new PiiScrubber();
@@ -85,7 +85,12 @@ export class ProfileInputCollector {
             return content;
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes('returned 404')) {
+            // A missing optional file is the common case (probing for go.mod,
+            // Cargo.toml, CHANGELOG, … in a repo that has none). The adapter
+            // raises RepoNotFoundError for any 404; treat that as "absent" and
+            // cache the miss silently — never warn, or every TypeScript repo
+            // logs a wall of false "not found" lines that read like an outage.
+            if (err instanceof RepoNotFoundError || msg.includes('returned 404')) {
                 this.cache.set(filePath, null);
                 return null;
             }

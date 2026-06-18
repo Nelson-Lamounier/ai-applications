@@ -83,6 +83,17 @@ interface GitHubCommitListItem {
     };
 }
 
+/** Map a GitHub commit-list item to the adapter's RepoCommit shape. */
+function toRepoCommit(c: GitHubCommitListItem): RepoCommit {
+    return {
+        sha:         c.sha,
+        authorLogin: c.author?.login,
+        authorName:  c.commit.author?.name ?? '(unknown)',
+        authoredAt:  c.commit.author?.date ?? c.commit.committer?.date ?? '',
+        message:     c.commit.message ?? '',
+    };
+}
+
 /** Subset of GitHub's commit-detail (`/commits/{sha}`) shape we consume. */
 interface GitHubCommitDetail {
     sha?:   string;
@@ -349,41 +360,60 @@ export class GitHubAdapter implements IRepoAdapter {
 
         const out: RepoCommit[] = [];
         const perPage = 100;
+        // True when listing stopped because the `max` cap was hit while GitHub
+        // still had a full page of older commits to return — i.e. history was
+        // truncated, not exhausted. Logged so a silently-capped repo (whose
+        // older history never reaches the case-study lane) is visible.
+        let truncatedByCap = false;
 
         for (let page = 1; out.length < max; page++) {
-            const qs: string[] = [
-                `sha=${encodeURIComponent(repoInfo.default_branch)}`,
-                `per_page=${perPage}`,
-                `page=${page}`,
-            ];
-            if (since) qs.push(`since=${encodeURIComponent(since)}`);
-
-            const batch = this.assertArray<GitHubCommitListItem>(
-                await this.get<GitHubCommitListItem[]>(
-                    `/repos/${repoFullName}/commits?${qs.join('&')}`,
-                ),
-                `/repos/${repoFullName}/commits`,
-                'expected an array of commits (repo may be renamed or moved)',
+            const batch = await this.fetchCommitsPage(
+                repoFullName, repoInfo.default_branch, page, perPage, since,
             );
-
             if (batch.length === 0) break;
 
-            for (const c of batch) {
-                if (out.length >= max) break;
-                out.push({
-                    sha:         c.sha,
-                    authorLogin: c.author?.login,
-                    authorName:  c.commit.author?.name ?? '(unknown)',
-                    authoredAt:  c.commit.author?.date ?? c.commit.committer?.date ?? '',
-                    message:     c.commit.message ?? '',
-                });
-            }
+            out.push(...batch.slice(0, max - out.length).map(toRepoCommit));
 
+            // Hit the cap mid-page (a full page) → more older history exists.
+            if (out.length >= max && batch.length === perPage) {
+                truncatedByCap = true;
+                break;
+            }
             // GitHub returned fewer than perPage → last page reached.
             if (batch.length < perPage) break;
         }
 
+        if (truncatedByCap) {
+            console.warn(
+                `[GitHubAdapter] listCommits ${repoFullName}: reached the ${max}-commit cap — ` +
+                `older history beyond ${max} commits is not ingested. Raise maxCommits to include more.`,
+            );
+        }
+
         return out;
+    }
+
+    /** Fetch one page of commit list items for the default branch, shape-checked. */
+    private async fetchCommitsPage(
+        repoFullName: string,
+        branch: string,
+        page: number,
+        perPage: number,
+        since?: string,
+    ): Promise<GitHubCommitListItem[]> {
+        const qs = [
+            `sha=${encodeURIComponent(branch)}`,
+            `per_page=${perPage}`,
+            `page=${page}`,
+        ];
+        if (since) qs.push(`since=${encodeURIComponent(since)}`);
+        return this.assertArray<GitHubCommitListItem>(
+            await this.get<GitHubCommitListItem[]>(
+                `/repos/${repoFullName}/commits?${qs.join('&')}`,
+            ),
+            `/repos/${repoFullName}/commits`,
+            'expected an array of commits (repo may be renamed or moved)',
+        );
     }
 
     // =========================================================================
