@@ -114,6 +114,8 @@ export type { CostRecord } from './bedrock-cost.js';
 
 // Technology graph (Layer 1)
 export { OntologyResolver, normalizeAlias } from './ontology/OntologyResolver.js';
+export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './ontology/SkillEmbeddingResolver.js';
+export type { SkillMatch } from './ontology/SkillEmbeddingResolver.js';
 export { TechnologyOntologyRepository }     from './implementations/TechnologyOntologyRepository.js';
 export { SkillOntologyRepository }          from './implementations/SkillOntologyRepository.js';
 export { TechnologyEvidenceRepository }     from './implementations/TechnologyEvidenceRepository.js';
