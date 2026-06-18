@@ -30,7 +30,7 @@ describe('reenrichSkippedChunks', () => {
 
         const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1 });
 
-        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0 });
+        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0, stoppedEarly: false, remaining: 0 });
         expect((enricher.enrich as jest.Mock)).toHaveBeenCalledTimes(2);
         expect(updates).toHaveLength(2);
         expect(updates[0]).toEqual({ skills: ['kubernetes networking'], id: 'a' });
@@ -58,6 +58,21 @@ describe('reenrichSkippedChunks', () => {
         expect(result.enriched).toBe(1);
         expect(result.failed).toBe(1);
         expect(updates).toHaveLength(1); // only the successful one updated
+    });
+
+    it('stops dispatching at the deadline, leaving the rest pending (resumable)', async () => {
+        const { pool, updates } = makePool(rows);
+        // Deadline already in the past → no row should be dispatched.
+        const enricher: IChunkEnricher = { enrich: jest.fn(async () => ({ skills: [], technologies: [] })) };
+
+        const result = await reenrichSkippedChunks(pool, enricher, {
+            concurrency: 1,
+            deadlineMs: Date.now() - 1,
+        });
+
+        expect((enricher.enrich as jest.Mock)).not.toHaveBeenCalled();
+        expect(updates).toHaveLength(0);
+        expect(result).toEqual({ candidates: 2, enriched: 0, failed: 0, stoppedEarly: true, remaining: 2 });
     });
 
     it('applies a limit clause when provided', async () => {

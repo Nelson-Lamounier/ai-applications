@@ -178,6 +178,26 @@ async function costBreakdownByAgent(
  * chunks in place after the repo is already searchable. No re-embedding;
  * best-effort, never throws (a failure must not flip the ingestion outcome).
  */
+/**
+ * Wall (epoch-ms) by which deferred enrichment must stop dispatching, derived
+ * from the pod's `activeDeadlineSeconds` minus a margin that reserves time for
+ * the profile-synthesis phase + graceful exit that run AFTER enrichment. On a
+ * large repo, enrichment would otherwise run into the deadline and get the pod
+ * SIGKILLed — marking an already-complete KB as a Failed (DeadlineExceeded)
+ * Job. Stopping early instead leaves the remainder `pending` (resumed next
+ * ordinary sync) and lets the run exit 0. Returns undefined (no bound) when the
+ * deadline env is unset/non-positive.
+ */
+function enrichmentDeadlineMs(): number | undefined {
+    const deadlineSec = Number(process.env['INGESTION_DEADLINE_SECONDS'] ?? 900);
+    const marginSec   = Number(process.env['ENRICHMENT_BUDGET_MARGIN_SECONDS'] ?? 180);
+    if (!Number.isFinite(deadlineSec) || deadlineSec <= 0) return undefined;
+    const budgetSec = deadlineSec - (Number.isFinite(marginSec) ? marginSec : 180);
+    if (budgetSec <= 0) return undefined;
+    const processStartMs = Date.now() - process.uptime() * 1000;
+    return processStartMs + budgetSec * 1000;
+}
+
 async function runDeferredEnrichment(
     pgPool: Pool,
     enricher: BedrockChunkEnricher,
@@ -190,6 +210,7 @@ async function runDeferredEnrichment(
         const reenriched = await reenrichSkippedChunks(pgPool, enricher, {
             userId,
             repoFullName,
+            deadlineMs: enrichmentDeadlineMs(),
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {
                     log.info({ done, total, repoFullName }, 'deferred_enrichment.progress');
@@ -203,6 +224,15 @@ async function runDeferredEnrichment(
             { event: 'deferred_enrichment.complete', repoFullName, ...reenriched, cost_usd: cost.costUsd },
             'deferred enrichment complete',
         );
+        // A deliberate early stop is normal for big repos — make it explicit so a
+        // partial enrichment isn't mistaken for a failure. The `remaining` rows
+        // stay `pending` and the next ordinary sync resumes them.
+        if (reenriched.stoppedEarly) {
+            log.warn(
+                { event: 'deferred_enrichment.stopped_early', repoFullName, remaining: reenriched.remaining },
+                'deferred enrichment hit its time budget — remaining chunks left pending for the next sync',
+            );
+        }
     } catch (err) {
         log.warn({ err: String(err), repoFullName }, 'deferred_enrichment.failed (non-fatal)');
     }
