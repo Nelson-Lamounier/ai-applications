@@ -63,6 +63,8 @@ export interface TitanCostContext {
 
 export class TitanEmbeddingProvider implements IEmbeddingProvider {
     readonly dimension: number;
+    /** Bedrock embedding model id — exposed for chunk lineage provenance. */
+    readonly modelId = MODEL_ID;
 
     private readonly client: BedrockRuntimeClient;
     private readonly region: string;

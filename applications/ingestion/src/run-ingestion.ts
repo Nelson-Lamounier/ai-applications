@@ -424,7 +424,6 @@ async function main(): Promise<void> {
     // with the chunk line ranges). Fail-safe: a resolve error leaves it null
     // and chunks persist without the stamp — never blocks ingestion.
     const commitSha = await repoAdapter.getHeadCommitSha(env.repoFullName).catch(() => null);
-    const vectorStore  = new RdsVectorStore(rdsConfig, undefined, githubRepoId, commitSha);
     const syncState    = new RdsSyncStateRepository(rdsConfig, githubRepoId);
 
     // Rename self-heal — BEFORE any object captures repoFullName and before the
@@ -481,6 +480,16 @@ async function main(): Promise<void> {
     }
 
     const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);
+
+    // Embedding/enrichment lineage stamped onto every chunk (metadata.lineage)
+    // so a chunk can be reproduced / audited / invalidated when a model or
+    // dimension changes. Built from the live providers (single source of truth).
+    const lineage: Record<string, unknown> = {
+        embedding_model: embedder.modelId,
+        embedding_dim:   embedder.dimension,
+        ...(enricher ? { enrichment_model: enricher.modelId } : {}),
+    };
+    const vectorStore = new RdsVectorStore(rdsConfig, undefined, githubRepoId, commitSha, lineage);
 
     // In defer mode the pipeline gets no inline enricher; `enricher` above is
     // reused by the post-completion re-enrich pass.
