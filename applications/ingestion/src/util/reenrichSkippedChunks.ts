@@ -14,12 +14,25 @@ export interface ReenrichOptions {
     readonly concurrency?: number;
     /** Progress callback (done, total). */
     readonly onProgress?: (done: number, total: number) => void;
+    /**
+     * Absolute epoch-ms wall by which enrichment must stop DISPATCHING new work.
+     * Reaching it leaves the unprocessed rows as `pending` (the next ordinary
+     * sync resumes them) and returns normally with `stoppedEarly: true`. This
+     * keeps a large repo's best-effort enrichment from running into the pod's
+     * `activeDeadlineSeconds` and marking an otherwise-successful Job as
+     * DeadlineExceeded. Omit for no time bound.
+     */
+    readonly deadlineMs?: number;
 }
 
 export interface ReenrichResult {
     readonly candidates: number;
     readonly enriched: number;
     readonly failed: number;
+    /** True when the deadline stopped dispatch before all candidates ran. */
+    readonly stoppedEarly: boolean;
+    /** Candidates left unprocessed (still `pending`) — resumed next sync. */
+    readonly remaining: number;
 }
 
 interface SkippedRow {
@@ -99,10 +112,17 @@ export async function reenrichSkippedChunks(
         }
     }
 
-    // Concurrency-limited worker pool over a shared cursor.
+    // Concurrency-limited worker pool over a shared cursor. Workers stop pulling
+    // new rows once the deadline passes (in-flight calls still finish), so the
+    // pass returns cleanly instead of being SIGKILLed at the pod deadline.
     let cursor = 0;
+    let stoppedEarly = false;
     async function worker(): Promise<void> {
         while (cursor < rows.length) {
+            if (opts.deadlineMs !== undefined && Date.now() >= opts.deadlineMs) {
+                stoppedEarly = true;
+                return;
+            }
             const index = cursor;
             cursor += 1;
             await processRow(rows[index]);
@@ -111,5 +131,5 @@ export async function reenrichSkippedChunks(
     const workers = Math.max(1, Math.min(opts.concurrency ?? 10, rows.length));
     await Promise.all(Array.from({ length: workers }, () => worker()));
 
-    return { candidates: rows.length, enriched, failed };
+    return { candidates: rows.length, enriched, failed, stoppedEarly, remaining: rows.length - done };
 }
