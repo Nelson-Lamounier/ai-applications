@@ -38,4 +38,29 @@ export class SkillOntologyRepository {
         for (const r of rows) map.set(r.alias.toLowerCase(), r.canonical_name.toLowerCase());
         return map;
     }
+
+    /**
+     * Load active canonical skills that still lack an embedding (migration 094),
+     * for the Titan backfill. Bounded by `limit` so the backfill drains in
+     * batches. Empty array once every active skill is embedded.
+     */
+    async loadCanonicalsNeedingEmbedding(limit: number): Promise<{ id: string; canonicalName: string }[]> {
+        const { rows } = await this.pool.query<{ id: string; canonical_name: string }>(
+            `SELECT id, canonical_name
+               FROM skill_ontology
+              WHERE embedding IS NULL AND is_active = true
+              ORDER BY canonical_name
+              LIMIT $1`,
+            [limit],
+        );
+        return rows.map(r => ({ id: r.id, canonicalName: r.canonical_name }));
+    }
+
+    /** Persist a canonical skill's embedding vector (migration 094). */
+    async updateEmbedding(id: string, embedding: readonly number[]): Promise<void> {
+        await this.pool.query(
+            `UPDATE skill_ontology SET embedding = $2::vector, updated_at = now() WHERE id = $1`,
+            [id, `[${embedding.join(',')}]`],
+        );
+    }
 }
