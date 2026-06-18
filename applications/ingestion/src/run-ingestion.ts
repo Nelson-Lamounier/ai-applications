@@ -29,6 +29,7 @@ import {
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
     BedrockChunkEnricher,
+    SkillOntologyRepository,
     IngestionPipeline,
     FileFilter,
     ChunkerRegistry,
@@ -454,14 +455,25 @@ async function main(): Promise<void> {
     // backfills skills after the repo is marked searchable. Cap per-run inline
     // cost via MAX_ENRICHMENT_PER_INGESTION (default 4000).
     const deferEnrichment = process.env.DEFER_ENRICHMENT === '1';
-    const enricher = process.env.ENRICHMENT_DISABLED === '1'
-        ? undefined
-        : BedrockChunkEnricher.fromEnvironment({
-            pool:     pgPool,
-            userId:   env.userId,
-            repoName: env.repoFullName,
-            syncKind: syncType,
-        });
+    let enricher: BedrockChunkEnricher | undefined;
+    if (process.env.ENRICHMENT_DISABLED !== '1') {
+        // Canonicalise emitted skills against the skill ontology (migration 092)
+        // so LLM variance collapses deterministically. Fail-safe: a load error
+        // leaves the map undefined and skills pass through as raw — never blocks
+        // ingestion.
+        const skillAliasToCanonical = await new SkillOntologyRepository(pgPool)
+            .loadAliasToCanonicalMap()
+            .catch(() => undefined);
+        enricher = BedrockChunkEnricher.fromEnvironment(
+            {
+                pool:     pgPool,
+                userId:   env.userId,
+                repoName: env.repoFullName,
+                syncKind: syncType,
+            },
+            skillAliasToCanonical,
+        );
+    }
 
     const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);
 
