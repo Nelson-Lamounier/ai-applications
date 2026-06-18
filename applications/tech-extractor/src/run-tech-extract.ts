@@ -134,9 +134,12 @@ async function main(): Promise<void> {
             && await dsaEvidenceRepo.hasDsaScanForCommit(env.userId, env.repoFullName, env.commitSha);
         const aiDone = !!env.commitSha
             && await aiEvidenceRepo.hasAiScanForCommit(env.userId, env.repoFullName, env.commitSha);
-        if (techDone && dsaDone && aiDone) {
+        if (techDone && dsaDone && aiDone && !env.forceReindex) {
             log.info({ repo: env.repoFullName, sha }, 'short-circuit: tech + dsa + ai evidence exist');
             return;
+        }
+        if (env.forceReindex) {
+            log.info({ repo: env.repoFullName, sha }, 'force re-index: bypassing commit short-circuit');
         }
 
         const tarPath = path.join(env.workDir, 'repo.tar.gz');
