@@ -8,7 +8,7 @@ import type { Extractor, RawTechnologyEvidence } from './Extractor.js';
 // primitive. Never switch this to exec().
 const execFileAsync = promisify(execFile);
 
-interface SyftArtifact { name?: string; type?: string; locations?: { path?: string }[] }
+interface SyftArtifact { name?: string; version?: string; type?: string; locations?: { path?: string }[] }
 
 /** Pure parser — unit-testable without invoking the syft binary. */
 export function parseSyftJson(stdout: string): RawTechnologyEvidence[] {
@@ -22,6 +22,7 @@ export function parseSyftJson(stdout: string): RawTechnologyEvidence[] {
             ecosystem:    a.type,
             source_layer: 'syft',
             file_path:    a.locations?.[0]?.path ?? '(unknown)',
+            ...(a.version ? { version: a.version } : {}),
         });
     }
     return out;

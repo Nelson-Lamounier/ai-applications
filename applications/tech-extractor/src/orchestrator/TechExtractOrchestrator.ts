@@ -57,6 +57,7 @@ export class TechExtractOrchestrator {
                     sourceLayer: r.source_layer, filePath: r.file_path,
                     lineStart: r.line_start ?? null, lineEnd: r.line_end ?? null,
                     confidence: CONFIDENCE_BY_LAYER[r.source_layer], ontologyVersion: input.ontologyVersion,
+                    version: r.version ?? null,
                 });
                 if (techId) { matched++; canonicalIds.add(techId); }
                 else {

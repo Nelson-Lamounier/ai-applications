@@ -1,5 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
+import { toPurl } from '../../sbom/purl.js';
 import type { TechnologyEvidenceRow } from '../types/techgraph.js';
 
 export class TechnologyEvidenceRepository {
@@ -35,21 +36,24 @@ export class TechnologyEvidenceRepository {
             await client.query('BEGIN');
             await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
             for (const r of rows) {
+                // Canonical purl derived here (the single persistence boundary) so
+                // every writer gets identity consistent with migration 089's backfill.
+                const purl = toPurl({ ecosystem: r.ecosystem ?? '', name: r.rawName, version: r.version ?? undefined });
                 await client.query(
                     `INSERT INTO technology_evidence (
                         user_id, repo_full_name, commit_sha, technology_id, raw_name,
                         ecosystem, source_layer, file_path, line_start, line_end,
-                        confidence, extracted_at_ontology_version
+                        confidence, extracted_at_ontology_version, version, purl
                     ) VALUES (
                         $1::uuid, $2, $3, $4::uuid, $5,
                         $6, $7, $8, $9, $10,
-                        $11, $12
+                        $11, $12, $13, $14
                     )
                     ON CONFLICT DO NOTHING`,
                     [
                         userId, r.repoFullName, r.commitSha, r.technologyId, r.rawName,
                         r.ecosystem, r.sourceLayer, r.filePath, r.lineStart, r.lineEnd,
-                        r.confidence, r.ontologyVersion,
+                        r.confidence, r.ontologyVersion, r.version, purl,
                     ],
                 );
             }
