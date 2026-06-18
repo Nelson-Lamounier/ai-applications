@@ -34,7 +34,10 @@ describe('TechnologyEvidenceRepository.insertMany', () => {
         expect(sqls).toContain("set_config('app.current_user_id'");
         const insert = client.calls.find(c => c.sql.includes('INSERT INTO technology_evidence'))!;
         expect(insert.sql).toContain('ON CONFLICT');
-        expect(insert.sql).toContain('DO NOTHING');
+        expect(insert.sql).toContain('DO UPDATE');
+        expect(insert.sql).toMatch(/version\s*=\s*EXCLUDED\.version/);
+        expect(insert.sql).toMatch(/purl\s*=\s*EXCLUDED\.purl/);
+        expect(insert.sql).toMatch(/github_repo_id\s*=\s*EXCLUDED\.github_repo_id/);
         expect(insert.params).toEqual([
             'u1', 'o/r', 'abc', 'id-kube', 'k8s',
             'iac', 'iac', 'deploy.yaml', 3, 3,

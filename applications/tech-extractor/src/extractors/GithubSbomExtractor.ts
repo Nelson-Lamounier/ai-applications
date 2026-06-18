@@ -33,9 +33,14 @@ function fromPurl(purl: string): { ecosystem: string; name: string; version?: st
     let rest = body.slice(slash + 1);
     let version: string | undefined;
     const at = rest.lastIndexOf('@');
-    if (at > 0) { version = rest.slice(at + 1); rest = rest.slice(0, at); }
-    const name = rest.replaceAll('%40', '@');
+    if (at > 0) { version = safeDecode(rest.slice(at + 1)); rest = rest.slice(0, at); }
+    const name = safeDecode(rest);
     return name ? { ecosystem, name, version } : null;
+}
+
+/** Percent-decode a purl segment (e.g. npm scope %40→@, version range %2A→*). */
+function safeDecode(s: string): string {
+    try { return decodeURIComponent(s); } catch { return s; }
 }
 
 /**
