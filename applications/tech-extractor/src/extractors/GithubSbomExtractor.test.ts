@@ -61,11 +61,18 @@ describe('GithubSbomExtractor', () => {
         expect(init.headers.Authorization).toBe('Bearer tok');
     });
 
-    it('throws on a non-ok response (fails the lane, non-fatal upstream)', async () => {
+    it('treats 404 as "no dependency-graph SBOM" — returns [] (not a failed lane)', async () => {
         const ex = new GithubSbomExtractor('o/r', 't', {
             fetchImpl: (async () => mockResponse('', { ok: false, status: 404 })),
         });
-        await expect(ex.extract('/x')).rejects.toThrow(/404/);
+        await expect(ex.extract('/x')).resolves.toEqual([]);
+    });
+
+    it('throws on a real error response (e.g. 403 permission) so it surfaces', async () => {
+        const ex = new GithubSbomExtractor('o/r', 't', {
+            fetchImpl: (async () => mockResponse('', { ok: false, status: 403 })),
+        });
+        await expect(ex.extract('/x')).rejects.toThrow(/403/);
     });
 
     it('rejects an over-cap response via content-length', async () => {

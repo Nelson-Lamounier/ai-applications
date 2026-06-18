@@ -74,6 +74,11 @@ export class GithubSbomExtractor implements Extractor {
                 },
                 signal: ctrl.signal,
             });
+            // 404 = this repo has no dependency-graph SBOM (feature off / private
+            // repo without it enabled). A normal "no data" outcome, not a failure
+            // — return empty so the lane isn't flagged failed. Other non-ok
+            // statuses (403 permission, 5xx) throw so they surface.
+            if (res.status === 404) return [];
             if (!res.ok) throw new Error(`github sbom fetch failed: HTTP ${res.status}`);
             const len = Number(res.headers.get('content-length') ?? '0');
             if (len > this.maxBytes) throw new Error(`github_sbom_too_large: ${len} > ${this.maxBytes}`);
