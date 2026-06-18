@@ -1,5 +1,5 @@
 /** @format */
-import { buildCycloneDxBom, technologyEvidenceToComponents } from './cyclonedx.js';
+import { buildCycloneDxBom, technologyEvidenceToComponents, preferSpecificPurls } from './cyclonedx.js';
 
 describe('buildCycloneDxBom', () => {
     it('wraps components in a CycloneDX 1.6 envelope', () => {
@@ -33,6 +33,19 @@ describe('technologyEvidenceToComponents', () => {
         expect(comps).toEqual([
             { name: 'cors', purl: 'pkg:npm/cors' },
             { name: 's3', purl: 'pkg:generic/s3' },
+        ]);
+    });
+});
+
+describe('preferSpecificPurls', () => {
+    it('drops a generic component when a package-ecosystem one exists for the same name', () => {
+        expect(preferSpecificPurls([
+            { name: 'cdk-nag', purl: 'pkg:npm/cdk-nag' },     // from Syft
+            { name: 'cdk-nag', purl: 'pkg:generic/cdk-nag' }, // from tree-sitter → dropped
+            { name: 'k8s', purl: 'pkg:generic/k8s' },         // no specific counterpart → kept
+        ])).toEqual([
+            { name: 'cdk-nag', purl: 'pkg:npm/cdk-nag' },
+            { name: 'k8s', purl: 'pkg:generic/k8s' },
         ]);
     });
 });
