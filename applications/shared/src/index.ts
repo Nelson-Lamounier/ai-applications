@@ -572,3 +572,9 @@ export {
     recomputeConfirmedProjectComponents,
 } from './projects/index.js';
 export type { RepoRoleSignals, ConfirmedRefreshSummary } from './projects/index.js';
+
+// ─── SBOM / supply-chain (CycloneDX 1.6 + Package URL) ──────────────────────
+export { toPurl } from './sbom/purl.js';
+export type { PurlInput } from './sbom/purl.js';
+export { buildCycloneDxBom, technologyEvidenceToComponents } from './sbom/cyclonedx.js';
+export type { SbomComponent, CycloneDxBom, BomMeta, EvidenceComponentInput } from './sbom/cyclonedx.js';
