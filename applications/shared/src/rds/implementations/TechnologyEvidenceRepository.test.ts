@@ -72,3 +72,25 @@ describe('TechnologyEvidenceRepository.hasEvidenceForCommit', () => {
         expect(await repo.hasEvidenceForCommit('u1', 'o/r', 'zzz')).toBe(false);
     });
 });
+
+describe('TechnologyEvidenceRepository.toCycloneDxBom', () => {
+    it('builds an RLS-scoped CycloneDX BOM, deduped with package purls preferred', async () => {
+        const client = fakeClient([
+            { raw_name: 'cdk-nag', ecosystem: 'npm', version: null, commit_sha: 'sha1' },
+            { raw_name: 'cdk-nag', ecosystem: 'typescript', version: null, commit_sha: 'sha1' }, // generic → dropped
+            { raw_name: 'react', ecosystem: 'npm', version: '18.2.0', commit_sha: 'sha1' },
+        ]);
+        const repo = new TechnologyEvidenceRepository(fakePool(client) as never);
+        const bom = await repo.toCycloneDxBom('u1', 'o/r');
+
+        expect(client.calls.some(c => c.sql.includes("set_config('app.current_user_id'"))).toBe(true);
+        expect(client.calls.some(c => c.sql.includes('FROM technology_evidence'))).toBe(true);
+        expect(bom.bomFormat).toBe('CycloneDX');
+        expect(bom.specVersion).toBe('1.6');
+        expect(bom.metadata.component).toEqual({ type: 'application', name: 'o/r', version: 'sha1' });
+        expect(bom.components).toEqual([
+            { type: 'library', name: 'cdk-nag', purl: 'pkg:npm/cdk-nag' },
+            { type: 'library', name: 'react', purl: 'pkg:npm/react@18.2.0', version: '18.2.0' },
+        ]);
+    });
+});

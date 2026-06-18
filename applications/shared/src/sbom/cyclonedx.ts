@@ -63,6 +63,22 @@ export function technologyEvidenceToComponents(rows: readonly EvidenceComponentI
     return [...byPurl.values()];
 }
 
+const GENERIC_PREFIX = 'pkg:generic/';
+
+/**
+ * Collapse cross-lane duplicates: the same tool can surface as both a
+ * package-ecosystem purl (e.g. `pkg:npm/cdk-nag` from Syft) and a `generic`
+ * purl (e.g. `pkg:generic/cdk-nag` from tree-sitter). Drop the generic variant
+ * when a more specific one exists for the same name; keep generics that have no
+ * specific counterpart. Order preserved.
+ */
+export function preferSpecificPurls(components: SbomComponent[]): SbomComponent[] {
+    const namesWithSpecific = new Set(
+        components.filter(c => !c.purl.startsWith(GENERIC_PREFIX)).map(c => c.name),
+    );
+    return components.filter(c => !(c.purl.startsWith(GENERIC_PREFIX) && namesWithSpecific.has(c.name)));
+}
+
 /** Wrap SBOM components in a CycloneDX 1.6 envelope. Pure — no clock/IO. */
 export function buildCycloneDxBom(components: SbomComponent[], meta: BomMeta): CycloneDxBom {
     return {
