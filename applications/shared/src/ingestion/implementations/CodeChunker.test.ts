@@ -117,6 +117,14 @@ describe('CodeChunker', () => {
             const symbols = chunks[0].metadata?.symbols as string[] | undefined;
             expect(symbols).toEqual(expect.arrayContaining(['foo', 'bar']));
         });
+
+        it('records a 1-based inclusive source-line range in metadata (citable provenance)', () => {
+            const chunks = chunker.chunk(ts, 'src/foo.ts');
+            const m = chunks[0].metadata as { lineStart?: number; lineEnd?: number };
+            expect(m.lineStart).toBe(1);
+            expect(typeof m.lineEnd).toBe('number');
+            expect(m.lineEnd!).toBeGreaterThanOrEqual(m.lineStart!);
+        });
     });
 
     // =========================================================================
