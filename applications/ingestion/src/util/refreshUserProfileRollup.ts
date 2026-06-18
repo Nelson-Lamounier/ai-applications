@@ -135,12 +135,21 @@ export async function refreshUserProfileRollup(
             const result = computeUserProfileRollup(rows);
             const synthMetric = synthesisOutcomeTotal();
 
-            const synth: MirrorReveal = await runSynthStage(STAGE.mirror, synthMetric,
-                synthesizer ? () => synthesizer.synthesize(result.rollup) : undefined);
-            const dir: Direction = await runSynthStage(STAGE.direction, synthMetric,
-                directionSynthesizer ? () => directionSynthesizer.synthesize(result.rollup) : undefined);
-            const { value: recon, attempted: reconAttempted } = await runReconciliationStage(
-                synthMetric, userId, result.rollup, reconciliationSynthesizer, careerRepo);
+            // Mirror, direction, and reconciliation are independent layers over
+            // the same source rollup (none consumes another's output), so run
+            // them concurrently — this cuts the tail latency from the sum of the
+            // three Sonnet calls (~110s observed) to the slowest single one.
+            // Diagnostic stays last: it genuinely depends on all three outputs.
+            const [synth, dir, reconStage]: [MirrorReveal, Direction, Awaited<ReturnType<typeof runReconciliationStage>>] =
+                await Promise.all([
+                    runSynthStage(STAGE.mirror, synthMetric,
+                        synthesizer ? () => synthesizer.synthesize(result.rollup) : undefined),
+                    runSynthStage(STAGE.direction, synthMetric,
+                        directionSynthesizer ? () => directionSynthesizer.synthesize(result.rollup) : undefined),
+                    runReconciliationStage(
+                        synthMetric, userId, result.rollup, reconciliationSynthesizer, careerRepo),
+                ]);
+            const { value: recon, attempted: reconAttempted } = reconStage;
             const diagnostic = await runDiagnosticStage(synthMetric, userId, {
                 rollup:         result.rollup,
                 mirror:         synth?.mirror         ?? null,

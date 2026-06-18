@@ -5,11 +5,21 @@
  * on an unexpected response shape.
  */
 
-/** A GitHub repo endpoint returned 404 — renamed away, deleted, or access revoked. */
+/**
+ * A GitHub endpoint returned 404. This is raised for BOTH a repo-level miss
+ * (the repository was renamed, deleted, or access was revoked) AND a
+ * resource-level miss (a specific file/path simply does not exist in the repo
+ * — a perfectly normal outcome when probing for optional manifests).
+ *
+ * The message no longer asserts the repo is gone: a 404 on `contents/go.mod`
+ * means that file is absent, not that the repository vanished. Callers that
+ * probe optional paths should catch this by type (`instanceof`) and treat it
+ * as "absent", rather than logging it as a failure.
+ */
 export class RepoNotFoundError extends Error {
   readonly resource: string;
   constructor(resource: string) {
-    super(`GitHub resource not found: ${resource} (repo renamed, deleted, or access revoked)`);
+    super(`GitHub resource not found: ${resource} (path absent, or repo renamed/deleted/inaccessible)`);
     this.name = 'RepoNotFoundError';
     this.resource = resource;
     // Preserve instanceof across transpile targets that down-level class extends.

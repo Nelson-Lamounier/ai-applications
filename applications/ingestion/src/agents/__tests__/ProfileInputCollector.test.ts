@@ -1,7 +1,8 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest, afterEach } from '@jest/globals';
 import { ProfileInputCollector } from '../ProfileInputCollector.js';
 import { FileFetchCache } from '../../util/FileFetchCache.js';
 import type { GitHubAdapter, RepoCommit } from '@bedrock/shared';
+import { RepoNotFoundError } from '@bedrock/shared';
 
 // ---------------------------------------------------------------------------
 // Stub helpers
@@ -34,7 +35,10 @@ function makeAdapter(overrides: {
             })),
         fetchFile: async (_repo: string, filePath: string): Promise<string> => {
             if (filePath === 'README.md') return readme;
-            throw new Error(`${filePath} returned 404`);
+            // Reproduce production: the real GitHubAdapter raises RepoNotFoundError
+            // (NOT a generic "returned 404" Error) for an absent file. The
+            // collector must treat this as "absent" and stay silent.
+            throw new RepoNotFoundError(`/repos/owner/repo/contents/${filePath}`);
         },
         listFiles: async (_repo: string) => [],
     } as unknown as GitHubAdapter;
@@ -52,6 +56,23 @@ function makeCollectorWithStub(overrides: {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('ProfileInputCollector absent-file handling', () => {
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    it('treats absent optional files (RepoNotFoundError) as empty without warning', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        // Only README.md exists; every probed manifest/changelog raises
+        // RepoNotFoundError. The bundle should still build, with empty manifests.
+        const collector = makeCollectorWithStub({ readme: '# Repo' });
+        const bundle = await collector.collect('owner/repo');
+
+        expect(bundle.manifests).toEqual({});
+        expect(bundle.changelog ?? null).toBeNull();
+        // The crux: absent files must NOT be logged as warnings.
+        expect(warn).not.toHaveBeenCalled();
+    });
+});
 
 describe('ProfileInputCollector PII scrubbing', () => {
     it('redacts PII from README and commit messages in the collected bundle', async () => {

@@ -72,6 +72,24 @@ const EMBED_CONCURRENCY = (() => {
 /** Log embedding progress every N chunks so the pod is not silent for minutes. */
 const EMBED_PROGRESS_LOG_EVERY = 250;
 
+/** Count chunks per fileClass lane (metadata.fileClass), for build-phase visibility. */
+function tallyFileClassLanes(chunks: RawChunk[]): Record<string, number> {
+    const lanes: Record<string, number> = {};
+    for (const c of chunks) {
+        const lane = (c.metadata?.['fileClass'] as string | undefined) ?? '(unclassified)';
+        lanes[lane] = (lanes[lane] ?? 0) + 1;
+    }
+    return lanes;
+}
+
+/** Render lane tallies as "source=1368 docs=703 …", busiest first. */
+function formatLanes(lanes: Record<string, number>): string {
+    return Object.entries(lanes)
+        .sort((a, b) => b[1] - a[1])
+        .map(([lane, n]) => `${lane}=${n}`)
+        .join(' ');
+}
+
 export interface IngestionPipelineOptions {
     /**
      * Optional skill-evidence enricher. When omitted, enrichment is skipped
@@ -183,6 +201,20 @@ export class IngestionPipeline {
                 }
             });
 
+            // Visibility: this is where document_embeddings is built — name the
+            // target table, what visited/produced the chunks, the per-fileClass
+            // lane distribution that will land in metadata->>'fileClass', and the
+            // components that create the rows. Previously the only signal was the
+            // "embedded N/N" counter, which named neither the table nor the lanes.
+            const lanes = tallyFileClassLanes(rawChunks);
+            console.log(
+                `[IngestionPipeline] ${repoFullName}: document_embeddings build — ` +
+                `${new Set(rawChunks.map(c => c.filePath)).size} files visited, ` +
+                `${rawChunks.length} chunks (${chunksToEmbed.length} to embed, ${unchanged.length} unchanged); ` +
+                `lanes ${formatLanes(lanes)}; ` +
+                `embedder=titan-embed writer=RdsVectorStore.upsertBatch table=document_embeddings`,
+            );
+
             // ── Phase: Enrich ────────────────────────────────────────────────────
             await this.syncState.markPhase(userId, repoFullName, 'enriching', 0, chunksToEmbed.length).catch(() => {});
             const enrichedChunks = await tracer.startActiveSpan('ingestion.enrich', async (span) => {
@@ -259,6 +291,12 @@ export class IngestionPipeline {
                     span.end();
                 }
             });
+
+            console.log(
+                `[IngestionPipeline] ${repoFullName}: document_embeddings written — ` +
+                `inserted ${upsertResult.inserted}, updated ${upsertResult.updated}, ` +
+                `skipped ${upsertResult.skipped}, errors ${upsertResult.errors}`,
+            );
 
             // ── Phase: Prune ─────────────────────────────────────────────────────
             const pruned = await tracer.startActiveSpan('ingestion.prune', async (span) => {

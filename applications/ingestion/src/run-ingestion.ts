@@ -109,6 +109,71 @@ const chunksProcessed = new Counter({
 seedIngestionSubStepSeries();
 
 /**
+ * Sum booked Bedrock spend (USD) from `prompt_invocations` for this repo since a
+ * cut-off, optionally scoped to one agent lane. Every cost lane (embeddings,
+ * enrichment, probe, profile agents) books here, so this is the authoritative
+ * source for run cost — no per-call plumbing required. Best-effort: any failure
+ * returns zeros so cost reporting never affects the ingestion outcome.
+ */
+async function sumBookedCostUsd(
+    pgPool: Pool,
+    userId: string,
+    repoFullName: string,
+    sinceIso: string,
+    agent?: string,
+): Promise<{ costUsd: number; invocations: number }> {
+    try {
+        const { rows } = await pgPool.query<{ cents: string; n: string }>(
+            `SELECT COALESCE(SUM(total_cost_cents), 0) AS cents, COUNT(*) AS n
+               FROM prompt_invocations
+              WHERE user_id = $1::uuid AND repo_name = $2 AND invoked_at >= $3
+                ${agent ? 'AND agent = $4' : ''}`,
+            agent ? [userId, repoFullName, sinceIso, agent] : [userId, repoFullName, sinceIso],
+        );
+        const cents = Number(rows[0]?.cents ?? 0);
+        return { costUsd: Number((cents / 100).toFixed(6)), invocations: Number(rows[0]?.n ?? 0) };
+    } catch (err) {
+        log.warn({ err: String(err), repoFullName }, 'cost_sum.failed (non-fatal)');
+        return { costUsd: 0, invocations: 0 };
+    }
+}
+
+/**
+ * Per-agent cost + invocation breakdown for this repo since a cut-off. Names
+ * exactly which component handled each lane (titan-embed builds
+ * document_embeddings; chunk-enrich adds skills; profile-* synthesize the
+ * profile). Best-effort: returns [] on any failure.
+ */
+async function costBreakdownByAgent(
+    pgPool: Pool,
+    userId: string,
+    repoFullName: string,
+    sinceIso: string,
+): Promise<Array<{ agent: string; model: string; invocations: number; costUsd: number }>> {
+    try {
+        const { rows } = await pgPool.query<{ agent: string; model_id: string; n: string; cents: string }>(
+            `SELECT agent, model_id,
+                    COUNT(*) AS n,
+                    COALESCE(SUM(total_cost_cents), 0) AS cents
+               FROM prompt_invocations
+              WHERE user_id = $1::uuid AND repo_name = $2 AND invoked_at >= $3
+              GROUP BY agent, model_id
+              ORDER BY cents DESC`,
+            [userId, repoFullName, sinceIso],
+        );
+        return rows.map(r => ({
+            agent:       r.agent,
+            model:       r.model_id,
+            invocations: Number(r.n),
+            costUsd:     Number((Number(r.cents) / 100).toFixed(6)),
+        }));
+    } catch (err) {
+        log.warn({ err: String(err), repoFullName }, 'cost_breakdown.failed (non-fatal)');
+        return [];
+    }
+}
+
+/**
  * Background skill enrichment for DEFER_ENRICHMENT runs — enrich the 'pending'
  * chunks in place after the repo is already searchable. No re-embedding;
  * best-effort, never throws (a failure must not flip the ingestion outcome).
@@ -119,6 +184,8 @@ async function runDeferredEnrichment(
     userId: string,
     repoFullName: string,
 ): Promise<void> {
+    // Cut-off so the cost sum below counts only THIS pass's enrichment calls.
+    const startedAt = new Date().toISOString();
     try {
         const reenriched = await reenrichSkippedChunks(pgPool, enricher, {
             userId,
@@ -129,7 +196,13 @@ async function runDeferredEnrichment(
                 }
             },
         });
-        log.info({ event: 'deferred_enrichment.complete', repoFullName, ...reenriched }, 'deferred enrichment complete');
+        // The enrichment lane (agent='chunk-enrich') was previously invisible in
+        // the logs despite being the bulk of a run's spend. Surface it here.
+        const cost = await sumBookedCostUsd(pgPool, userId, repoFullName, startedAt, 'chunk-enrich');
+        log.info(
+            { event: 'deferred_enrichment.complete', repoFullName, ...reenriched, cost_usd: cost.costUsd },
+            'deferred enrichment complete',
+        );
     } catch (err) {
         log.warn({ err: String(err), repoFullName }, 'deferred_enrichment.failed (non-fatal)');
     }
@@ -269,6 +342,8 @@ async function selfHealRepoName(deps: {
 async function main(): Promise<void> {
     let env = parseEnv();
     const start = process.hrtime.bigint();
+    // Wall-clock cut-off for the end-of-run cost roll-up (prompt_invocations.invoked_at).
+    const runStartIso = new Date().toISOString();
     let outcome: 'success' | 'failed' = 'failed';
 
     log.info({
@@ -579,6 +654,18 @@ async function main(): Promise<void> {
             await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo, diagnosticNarrator, diagnosticInputsRepo);
         }
 
+        // Authoritative run cost: SUM every lane booked to prompt_invocations
+        // for this repo since the run started (embeddings + enrichment + probe +
+        // profile agents). Previously no single total was emitted anywhere.
+        const runCost = await sumBookedCostUsd(pgPool, env.userId, env.repoFullName, runStartIso);
+        // Per-agent breakdown so each cost lane is attributable — e.g.
+        // titan-embed (document_embeddings), chunk-enrich (skills), profile-*.
+        const costByAgent = await costBreakdownByAgent(pgPool, env.userId, env.repoFullName, runStartIso);
+        log.info(
+            { event: 'ingestion.cost_breakdown', repoFullName: env.repoFullName, total_usd: runCost.costUsd, by_agent: costByAgent },
+            'cost breakdown by agent',
+        );
+
         const { traceId } = rootSpan.spanContext();
         log.info({
             event:           'ingestion.complete',
@@ -594,6 +681,8 @@ async function main(): Promise<void> {
             duration_ms:      report.durationMs,
             kb_quality_score: report.kbQualityScore,
             retrieval_score:  report.retrievalScore,
+            cost_usd:         runCost.costUsd,
+            bedrock_invocations: runCost.invocations,
         }, 'complete');
 
     } catch (err) {
