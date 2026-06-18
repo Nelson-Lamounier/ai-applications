@@ -72,6 +72,27 @@ describe('RdsVectorStore.upsertBatch (multi-row)', () => {
         expect(res.inserted).toBe(1);
     });
 
+    it('stamps the run commit_sha into metadata (source provenance), preserving existing keys', async () => {
+        const query = jest.fn(async () => ({ rows: [{ was_inserted: true }] }));
+        const pool = { query } as unknown as Pool;
+        const vs = new RdsVectorStore(
+            { host: 'h', port: 5432, database: 'd', user: 'u', password: 'p' },
+            pool, 4242, 'commitabc',
+        );
+        await vs.upsertBatch([chunk({ filePath: 'a.ts', metadata: { lineStart: 1, lineEnd: 9 } })]);
+        const [, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        const metadata = JSON.parse(values[7] as string) as Record<string, unknown>;
+        expect(metadata).toEqual({ lineStart: 1, lineEnd: 9, commit_sha: 'commitabc' });
+    });
+
+    it('does not add commit_sha when none is injected (default run)', async () => {
+        const query = jest.fn(async () => ({ rows: [{ was_inserted: true }] }));
+        await store(query).upsertBatch([chunk({ filePath: 'a.ts', metadata: { lineStart: 1 } })]);
+        const [, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        const metadata = JSON.parse(values[7] as string) as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('commit_sha');
+    });
+
     it('splits into multiple INSERTs above UPSERT_BATCH_SIZE (200)', async () => {
         const query = jest.fn(async () => ({ rows: [] }));
         const chunks = Array.from({ length: 250 }, (_, i) => chunk({ filePath: `f${i}.ts` }));
