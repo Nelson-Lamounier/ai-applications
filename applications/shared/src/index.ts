@@ -340,6 +340,7 @@ export type {
 // Technology graph (Layer 1)
 export { OntologyResolver, normalizeAlias } from './rds/index.js';
 export { TechnologyOntologyRepository }     from './rds/index.js';
+export { SkillOntologyRepository }          from './rds/index.js';
 export { TechnologyEvidenceRepository }     from './rds/index.js';
 export { TechnologyCandidateRepository }    from './rds/index.js';
 export { TechnologyParityRunRepository }    from './rds/index.js';
