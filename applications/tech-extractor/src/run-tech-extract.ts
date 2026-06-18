@@ -20,6 +20,7 @@ import { safeExtract } from './tarball/safeExtract.js';
 import { walkTextFiles } from './util/fileWalk.js';
 import { isTestFile } from './util/isTestFile.js';
 import { SyftExtractor } from './extractors/SyftExtractor.js';
+import { GithubSbomExtractor } from './extractors/GithubSbomExtractor.js';
 import { TreeSitterExtractor } from './extractors/TreeSitterExtractor.js';
 import { parseDockerfile } from './extractors/iac/DockerfileParser.js';
 import { parseK8sManifest, parseK8sManifestValues } from './extractors/iac/K8sManifestParser.js';
@@ -172,6 +173,12 @@ async function main(): Promise<void> {
                 new SyftExtractor(),
                 new TreeSitterExtractor(readFile, files, proseSafeAliases),
                 iacExtractor(extractDir, files, proseSafeAliases),
+                // Optional cross-check/fallback lane: GitHub's dependency-graph
+                // SBOM (zero local compute), gated and off by default. Best-effort
+                // — a fetch failure is a failed lane, never fails the run.
+                ...(process.env['GITHUB_SBOM_ENABLED'] === '1'
+                    ? [new GithubSbomExtractor(env.repoFullName, env.githubToken)]
+                    : []),
             ];
 
             const orch = new TechExtractOrchestrator(resolver, evidenceRepo, candidateRepo);
