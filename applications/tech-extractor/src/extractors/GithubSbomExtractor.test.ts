@@ -31,6 +31,16 @@ describe('parseGithubSpdx', () => {
         expect(out[1]).toMatchObject({ raw_name: '@aws-sdk/client-s3', ecosystem: 'npm', version: '3.0.0' });
     });
 
+    it('percent-decodes the version range (GitHub Actions 4.%2A.%2A → 4.*.*)', () => {
+        const ghaDoc = JSON.stringify({ sbom: { packages: [{
+            name: 'actions/checkout',
+            externalRefs: [{ referenceType: 'purl', referenceLocator: 'pkg:githubactions/actions/checkout@4.%2A.%2A' }],
+        }] } });
+        expect(parseGithubSpdx(ghaDoc)[0]).toMatchObject({
+            raw_name: 'actions/checkout', ecosystem: 'githubactions', version: '4.*.*',
+        });
+    });
+
     it('returns [] for empty or non-JSON input', () => {
         expect(parseGithubSpdx('{}')).toEqual([]);
         expect(parseGithubSpdx('not json')).toEqual([]);

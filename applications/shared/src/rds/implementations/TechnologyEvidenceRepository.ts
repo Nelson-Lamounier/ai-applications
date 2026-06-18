@@ -56,7 +56,17 @@ export class TechnologyEvidenceRepository {
                         $6, $7, $8, $9, $10,
                         $11, $12, $13, $14, $15
                     )
-                    ON CONFLICT DO NOTHING`,
+                    -- Refresh volatile provenance on re-extract (the unique key is
+                    -- tech+file+line, NOT commit) so a force-reindex backfills
+                    -- version/purl/github_repo_id onto existing rows instead of
+                    -- skipping them. Matches uq_technology_evidence exactly.
+                    ON CONFLICT (user_id, repo_full_name, COALESCE(technology_id::text, raw_name), file_path, COALESCE(line_start, -1))
+                    DO UPDATE SET
+                        commit_sha                    = EXCLUDED.commit_sha,
+                        version                       = EXCLUDED.version,
+                        purl                          = EXCLUDED.purl,
+                        github_repo_id                = EXCLUDED.github_repo_id,
+                        extracted_at_ontology_version = EXCLUDED.extracted_at_ontology_version`,
                     [
                         userId, r.repoFullName, r.commitSha, r.technologyId, r.rawName,
                         r.ecosystem, r.sourceLayer, r.filePath, r.lineStart, r.lineEnd,
