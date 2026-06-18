@@ -418,9 +418,14 @@ async function main(): Promise<void> {
     // backfill fills it). The id is constant for the whole run, so it is injected
     // once at construction rather than threaded through each writer call.
     const githubRepoId = env.githubRepoId;
-    const vectorStore  = new RdsVectorStore(rdsConfig, undefined, githubRepoId);
-    const syncState    = new RdsSyncStateRepository(rdsConfig, githubRepoId);
     const repoAdapter  = new GitHubAdapter(env.githubToken);
+    // Head commit of the synced content — stamped onto every chunk's
+    // metadata.commit_sha for source provenance (file:line@commit when paired
+    // with the chunk line ranges). Fail-safe: a resolve error leaves it null
+    // and chunks persist without the stamp — never blocks ingestion.
+    const commitSha = await repoAdapter.getHeadCommitSha(env.repoFullName).catch(() => null);
+    const vectorStore  = new RdsVectorStore(rdsConfig, undefined, githubRepoId, commitSha);
+    const syncState    = new RdsSyncStateRepository(rdsConfig, githubRepoId);
 
     // Rename self-heal — BEFORE any object captures repoFullName and before the
     // first GitHub fetch. If the dispatcher supplied GITHUB_REPO_ID and the repo

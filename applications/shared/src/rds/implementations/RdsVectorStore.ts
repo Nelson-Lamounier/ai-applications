@@ -133,8 +133,23 @@ export class RdsVectorStore implements IVectorStore {
      */
     private readonly githubRepoId: number | null;
 
-    constructor(config: RdsClientConfig, pool?: Pool, githubRepoId: number | null = null) {
+    /**
+     * Head commit SHA of the synced content. Stamped into each chunk's
+     * `metadata.commit_sha` so a retrieved chunk is provenance-anchored to the
+     * exact commit it came from (pairs with `metadata.lineStart`/`lineEnd` for a
+     * full file:line@commit citation). Author/time stay joinable from
+     * `repo_commits` on this sha — not denormalised. Null when unknown.
+     */
+    private readonly commitSha: string | null;
+
+    constructor(
+        config: RdsClientConfig,
+        pool?: Pool,
+        githubRepoId: number | null = null,
+        commitSha: string | null = null,
+    ) {
         this.githubRepoId = githubRepoId;
+        this.commitSha = commitSha;
         this.pool = pool ?? new Pool({
             host:               config.host,
             port:               config.port,
@@ -182,6 +197,19 @@ export class RdsVectorStore implements IVectorStore {
     /** Release all pool connections. Call on graceful shutdown if needed. */
     async end(): Promise<void> {
         await this.pool.end();
+    }
+
+    /**
+     * Serialise a chunk's metadata for the `metadata` jsonb column, stamping the
+     * run's `commit_sha` provenance when known. A chunk-level commit_sha (rare)
+     * is not overwritten.
+     */
+    private metadataJson(chunk: DocumentChunk): string {
+        const base = chunk.metadata ?? {};
+        if (this.commitSha && base['commit_sha'] === undefined) {
+            return JSON.stringify({ ...base, commit_sha: this.commitSha });
+        }
+        return JSON.stringify(base);
     }
 
     // =========================================================================
@@ -281,7 +309,7 @@ export class RdsVectorStore implements IVectorStore {
                 chunk.content,
                 chunk.fileType ?? null,
                 toPostgresArray(chunk.tags ?? []),
-                JSON.stringify(chunk.metadata ?? {}),
+                this.metadataJson(chunk),
                 toPostgresArray(chunk.skills ?? []),
                 toPostgresArray(chunk.technologies ?? []),
                 chunk.chunkIndex,
@@ -367,7 +395,7 @@ export class RdsVectorStore implements IVectorStore {
                 chunk.content,
                 chunk.fileType ?? null,
                 toPostgresArray(chunk.tags ?? []),
-                JSON.stringify(chunk.metadata ?? {}),
+                this.metadataJson(chunk),
                 toPostgresArray(chunk.skills ?? []),
                 toPostgresArray(chunk.technologies ?? []),
                 chunk.chunkIndex,
