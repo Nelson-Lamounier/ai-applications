@@ -7,6 +7,9 @@ export interface TechExtractEnv {
     readonly githubToken:  string;
     /** Immutable GitHub repo id (rename-safe key). Absent until backfilled. */
     readonly githubRepoId?: number;
+    /** Skip the commit-SHA short-circuit and re-extract — lets new lanes
+     *  (e.g. github-sbom) backfill a commit already extracted by older lanes. */
+    readonly forceReindex: boolean;
     readonly workDir:      string;
     readonly pg: {
         readonly host: string; readonly port: number; readonly database: string;
@@ -35,6 +38,7 @@ export function parseEnv(): TechExtractEnv {
         commitSha:    process.env['COMMIT_SHA'] || undefined,
         githubToken:  required('GITHUB_TOKEN'),
         ...(githubRepoId === undefined ? {} : { githubRepoId }),
+        forceReindex: process.env['FORCE_REINDEX'] === '1',
         workDir:      process.env['WORK_DIR'] ?? '/work',
         pg: {
             host:     required('PG_HOST'),
