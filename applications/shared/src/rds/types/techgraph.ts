@@ -19,6 +19,8 @@ export interface RawTechnologyEvidence {
     file_path:    string;
     line_start?:  number;
     line_end?:    number;
+    /** Resolved version when the lane knows it (Syft/SBOM). Absent otherwise. */
+    version?:     string;
 }
 
 /** A resolved (or unresolved) evidence row ready to persist. */
@@ -35,6 +37,10 @@ export interface TechnologyEvidenceRow {
     lineEnd:       number | null;
     confidence:    number;
     ontologyVersion: number;
+    /** Package version when known (Syft lane); null otherwise. The canonical
+     *  Package URL is derived from (ecosystem, rawName, version) at persist time
+     *  by TechnologyEvidenceRepository — not carried on the row. */
+    version:       string | null;
 }
 
 export interface OntologyRow {

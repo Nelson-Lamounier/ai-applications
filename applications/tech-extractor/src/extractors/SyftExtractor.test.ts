@@ -11,8 +11,9 @@ describe('parseSyftJson', () => {
         expect(out).toHaveLength(2);
         expect(out[0]).toMatchObject({
             raw_name: 'react', ecosystem: 'npm', source_layer: 'syft', file_path: 'package.json',
+            version: '18.2.0',
         });
-        expect(out[1]).toMatchObject({ raw_name: 'boto3', ecosystem: 'python', source_layer: 'syft' });
+        expect(out[1]).toMatchObject({ raw_name: 'boto3', ecosystem: 'python', source_layer: 'syft', version: '1.34.0' });
     });
 
     it('returns [] for empty or non-JSON input', () => {
