@@ -25,7 +25,7 @@ describe('TechExtractOrchestrator.run', () => {
 
         const orch = new TechExtractOrchestrator(resolver, evidenceRepo as never, candidateRepo as never);
         const result = await orch.run({
-            userId: 'u1', repoFullName: 'o/r', commitSha: 'abc', rootDir: '/tmp/extract', ontologyVersion: 3, extractors: [good, bad],
+            userId: 'u1', repoFullName: 'o/r', commitSha: 'abc', rootDir: '/tmp/extract', ontologyVersion: 3, extractors: [good, bad], githubRepoId: 999,
         });
 
         const persisted = (evidenceRepo.insertMany as jest.Mock).mock.calls[0][1] as { technologyId: string | null; rawName: string }[];

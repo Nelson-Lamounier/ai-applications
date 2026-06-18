@@ -13,6 +13,8 @@ export interface OrchestratorRunInput {
     rootDir:         string;
     ontologyVersion: number;
     extractors:      Extractor[];
+    /** Immutable GitHub repo id (rename-safe key); null when unknown. */
+    githubRepoId:    number | null;
 }
 
 export interface OrchestratorResult {
@@ -58,6 +60,7 @@ export class TechExtractOrchestrator {
                     lineStart: r.line_start ?? null, lineEnd: r.line_end ?? null,
                     confidence: CONFIDENCE_BY_LAYER[r.source_layer], ontologyVersion: input.ontologyVersion,
                     version: r.version ?? null,
+                    githubRepoId: input.githubRepoId,
                 });
                 if (techId) { matched++; canonicalIds.add(techId); }
                 else {

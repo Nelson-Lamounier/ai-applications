@@ -1,9 +1,14 @@
 /** @format */
 
-export type SourceLayer = 'syft' | 'treesitter' | 'iac' | 'dockerfile' | 'readme' | 'code-prose';
+export type SourceLayer =
+    'syft' | 'treesitter' | 'iac' | 'dockerfile' | 'readme' | 'code-prose' | 'github-sbom';
 
 export const CONFIDENCE_BY_LAYER: Record<SourceLayer, number> = {
     syft:         0.95,
+    // GitHub's dependency-graph SBOM is authoritative for declared deps but
+    // does not resolve transitive deps or version ranges (and isn't file-cited),
+    // so it sits just below Syft as a cross-check/fallback lane.
+    'github-sbom': 0.9,
     treesitter:   0.85,
     iac:          0.85,
     dockerfile:   0.80,
@@ -41,6 +46,8 @@ export interface TechnologyEvidenceRow {
      *  Package URL is derived from (ecosystem, rawName, version) at persist time
      *  by TechnologyEvidenceRepository — not carried on the row. */
     version:       string | null;
+    /** Immutable GitHub repo id (rename-safe key); null until provided. */
+    githubRepoId:  number | null;
 }
 
 export interface OntologyRow {
