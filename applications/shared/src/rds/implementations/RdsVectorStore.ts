@@ -13,6 +13,7 @@
 
 import { Pool, type QueryResult } from 'pg';
 
+import { buildCroissant, type CroissantDataset } from '../../rag/croissant.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import type {
     ChunkIdentity,
@@ -220,6 +221,44 @@ export class RdsVectorStore implements IVectorStore {
         if (this.commitSha && base['commit_sha'] === undefined) extra['commit_sha'] = this.commitSha;
         if (this.lineage && base['lineage'] === undefined) extra['lineage'] = this.lineage;
         return Object.keys(extra).length > 0 ? JSON.stringify({ ...base, ...extra }) : JSON.stringify(base);
+    }
+
+    /**
+     * Export a repo's RAG knowledge base as an MLCommons Croissant data card
+     * (the standard ML-dataset description) — the RAG-domain counterpart to the
+     * tech-extractor's CycloneDX SBOM export. Aggregates the chunk corpus
+     * (count, canonical-skill vocabulary, commit + model lineage from
+     * `metadata`) and maps it via the pure {@link buildCroissant}. Scoped by
+     * explicit `user_id` like every other read on this store.
+     */
+    async toCroissant(userId: string, repoFullName: string): Promise<CroissantDataset> {
+        const { rows } = await this.pool.query<{
+            record_count: number;
+            skills: string[] | null;
+            commit_sha: string | null;
+            lineage: { embedding_model?: string; embedding_dim?: number; enrichment_model?: string } | null;
+        }>(
+            `SELECT
+                (SELECT count(*) FROM document_embeddings
+                  WHERE user_id = $1::uuid AND repo_full_name = $2)::int AS record_count,
+                (SELECT array_agg(DISTINCT sk) FROM document_embeddings d, unnest(d.skills) sk
+                  WHERE d.user_id = $1::uuid AND d.repo_full_name = $2) AS skills,
+                (SELECT metadata->>'commit_sha' FROM document_embeddings
+                  WHERE user_id = $1::uuid AND repo_full_name = $2 AND metadata ? 'commit_sha' LIMIT 1) AS commit_sha,
+                (SELECT metadata->'lineage' FROM document_embeddings
+                  WHERE user_id = $1::uuid AND repo_full_name = $2 AND metadata ? 'lineage' LIMIT 1) AS lineage`,
+            [userId, repoFullName],
+        );
+        const r = rows[0];
+        return buildCroissant({
+            repoFullName,
+            recordCount: r?.record_count ?? 0,
+            ...(r?.skills ? { skills: r.skills } : {}),
+            ...(r?.commit_sha ? { commitSha: r.commit_sha } : {}),
+            ...(r?.lineage?.embedding_model ? { embeddingModel: r.lineage.embedding_model } : {}),
+            ...(r?.lineage?.embedding_dim ? { embeddingDim: r.lineage.embedding_dim } : {}),
+            ...(r?.lineage?.enrichment_model ? { enrichmentModel: r.lineage.enrichment_model } : {}),
+        });
     }
 
     // =========================================================================

@@ -131,6 +131,36 @@ describe('RdsVectorStore.upsertBatch (multi-row)', () => {
     });
 });
 
+describe('RdsVectorStore.toCroissant', () => {
+    it('builds a Croissant data card from the aggregated chunk corpus', async () => {
+        const query = jest.fn(async () => ({ rows: [{
+            record_count: 200,
+            skills: ['kubernetes networking', 'gitops'],
+            commit_sha: 'abc123',
+            lineage: { embedding_model: 'titan-v2', embedding_dim: 1024, enrichment_model: 'haiku' },
+        }] }));
+        const ds = await store(query).toCroissant('u1', 'o/r');
+
+        const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(sql).toMatch(/FROM document_embeddings/);
+        expect(params).toEqual(['u1', 'o/r']);
+        expect(ds.conformsTo).toBe('http://mlcommons.org/croissant/1.0');
+        expect(ds.name).toBe('rag-kb-o-r');
+        expect(ds.version).toBe('abc123');
+        expect(ds.keywords).toEqual(['kubernetes networking', 'gitops']);
+        expect(ds.description).toContain('200 chunks');
+        expect(ds.description).toContain('titan-v2 (1024d)');
+    });
+
+    it('produces a valid empty data card when the repo has no chunks', async () => {
+        const query = jest.fn(async () => ({ rows: [{ record_count: 0, skills: null, commit_sha: null, lineage: null }] }));
+        const ds = await store(query).toCroissant('u1', 'o/r');
+        expect(ds.recordSet[0]?.name).toBe('chunks');
+        expect(ds).not.toHaveProperty('version');
+        expect(ds.description).toContain('0 chunks');
+    });
+});
+
 describe('RdsVectorStore.querySimilar (filter-then-rank)', () => {
     const simRow = (over: Record<string, unknown> = {}) => ({
         id: 'id1', repo_full_name: 'o/r', file_path: 'a.ts', heading: null,
