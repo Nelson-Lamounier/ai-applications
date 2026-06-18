@@ -103,7 +103,15 @@ export class CodeChunker implements IChunker {
                 : findPythonUnits(lines);
 
         const packed = this.packUnits(units)
-            .map((u) => ({ content: u.lines.join('\n').trim(), oversplit: u.oversplit }))
+            .map((u) => ({
+                content: u.lines.join('\n').trim(),
+                oversplit: u.oversplit,
+                // 1-based inclusive source-line span — provenance for citable
+                // retrieval ("see file.ts:42-87"). `start` is the unit's 0-based
+                // offset in the original file's line array.
+                lineStart: u.start + 1,
+                lineEnd:   u.start + u.lines.length,
+            }))
             .filter((u) => u.content.length > 0);
 
         return packed.map((u, i) => ({
@@ -116,6 +124,8 @@ export class CodeChunker implements IChunker {
             metadata: {
                 chunkStrategy: 'code-structure',
                 symbols: symbolNames(u.content, language),
+                lineStart: u.lineStart,
+                lineEnd:   u.lineEnd,
                 ...(u.oversplit ? { oversplit: true } : {}),
             },
         }));
