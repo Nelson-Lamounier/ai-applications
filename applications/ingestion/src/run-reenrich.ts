@@ -20,6 +20,7 @@
 
 import {
     BedrockChunkEnricher,
+    SkillOntologyRepository,
     bootstrapK8sObservability,
     pushFinalMetrics,
 } from '@bedrock/shared';
@@ -55,11 +56,16 @@ async function main(): Promise<void> {
     log.info({ userId, repoFullName, limit }, 're_enrich.start');
 
     try {
+        // Canonicalise skills against the skill ontology (migration 092), same
+        // as inline ingestion. Fail-safe: undefined map -> raw skills pass through.
+        const skillAliasToCanonical = await new SkillOntologyRepository(pgPool)
+            .loadAliasToCanonicalMap()
+            .catch(() => undefined);
         const enricher = BedrockChunkEnricher.fromEnvironment({
             pool:     pgPool,
             userId,
             repoName: repoFullName ?? 're-enrich',
-        });
+        }, skillAliasToCanonical);
 
         const result = await reenrichSkippedChunks(pgPool, enricher, {
             userId,

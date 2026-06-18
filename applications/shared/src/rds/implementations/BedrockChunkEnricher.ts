@@ -95,6 +95,14 @@ export interface BedrockChunkEnricherConfig {
     readonly modelId?: string;
     /** Bedrock client region. Defaults to AWS_REGION env or us-east-1. */
     readonly region?: string;
+    /**
+     * Lowercased alias -> canonical skill map (from SkillOntologyRepository,
+     * migration 092). When present, each emitted skill is resolved to its
+     * canonical form so LLM variance ("k8s networking" ≈ "kubernetes
+     * networking") collapses deterministically. Unknown skills pass through as
+     * their normalised raw. Omit to keep raw skills unchanged.
+     */
+    readonly aliasToCanonical?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -116,18 +124,24 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     private readonly client:  BedrockRuntimeClient;
     private readonly modelId: string;
     private readonly costCtx?: ChunkEnricherCostContext;
+    private readonly aliasToCanonical?: ReadonlyMap<string, string>;
 
     constructor(config: BedrockChunkEnricherConfig = {}, costCtx?: ChunkEnricherCostContext) {
         const region = config.region ?? process.env.AWS_REGION ?? 'us-east-1';
         this.client  = new BedrockRuntimeClient({ region });
         this.modelId = config.modelId ?? DEFAULT_MODEL_ID;
         this.costCtx = costCtx;
+        this.aliasToCanonical = config.aliasToCanonical;
     }
 
-    static fromEnvironment(costCtx?: ChunkEnricherCostContext): BedrockChunkEnricher {
+    static fromEnvironment(
+        costCtx?: ChunkEnricherCostContext,
+        aliasToCanonical?: ReadonlyMap<string, string>,
+    ): BedrockChunkEnricher {
         return new BedrockChunkEnricher({
             modelId: process.env.ENRICHMENT_MODEL_ID,
             region:  process.env.AWS_REGION,
+            ...(aliasToCanonical ? { aliasToCanonical } : {}),
         }, costCtx);
     }
 
@@ -232,7 +246,12 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         for (const v of raw) {
             if (typeof v !== 'string') continue;
             const cleaned = v.toLowerCase().trim();
-            if (cleaned) seen.add(cleaned);
+            if (!cleaned) continue;
+            // Canonicalise against the skill ontology when available; unknown
+            // skills fall through as their normalised raw. The Set dedups
+            // variants that collapse to the same canonical (slice 2c).
+            const canonical = this.aliasToCanonical?.get(cleaned) ?? cleaned;
+            seen.add(canonical);
         }
         return Array.from(seen);
     }

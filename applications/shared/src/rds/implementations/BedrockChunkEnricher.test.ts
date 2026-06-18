@@ -67,6 +67,32 @@ describe('BedrockChunkEnricher', () => {
         expect(result).not.toHaveProperty('injected');
     });
 
+    it('canonicalises skills against the alias map and dedups collapsed variants', async () => {
+        mockSend.mockResolvedValueOnce(bedrockReply({
+            skills: ['K8s Networking', 'kubernetes networking', 'rest api'],
+        }));
+
+        const result = await new BedrockChunkEnricher({
+            aliasToCanonical: new Map([
+                ['k8s networking',       'kubernetes networking'],
+                ['kubernetes networking','kubernetes networking'],
+                ['rest api',             'rest api design'],
+            ]),
+        }).enrich(chunk());
+
+        // Two variants collapse to one canonical; the unknown-to-alias raw stays normalised.
+        expect(result.skills).toEqual(['kubernetes networking', 'rest api design']);
+    });
+
+    it('keeps an unknown skill as its normalised raw when no alias matches', async () => {
+        mockSend.mockResolvedValueOnce(bedrockReply({ skills: ['Some Novel Skill'] }));
+
+        const result = await new BedrockChunkEnricher({ aliasToCanonical: new Map() })
+            .enrich(chunk());
+
+        expect(result.skills).toEqual(['some novel skill']);
+    });
+
     it('tool schema only requests skills (technologies decommissioned 2026-05-27)', async () => {
         mockSend.mockResolvedValueOnce(bedrockReply({ skills: [] }));
         await new BedrockChunkEnricher().enrich(chunk());
