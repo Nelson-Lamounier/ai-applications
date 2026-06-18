@@ -185,6 +185,7 @@ async function main(): Promise<void> {
             const result = await orch.run({
                 userId: env.userId, repoFullName: env.repoFullName, commitSha: sha,
                 rootDir: extractDir, ontologyVersion, extractors,
+                githubRepoId: env.githubRepoId ?? null,
             });
             for (const name of result.failedExtractors) extractorFailed.inc({ extractor: name });
 

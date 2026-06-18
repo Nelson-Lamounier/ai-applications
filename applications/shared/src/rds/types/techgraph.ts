@@ -46,6 +46,8 @@ export interface TechnologyEvidenceRow {
      *  Package URL is derived from (ecosystem, rawName, version) at persist time
      *  by TechnologyEvidenceRepository — not carried on the row. */
     version:       string | null;
+    /** Immutable GitHub repo id (rename-safe key); null until provided. */
+    githubRepoId:  number | null;
 }
 
 export interface OntologyRow {

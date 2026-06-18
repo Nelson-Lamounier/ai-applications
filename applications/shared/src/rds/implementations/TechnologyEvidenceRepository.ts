@@ -49,17 +49,19 @@ export class TechnologyEvidenceRepository {
                     `INSERT INTO technology_evidence (
                         user_id, repo_full_name, commit_sha, technology_id, raw_name,
                         ecosystem, source_layer, file_path, line_start, line_end,
-                        confidence, extracted_at_ontology_version, version, purl
+                        confidence, extracted_at_ontology_version, version, purl,
+                        github_repo_id
                     ) VALUES (
                         $1::uuid, $2, $3, $4::uuid, $5,
                         $6, $7, $8, $9, $10,
-                        $11, $12, $13, $14
+                        $11, $12, $13, $14, $15
                     )
                     ON CONFLICT DO NOTHING`,
                     [
                         userId, r.repoFullName, r.commitSha, r.technologyId, r.rawName,
                         r.ecosystem, r.sourceLayer, r.filePath, r.lineStart, r.lineEnd,
                         r.confidence, r.ontologyVersion, r.version, purl,
+                        r.githubRepoId,
                     ],
                 );
             }

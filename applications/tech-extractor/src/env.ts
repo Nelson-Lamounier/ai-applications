@@ -5,6 +5,8 @@ export interface TechExtractEnv {
     readonly repoFullName: string;
     readonly commitSha?:   string;
     readonly githubToken:  string;
+    /** Immutable GitHub repo id (rename-safe key). Absent until backfilled. */
+    readonly githubRepoId?: number;
     readonly workDir:      string;
     readonly pg: {
         readonly host: string; readonly port: number; readonly database: string;
@@ -18,12 +20,21 @@ function required(name: string): string {
     return v;
 }
 
+/** GITHUB_REPO_ID → a finite positive number, or undefined when unset/invalid. */
+function parseRepoId(raw: string | undefined): number | undefined {
+    if (!raw) return undefined;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 export function parseEnv(): TechExtractEnv {
+    const githubRepoId = parseRepoId(process.env['GITHUB_REPO_ID']);
     return {
         userId:       required('USER_ID'),
         repoFullName: required('REPO_FULL_NAME'),
         commitSha:    process.env['COMMIT_SHA'] || undefined,
         githubToken:  required('GITHUB_TOKEN'),
+        ...(githubRepoId === undefined ? {} : { githubRepoId }),
         workDir:      process.env['WORK_DIR'] ?? '/work',
         pg: {
             host:     required('PG_HOST'),

@@ -22,7 +22,7 @@ const row: TechnologyEvidenceRow = {
     userId: 'u1', repoFullName: 'o/r', commitSha: 'abc', technologyId: 'id-kube',
     rawName: 'k8s', ecosystem: 'iac', sourceLayer: 'iac',
     filePath: 'deploy.yaml', lineStart: 3, lineEnd: 3, confidence: 0.85, ontologyVersion: 5,
-    version: null,
+    version: null, githubRepoId: 999,
 };
 
 describe('TechnologyEvidenceRepository.insertMany', () => {
@@ -38,7 +38,7 @@ describe('TechnologyEvidenceRepository.insertMany', () => {
         expect(insert.params).toEqual([
             'u1', 'o/r', 'abc', 'id-kube', 'k8s',
             'iac', 'iac', 'deploy.yaml', 3, 3,
-            0.85, 5, null, 'pkg:generic/k8s',
+            0.85, 5, null, 'pkg:generic/k8s', 999,
         ]);
         expect(client.release).toHaveBeenCalled();
     });
@@ -48,7 +48,7 @@ describe('TechnologyEvidenceRepository.insertMany', () => {
         const repo = new TechnologyEvidenceRepository(fakePool(client) as never);
         await repo.insertMany('u1', [{ ...row, rawName: '@aws-sdk/client-s3', ecosystem: 'npm', version: '3.0.0' }]);
         const insert = client.calls.find(c => c.sql.includes('INSERT INTO technology_evidence'))!;
-        expect(insert.params!.slice(-2)).toEqual(['3.0.0', 'pkg:npm/%40aws-sdk/client-s3@3.0.0']);
+        expect(insert.params!.slice(-3)).toEqual(['3.0.0', 'pkg:npm/%40aws-sdk/client-s3@3.0.0', 999]);
     });
 
     it('no-ops on an empty batch', async () => {

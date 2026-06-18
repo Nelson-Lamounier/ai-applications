@@ -15,7 +15,7 @@ describe('layer-1 end-to-end (in-process)', () => {
         const evidenceRepo = { insertMany: jest.fn(async () => {}) };
         const candidateRepo = { upsert: jest.fn(async () => {}) };
         const orch = new TechExtractOrchestrator(resolver, evidenceRepo as never, candidateRepo as never);
-        const result = await orch.run({ userId: 'u1', repoFullName: 'o/r', commitSha: 'abc', rootDir: '/tmp/extract', ontologyVersion: 1, extractors: [dockerEx, syftEx] });
+        const result = await orch.run({ userId: 'u1', repoFullName: 'o/r', commitSha: 'abc', rootDir: '/tmp/extract', ontologyVersion: 1, extractors: [dockerEx, syftEx], githubRepoId: 999 });
 
         expect(result.matched).toBe(2);
         expect(result.canonicalIds.has('id-node')).toBe(true);
