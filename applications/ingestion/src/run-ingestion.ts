@@ -139,6 +139,41 @@ async function sumBookedCostUsd(
 }
 
 /**
+ * Per-agent cost + invocation breakdown for this repo since a cut-off. Names
+ * exactly which component handled each lane (titan-embed builds
+ * document_embeddings; chunk-enrich adds skills; profile-* synthesize the
+ * profile). Best-effort: returns [] on any failure.
+ */
+async function costBreakdownByAgent(
+    pgPool: Pool,
+    userId: string,
+    repoFullName: string,
+    sinceIso: string,
+): Promise<Array<{ agent: string; model: string; invocations: number; costUsd: number }>> {
+    try {
+        const { rows } = await pgPool.query<{ agent: string; model_id: string; n: string; cents: string }>(
+            `SELECT agent, model_id,
+                    COUNT(*) AS n,
+                    COALESCE(SUM(total_cost_cents), 0) AS cents
+               FROM prompt_invocations
+              WHERE user_id = $1::uuid AND repo_name = $2 AND invoked_at >= $3
+              GROUP BY agent, model_id
+              ORDER BY cents DESC`,
+            [userId, repoFullName, sinceIso],
+        );
+        return rows.map(r => ({
+            agent:       r.agent,
+            model:       r.model_id,
+            invocations: Number(r.n),
+            costUsd:     Number((Number(r.cents) / 100).toFixed(6)),
+        }));
+    } catch (err) {
+        log.warn({ err: String(err), repoFullName }, 'cost_breakdown.failed (non-fatal)');
+        return [];
+    }
+}
+
+/**
  * Background skill enrichment for DEFER_ENRICHMENT runs — enrich the 'pending'
  * chunks in place after the repo is already searchable. No re-embedding;
  * best-effort, never throws (a failure must not flip the ingestion outcome).
@@ -623,6 +658,13 @@ async function main(): Promise<void> {
         // for this repo since the run started (embeddings + enrichment + probe +
         // profile agents). Previously no single total was emitted anywhere.
         const runCost = await sumBookedCostUsd(pgPool, env.userId, env.repoFullName, runStartIso);
+        // Per-agent breakdown so each cost lane is attributable — e.g.
+        // titan-embed (document_embeddings), chunk-enrich (skills), profile-*.
+        const costByAgent = await costBreakdownByAgent(pgPool, env.userId, env.repoFullName, runStartIso);
+        log.info(
+            { event: 'ingestion.cost_breakdown', repoFullName: env.repoFullName, total_usd: runCost.costUsd, by_agent: costByAgent },
+            'cost breakdown by agent',
+        );
 
         const { traceId } = rootSpan.spanContext();
         log.info({

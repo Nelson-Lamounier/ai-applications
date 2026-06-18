@@ -94,6 +94,40 @@ function makeChunk(filePath: string, idx: number, content = 'body'): RawChunk {
 // TESTS
 // =============================================================================
 
+describe('IngestionPipeline — document_embeddings build visibility', () => {
+    let store: FakeVectorStore;
+    let sync:  FakeSyncState;
+    let embed: FakeEmbedder;
+
+    beforeEach(() => {
+        store = new FakeVectorStore();
+        sync  = new FakeSyncState();
+        embed = new FakeEmbedder();
+    });
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    it('logs the target table, files visited, and per-fileClass lane counts', async () => {
+        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const chunks: RawChunk[] = [
+            { filePath: 'src/a.ts', content: 'x', chunkIndex: 0, totalChunks: 1, metadata: { fileClass: 'source' } },
+            { filePath: 'src/b.ts', content: 'y', chunkIndex: 0, totalChunks: 1, metadata: { fileClass: 'source' } },
+            { filePath: 'a.test.ts', content: 'z', chunkIndex: 0, totalChunks: 1, metadata: { fileClass: 'test' } },
+        ];
+        await pipeline.ingestChunks('u1', 'o/r', chunks);
+
+        const lines = logSpy.mock.calls.map(c => String(c[0]));
+        const build = lines.find(m => m.includes('document_embeddings build'));
+        expect(build).toBeDefined();
+        expect(build).toContain('3 files visited');
+        expect(build).toContain('source=2');
+        expect(build).toContain('test=1');
+        expect(build).toContain('table=document_embeddings');
+        // The write phase names the table + insert/update counts too.
+        expect(lines.find(m => m.includes('document_embeddings written'))).toBeDefined();
+    });
+});
+
 describe('IngestionPipeline enrichment', () => {
     let store: FakeVectorStore;
     let sync:  FakeSyncState;
