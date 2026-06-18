@@ -93,6 +93,20 @@ describe('RdsVectorStore.upsertBatch (multi-row)', () => {
         expect(metadata).not.toHaveProperty('commit_sha');
     });
 
+    it('stamps embedding/enrichment lineage into metadata.lineage', async () => {
+        const query = jest.fn(async () => ({ rows: [{ was_inserted: true }] }));
+        const pool = { query } as unknown as Pool;
+        const lineage = { embedding_model: 'titan-v2', embedding_dim: 1024, enrichment_model: 'haiku' };
+        const vs = new RdsVectorStore(
+            { host: 'h', port: 5432, database: 'd', user: 'u', password: 'p' },
+            pool, null, null, lineage,
+        );
+        await vs.upsertBatch([chunk({ filePath: 'a.ts', metadata: { lineStart: 1 } })]);
+        const [, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        const metadata = JSON.parse(values[7] as string) as Record<string, unknown>;
+        expect(metadata).toEqual({ lineStart: 1, lineage });
+    });
+
     it('splits into multiple INSERTs above UPSERT_BATCH_SIZE (200)', async () => {
         const query = jest.fn(async () => ({ rows: [] }));
         const chunks = Array.from({ length: 250 }, (_, i) => chunk({ filePath: `f${i}.ts` }));

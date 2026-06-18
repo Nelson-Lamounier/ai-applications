@@ -142,14 +142,24 @@ export class RdsVectorStore implements IVectorStore {
      */
     private readonly commitSha: string | null;
 
+    /**
+     * Embedding/enrichment lineage stamped into each chunk's `metadata.lineage`
+     * (embedding model + dimension, enrichment model). Lets a chunk be
+     * reproduced / audited / invalidated when a model or dimension changes.
+     * Null when not supplied.
+     */
+    private readonly lineage: Record<string, unknown> | null;
+
     constructor(
         config: RdsClientConfig,
         pool?: Pool,
         githubRepoId: number | null = null,
         commitSha: string | null = null,
+        lineage: Record<string, unknown> | null = null,
     ) {
         this.githubRepoId = githubRepoId;
         this.commitSha = commitSha;
+        this.lineage = lineage;
         this.pool = pool ?? new Pool({
             host:               config.host,
             port:               config.port,
@@ -206,10 +216,10 @@ export class RdsVectorStore implements IVectorStore {
      */
     private metadataJson(chunk: DocumentChunk): string {
         const base = chunk.metadata ?? {};
-        if (this.commitSha && base['commit_sha'] === undefined) {
-            return JSON.stringify({ ...base, commit_sha: this.commitSha });
-        }
-        return JSON.stringify(base);
+        const extra: Record<string, unknown> = {};
+        if (this.commitSha && base['commit_sha'] === undefined) extra['commit_sha'] = this.commitSha;
+        if (this.lineage && base['lineage'] === undefined) extra['lineage'] = this.lineage;
+        return Object.keys(extra).length > 0 ? JSON.stringify({ ...base, ...extra }) : JSON.stringify(base);
     }
 
     // =========================================================================

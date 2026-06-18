@@ -122,7 +122,8 @@ export interface ChunkEnricherCostContext {
 
 export class BedrockChunkEnricher implements IChunkEnricher {
     private readonly client:  BedrockRuntimeClient;
-    private readonly modelId: string;
+    /** Enrichment model id — exposed for chunk lineage provenance. */
+    readonly modelId: string;
     private readonly costCtx?: ChunkEnricherCostContext;
     private readonly aliasToCanonical?: ReadonlyMap<string, string>;
 
