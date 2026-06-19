@@ -61,7 +61,9 @@ WORKDIR /app
 # use 0555 (traversable + readable, no write); standalone files use 0444.
 # The only writable path at runtime is the /work emptyDir mounted by the Job.
 COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/ontology-importer/dist ./applications/ontology-importer/dist
-COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/ontology-importer/data ./applications/ontology-importer/data
+# 0555 (not 0444): a directory needs the execute bit to be traversable, else the
+# runtime user gets EACCES opening files inside it (caught by the dry-run Job).
+COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/ontology-importer/data ./applications/ontology-importer/data
 COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/ontology-importer/package.json ./applications/ontology-importer/
 COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/shared/dist ./applications/shared/dist
 COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/shared/package.json ./applications/shared/
