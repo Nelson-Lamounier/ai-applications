@@ -22,25 +22,31 @@ function makePool(canned: {
     syncState?: unknown[];
     fileChanges?: unknown[];
     laneCounts?: unknown[];
+    verifiedStack?: unknown[];
 }) {
+    // Table-driven dispatch: first matching predicate wins. Keeps the stub's
+    // cognitive complexity flat as queries are added (one row per query).
+    const routes: ReadonlyArray<readonly [(sql: string) => boolean, () => unknown[]]> = [
+        [(s) => /FROM technology_evidence/.test(s), () => canned.verifiedStack ?? []],
+        [(s) => /FROM projects/.test(s), () => canned.projects ?? []],
+        [(s) => /FROM project_components/.test(s) && !/FROM project_repositories/.test(s), () => canned.components ?? []],
+        [(s) => /FROM project_repositories/.test(s), () => canned.repositories ?? []],
+        [(s) => /FROM repo_commit_files/.test(s), () => canned.fileChanges ?? []],
+        [(s) => /FROM document_embeddings/.test(s) && /fileClass/.test(s), () => canned.laneCounts ?? []],
+        [(s) => /FROM document_embeddings/.test(s), () => canned.embeddings ?? []],
+        [(s) => /FROM repo_sync_state/.test(s), () => canned.syncState ?? []],
+        [(s) => /FROM repo_commits/.test(s), () => canned.commits ?? []],
+        [(s) => /FROM repo_pull_requests/.test(s), () => canned.pulls ?? []],
+        [(s) => /FROM project_archetypes/.test(s), () => canned.archetypes ?? []],
+        [(s) => /FROM project_stage_overlays/.test(s), () => canned.overlays ?? []],
+        [(s) => /FROM user_profile_rollup/.test(s), () => canned.rollup ?? []],
+        [(s) => /UPDATE projects/.test(s), () => []],
+    ];
     return {
         async query(sql: string): Promise<QueryResult> {
-            if (/FROM projects/.test(sql))            return { rows: canned.projects ?? [] };
-            if (/FROM project_components/.test(sql) && !/FROM project_repositories/.test(sql)) {
-                return { rows: canned.components ?? [] };
-            }
-            if (/FROM project_repositories/.test(sql)) return { rows: canned.repositories ?? [] };
-            if (/FROM repo_commit_files/.test(sql))   return { rows: canned.fileChanges ?? [] };
-            if (/document_embeddings/.test(sql) && /fileClass/.test(sql)) return { rows: canned.laneCounts ?? [] };
-            if (/FROM document_embeddings/.test(sql)) return { rows: canned.embeddings ?? [] };
-            if (/FROM repo_sync_state/.test(sql))     return { rows: canned.syncState ?? [] };
-            if (/FROM repo_commits/.test(sql))        return { rows: canned.commits ?? [] };
-            if (/FROM repo_pull_requests/.test(sql))  return { rows: canned.pulls ?? [] };
-            if (/FROM project_archetypes/.test(sql))      return { rows: canned.archetypes ?? [] };
-            if (/FROM project_stage_overlays/.test(sql))  return { rows: canned.overlays ?? [] };
-            if (/FROM user_profile_rollup/.test(sql))     return { rows: canned.rollup ?? [] };
-            if (/UPDATE projects/.test(sql))              return { rows: [] };
-            throw new Error(`unexpected SQL: ${sql}`);
+            const route = routes.find(([match]) => match(sql));
+            if (!route) throw new Error(`unexpected SQL: ${sql}`);
+            return { rows: route[1]() };
         },
     };
 }

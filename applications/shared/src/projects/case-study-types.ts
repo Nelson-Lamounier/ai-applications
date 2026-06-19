@@ -86,6 +86,20 @@ export const SourceSignalSchema = z.object({
      * confidence indicator without re-running the check.
      */
     grounding: z.enum(['GROUNDED', 'NOT_GROUNDED', 'NOT_VERIFIED']).default('NOT_VERIFIED'),
+    /**
+     * SBOM-grounded dependency identity, stamped server-side at persist time
+     * for stack items only (never emitted by the model). Each entry ties the
+     * stack name to its real `technology_evidence` version + canonical purl +
+     * declaration file:line (migrations 089/090). Absent on non-stack signals
+     * and on stack items with no code-dependency match.
+     */
+    verifiedTech: z.array(z.object({
+        name:    z.string(),
+        version: z.string().nullable(),
+        purl:    z.string().nullable(),
+        path:    z.string().nullable(),
+        line:    z.number().int().nullable(),
+    }).strict()).optional(),
 }).strict();
 export type SourceSignal = z.infer<typeof SourceSignalSchema>;
 
@@ -296,5 +310,17 @@ export interface CaseStudyContext {
         readonly additions:    number;
         readonly deletions:    number;
         readonly changes:      number;
+    }>;
+
+    // ── SBOM-grounded stack (additive) ─────────────────────────────────────
+    // The project's REAL code dependencies (technology_evidence: Syft/treesitter/
+    // IaC/Docker lanes), one per canonical with its version + canonical purl.
+    // Shown to the agent so the drafted stack reflects what the code actually
+    // declares, not LLM-guessed tech tags. The persistence layer re-derives the
+    // full map (with file:line) to stamp each stack item deterministically.
+    readonly verifiedStack?: ReadonlyArray<{
+        readonly name:    string;
+        readonly version: string | null;
+        readonly purl:    string | null;
     }>;
 }

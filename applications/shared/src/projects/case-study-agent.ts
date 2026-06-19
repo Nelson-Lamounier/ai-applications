@@ -118,7 +118,16 @@ The input is a compact JSON envelope describing the project, its
 components, its repositories, recent commits, and selected KB passages,
 plus an optional <productContext> block. Use <productContext> for the
 product framing (tagline + first pitch paragraph) and commits + KB
-passages as evidence for every grounded engineering claim.`;
+passages as evidence for every grounded engineering claim.
+
+When a <verifiedStack> block is supplied, it lists the project's REAL
+code dependencies (extracted from package manifests, IaC, and
+Dockerfiles) with their actual versions. Your \`stack\` MUST be drawn
+from these — prefer their exact names so each item can be tied back to a
+real dependency. Do NOT list a language/framework/database/service that
+is absent from <verifiedStack> unless a commit, PR, or KB passage clearly
+evidences it. Do not put version numbers in stack names; versions are
+attached deterministically after generation.`;
 
 /**
  * Build the system prompt, appending an archetype/stage calibration block
@@ -408,6 +417,16 @@ export function buildUserMessage(ctx: CaseStudyContext): string {
             '<fileChanges>',
             JSON.stringify(ctx.fileChangeEvidence),
             '</fileChanges>',
+        );
+    }
+    // Real code dependencies (technology_evidence: Syft/treesitter/IaC/Docker),
+    // each with its actual version + canonical purl. The stack must reflect
+    // these; do not invent a dependency that is absent here and unevidenced.
+    if (ctx.verifiedStack && ctx.verifiedStack.length > 0) {
+        lines.push(
+            '<verifiedStack>',
+            JSON.stringify(ctx.verifiedStack),
+            '</verifiedStack>',
         );
     }
     if (ctx.priorCaseStudy) {
