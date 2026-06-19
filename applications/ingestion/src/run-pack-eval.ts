@@ -28,6 +28,8 @@ import {
 import { Pool } from 'pg';
 
 import { computeEnrichEvalMetrics } from './util/enrichEvalMetrics.js';
+import { computeSemanticEvalMetrics } from './util/semanticEvalMetrics.js';
+import { buildSkillSim } from './util/buildSkillSim.js';
 
 const obs = bootstrapK8sObservability({ serviceName: 'pack-eval' });
 const log = obs.logger;
@@ -93,14 +95,22 @@ async function runPacked(enricher: BedrockChunkEnricher, rows: SampleRow[], pack
     return { map, calls: packs.length };
 }
 
-function logResult(baseline: Map<string, string[]>, packed: Map<string, string[]>, sampleN: number, calls: number, packSize: number): void {
-    const m = computeEnrichEvalMetrics(baseline, packed);
-    const coverage = sampleN === 0 ? 0 : packed.size / sampleN;   // attribution: chunks that got their own entry
+async function logResult(baseline: Map<string, string[]>, packed: Map<string, string[]>, sampleN: number, calls: number, packSize: number): Promise<void> {
+    const exact = computeEnrichEvalMetrics(baseline, packed);
+    // Semantic re-score: the corpus is ~2.2% canonical, so exact-string overlap
+    // measures phrasing noise. Match skills by embedding cosine instead.
+    const semThreshold = Number.parseFloat(process.env['SEM_THRESHOLD'] ?? '0.82');
+    const sim = await buildSkillSim([baseline, packed], TitanEmbeddingProvider.fromEnvironment());
+    const sem = computeSemanticEvalMetrics(baseline, packed, sim, semThreshold);
+    const coverage = sampleN === 0 ? 0 : packed.size / sampleN;
     const reduction = Number((sampleN / Math.max(calls, 1)).toFixed(1));
     log.info(
-        { event: 'pack_eval.result', ...m, coverage, packSize, baselineCalls: sampleN, packedCalls: calls, callReduction: reduction },
-        `pack eval (size ${packSize}): recall=${m.recall.toFixed(3)} precision=${m.precision.toFixed(3)} ` +
-        `coverage=${coverage.toFixed(3)} calls ${sampleN}->${calls} (${reduction}x fewer) — recall ~1.0 + coverage ~1.0 = recall-safe`,
+        { event: 'pack_eval.result', packSize, baselineCalls: sampleN, packedCalls: calls, callReduction: reduction, coverage,
+          exactRecall: exact.recall, exactPrecision: exact.precision,
+          semanticRecall: sem.recall, semanticPrecision: sem.precision, semThreshold },
+        `pack eval (size ${packSize}): EXACT recall=${exact.recall.toFixed(3)} prec=${exact.precision.toFixed(3)} | ` +
+        `SEMANTIC recall=${sem.recall.toFixed(3)} prec=${sem.precision.toFixed(3)} (cos>=${semThreshold}) | ` +
+        `coverage=${coverage.toFixed(3)} calls ${sampleN}->${calls} (${reduction}x fewer)`,
     );
 }
 
@@ -120,7 +130,7 @@ async function main(): Promise<void> {
         const baseline = await runBaseline(enricher, rows);
         const { map: packed, calls } = await runPacked(enricher, rows, packSize, maxChars);
 
-        logResult(baseline, packed, rows.length, calls, packSize);
+        await logResult(baseline, packed, rows.length, calls, packSize);
         await pool.end().catch(() => { /* drain */ });
         await obs.shutdown().catch(() => { /* flush */ });
         process.exit(0);
