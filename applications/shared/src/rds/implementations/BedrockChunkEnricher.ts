@@ -206,7 +206,10 @@ export class BedrockChunkEnricher implements IChunkEnricher {
             bucket,
             prefix:  process.env.ENRICH_BATCH_PREFIX ?? 'enrich-batch',
             roleArn,
-            modelId: this.modelId,
+            // Batch CreateModelInvocationJob takes the base foundation-model id,
+            // not the inline-only EU inference profile (the importer's pattern).
+            // Defaults to the inline model id; override when they must differ.
+            modelId: process.env.ENRICH_BATCH_MODEL_ID ?? this.modelId,
         });
         const { records, recordToId } = buildEnrichRecords(items);
         const jobArn = await batch.submit(records, runKey);
