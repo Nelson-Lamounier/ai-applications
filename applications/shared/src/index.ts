@@ -343,6 +343,9 @@ export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './rds/ind
 export type { SkillMatch } from './rds/index.js';
 export { PhraseSkillResolver } from './rds/index.js';
 export { canonicaliseSkills } from './rds/index.js';
+export { dedupeSkillCanonicals } from './rds/index.js';
+export type { DedupCandidate, DedupAction, DedupOptions } from './rds/index.js';
+export { SkillOntologyWriteRepository } from './rds/index.js';
 export { scoreSkillResolution } from './rds/index.js';
 export type { ResolutionOutcome, ResolutionScore } from './rds/index.js';
 export { backfillSkillEmbeddings } from './rds/index.js';

@@ -12,18 +12,18 @@ Tests are included: the project follows TDD and Constitution VI mandates the res
 
 ## Phase 1: Setup
 
-- [ ] T001 Add migration `applications/platform-rds-bootstrap/migrations/095_skill_ontology_provenance.sql`: `ADD COLUMN IF NOT EXISTS source_licence TEXT, source_url TEXT`; backfill the 75 curated seed to `source_licence='curated'`; idempotent guards (per data-model.md). (Seed-dedup SQL is T020.)
-- [ ] T002 [P] Add capped-fetch helper `applications/ontology-importer/src/lib/capped-fetch.ts`: `undici.request` with request+body timeout and a max-response-byte cap; throws on overrun (Constitution V).
+- [X] T001 Add migration `applications/platform-rds-bootstrap/migrations/095_skill_ontology_provenance.sql`: `ADD COLUMN IF NOT EXISTS source_licence TEXT, source_url TEXT`; backfill the 75 curated seed to `source_licence='curated'`; idempotent guards (per data-model.md). (Seed-dedup SQL is T020.)
+- [X] T002 [P] Add capped-fetch helper `applications/ontology-importer/src/lib/capped-fetch.ts`: `undici.request` with request+body timeout and a max-response-byte cap; throws on overrun (Constitution V).
 - [ ] T003 [P] Add `applications/ontology-importer/src/categorization/skill-patterns.ts`: deterministic L1–3 pattern/override rules mapping O*NET groupings → the 15 `skill_ontology` categories.
 
 ## Phase 2: Foundational (blocks all stories)
 
-- [ ] T004 [P] Unit test `applications/ontology-importer/src/lib/capped-fetch.test.ts`: times out past deadline; rejects a body exceeding the byte cap; returns body under the cap.
-- [ ] T005 Create `applications/shared/src/rds/implementations/SkillOntologyWriteRepository.ts` targeting `skill_ontology`/`skill_aliases`: `findByCanonical`, `insertAutoImported(canonical, display, category, source, licence, url)`, `loadAliasMap`, `insertAliases`, `deactivateStale` — mirrors `OntologyWriteRepository` but skill tables + provenance columns.
-- [ ] T006 Unit test `applications/shared/src/rds/implementations/SkillOntologyWriteRepository.test.ts`: insert is idempotent (re-insert no-ops); curated rows never overwritten (FR-008); aliases attach on canonical collision.
-- [ ] T007 Create pure `applications/shared/src/rds/ontology/dedupeSkillCanonicals.ts`: given canonical+embedding pairs + thresholds, returns merge actions (≥auto-merge → merge; [review-floor,auto) → review; else none). No DB.
-- [ ] T008 [P] Unit test `applications/shared/src/rds/ontology/dedupeSkillCanonicals.test.ts`: merges ≥0.85; routes 0.70–0.85 to review; leaves <0.70; deterministic ordering.
-- [ ] T009 Export `SkillOntologyWriteRepository`, `dedupeSkillCanonicals` from `applications/shared/src/rds/index.ts` + `applications/shared/src/index.ts`.
+- [X] T004 [P] Unit test `applications/ontology-importer/src/lib/capped-fetch.test.ts`: times out past deadline; rejects a body exceeding the byte cap; returns body under the cap.
+- [X] T005 Create `applications/shared/src/rds/implementations/SkillOntologyWriteRepository.ts` targeting `skill_ontology`/`skill_aliases`: `findByCanonical`, `insertAutoImported(canonical, display, category, source, licence, url)`, `loadAliasMap`, `insertAliases`, `deactivateStale` — mirrors `OntologyWriteRepository` but skill tables + provenance columns.
+- [X] T006 Unit test `applications/shared/src/rds/implementations/SkillOntologyWriteRepository.test.ts`: insert is idempotent (re-insert no-ops); curated rows never overwritten (FR-008); aliases attach on canonical collision.
+- [X] T007 Create pure `applications/shared/src/rds/ontology/dedupeSkillCanonicals.ts`: given canonical+embedding pairs + thresholds, returns merge actions (≥auto-merge → merge; [review-floor,auto) → review; else none). No DB.
+- [X] T008 [P] Unit test `applications/shared/src/rds/ontology/dedupeSkillCanonicals.test.ts`: merges ≥0.85; routes 0.70–0.85 to review; leaves <0.70; deterministic ordering.
+- [X] T009 Export `SkillOntologyWriteRepository`, `dedupeSkillCanonicals` from `applications/shared/src/rds/index.ts` + `applications/shared/src/index.ts`.
 - [ ] T010 Scaffold the Job entrypoint `applications/ontology-importer/src/run-skill-import.ts` (env parse per contracts/, pool, observability bootstrap, source registry, `DRY_RUN` gate) — wiring only; sources/dedup land in later phases.
 
 ## Phase 3: User Story 1 — long-tail phrases resolve to canonicals (P1) 🎯 MVP

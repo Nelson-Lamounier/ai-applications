@@ -118,6 +118,9 @@ export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './ontolog
 export type { SkillMatch } from './ontology/SkillEmbeddingResolver.js';
 export { PhraseSkillResolver } from './ontology/PhraseSkillResolver.js';
 export { canonicaliseSkills } from './ontology/canonicaliseSkills.js';
+export { dedupeSkillCanonicals } from './ontology/dedupeSkillCanonicals.js';
+export type { DedupCandidate, DedupAction, DedupOptions } from './ontology/dedupeSkillCanonicals.js';
+export { SkillOntologyWriteRepository } from './implementations/SkillOntologyWriteRepository.js';
 export { scoreSkillResolution } from './ontology/evaluateSkillResolution.js';
 export type { ResolutionOutcome, ResolutionScore } from './ontology/evaluateSkillResolution.js';
 export { backfillSkillEmbeddings } from './ontology/backfillSkillEmbeddings.js';
