@@ -20,6 +20,7 @@
  */
 
 import type { RawChunk } from '../types.js';
+import type { FileEnrichUnit } from '../enrichment/groupChunksByFile.js';
 
 export interface ChunkEnrichment {
     /** Domain capabilities (e.g. "kubernetes networking"). Lowercased. */
@@ -30,4 +31,17 @@ export interface ChunkEnrichment {
 
 export interface IChunkEnricher {
     enrich(chunk: RawChunk): Promise<ChunkEnrichment>;
+    /**
+     * Extract skill evidence from arbitrary text (feature 002 per-file lever).
+     * Optional so static/no-op test enrichers need not implement it; the
+     * per-file path falls back to per-chunk `enrich` when absent.
+     */
+    enrichText?(filePath: string, content: string, heading?: string): Promise<ChunkEnrichment>;
+    /**
+     * Enrich many file units in ONE Bedrock batch job (feature 002 US3, ~50%
+     * cheaper). Returns canonicalised skills keyed by filePath. Optional + may
+     * throw (missing batch infra, job failure) — the pipeline falls back to
+     * inline enrichText, never zero-skill.
+     */
+    enrichBatch?(units: readonly FileEnrichUnit[], runKey: string): Promise<Map<string, ChunkEnrichment>>;
 }

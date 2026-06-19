@@ -32,51 +32,11 @@ import type { RawChunk } from '../types.js';
 import type { Pool } from 'pg';
 import { recordBedrockCost } from '../bedrock-cost.js';
 import { canonicaliseSkills } from '../ontology/canonicaliseSkills.js';
+import { buildExtractionBody } from './extractionBody.js';
+import type { FileEnrichUnit } from '../enrichment/groupChunksByFile.js';
+import { BedrockBatchEnrich, buildEnrichRecords } from '../../bedrock/BedrockBatchEnrich.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
-
-const SYSTEM_PROMPT = [
-    'You are a skill-evidence extractor for a resume-generation system.',
-    'Given a single document chunk from a software repository, identify',
-    'domain capabilities the chunk EVIDENCES the user has practised.',
-    'Use short noun phrases (≤ 4 words). Examples:',
-    '  "kubernetes networking", "iac with cdk", "step functions orchestration"',
-    '',
-    'Rules:',
-    '  - Extract only signals that the chunk text actually demonstrates.',
-    '    Do NOT infer from the file path, repository name, or chunk metadata.',
-    '  - Generic prose ("we use kubernetes") with no specifics is awareness',
-    '    only — STILL extract it. Do not gate on depth at this stage.',
-    '  - Background facts about a technology (its limits, its history) are',
-    '    NOT user signals. Skip them.',
-    '  - Lowercased output. Deduplicate. Empty arrays are valid when no',
-    '    signal is present.',
-    '  - You MUST respond by calling the record_extraction tool. Do not write',
-    '    free-form text.',
-    '',
-    // NOTE: prior to 2026-05-27 this prompt also asked for `technologies`.
-    // That role moved to the deterministic tech-extractor Layer-1 pipeline
-    // after the 2026-05-26 → 2026-05-27 parity work (artefact in
-    // applications/tech-extractor/parity/2026-05-26-bucket-recount.md, v2.3
-    // trajectory section). The enricher now extracts SKILLS ONLY.
-].join('\n');
-
-const TOOL_SCHEMA = {
-    name:        'record_extraction',
-    description: 'Records the extracted skills for the chunk.',
-    input_schema: {
-        type: 'object',
-        properties: {
-            skills: {
-                type:        'array',
-                items:       { type: 'string' },
-                description: 'Domain capabilities the chunk evidences. Lowercased.',
-            },
-        },
-        required: ['skills'],
-        additionalProperties: false,
-    },
-};
 
 interface AnthropicToolUseBlock {
     type:  'tool_use';
@@ -133,12 +93,14 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     private readonly client:  BedrockRuntimeClient;
     /** Enrichment model id — exposed for chunk lineage provenance. */
     readonly modelId: string;
+    private readonly region: string;
     private readonly costCtx?: ChunkEnricherCostContext;
     private readonly aliasToCanonical?: ReadonlyMap<string, string>;
     private readonly resolveSkill?: (phrase: string) => Promise<string | null>;
 
     constructor(config: BedrockChunkEnricherConfig = {}, costCtx?: ChunkEnricherCostContext) {
         const region = config.region ?? process.env.AWS_REGION ?? 'us-east-1';
+        this.region  = region;
         this.client  = new BedrockRuntimeClient({ region });
         this.modelId = config.modelId ?? DEFAULT_MODEL_ID;
         this.costCtx = costCtx;
@@ -164,19 +126,17 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     // =========================================================================
 
     async enrich(chunk: RawChunk): Promise<ChunkEnrichment> {
-        const userMessage = this.buildUserMessage(chunk);
+        return this.enrichText(chunk.filePath, chunk.content, chunk.heading);
+    }
 
-        const body = JSON.stringify({
-            anthropic_version: 'bedrock-2023-05-31',
-            max_tokens:        512,
-            temperature:       0,
-            system:            SYSTEM_PROMPT,
-            tools:             [TOOL_SCHEMA],
-            tool_choice:       { type: 'tool', name: 'record_extraction' },
-            messages: [
-                { role: 'user', content: userMessage },
-            ],
-        });
+    /**
+     * Extract skill evidence from arbitrary text (feature 002 cost levers).
+     * The per-chunk `enrich` and the per-file path (one call per file, then fan
+     * skills back to chunks by evidence) share THIS single model-call path, so
+     * both bill + resolve identically — only the grouping differs.
+     */
+    async enrichText(filePath: string, content: string, heading?: string): Promise<ChunkEnrichment> {
+        const body = JSON.stringify(buildExtractionBody(filePath, content, heading));
 
         const { body: responseBody } = await this.client.send(
             new InvokeModelCommand({
@@ -228,27 +188,55 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         };
     }
 
+    /**
+     * Enrich many file units in ONE Bedrock batch job (feature 002 US3). Reuses
+     * the SHARED extraction body (so a batched call == an inline one) and the
+     * SAME canonicalisation cascade, then keys canonicalised skills by filePath.
+     * Throws when batch infra is unconfigured or the job fails/expires — the
+     * pipeline falls back to inline enrichText (never zero-skill).
+     */
+    async enrichBatch(units: readonly FileEnrichUnit[], runKey: string): Promise<Map<string, ChunkEnrichment>> {
+        const bucket  = process.env.ENRICH_BATCH_BUCKET;
+        const roleArn = process.env.ENRICH_BATCH_ROLE_ARN;
+        if (!bucket || !roleArn) {
+            throw new Error('batch infra not configured (ENRICH_BATCH_BUCKET / ENRICH_BATCH_ROLE_ARN)');
+        }
+        const batch = new BedrockBatchEnrich({
+            region:  this.region,
+            bucket,
+            prefix:  process.env.ENRICH_BATCH_PREFIX ?? 'enrich-batch',
+            roleArn,
+            modelId: this.modelId,
+        });
+        const { records, recordToFile } = buildEnrichRecords(units);
+        const jobArn = await batch.submit(records, runKey);
+        await this.pollBatch(batch, jobArn);
+        const rawByRecord = await batch.collect(runKey);
+
+        const out = new Map<string, ChunkEnrichment>();
+        for (const [recordId, file] of Object.entries(recordToFile)) {
+            const raw = rawByRecord.get(recordId) ?? [];
+            out.set(file, { skills: await this.resolveSkills(raw), technologies: [] });
+        }
+        return out;
+    }
+
+    /** Poll a batch job to terminal state. Resolves on Completed; throws on failure/deadline. */
+    private async pollBatch(batch: BedrockBatchEnrich, jobArn: string): Promise<void> {
+        const deadline = Date.now() + (Number.parseInt(process.env.ENRICH_BATCH_DEADLINE_MS ?? '1200000', 10) || 1_200_000);
+        const pollMs   = Number.parseInt(process.env.ENRICH_BATCH_POLL_MS ?? '30000', 10) || 30_000;
+        while (Date.now() < deadline) {
+            const status = await batch.status(jobArn);
+            if (status === 'Completed') return;
+            if (['Failed', 'Stopped', 'Expired'].includes(status)) throw new Error(`batch job ${status}`);
+            await new Promise((resolve) => setTimeout(resolve, pollMs));
+        }
+        throw new Error('batch job deadline exceeded');
+    }
+
     // =========================================================================
     // Private
     // =========================================================================
-
-    /**
-     * Build the user-side prompt. Includes the file path and heading so the
-     * model has structural context — but the system prompt forbids inferring
-     * signal from path alone.
-     */
-    private buildUserMessage(chunk: RawChunk): string {
-        const heading = chunk.heading ?? '(no heading)';
-        return [
-            `File: ${chunk.filePath}`,
-            `Section: ${heading}`,
-            '',
-            'Chunk content:',
-            '"""',
-            chunk.content,
-            '"""',
-        ].join('\n');
-    }
 
     /**
      * Canonicalise the model's skills via the SHARED cascade (alias -> embedding

@@ -344,6 +344,8 @@ export type { SkillMatch } from './rds/index.js';
 export { PhraseSkillResolver } from './rds/index.js';
 export { canonicaliseSkills } from './rds/index.js';
 export { dedupeSkillCanonicals } from './rds/index.js';
+export { groupChunksByFile, assignSkillsToChunks } from './rds/index.js';
+export type { FileEnrichUnit, SkillAssignment, SkillEvidence } from './rds/index.js';
 export type { DedupCandidate, DedupAction, DedupOptions } from './rds/index.js';
 export { SkillOntologyWriteRepository } from './rds/index.js';
 export { scoreSkillResolution } from './rds/index.js';
