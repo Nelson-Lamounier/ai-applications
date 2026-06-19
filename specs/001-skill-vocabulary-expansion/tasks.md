@@ -32,7 +32,7 @@ Tests are included: the project follows TDD and Constitution VI mandates the res
 **Independent test**: run the Job, then `run-skill-resolution-eval` + a re-enrich coverage check show substantial gains over the 28-of-75 / ~534 baseline (quickstart §4–5).
 
 - [ ] T011 [P] [US1] `applications/ontology-importer/src/sources/OnetSkillSource.ts`: fetch the O*NET CC-BY bundle via capped-fetch, parse Skills/Abilities + Technology-Skills layers into `RawImportEntry[]` with altLabels as aliases.
-- [ ] T012 [P] [US1] `applications/ontology-importer/src/sources/CuratedSkillSource.ts`: load the project's curated engineering-tail canonicals + aliases (the moat layer) as `RawImportEntry[]`.
+- [X] T012 [P] [US1] `applications/ontology-importer/src/sources/CuratedSkillSource.ts`: load the project's curated engineering-tail canonicals + aliases (the moat layer) as `RawImportEntry[]`.
 - [ ] T013 [US1] Wire the import loop in `run-skill-import.ts`: for each source → capped fetch → `Categorizer` (reuse L1–3 + Bedrock Haiku batch for residual) → `SkillOntologyWriteRepository` upsert; record `ImportRunCounts` via `OntologyImportRunRepository`.
 - [ ] T014 [US1] After upsert, call `backfillSkillEmbeddings` in `run-skill-import.ts` to embed new `embedding IS NULL` canonicals (no new embedding code).
 - [ ] T015 [US1] Integration test `applications/ontology-importer/src/run-skill-import.test.ts` (mocked sources + pg): a fixture source yields entries → upserted + categorised + counts recorded; `DRY_RUN=1` writes nothing.

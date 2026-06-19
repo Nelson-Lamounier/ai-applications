@@ -1,0 +1,26 @@
+{
+  "_comment": "Curated engineering-capability vocabulary — the fast-moving tail O*NET lacks (research D2). Each entry: canonical (lowercased preferred label), display, one of the 15 skill_ontology categories, aliases (surface-form variants). Grounded in the canonicals the live tucaken-app E2E exercised plus the fast-moving tail. Extend freely; this is the project's owned moat layer.",
+  "licence": "curated",
+  "skills": [
+    { "canonical": "kubernetes networking", "display": "Kubernetes Networking", "category": "infrastructure", "aliases": ["k8s networking", "cluster networking", "pod networking", "cni"] },
+    { "canonical": "container orchestration", "display": "Container Orchestration", "category": "infrastructure", "aliases": ["kubernetes orchestration", "k8s orchestration", "container scheduling"] },
+    { "canonical": "rest api design", "display": "REST API Design", "category": "api", "aliases": ["rest api", "restful api", "rest endpoints", "http api design"] },
+    { "canonical": "error handling", "display": "Error Handling", "category": "backend", "aliases": ["exception handling", "fault handling", "error recovery"] },
+    { "canonical": "connection pooling", "display": "Connection Pooling", "category": "database", "aliases": ["db connection pooling", "pgbouncer", "pool management"] },
+    { "canonical": "row level security", "display": "Row-Level Security", "category": "security", "aliases": ["rls", "postgres rls", "tenant isolation"] },
+    { "canonical": "observability", "display": "Observability", "category": "observability", "aliases": ["o11y", "telemetry", "monitoring and tracing"] },
+    { "canonical": "distributed tracing", "display": "Distributed Tracing", "category": "observability", "aliases": ["opentelemetry tracing", "otel tracing", "span tracing"] },
+    { "canonical": "ci/cd pipelines", "display": "CI/CD Pipelines", "category": "devops", "aliases": ["continuous integration", "continuous delivery", "ci cd", "build pipelines"] },
+    { "canonical": "database migrations", "display": "Database Migrations", "category": "database", "aliases": ["schema migrations", "sql migrations", "ddl migrations"] },
+    { "canonical": "access control", "display": "Access Control", "category": "security", "aliases": ["authorization", "rbac", "permissions"] },
+    { "canonical": "infrastructure as code", "display": "Infrastructure as Code", "category": "infrastructure", "aliases": ["iac", "iac with cdk", "terraform", "aws cdk"] },
+    { "canonical": "vector search", "display": "Vector Search", "category": "data", "aliases": ["pgvector hybrid retrieval", "semantic search", "nearest-neighbour search", "ann search"] },
+    { "canonical": "retrieval augmented generation", "display": "Retrieval-Augmented Generation", "category": "ml", "aliases": ["rag", "bedrock rag", "rag evaluation", "rag pipeline"] },
+    { "canonical": "autoscaling", "display": "Autoscaling", "category": "infrastructure", "aliases": ["auto scaling", "autoscaling groups", "karpenter autoscaling", "horizontal pod autoscaling", "hpa"] },
+    { "canonical": "prompt engineering", "display": "Prompt Engineering", "category": "ml", "aliases": ["prompt design", "llm prompting", "structured output prompting"] },
+    { "canonical": "embeddings", "display": "Embeddings", "category": "ml", "aliases": ["text embeddings", "titan embeddings", "vector embeddings"] },
+    { "canonical": "structured logging", "display": "Structured Logging", "category": "observability", "aliases": ["json logging", "log structuring", "pino logging"] },
+    { "canonical": "integration testing", "display": "Integration Testing", "category": "testing", "aliases": ["e2e testing", "end-to-end testing", "integration tests"] },
+    { "canonical": "event-driven architecture", "display": "Event-Driven Architecture", "category": "architecture", "aliases": ["eda", "event sourcing", "message-driven architecture", "pub/sub"] }
+  ]
+}
