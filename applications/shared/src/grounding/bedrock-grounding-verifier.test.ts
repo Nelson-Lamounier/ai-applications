@@ -132,4 +132,18 @@ describe('BedrockGroundingVerifier', () => {
         expect(warn).toHaveBeenCalledTimes(1);
         warn.mockRestore();
     });
+
+    it('logs a generic warning for unparseable output without the generated response text', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const generatedResponseText = 'unparseable response with secret sauce and PII';
+        sendMock.mockResolvedValueOnce(modelReply(generatedResponseText));
+
+        await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input);
+
+        expect(warn).toHaveBeenCalledWith(
+            '[grounding-verifier] unparseable model output — defaulting to NOT_GROUNDED',
+        );
+        expect(warn.mock.calls.flat().join(' ')).not.toContain(generatedResponseText);
+        warn.mockRestore();
+    });
 });

@@ -89,10 +89,7 @@ function parseClaims(text: string): string[] {
 
 function warnIfUnparseable(text: string): void {
     if (hasVerdict(text)) return;
-    console.warn(
-        '[grounding-verifier] unparseable model output — defaulting to NOT_GROUNDED:',
-        text.substring(0, 200),
-    );
+    console.warn('[grounding-verifier] unparseable model output — defaulting to NOT_GROUNDED');
 }
 
 function parse(text: string): { status: 'GROUNDED' | 'NOT_GROUNDED'; reason: string; claims: string[] } {
