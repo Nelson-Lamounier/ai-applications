@@ -6,7 +6,7 @@
 
 ## Summary
 
-Replace the per-chunk Haiku call with a cheap-to-expensive cascade, LLM last. **Tier 0** joins the file-cited `technology_evidence` onto chunks → `document_embeddings.technologies` (zero LLM). **Tier 1** maps a chunk's file technologies/structure → canonical skills via a maintained rule table (zero LLM). **Tier 2** classifies residual chunks' existing Titan embedding against the 209 embedded `skill_ontology` labels (no new model call). **Tier 3** sends only the residue to Haiku, batched + deferred. A content-hash dedup cache (existing redis-client) sits across all tiers. Every tier emits canonical vocabulary and is eval-gated vs the per-chunk baseline.
+Replace the per-chunk Haiku **skills** call with a cheap-to-expensive cascade, LLM last. (Technologies are NOT in scope — they were decommissioned from the enricher in favour of the parallel `extract_tech`, which already stamps `metadata.file_tech_stack` each sync; that is "Tier 0", already done, and the INPUT to Tier 1.) **Tier 1** maps a chunk's existing `file_tech_stack` → canonical skills via a maintained rule table (zero LLM). **Tier 2** classifies residual chunks' existing Titan embedding against the 209 embedded `skill_ontology` labels (no new model call). **Tier 3** sends only the residue to Haiku, batched + deferred. A content-hash dedup cache (existing redis-client) sits across all tiers. Every tier emits canonical vocabulary and is eval-gated vs the per-chunk baseline.
 
 ## Technical Context
 

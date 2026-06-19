@@ -36,6 +36,11 @@
 - **Decision**: before claiming any caching saving, verify via the live account that Bedrock prompt caching is available for `claude-haiku-4-5` in eu-west-1 and its minimum cached-prefix size. Prior signal: a ~4,096-token minimum, and our bare system prompt is ~700 tokens → caching is a no-op unless Tier 3's prefix (system + full 209-label taxonomy + few-shot) is padded past the minimum.
 - **Rationale**: Constitution III — no asserted infra savings. The Tier 0–2 call-removal savings (the bulk of the ~90%) do NOT depend on caching, so caching is upside, not a dependency.
 
+## D9 — Tier 0 already exists (verified) — NOT a build
+- **Decision**: do not build a technologies tier. The enricher's `technologies` field was decommissioned in favour of the **parallel `extract_tech`** (tech-extractor Layer 1), which writes `technology_evidence`; `stampUserEvidenceMetadata` (run every sync, `run-ingestion.ts:683`) JOINs that onto chunks as `metadata.file_tech_stack` — the field retrieval reads. Verified live: `technologies` column 0/12,236 (dead); `file_tech_stack` 4,096/12,236 (33.5%). So "Tier 0" is done; it is the **input** to Tier 1, not work.
+- **Rationale**: the cost driver is SKILLS (the LLM call), never technologies (already deterministic + parallel). Tier 1 reads the existing `file_tech_stack` — no JOIN, no new column.
+- **Alternatives**: populating `document_embeddings.technologies` (rejected — decommissioned, unread by retrieval).
+
 ## D8 — Tier independence + fail-safe (FR-010)
 - **Decision**: env flags `ENRICH_TIER0..3` gate each tier; the cascade falls through unresolved chunks to the next enabled tier, ultimately the existing per-chunk `enrich` (today's path) if all are off/failed. Tier 0 ships first (MVP), measured, then 1, 2, 3.
 - **Rationale**: independent shippability + a guaranteed correct floor. A tier regressing its eval is disabled without losing enrichment.

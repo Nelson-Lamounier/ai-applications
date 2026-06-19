@@ -18,26 +18,21 @@ Tests/eval ARE requested (Constitution VI — per-tier recall/precision vs the p
 
 **Checkpoint**: pipeline reordered, cascade shell is a verified no-op when off.
 
-## Phase 3: User Story 1 — Tier 0 deterministic technologies (P1) — MVP
+## Phase 3: Tier 0 — deterministic technologies (ALREADY EXISTS — no build)
 
-**Goal**: populate `chunks.technologies` from `technology_evidence` (zero LLM). **Independent test**: evidenced files → canonical technologies, no model call (SC-003).
+**Finding (verified on dev):** the `technologies` column is decommissioned (0/12,236). The deterministic file→tech JOIN already runs every sync via `stampUserEvidenceMetadata` (`run-ingestion.ts:683`) → `metadata.file_tech_stack` (the field retrieval reads), live on **4,096/12,236 chunks (33.5%)**. So there is NOTHING to build here — `file_tech_stack` is the INPUT to Tier 1.
 
-- [ ] T006 [US1] Implement `tier0Technologies(pool, userId, repo, chunks)` in `applications/shared/src/rds/enrichment/tier0-technologies.ts` — RLS-scoped JOIN `technology_evidence` → `technology_ontology` canonical, confidence-filtered, distinct per chunk by file_path.
-- [ ] T007 [P] [US1] Unit/integration test `tier0-technologies.test.ts` — evidenced file → canonical techs; no-evidence file → empty (no hallucination); user-scoped.
-- [ ] T008 [US1] Wire Tier 0 into the cascade behind `ENRICH_TIER0=1`; write `chunks.technologies`; record `resolvedBy=tier0` for technologies.
-- [ ] T009 [US1] Dev run on one repo with `ENRICH_TIER0=1`: confirm `chunks.technologies` populated (0 → N) + matches `technology_evidence`; record coverage.
+- [ ] T006 Confirm `metadata.file_tech_stack` coverage + canonical-name form on dev (one query); record as the Tier 1 input baseline. No new code, no new column.
 
-**Checkpoint**: technologies populated deterministically, file-cited — MVP shippable.
+## Phase 4: User Story 1 — Tier 1 ontology skill rules (P1) — MVP
 
-## Phase 4: User Story 2 — Tier 1 ontology skill rules (P1)
+**Goal**: deterministic SKILLS from a chunk's existing `file_tech_stack` (zero LLM) — the real cost lever (skills are the expensive LLM output). The ~33.5% of chunks with file tech can skip the LLM. **Independent test**: a chunk whose `file_tech_stack` contains a mapped tech → the mapped canonical skill, no model call; precision guard holds.
 
-**Goal**: deterministic skills from a chunk's technologies/structure. **Independent test**: mapped tech → canonical skill, no model call; precision guard holds.
-
-- [ ] T010 [US2] Migration `0NN_tech_skill_map.sql` (ledger + checksum) creating + seeding `tech_skill_map` from `TechnologyDerivedSkillSource` + `mapTechCategoryToSkillCategory`.
-- [ ] T011 [P] [US2] `TechSkillMapRepository.ts` to load the rule map (cached reference read).
-- [ ] T012 [US2] Pure `tier1-skill-rules.ts`: chunk techs/structure + rule map → canonical skills, with the per-chunk evidence guard (FR-008).
-- [ ] T013 [P] [US2] Unit-test `tier1-skill-rules.test.ts` — mapped tech → skill; over-tag prevented; canonical-only output.
-- [ ] T014 [US2] Wire Tier 1 behind `ENRICH_TIER1=1`; residual chunks (no rule hit) pass down-cascade.
+- [ ] T010 [US1] Migration `0NN_tech_skill_map.sql` (ledger + checksum) creating + seeding `tech_skill_map (tech_canonical → skill_canonical)` from `TechnologyDerivedSkillSource` + `mapTechCategoryToSkillCategory`.
+- [ ] T011 [P] [US1] `TechSkillMapRepository.ts` to load the rule map (cached reference read).
+- [ ] T012 [US1] Pure `tier1-skill-rules.ts`: read a chunk's existing `metadata.file_tech_stack` (produced by the parallel `extract_tech`, canonical tech names) + rule map → canonical skills, with the per-chunk evidence guard (FR-008). No JOIN, no model call — the tech is already on the chunk.
+- [ ] T013 [P] [US1] Unit-test `tier1-skill-rules.test.ts` — file_tech_stack tech → mapped skill; over-tag prevented; canonical-only output; chunk with no file_tech_stack → residual.
+- [ ] T014 [US1] Wire Tier 1 behind `ENRICH_TIER1=1` in the cascade; residual chunks (no file_tech_stack or no rule hit) pass down-cascade; record `resolvedBy=tier1`.
 
 ## Phase 5: User Story 3 — Tier 2 embedding classification (P1)
 
@@ -84,4 +79,4 @@ Tests/eval ARE requested (Constitution VI — per-tier recall/precision vs the p
 
 ## MVP scope
 
-**US1 (Tier 0)** alone is the MVP — deterministic, file-cited technologies with zero LLM and no regression risk (the field is empty today). **US1+US2+US3** (the three zero-LLM tiers) deliver the bulk of the ~90% cost cut; **US4 (Tier 3)** handles the irreducible tail.
+**Tier 0 (technologies) already exists** — the parallel `extract_tech` stamps `file_tech_stack` each sync (33.5% of chunks); nothing to build. The MVP is **Tier 1 (skills from `file_tech_stack`)** — the first real cut to the skills LLM cost, deterministically skilling the ~33.5% of chunks that carry file tech. **Tier 1 + Tier 2** (the two zero-LLM skill tiers) deliver the bulk of the ~90%; **Tier 3** handles the irreducible LLM tail. Skills — not technologies — were always the cost.
