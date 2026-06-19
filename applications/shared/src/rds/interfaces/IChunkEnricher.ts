@@ -30,4 +30,10 @@ export interface ChunkEnrichment {
 
 export interface IChunkEnricher {
     enrich(chunk: RawChunk): Promise<ChunkEnrichment>;
+    /**
+     * Extract skill evidence from arbitrary text (feature 002 per-file lever).
+     * Optional so static/no-op test enrichers need not implement it; the
+     * per-file path falls back to per-chunk `enrich` when absent.
+     */
+    enrichText?(filePath: string, content: string, heading?: string): Promise<ChunkEnrichment>;
 }

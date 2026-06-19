@@ -81,6 +81,17 @@ class FakeEnricher implements IChunkEnricher {
     }
 }
 
+/** Enricher with the per-file enrichText seam (feature 002). Records text calls. */
+class FakeTextEnricher implements IChunkEnricher {
+    public textCalls: { filePath: string; content: string }[] = [];
+    constructor(private readonly skillsForFile: (filePath: string) => string[]) {}
+    async enrich(_chunk: RawChunk): Promise<ChunkEnrichment> { return { skills: [], technologies: [] }; }
+    async enrichText(filePath: string, content: string): Promise<ChunkEnrichment> {
+        this.textCalls.push({ filePath, content });
+        return { skills: this.skillsForFile(filePath), technologies: [] };
+    }
+}
+
 function makeChunk(filePath: string, idx: number, content = 'body'): RawChunk {
     return {
         filePath,
@@ -399,5 +410,45 @@ describe('IngestionPipeline — OTel spans', () => {
             expect(span).toBeDefined();
             expect(span!.parentSpanContext?.spanId).toBe(rootSpanId);
         }
+    });
+});
+
+describe('IngestionPipeline — per-file enrichment (feature 002 cost lever)', () => {
+    let store: FakeVectorStore;
+    let sync:  FakeSyncState;
+    let embed: FakeEmbedder;
+
+    beforeEach(() => { store = new FakeVectorStore(); sync = new FakeSyncState(); embed = new FakeEmbedder(); });
+    afterEach(() => { delete process.env.ENRICH_PER_FILE; });
+
+    it('ENRICH_PER_FILE=1 makes ONE call per file and fans skills back by evidence', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        const enricher = new FakeTextEnricher((fp) => (fp === 'a.ts' ? ['kubernetes'] : ['react']));
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [
+            makeChunk('a.ts', 0, 'uses kubernetes here'),
+            makeChunk('a.ts', 1, 'plain prose, no signal'),
+            makeChunk('b.ts', 0, 'a react app'),
+        ]);
+
+        // 3 chunks -> 2 model calls (one per file), the call-reduction lever
+        expect(enricher.textCalls).toHaveLength(2);
+
+        const upserted = store.upserts[0];
+        const byKey = new Map(upserted.map((c) => [`${c.filePath}#${c.chunkIndex}`, c.skills]));
+        expect(byKey.get('a.ts#0')).toEqual(['kubernetes']);  // evidences it
+        expect(byKey.get('a.ts#1')).toEqual([]);              // file has it, chunk doesn't -> not smeared
+        expect(byKey.get('b.ts#0')).toEqual(['react']);
+    });
+
+    it('falls back to per-chunk when the enricher lacks enrichText (fail-safe)', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        const enricher = new FakeEnricher(async () => ({ skills: ['s'], technologies: [] })); // no enrichText
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'x'), makeChunk('a.ts', 1, 'y')]);
+
+        expect(enricher.calls).toBe(2);  // per-chunk path, not per-file
     });
 });

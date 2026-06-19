@@ -7,16 +7,16 @@ Tests/eval ARE requested (Constitution VI — the per-file-vs-per-chunk eval is 
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the enrichment lever module dir `applications/shared/src/rds/enrichment/` and the bedrock helper dir `applications/shared/src/bedrock/` (if absent), and export the new symbols from `applications/shared/src/index.ts`.
-- [ ] T002 [P] Confirm the cost baseline for SC-002/SC-001 from the live system: distinct `file_path` count vs chunk count per repo (`document_embeddings`) and the per-chunk enrich cost-record figure; record them in `research.md` D7 if they have drifted.
+- [X] T001 Create the enrichment lever module dir `applications/shared/src/rds/enrichment/` and the bedrock helper dir `applications/shared/src/bedrock/` (if absent), and export the new symbols from `applications/shared/src/index.ts`.
+- [X] T002 [P] Confirm the cost baseline for SC-002/SC-001 from the live system: distinct `file_path` count vs chunk count per repo (`document_embeddings`) and the per-chunk enrich cost-record figure; record them in `research.md` D7 if they have drifted.
 
 ## Phase 2: Foundational (blocking — both P1 stories need these)
 
-- [ ] T003 [P] Implement the pure `groupChunksByFile(chunks, maxInputChars): FileEnrichUnit[]` in `applications/shared/src/rds/enrichment/groupChunksByFile.ts` — one unit per `file_path`, chunks ordered by `chunk_index`, split a file over `maxInputChars` into ≤budget units, single-chunk file → single unit (per [data-model.md](./data-model.md)).
-- [ ] T004 [P] Unit-test `groupChunksByFile` in `applications/shared/src/rds/enrichment/groupChunksByFile.test.ts` — grouping, ordering, single-chunk degrade, over-budget split.
-- [ ] T005 [P] Implement the pure `assignSkillsToChunks(unit, unitSkills, evidence): SkillAssignment[]` in `applications/shared/src/rds/enrichment/assignSkillsToChunks.ts` — per-chunk subset by evidence (surface-match OR injected resolver-near fn); drop a unit skill no chunk evidences (FR-004); output ⊆ unit skills.
-- [ ] T006 [P] Unit-test `assignSkillsToChunks` in `applications/shared/src/rds/enrichment/assignSkillsToChunks.test.ts` — the precision case (file skill evidenced by only chunk A is NOT attached to chunk B), surface + resolver evidence, empty-evidence drop.
-- [ ] T007 Add an `enrichText(text): EnrichResult` seam to `applications/shared/src/rds/implementations/BedrockChunkEnricher.ts` (the existing per-chunk call generalised to arbitrary text) reusing the current Messages body + `resolveSkills`, so per-file and per-chunk share one model-call path.
+- [X] T003 [P] Implement the pure `groupChunksByFile(chunks, maxInputChars): FileEnrichUnit[]` in `applications/shared/src/rds/enrichment/groupChunksByFile.ts` — one unit per `file_path`, chunks ordered by `chunk_index`, split a file over `maxInputChars` into ≤budget units, single-chunk file → single unit (per [data-model.md](./data-model.md)).
+- [X] T004 [P] Unit-test `groupChunksByFile` in `applications/shared/src/rds/enrichment/groupChunksByFile.test.ts` — grouping, ordering, single-chunk degrade, over-budget split.
+- [X] T005 [P] Implement the pure `assignSkillsToChunks(unit, unitSkills, evidence): SkillAssignment[]` in `applications/shared/src/rds/enrichment/assignSkillsToChunks.ts` — per-chunk subset by evidence (surface-match OR injected resolver-near fn); drop a unit skill no chunk evidences (FR-004); output ⊆ unit skills.
+- [X] T006 [P] Unit-test `assignSkillsToChunks` in `applications/shared/src/rds/enrichment/assignSkillsToChunks.test.ts` — the precision case (file skill evidenced by only chunk A is NOT attached to chunk B), surface + resolver evidence, empty-evidence drop.
+- [X] T007 Add an `enrichText(text): EnrichResult` seam to `applications/shared/src/rds/implementations/BedrockChunkEnricher.ts` (the existing per-chunk call generalised to arbitrary text) reusing the current Messages body + `resolveSkills`, so per-file and per-chunk share one model-call path.
 
 **Checkpoint**: pure grouping + assignment + text-enrich seam exist, unit-green — neither story is wired yet.
 
@@ -25,9 +25,9 @@ Tests/eval ARE requested (Constitution VI — the per-file-vs-per-chunk eval is 
 **Goal**: one model call per file instead of per chunk; fewer calls + lower cost.
 **Independent test**: enrich a repo with `ENRICH_PER_FILE=1`; model-call count ≈ distinct-file count (SC-001).
 
-- [ ] T008 [US1] Wire the per-file path into `enrichChunks` in `applications/shared/src/rds/pipeline/IngestionPipeline.ts`: when `ENRICH_PER_FILE=1`, `groupChunksByFile` → `enrichText` per unit → `assignSkillsToChunks` → write each chunk's subset; when unset, today's per-chunk loop runs unchanged (SC-005).
-- [ ] T009 [US1] Emit a per-run enrich-call counter (calls, units, chunks) via the existing observability registry so SC-001 (calls ≈ files) and SC-002 (cost) are measurable from a run.
-- [ ] T010 [P] [US1] Integration test in `applications/shared/src/rds/pipeline/IngestionPipeline.enrichPerFile.test.ts` — `ENRICH_PER_FILE=1` makes one `enrichText` call per file (mock enricher) and writes per-chunk evidenced subsets; `unset` makes one call per chunk (no-op equivalence).
+- [X] T008 [US1] Wire the per-file path into `enrichChunks` in `applications/shared/src/rds/pipeline/IngestionPipeline.ts`: when `ENRICH_PER_FILE=1`, `groupChunksByFile` → `enrichText` per unit → `assignSkillsToChunks` → write each chunk's subset; when unset, today's per-chunk loop runs unchanged (SC-005).
+- [X] T009 [US1] Emit a per-run enrich-call counter (calls, units, chunks) via the existing observability registry so SC-001 (calls ≈ files) and SC-002 (cost) are measurable from a run.
+- [X] T010 [P] [US1] Integration test in `applications/shared/src/rds/pipeline/IngestionPipeline.enrichPerFile.test.ts` — `ENRICH_PER_FILE=1` makes one `enrichText` call per file (mock enricher) and writes per-chunk evidenced subsets; `unset` makes one call per chunk (no-op equivalence).
 
 **Checkpoint**: per-file path works behind the flag; call-count drop demonstrable. NOT relied upon until Phase 4 eval is green.
 

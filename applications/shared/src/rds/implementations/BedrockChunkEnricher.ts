@@ -164,7 +164,17 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     // =========================================================================
 
     async enrich(chunk: RawChunk): Promise<ChunkEnrichment> {
-        const userMessage = this.buildUserMessage(chunk);
+        return this.enrichText(chunk.filePath, chunk.content, chunk.heading);
+    }
+
+    /**
+     * Extract skill evidence from arbitrary text (feature 002 cost levers).
+     * The per-chunk `enrich` and the per-file path (one call per file, then fan
+     * skills back to chunks by evidence) share THIS single model-call path, so
+     * both bill + resolve identically — only the grouping differs.
+     */
+    async enrichText(filePath: string, content: string, heading?: string): Promise<ChunkEnrichment> {
+        const userMessage = this.buildUserMessage(filePath, content, heading);
 
         const body = JSON.stringify({
             anthropic_version: 'bedrock-2023-05-31',
@@ -237,15 +247,14 @@ export class BedrockChunkEnricher implements IChunkEnricher {
      * model has structural context — but the system prompt forbids inferring
      * signal from path alone.
      */
-    private buildUserMessage(chunk: RawChunk): string {
-        const heading = chunk.heading ?? '(no heading)';
+    private buildUserMessage(filePath: string, content: string, heading?: string): string {
         return [
-            `File: ${chunk.filePath}`,
-            `Section: ${heading}`,
+            `File: ${filePath}`,
+            `Section: ${heading ?? '(no heading)'}`,
             '',
             'Chunk content:',
             '"""',
-            chunk.content,
+            content,
             '"""',
         ].join('\n');
     }

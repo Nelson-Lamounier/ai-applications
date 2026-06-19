@@ -30,6 +30,8 @@ import type { IChunkEnricher } from '../interfaces/IChunkEnricher.js';
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import { assignSkillsToChunks } from '../enrichment/assignSkillsToChunks.js';
+import { groupChunksByFile } from '../enrichment/groupChunksByFile.js';
 import { computeKbQuality } from '../quality/computeKbQuality.js';
 import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
@@ -449,6 +451,13 @@ export class IngestionPipeline {
         }
         if (!this.enricher || chunks.length === 0) return chunks;
 
+        // Per-file lever (feature 002): one model call per file instead of per
+        // chunk, fanning skills back by evidence. Opt-in + requires enrichText;
+        // falls through to the per-chunk path otherwise (fail-safe).
+        if (process.env.ENRICH_PER_FILE === '1' && this.enricher.enrichText) {
+            return this.enrichChunksPerFile(userId, repoFullName, chunks);
+        }
+
         const out: RawChunk[] = new Array(chunks.length);
         const cap = this.maxEnrichmentPerRun;
         let enrichDone = 0;
@@ -505,6 +514,88 @@ export class IngestionPipeline {
         );
 
         return out;
+    }
+
+    /**
+     * Per-file enrichment (feature 002 cost lever, opt-in via ENRICH_PER_FILE):
+     * group chunks by file, make ONE model call per file via enrichText, then
+     * fan the file's skills back to its chunks under the per-chunk evidence
+     * guard (a chunk gets a skill only if it evidences it — no smearing). On the
+     * reference repo this is ~1,066 calls vs ~3,932, a ~3.7x reduction.
+     *
+     * Same fail-safe posture as the per-chunk path: a unit whose call throws
+     * marks its chunks 'failed' (never blocks ingestion). The cap applies to
+     * UNITS (model calls) here; chunks of skipped units → 'skipped_quota'.
+     */
+    private async enrichChunksPerFile(userId: string, repoFullName: string, chunks: RawChunk[]): Promise<RawChunk[]> {
+        const maxChars = Number.parseInt(process.env.ENRICH_PER_FILE_MAX_CHARS ?? '12000', 10) || 12000;
+        const units = groupChunksByFile(chunks, maxChars);
+        const cap = this.maxEnrichmentPerRun;
+        // No resolver-near evidence wired here yet — surface-match (built into
+        // assignSkillsToChunks) is the v1 guard; the US2 eval decides if the
+        // embedding lane is needed. Deterministic + cheap (no extra model call).
+        const noExtraEvidence = (): boolean => false;
+
+        const byKey = new Map<string, string[]>();   // `${filePath}::${chunkIndex}` -> skills
+        const statusByKey = new Map<string, string>();
+        let callsDone = 0;
+
+        const enrichUnit = async (unitIdx: number): Promise<void> => {
+            const unit = units[unitIdx];
+            const tag = (status: string, skillsFor: (c: RawChunk) => string[]): void => {
+                for (const c of unit.chunks) {
+                    const key = `${c.filePath}::${c.chunkIndex}`;
+                    statusByKey.set(key, status);
+                    byKey.set(key, skillsFor(c));
+                }
+            };
+            if (unitIdx >= cap) { tag('skipped_quota', () => []); return; }
+            try {
+                const { skills } = await this.enricher!.enrichText!(unit.filePath, unit.text, unit.chunks[0]?.heading);
+                const assigned = assignSkillsToChunks(unit, skills, noExtraEvidence);
+                const byIndex = new Map(assigned.map(a => [a.chunkIndex, a.skills]));
+                tag('ok', (c) => byIndex.get(c.chunkIndex) ?? []);
+            } catch (err) {
+                console.error(`[IngestionPipeline.enrichChunksPerFile] failed for ${unit.filePath}:`, err);
+                tag('failed', () => []);
+            }
+        };
+
+        let next = 0;
+        const currentCtx = context.active();
+        await Promise.all(
+            Array.from({ length: Math.min(ENRICHMENT_CONCURRENCY, units.length) }, () =>
+                context.with(currentCtx, async () => {
+                    while (true) {
+                        const myIdx = next++;
+                        if (myIdx >= units.length) return;
+                        await enrichUnit(myIdx);
+                        callsDone++;
+                        if (callsDone % EMBED_PROGRESS_LOG_EVERY === 0 || callsDone === units.length) {
+                            await this.syncState
+                                .markPhase(userId, repoFullName, 'enriching', callsDone, units.length)
+                                .catch(() => { /* advisory progress */ });
+                        }
+                    }
+                }),
+            ),
+        );
+
+        // SC-001/SC-002 measurability: model calls ≈ files, not chunks.
+        console.info(
+            `[IngestionPipeline] per-file enrichment: ${units.length} model calls ` +
+            `for ${chunks.length} chunks (${(chunks.length / Math.max(units.length, 1)).toFixed(1)}x fewer)`,
+        );
+
+        return chunks.map((c) => {
+            const key = `${c.filePath}::${c.chunkIndex}`;
+            return {
+                ...c,
+                skills:       byKey.get(key) ?? [],
+                technologies: [],
+                metadata: { ...(c.metadata ?? {}), enrichment_status: statusByKey.get(key) ?? 'ok' },
+            };
+        });
     }
 }
 
