@@ -180,4 +180,24 @@ describe('BedrockChunkEnricher', () => {
         await new BedrockChunkEnricher().enrich(chunk());
         expect(mockRecordBedrockCost).not.toHaveBeenCalled();
     });
+
+    it('enrichPack: one call returns skills keyed per chunk + one cost record (#004)', async () => {
+        mockSend.mockResolvedValueOnce({
+            body: Buffer.from(JSON.stringify({
+                usage:   { input_tokens: 50, output_tokens: 20 },
+                content: [{ type: 'tool_use', name: 'record_extractions', input: { extractions: [
+                    { key: 'a', skills: ['kubernetes networking'] },
+                    { key: 'b', skills: ['react'] },
+                ] } }],
+            })),
+        });
+
+        const result = await new BedrockChunkEnricher({}, { pool: {} as Pool, userId: 'u', repoName: 'r' })
+            .enrichPack([{ key: 'a', filePath: 'a.ts', content: 'x' }, { key: 'b', filePath: 'b.ts', content: 'y' }]);
+
+        expect(result.get('a')?.skills).toEqual(['kubernetes networking']);
+        expect(result.get('b')?.skills).toEqual(['react']);
+        expect(mockSend).toHaveBeenCalledTimes(1);            // ONE model call for the whole pack
+        expect(mockRecordBedrockCost).toHaveBeenCalledTimes(1); // ONE cost record (FR-009)
+    });
 });

@@ -12,10 +12,10 @@ Tests/eval ARE requested (Constitution VI — packed-vs-per-chunk recall + attri
 
 ## Phase 2: Foundational (blocking — the packed body + parser + packer)
 
-- [ ] T003 [P] Pure `packChunks(items, packSize, maxChars): ChunkPack[]` in `applications/shared/src/rds/enrichment/packChunks.ts` — greedy fill ≤ packSize ∧ ≤ maxChars; over-large single item = own pack; preserves order.
-- [ ] T004 [P] Unit-test `packChunks.test.ts` — packing, both bounds, over-large single, order preserved.
-- [ ] T005 Extend `applications/shared/src/rds/implementations/extractionBody.ts`: `buildPackExtractionBody(items)` (shared system prompt + `=== CHUNK <key> ===` blocks + `record_extractions` keyed tool, max_tokens scaled) and `parsePackSkills(content): Map<key, rawSkills>` (keyed, missing→absent, extras ignored, dup last-wins).
-- [ ] T006 [P] Unit-test the body + parser in `extractionBody.test.ts` — body reuses the system prompt + forces the array tool; parser keys correctly, drops extras, leaves missing absent (no positional mapping).
+- [X] T003 [P] Pure `packChunks(items, packSize, maxChars): ChunkPack[]` in `applications/shared/src/rds/enrichment/packChunks.ts` — greedy fill ≤ packSize ∧ ≤ maxChars; over-large single item = own pack; preserves order.
+- [X] T004 [P] Unit-test `packChunks.test.ts` — packing, both bounds, over-large single, order preserved.
+- [X] T005 Extend `applications/shared/src/rds/implementations/extractionBody.ts`: `buildPackExtractionBody(items)` (shared system prompt + `=== CHUNK <key> ===` blocks + `record_extractions` keyed tool, max_tokens scaled) and `parsePackSkills(content): Map<key, rawSkills>` (keyed, missing→absent, extras ignored, dup last-wins).
+- [X] T006 [P] Unit-test the body + parser in `extractionBody.test.ts` — body reuses the system prompt + forces the array tool; parser keys correctly, drops extras, leaves missing absent (no positional mapping).
 
 **Checkpoint**: pure packer + keyed body/parser exist, unit-green — no call site wired yet.
 
@@ -23,9 +23,9 @@ Tests/eval ARE requested (Constitution VI — packed-vs-per-chunk recall + attri
 
 **Goal**: one model call per pack; per-chunk skills unchanged. **Independent test**: calls ≈ ⌈N/packSize⌉; skills match per-chunk baseline (SC-001/003).
 
-- [ ] T007 [US1] Add `enrichPack(items): Promise<Map<key, ChunkEnrichment>>` to `BedrockChunkEnricher.ts` — one InvokeModel with `buildPackExtractionBody`, `parsePackSkills`, canonicalise each via the existing `resolveSkills`, book ONE cost record.
-- [ ] T008 [P] [US1] Unit-test `enrichPack` (mock Bedrock) — keyed result, canonicalisation applied, one cost record, transport error throws (for caller fallback).
-- [ ] T009 [US1] Wire `ENRICH_PACK=1` into `applications/shared/src/rds/pipeline/IngestionPipeline.ts` enrichChunks: `packChunks` → `enrichPack`; apply present keys; record `resolvedBy`; OFF → today's per-chunk loop unchanged.
+- [X] T007 [US1] Add `enrichPack(items): Promise<Map<key, ChunkEnrichment>>` to `BedrockChunkEnricher.ts` — one InvokeModel with `buildPackExtractionBody`, `parsePackSkills`, canonicalise each via the existing `resolveSkills`, book ONE cost record.
+- [X] T008 [P] [US1] Unit-test `enrichPack` (mock Bedrock) — keyed result, canonicalisation applied, one cost record, transport error throws (for caller fallback).
+- [X] T009 [US1] Wire `ENRICH_PACK=1` into `applications/shared/src/rds/pipeline/IngestionPipeline.ts` enrichChunks: `packChunks` → `enrichPack`; apply present keys; record `resolvedBy`; OFF → today's per-chunk loop unchanged.
 
 **Checkpoint**: inline packing works behind the flag; call-count drop demonstrable. NOT relied upon until the eval (Phase 6).
 
@@ -33,8 +33,8 @@ Tests/eval ARE requested (Constitution VI — packed-vs-per-chunk recall + attri
 
 **Goal**: each chunk gets its own skills; never mis-mapped. **Independent test**: distinct-skill pack → each chunk its own; missing keys → fallback, not mis-mapped (SC-004).
 
-- [ ] T010 [US2] In the wiring, attribute strictly by key (no positional); MISSING keys (omitted/short) collected for fallback. (Same file as T009 — sequential.)
-- [ ] T011 [P] [US2] Integration test (FakeEnricher returning a partial keyed map) — present keys applied to the right chunks, missing keys fall back, zero cross-chunk leakage.
+- [X] T010 [US2] In the wiring, attribute strictly by key (no positional); MISSING keys (omitted/short) collected for fallback. (Same file as T009 — sequential.)
+- [X] T011 [P] [US2] Integration test (FakeEnricher returning a partial keyed map) — present keys applied to the right chunks, missing keys fall back, zero cross-chunk leakage.
 
 ## Phase 5: User Story 3 — Opt-in, bounded, fail-safe (P2)
 
