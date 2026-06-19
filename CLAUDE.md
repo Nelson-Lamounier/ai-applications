@@ -119,5 +119,5 @@ When you start or refactor any LLM workflow, walk this list:
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/002-enrichment-cost-reduction/plan.md`
+`specs/003-tiered-enrichment/plan.md`
 <!-- SPECKIT END -->
