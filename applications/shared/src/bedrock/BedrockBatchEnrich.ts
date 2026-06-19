@@ -13,8 +13,19 @@
 import { BedrockClient, CreateModelInvocationJobCommand, GetModelInvocationJobCommand } from '@aws-sdk/client-bedrock';
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
-import type { FileEnrichUnit } from '../rds/enrichment/groupChunksByFile.js';
 import { buildExtractionBody, parseExtractionSkills } from '../rds/implementations/extractionBody.js';
+
+/**
+ * One thing to enrich in a batch — granularity-agnostic. `id` is the caller's
+ * key to map results back: a chunk id (`filePath::chunkIndex`) for the per-chunk
+ * lever, or a file path for the (gated-off) per-file lever.
+ */
+export interface BatchEnrichItem {
+    id: string;
+    filePath: string;
+    content: string;
+    heading?: string;
+}
 
 /** A Bedrock batch input record. modelInput is the Anthropic Messages body. */
 export interface BatchEnrichRecord {
@@ -39,19 +50,19 @@ export function sanitizeJobName(candidate: string): string {
     return candidate.replace(/[^a-zA-Z0-9+\-.]/g, '-').slice(0, 63);
 }
 
-/** Pure: one batch record per file unit + a recordId→filePath map. */
-export function buildEnrichRecords(units: readonly FileEnrichUnit[]): {
+/** Pure: one batch record per item + a recordId→item-id map (granularity-agnostic). */
+export function buildEnrichRecords(items: readonly BatchEnrichItem[]): {
     records: BatchEnrichRecord[];
-    recordToFile: Record<string, string>;
+    recordToId: Record<string, string>;
 } {
     const records: BatchEnrichRecord[] = [];
-    const recordToFile: Record<string, string> = {};
-    units.forEach((unit, i) => {
+    const recordToId: Record<string, string> = {};
+    items.forEach((item, i) => {
         const recordId = recordIdFor(i + 1);
-        recordToFile[recordId] = unit.filePath;
-        records.push({ recordId, modelInput: buildExtractionBody(unit.filePath, unit.text, unit.chunks[0]?.heading) });
+        recordToId[recordId] = item.id;
+        records.push({ recordId, modelInput: buildExtractionBody(item.filePath, item.content, item.heading) });
     });
-    return { records, recordToFile };
+    return { records, recordToId };
 }
 
 interface OutputRecord {

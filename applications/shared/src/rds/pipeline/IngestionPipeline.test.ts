@@ -85,8 +85,8 @@ class FakeEnricher implements IChunkEnricher {
 class FakeTextEnricher implements IChunkEnricher {
     public textCalls: { filePath: string; content: string }[] = [];
     public batchCalls = 0;
-    /** Assigned in the constructor only when a batchMode is given (else absent). */
-    public enrichBatch?: (units: readonly { filePath: string }[]) => Promise<Map<string, ChunkEnrichment>>;
+    /** Assigned in the constructor only when a batchMode is given (else absent). Keyed by item id. */
+    public enrichBatch?: (items: readonly { id: string; filePath: string }[]) => Promise<Map<string, ChunkEnrichment>>;
 
     constructor(
         private readonly skillsForFile: (filePath: string) => string[],
@@ -94,14 +94,14 @@ class FakeTextEnricher implements IChunkEnricher {
         batchMode?: 'throw' | 'ok',
     ) {
         if (batchMode) {
-            this.enrichBatch = async (units): Promise<Map<string, ChunkEnrichment>> => {
+            this.enrichBatch = async (items): Promise<Map<string, ChunkEnrichment>> => {
                 this.batchCalls++;
                 if (batchMode === 'throw') throw new Error('batch infra unavailable');
-                return new Map(units.map((u) => [u.filePath, { skills: this.skillsForFile(u.filePath), technologies: [] }]));
+                return new Map(items.map((it) => [it.id, { skills: this.skillsForFile(it.filePath), technologies: [] }]));
             };
         }
     }
-    async enrich(_chunk: RawChunk): Promise<ChunkEnrichment> { return { skills: [], technologies: [] }; }
+    async enrich(chunk: RawChunk): Promise<ChunkEnrichment> { return { skills: this.skillsForFile(chunk.filePath), technologies: [] }; }
     async enrichText(filePath: string, content: string): Promise<ChunkEnrichment> {
         this.textCalls.push({ filePath, content });
         return { skills: this.skillsForFile(filePath), technologies: [] };
@@ -496,6 +496,37 @@ describe('IngestionPipeline — per-file enrichment (feature 002 cost lever)', (
         expect(enricher.textCalls).toHaveLength(1);     // fell back to inline
         expect(warn).toHaveBeenCalled();                // surfaced, not silent
         expect(store.upserts[0][0].skills).toEqual(['kubernetes']);  // skills still correct
+        delete process.env.ENRICH_BATCH;
+    });
+
+    // --- The chosen lever: batch the PER-CHUNK calls (recall-neutral ~50%) ---
+
+    it('ENRICH_BATCH=1 alone batches the per-chunk calls, keyed by chunk id', async () => {
+        process.env.ENRICH_BATCH = '1';   // NO ENRICH_PER_FILE — per-chunk granularity preserved
+        const enricher = new FakeTextEnricher((fp) => (fp === 'a.ts' ? ['kubernetes'] : ['react']), 'ok');
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'x'), makeChunk('a.ts', 1, 'y'), makeChunk('b.ts', 0, 'z')]);
+
+        expect(enricher.batchCalls).toBe(1);          // one batch job for all chunks
+        const byKey = new Map(store.upserts[0].map((c) => [`${c.filePath}#${c.chunkIndex}`, c.skills]));
+        expect(byKey.get('a.ts#0')).toEqual(['kubernetes']);   // each chunk keyed distinctly
+        expect(byKey.get('a.ts#1')).toEqual(['kubernetes']);   // same file, separate record
+        expect(byKey.get('b.ts#0')).toEqual(['react']);
+        delete process.env.ENRICH_BATCH;
+    });
+
+    it('a failing per-chunk batch falls back to inline enrich — skills preserved (SC-006)', async () => {
+        process.env.ENRICH_BATCH = '1';
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const enricher = new FakeTextEnricher(() => ['kubernetes'], 'throw');
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'x')]);
+
+        expect(enricher.batchCalls).toBe(1);
+        expect(warn).toHaveBeenCalled();
+        expect(store.upserts[0][0].skills).toEqual(['kubernetes']);  // inline enrich filled it
         delete process.env.ENRICH_BATCH;
     });
 });

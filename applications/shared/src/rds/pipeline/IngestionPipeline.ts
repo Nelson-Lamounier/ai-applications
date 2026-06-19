@@ -462,6 +462,24 @@ export class IngestionPipeline {
         const cap = this.maxEnrichmentPerRun;
         let enrichDone = 0;
 
+        // Batch lever (US3, recall-neutral): submit the per-chunk calls as ONE
+        // Bedrock batch job (~50% cheaper) — identical model calls, just async,
+        // so skills are byte-equivalent to inline. Fail-safe: any batch error
+        // leaves chunkBatch null and the inline enrich below runs.
+        let chunkBatch: Map<string, ChunkEnrichment> | null = null;
+        if (process.env.ENRICH_BATCH === '1' && this.enricher.enrichBatch) {
+            const runKey = `${repoFullName}/${userId}`.replace(/[^a-zA-Z0-9.-]/g, '-');
+            try {
+                const items = chunks.slice(0, cap).map((c) => ({
+                    id: `${c.filePath}::${c.chunkIndex}`, filePath: c.filePath, content: c.content, heading: c.heading,
+                }));
+                chunkBatch = await this.enricher.enrichBatch(items, runKey);
+            } catch (err) {
+                console.warn('[IngestionPipeline.enrichChunks] batch failed — falling back to inline:', err);
+                chunkBatch = null;
+            }
+        }
+
         const enrichOne = async (idx: number): Promise<void> => {
             const chunk = chunks[idx];
             if (idx >= cap) {
@@ -469,7 +487,8 @@ export class IngestionPipeline {
                 return;
             }
             try {
-                const { skills, technologies } = await this.enricher!.enrich(chunk);
+                const fromBatch = chunkBatch?.get(`${chunk.filePath}::${chunk.chunkIndex}`);
+                const { skills, technologies } = fromBatch ?? await this.enricher!.enrich(chunk);
                 out[idx] = {
                     ...chunk,
                     skills,
@@ -543,7 +562,10 @@ export class IngestionPipeline {
         if (process.env.ENRICH_BATCH === '1' && this.enricher!.enrichBatch) {
             const runKey = `${repoFullName}/${userId}`.replace(/[^a-zA-Z0-9.-]/g, '-');
             try {
-                batchSkills = await this.enricher!.enrichBatch(units.slice(0, cap), runKey);
+                const items = units.slice(0, cap).map((u) => ({
+                    id: u.filePath, filePath: u.filePath, content: u.text, heading: u.chunks[0]?.heading,
+                }));
+                batchSkills = await this.enricher!.enrichBatch(items, runKey);
             } catch (err) {
                 console.warn('[IngestionPipeline.enrichChunksPerFile] batch failed — falling back to inline:', err);
                 batchSkills = null;
