@@ -30,6 +30,9 @@ import {
     TitanEmbeddingProvider,
     BedrockChunkEnricher,
     SkillOntologyRepository,
+    SkillEmbeddingResolver,
+    PhraseSkillResolver,
+    backfillSkillEmbeddings,
     IngestionPipeline,
     FileFilter,
     ChunkerRegistry,
@@ -237,6 +240,36 @@ async function runDeferredEnrichment(
     } catch (err) {
         log.warn({ err: String(err), repoFullName }, 'deferred_enrichment.failed (non-fatal)');
     }
+}
+
+/**
+ * Self-heal the skill-ontology embeddings (migration 094), then build the
+ * phrase -> canonical resolver callback the enricher uses as its fuzzy fallback.
+ *
+ * The backfill is idempotent (only NULL-embedding rows are fetched) so it is a
+ * no-op after the first run that fills the ~75-row seed. Returns undefined when
+ * the ontology has no embedded skills — the resolver could never match, so the
+ * enricher cleanly stays alias-only rather than paying a wasted embed per phrase.
+ */
+async function buildSkillResolver(
+    pool: Pool,
+    skillOntologyRepo: SkillOntologyRepository,
+    embedder: TitanEmbeddingProvider,
+): Promise<((phrase: string) => Promise<string | null>) | undefined> {
+    const embedded = await backfillSkillEmbeddings(skillOntologyRepo, embedder);
+    if (embedded > 0) console.info(`[ingestion] skill ontology: embedded ${embedded} new canonical(s)`);
+
+    const { rows } = await pool.query<{ n: string }>(
+        `SELECT count(*)::int AS n FROM skill_ontology WHERE embedding IS NOT NULL`,
+    );
+    if (Number(rows[0]?.n ?? 0) === 0) return undefined;
+
+    const threshold = process.env.SKILL_MATCH_THRESHOLD
+        ? Number.parseFloat(process.env.SKILL_MATCH_THRESHOLD)
+        : undefined;
+    const resolver = new SkillEmbeddingResolver(pool, threshold);
+    const phraseResolver = new PhraseSkillResolver(embedder, resolver);
+    return (phrase: string) => phraseResolver.resolve(phrase);
 }
 
 async function embedProfile(
@@ -465,9 +498,19 @@ async function main(): Promise<void> {
         // so LLM variance collapses deterministically. Fail-safe: a load error
         // leaves the map undefined and skills pass through as raw — never blocks
         // ingestion.
-        const skillAliasToCanonical = await new SkillOntologyRepository(pgPool)
+        const skillOntologyRepo = new SkillOntologyRepository(pgPool);
+        const skillAliasToCanonical = await skillOntologyRepo
             .loadAliasToCanonicalMap()
             .catch(() => undefined);
+
+        // Self-heal the ontology embeddings (migration 094) before enrichment so
+        // the fuzzy resolver has vectors to match against. Idempotent: only rows
+        // with a NULL embedding are fetched, so this is a no-op after the first
+        // run. Fail-safe: any error leaves resolveSkill unbuilt and the enricher
+        // falls back to alias-only — never blocks ingestion.
+        const resolveSkill = await buildSkillResolver(pgPool, skillOntologyRepo, embedder)
+            .catch((err) => { console.warn('[ingestion] skill embedding resolver disabled (non-fatal)', err); return undefined; });
+
         enricher = BedrockChunkEnricher.fromEnvironment(
             {
                 pool:     pgPool,
@@ -476,6 +519,7 @@ async function main(): Promise<void> {
                 syncKind: syncType,
             },
             skillAliasToCanonical,
+            resolveSkill,
         );
     }
 

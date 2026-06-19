@@ -103,6 +103,14 @@ export interface BedrockChunkEnricherConfig {
      * their normalised raw. Omit to keep raw skills unchanged.
      */
     readonly aliasToCanonical?: ReadonlyMap<string, string>;
+    /**
+     * Fuzzy fallback for skills the exact alias map misses: a phrase ->
+     * canonical resolver (embedding nearest-canonical, PhraseSkillResolver).
+     * Returns the canonical, or null to keep the raw phrase. Applied ONLY to
+     * skills `aliasToCanonical` didn't resolve, so the cheap exact path still
+     * wins. Omit to keep alias-only behaviour.
+     */
+    readonly resolveSkill?: (phrase: string) => Promise<string | null>;
 }
 
 /**
@@ -126,6 +134,7 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     readonly modelId: string;
     private readonly costCtx?: ChunkEnricherCostContext;
     private readonly aliasToCanonical?: ReadonlyMap<string, string>;
+    private readonly resolveSkill?: (phrase: string) => Promise<string | null>;
 
     constructor(config: BedrockChunkEnricherConfig = {}, costCtx?: ChunkEnricherCostContext) {
         const region = config.region ?? process.env.AWS_REGION ?? 'us-east-1';
@@ -133,16 +142,19 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         this.modelId = config.modelId ?? DEFAULT_MODEL_ID;
         this.costCtx = costCtx;
         this.aliasToCanonical = config.aliasToCanonical;
+        this.resolveSkill = config.resolveSkill;
     }
 
     static fromEnvironment(
         costCtx?: ChunkEnricherCostContext,
         aliasToCanonical?: ReadonlyMap<string, string>,
+        resolveSkill?: (phrase: string) => Promise<string | null>,
     ): BedrockChunkEnricher {
         return new BedrockChunkEnricher({
             modelId: process.env.ENRICHMENT_MODEL_ID,
             region:  process.env.AWS_REGION,
             ...(aliasToCanonical ? { aliasToCanonical } : {}),
+            ...(resolveSkill ? { resolveSkill } : {}),
         }, costCtx);
     }
 
@@ -206,7 +218,7 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         }
 
         return {
-            skills:       this.normalize(toolUse.input.skills),
+            skills:       await this.resolveSkills(toolUse.input.skills),
             // technologies extraction decommissioned 2026-05-27 — owned by
             // the deterministic tech-extractor Layer-1 pipeline. Field
             // retained as [] for schema back-compat with the existing
@@ -238,21 +250,30 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     }
 
     /**
-     * Defensive normalisation of a string[] field returned by the model.
-     * Lowercases, trims, deduplicates, and discards non-strings / empties.
+     * Normalise + canonicalise the model's skills, three-stage cascade:
+     *   1. lowercase / trim / drop empties + non-strings
+     *   2. exact alias -> canonical (cheap, deterministic; migration 092)
+     *   3. residual only: embedding nearest-canonical (resolveSkill), else raw
+     *
+     * The Set dedups variants that collapse to the same canonical. Stage 3 is
+     * skipped entirely when no resolver is wired, preserving alias-only
+     * behaviour. Async because stage 3 embeds + queries pgvector.
      */
-    private normalize(raw: unknown): string[] {
+    private async resolveSkills(raw: unknown): Promise<string[]> {
         if (!Array.isArray(raw)) return [];
         const seen = new Set<string>();
         for (const v of raw) {
             if (typeof v !== 'string') continue;
             const cleaned = v.toLowerCase().trim();
             if (!cleaned) continue;
-            // Canonicalise against the skill ontology when available; unknown
-            // skills fall through as their normalised raw. The Set dedups
-            // variants that collapse to the same canonical (slice 2c).
-            const canonical = this.aliasToCanonical?.get(cleaned) ?? cleaned;
-            seen.add(canonical);
+            const alias = this.aliasToCanonical?.get(cleaned);
+            if (alias) { seen.add(alias); continue; }
+            // Exact alias missed — try the fuzzy resolver (fail-safe: any error
+            // keeps the raw phrase, never blocks enrichment).
+            const fuzzy = this.resolveSkill
+                ? await this.resolveSkill(cleaned).catch(() => null)
+                : null;
+            seen.add(fuzzy ?? cleaned);
         }
         return Array.from(seen);
     }

@@ -116,6 +116,7 @@ export type { CostRecord } from './bedrock-cost.js';
 export { OntologyResolver, normalizeAlias } from './ontology/OntologyResolver.js';
 export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './ontology/SkillEmbeddingResolver.js';
 export type { SkillMatch } from './ontology/SkillEmbeddingResolver.js';
+export { PhraseSkillResolver } from './ontology/PhraseSkillResolver.js';
 export { backfillSkillEmbeddings } from './ontology/backfillSkillEmbeddings.js';
 export type { BackfillSkillEmbeddingsOptions } from './ontology/backfillSkillEmbeddings.js';
 export { TechnologyOntologyRepository }     from './implementations/TechnologyOntologyRepository.js';

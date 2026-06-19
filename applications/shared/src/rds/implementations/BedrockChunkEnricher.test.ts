@@ -93,6 +93,35 @@ describe('BedrockChunkEnricher', () => {
         expect(result.skills).toEqual(['some novel skill']);
     });
 
+    it('cascade: alias wins; alias-miss falls to the fuzzy resolver; resolver-null keeps raw', async () => {
+        mockSend.mockResolvedValueOnce(bedrockReply({
+            skills: ['K8s Networking', 'auto scaling group config', 'totally novel thing'],
+        }));
+        // resolveSkill is the embedding fallback. It must be consulted ONLY for
+        // skills the alias map missed.
+        const resolveSkill = jest.fn(async (phrase: string) =>
+            phrase === 'auto scaling group config' ? 'aws auto scaling' : null,
+        );
+
+        const result = await new BedrockChunkEnricher({
+            aliasToCanonical: new Map([['k8s networking', 'kubernetes networking']]),
+            resolveSkill,
+        }).enrich(chunk());
+
+        expect(result.skills).toEqual(['kubernetes networking', 'aws auto scaling', 'totally novel thing']);
+        // alias hit ('k8s networking') never reaches the resolver — only the two misses do.
+        expect(resolveSkill.mock.calls.map((c) => c[0])).toEqual(['auto scaling group config', 'totally novel thing']);
+    });
+
+    it('fuzzy resolver errors are non-fatal — the raw phrase is kept', async () => {
+        mockSend.mockResolvedValueOnce(bedrockReply({ skills: ['weird phrase'] }));
+        const resolveSkill = jest.fn(async () => { throw new Error('pgvector down'); });
+
+        const result = await new BedrockChunkEnricher({ resolveSkill }).enrich(chunk());
+
+        expect(result.skills).toEqual(['weird phrase']);
+    });
+
     it('tool schema only requests skills (technologies decommissioned 2026-05-27)', async () => {
         mockSend.mockResolvedValueOnce(bedrockReply({ skills: [] }));
         await new BedrockChunkEnricher().enrich(chunk());
