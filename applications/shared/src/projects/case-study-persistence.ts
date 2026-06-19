@@ -27,6 +27,45 @@ import type {
     SourceSignal,
 } from './case-study-types.js';
 import { computeContentHash } from './source-signals.js';
+import {
+    buildVerifiedStackMap,
+    stampStackSignals,
+    type VerifiedTechEntry,
+} from './case-study-verified-stack.js';
+
+/** technology_evidence lanes that represent real code-declared dependencies. */
+const CODE_LAYERS = ['syft', 'treesitter', 'iac', 'dockerfile'];
+
+/**
+ * Load the SBOM-grounded stack map for a project from `technology_evidence`,
+ * scoped to the project's repos. The persistence-side twin of the loader's
+ * verifiedStack — carries file:line so each stamped stack item cites its exact
+ * declaration. Empty when the repos have no extracted evidence.
+ */
+async function loadVerifiedStackMap(
+    client: PoolClient,
+    userId: string,
+    projectId: string,
+): Promise<Map<string, VerifiedTechEntry>> {
+    const { rows } = await client.query<{ canonical_name: string; version: string | null; purl: string | null; file_path: string | null; line_start: number | null }>(
+        `SELECT o.canonical_name, te.version, te.purl, te.file_path, te.line_start
+           FROM technology_evidence te
+           JOIN technology_ontology o ON o.id = te.technology_id
+           JOIN repositories r ON r.full_name = te.repo_full_name AND r.user_id = te.user_id
+           JOIN project_repositories pr ON pr.repository_id = r.id
+           JOIN project_components pc ON pc.id = pr.project_component_id
+          WHERE pc.project_id = $1 AND te.user_id = $2
+            AND te.source_layer = ANY($3)`,
+        [projectId, userId, CODE_LAYERS],
+    );
+    return buildVerifiedStackMap(rows.map((r) => ({
+        canonicalName: r.canonical_name,
+        version:       r.version,
+        purl:          r.purl,
+        filePath:      r.file_path,
+        lineStart:     r.line_start,
+    })));
+}
 
 export interface PersistCaseStudyInput {
     readonly projectId:      string;
@@ -304,10 +343,15 @@ export async function persistCaseStudy(
 
         let stackItemsInserted = 0;
         if (!isSticky(overrides, 'stack')) {
+            // SBOM-ground each stack item: stamp its real version + purl +
+            // declaration file:line when it matches a code dependency, or flag
+            // it when it grounds to nothing. Deterministic, server-side — the
+            // model never sets these.
+            const verifiedMap = await loadVerifiedStackMap(client, input.userId, input.projectId);
             const stackRows = await Promise.all(
                 input.caseStudy.stack.map(async (s) => ({
                     contentFields: [s.category, s.name, s.justification],
-                    signals:       s.sourceSignals,
+                    signals:       stampStackSignals(s.name, s.sourceSignals, verifiedMap),
                     columns: {
                         category:               s.category,
                         name:                   s.name,

@@ -25,6 +25,7 @@ import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectO
 import { classifyArchetype } from './archetype-classifier.js';
 import { pickStage } from './derive-stage.js';
 import { deriveDepthMarkers } from './case-study-depth.js';
+import { buildVerifiedStackMap } from './case-study-verified-stack.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
 export interface CaseStudyCommit {
@@ -100,6 +101,10 @@ interface KbRow {
 
 /** Number of KB chunks fed to the prompt. Hard cap to bound input cost. */
 const KB_CHUNK_CAP = 24;
+/** technology_evidence lanes that represent real code-declared dependencies. */
+const CODE_LAYERS = ['syft', 'treesitter', 'iac', 'dockerfile'];
+/** Cap on verified dependencies surfaced to the prompt (a monorepo has many). */
+const VERIFIED_STACK_CAP = 80;
 /** Cap on most-changed files surfaced as file-level evidence to the agent. */
 const FILE_CHANGE_CAP = 30;
 /** Max chars of root-README prose taken per repo for product context. */
@@ -212,6 +217,92 @@ async function loadCodeGroundedEvidence(
     }));
 
     return { depthMarkers, fileChangeEvidence };
+}
+
+/**
+ * The project's real code dependencies from the tech-extractor's
+ * `technology_evidence` lanes, one entry per canonical (version-bearing row
+ * wins), capped + version-first ordered for the prompt. Lets the agent draft a
+ * stack that reflects what the code declares — and gives the persistence layer
+ * the ground truth to stamp each stack item against. Empty when the repos have
+ * no extracted evidence yet.
+ */
+async function loadVerifiedStack(
+    pool: Pool,
+    userId: string,
+    repoNames: string[],
+): Promise<CaseStudyContext['verifiedStack']> {
+    if (repoNames.length === 0) return [];
+    const { rows } = await pool.query<{ canonical_name: string; version: string | null; purl: string | null; file_path: string | null; line_start: number | null }>(
+        `SELECT o.canonical_name, te.version, te.purl, te.file_path, te.line_start
+           FROM technology_evidence te
+           JOIN technology_ontology o ON o.id = te.technology_id
+          WHERE te.user_id = $1
+            AND te.repo_full_name = ANY($2::text[])
+            AND te.source_layer = ANY($3)`,
+        [userId, repoNames, CODE_LAYERS],
+    );
+    const map = buildVerifiedStackMap(rows.map((r) => ({
+        canonicalName: r.canonical_name,
+        version:       r.version,
+        purl:          r.purl,
+        filePath:      r.file_path,
+        lineStart:     r.line_start,
+    })));
+    return [...map.values()]
+        // Version-bearing first (more useful), then alphabetical for stability.
+        .sort((a, b) => Number(b.version != null) - Number(a.version != null)
+            || a.canonical.localeCompare(b.canonical))
+        .slice(0, VERIFIED_STACK_CAP)
+        .map((e) => ({ name: e.canonical, version: e.version, purl: e.purl }));
+}
+
+/**
+ * Classify the project's archetype + the user's stage, returning the soft
+ * section-emphasis calibration the prompt layers on. Additive: an absent
+ * classification yields `{}` (today's base-prompt behaviour). Extracted from the
+ * loader to keep its cyclomatic complexity bounded. The computed archetype/stage
+ * are persisted atomically with the case study inside persistCaseStudy's
+ * transaction — not written here on the pool.
+ */
+type Calibration = Partial<Pick<CaseStudyContext, 'archetype' | 'stage' | 'prioritySections' | 'deemphasizedSections'>>;
+
+/** Pure assembly of the calibration object from the resolved parts. */
+function assembleCalibration(
+    archetypeId: string,
+    def: { id: string; name: string; expectedSections?: readonly string[] } | null,
+    stage: CaseStudyContext['stage'],
+    overlay: { prioritySections?: readonly string[]; deemphasizedSections?: readonly string[] } | null,
+): Calibration {
+    return {
+        archetype: def ? { id: def.id, name: def.name } : { id: archetypeId, name: archetypeId },
+        stage,
+        prioritySections: overlay?.prioritySections ?? def?.expectedSections ?? [],
+        deemphasizedSections: overlay?.deemphasizedSections ?? [],
+    };
+}
+
+async function computeCalibration(
+    pool: Pool,
+    userId: string,
+    projectType: string,
+    mergedSignals: Record<string, boolean>,
+): Promise<Calibration> {
+    const ontology   = new RdsProjectOntologyRepository(pool);
+    const archetypes = await ontology.listArchetypes();
+    const classified = classifyArchetype(mergedSignals, projectType, archetypes);
+    if (!classified) return {};
+
+    const def = archetypes.find((a) => a.id === classified.archetypeId) ?? null;
+    const seniorityRow = await pool.query<{ direction: { seniority?: Array<{ area: string; level: string }> } | null }>(
+        `SELECT direction FROM user_profile_rollup WHERE user_id = $1`,
+        [userId],
+    );
+    const seniority = seniorityRow.rows[0]?.direction?.seniority ?? [];
+    const stage = pickStage(seniority);
+    const overlay = stage ? await ontology.getStageOverlay(classified.archetypeId, stage) : null;
+
+    return assembleCalibration(classified.archetypeId, def, stage, overlay);
 }
 
 export async function loadCaseStudyContext(
@@ -349,6 +440,8 @@ export async function loadCaseStudyContext(
         pool, p.user_id, repoNames, mergedSignals, commits,
     );
 
+    const verifiedStack = await loadVerifiedStack(pool, p.user_id, repoNames);
+
     const rawContext: CaseStudyContext = {
         projectId:     p.id,
         projectName:   p.name,
@@ -375,6 +468,7 @@ export async function loadCaseStudyContext(
         })),
         depthMarkers,
         fileChangeEvidence,
+        verifiedStack,
     };
 
     // Bound the prompt to a global token ceiling. Without this, a multi_repo
@@ -386,33 +480,7 @@ export async function loadCaseStudyContext(
     // agent) so the orchestrator's input-hash and the prompt see identical,
     // already-bounded content.
     // ── Archetype/stage calibration (additive; absent fields = no change) ──
-    const ontology   = new RdsProjectOntologyRepository(pool);
-    const archetypes = await ontology.listArchetypes();
-    const classified = classifyArchetype(mergedSignals, p.type, archetypes);
-
-    let calibration: Partial<Pick<CaseStudyContext,
-        'archetype' | 'stage' | 'prioritySections' | 'deemphasizedSections'>> = {};
-
-    if (classified) {
-        const def = archetypes.find((a) => a.id === classified.archetypeId) ?? null;
-        const seniorityRow = await pool.query<{ direction: { seniority?: Array<{ area: string; level: string }> } | null }>(
-            `SELECT direction FROM user_profile_rollup WHERE user_id = $1`,
-            [p.user_id],
-        );
-        const seniority = seniorityRow.rows[0]?.direction?.seniority ?? [];
-        const stage = pickStage(seniority);
-        const overlay = stage ? await ontology.getStageOverlay(classified.archetypeId, stage) : null;
-
-        calibration = {
-            archetype: def ? { id: def.id, name: def.name } : { id: classified.archetypeId, name: classified.archetypeId },
-            stage,
-            prioritySections: overlay?.prioritySections ?? def?.expectedSections ?? [],
-            deemphasizedSections: overlay?.deemphasizedSections ?? [],
-        };
-        // The computed archetype/stage are surfaced via `context.archetype`/
-        // `context.stage` and persisted atomically with the case study inside
-        // persistCaseStudy's transaction — not written here on the pool.
-    }
+    const calibration = await computeCalibration(pool, p.user_id, p.type, mergedSignals);
 
     const context = packContext({ ...rawContext, ...calibration }, { maxTokens: CONTEXT_TOKEN_BUDGET });
 
