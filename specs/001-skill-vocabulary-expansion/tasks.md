@@ -24,7 +24,7 @@ Tests are included: the project follows TDD and Constitution VI mandates the res
 - [X] T007 Create pure `applications/shared/src/rds/ontology/dedupeSkillCanonicals.ts`: given canonical+embedding pairs + thresholds, returns merge actions (≥auto-merge → merge; [review-floor,auto) → review; else none). No DB.
 - [X] T008 [P] Unit test `applications/shared/src/rds/ontology/dedupeSkillCanonicals.test.ts`: merges ≥0.85; routes 0.70–0.85 to review; leaves <0.70; deterministic ordering.
 - [X] T009 Export `SkillOntologyWriteRepository`, `dedupeSkillCanonicals` from `applications/shared/src/rds/index.ts` + `applications/shared/src/index.ts`.
-- [ ] T010 Scaffold the Job entrypoint `applications/ontology-importer/src/run-skill-import.ts` (env parse per contracts/, pool, observability bootstrap, source registry, `DRY_RUN` gate) — wiring only; sources/dedup land in later phases.
+- [X] T010 Scaffold the Job entrypoint `applications/ontology-importer/src/run-skill-import.ts` (env parse per contracts/, pool, observability bootstrap, source registry, `DRY_RUN` gate) — wiring only; sources/dedup land in later phases.
 
 ## Phase 3: User Story 1 — long-tail phrases resolve to canonicals (P1) 🎯 MVP
 
@@ -34,9 +34,9 @@ Tests are included: the project follows TDD and Constitution VI mandates the res
 - [ ] ~~T011 OnetSkillSource~~ DROPPED (research D7 — real O*NET 29.1 too coarse: 35 generic skills, 135 coarse software categories; 8,768 tools belong in technology_ontology). REPLACED by T011b.
 - [X] T011b [US1] `applications/ontology-importer/src/sources/TechnologyDerivedSkillSource.ts`: read `technology_ontology` canonicals + categories (already registry-imported) and emit them as skill capability `RawImportEntry[]`, so tool-centric skill phrases collapse in the skill lane. Needs a technology_ontology read (local export for offline preview).
 - [X] T012 [P] [US1] `applications/ontology-importer/src/sources/CuratedSkillSource.ts`: load the project's curated engineering-tail canonicals + aliases (the moat layer — now PRIMARY) as `RawImportEntry[]`.
-- [ ] T013 [US1] Wire the import loop in `run-skill-import.ts`: for each source → capped fetch → `Categorizer` (reuse L1–3 + Bedrock Haiku batch for residual) → `SkillOntologyWriteRepository` upsert; record `ImportRunCounts` via `OntologyImportRunRepository`.
-- [ ] T014 [US1] After upsert, call `backfillSkillEmbeddings` in `run-skill-import.ts` to embed new `embedding IS NULL` canonicals (no new embedding code).
-- [ ] T015 [US1] Integration test `applications/ontology-importer/src/run-skill-import.test.ts` (mocked sources + pg): a fixture source yields entries → upserted + categorised + counts recorded; `DRY_RUN=1` writes nothing.
+- [X] T013 [US1] Wire the import loop in `run-skill-import.ts`: for each source → capped fetch → `Categorizer` (reuse L1–3 + Bedrock Haiku batch for residual) → `SkillOntologyWriteRepository` upsert; record `ImportRunCounts` via `OntologyImportRunRepository`.
+- [X] T014 [US1] After upsert, call `backfillSkillEmbeddings` in `run-skill-import.ts` to embed new `embedding IS NULL` canonicals (no new embedding code).
+- [X] T015 [US1] Integration test `applications/ontology-importer/src/run-skill-import.test.ts` (mocked sources + pg): a fixture source yields entries → upserted + categorised + counts recorded; `DRY_RUN=1` writes nothing.
 
 ## Phase 4: User Story 2 — commercially-safe + auditable (P1)
 
