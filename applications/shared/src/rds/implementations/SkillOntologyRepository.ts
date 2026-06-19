@@ -63,4 +63,23 @@ export class SkillOntologyRepository {
             [id, `[${embedding.join(',')}]`],
         );
     }
+
+    /**
+     * Load active canonicals + their embeddings (parsed from the pgvector text
+     * form) for near-duplicate detection (dedupeSkillCanonicals). Skips rows not
+     * yet embedded. Carries curation_level so the merge keeps the curated row.
+     */
+    async loadActiveWithEmbeddings(): Promise<Array<{ id: string; canonical: string; curationLevel: string; embedding: number[] }>> {
+        const { rows } = await this.pool.query<{ id: string; canonical_name: string; curation_level: string; embedding: string }>(
+            `SELECT id, canonical_name, curation_level, embedding::text AS embedding
+               FROM skill_ontology
+              WHERE is_active = true AND embedding IS NOT NULL`,
+        );
+        return rows.map((r) => ({
+            id: r.id,
+            canonical: r.canonical_name,
+            curationLevel: r.curation_level,
+            embedding: r.embedding.replace(/[[\]]/g, '').split(',').map(Number),
+        }));
+    }
 }
