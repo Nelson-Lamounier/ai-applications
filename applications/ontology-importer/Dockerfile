@@ -34,6 +34,7 @@ COPY applications/shared/tsconfig.json         ./applications/shared/
 COPY applications/shared/src                   ./applications/shared/src/
 COPY applications/ontology-importer/tsconfig.json ./applications/ontology-importer/
 COPY applications/ontology-importer/src           ./applications/ontology-importer/src/
+COPY applications/ontology-importer/data          ./applications/ontology-importer/data/
 
 RUN node_modules/.bin/tsc -b applications/shared applications/ontology-importer --force \
  || [ -f applications/ontology-importer/dist/run-import.js ]
@@ -60,6 +61,7 @@ WORKDIR /app
 # use 0555 (traversable + readable, no write); standalone files use 0444.
 # The only writable path at runtime is the /work emptyDir mounted by the Job.
 COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/ontology-importer/dist ./applications/ontology-importer/dist
+COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/ontology-importer/data ./applications/ontology-importer/data
 COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/ontology-importer/package.json ./applications/ontology-importer/
 COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/shared/dist ./applications/shared/dist
 COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/shared/package.json ./applications/shared/

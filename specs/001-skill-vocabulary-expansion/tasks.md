@@ -58,7 +58,7 @@ Tests are included: the project follows TDD and Constitution VI mandates the res
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T022 [P] Wire the Job into delivery: add the `run-skill-import` command to the `ontology-importer` Dockerfile/build + a dev K8s Job manifest (mirror the existing `run-import` Job).
+- [X] T022 [P] Wire the Job into delivery: add the `run-skill-import` command to the `ontology-importer` Dockerfile/build + a dev K8s Job manifest (mirror the existing `run-import` Job).
 - [X] T023 Run ESLint on all new/changed files; resolve to zero errors (Constitution I).
 - [ ] T024 Run the full `shared` + `ontology-importer` jest suites green; then `run-skill-resolution-eval` on dev confirms recall holds/improves with no precision drop (SC-002, Constitution VI gate).
 - [ ] T025 Execute quickstart.md §1–5 on dev (dry-run, import, re-run idempotency, eval, re-enrich coverage); record figures against the captured baseline (SC-001…SC-006).
