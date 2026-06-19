@@ -15,7 +15,8 @@
  */
 import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills } from '@bedrock/shared';
+import type { JdSignal } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
@@ -71,6 +72,51 @@ const groundingVerifier = new BedrockGroundingVerifier({
 const semanticCache = PgSemanticCache.fromEnvironment();
 /** Redacts infra identifiers from the failure message before it reaches the client. */
 const outputSanitiser = new OutputSanitiser();
+
+/**
+ * Query-side phrase -> canonical resolver — the read-only twin of the ingestion
+ * enricher's resolver. No self-heal backfill (ingestion owns embedding the
+ * ontology); this just embeds a JD skill phrase and maps it to its nearest
+ * canonical so the query side of `d.skills && query.skills` resolves like the
+ * corpus side. Same SKILL_MATCH_THRESHOLD as the corpus side for symmetry.
+ */
+function buildQuerySkillResolver(pool: Pool): (phrase: string) => Promise<string | null> {
+    const threshold = process.env['SKILL_MATCH_THRESHOLD']
+        ? Number.parseFloat(process.env['SKILL_MATCH_THRESHOLD'])
+        : undefined;
+    const resolver = new SkillEmbeddingResolver(pool, threshold);
+    const phraseResolver = new PhraseSkillResolver(TitanEmbeddingProvider.fromEnvironment(), resolver);
+    return (phrase) => phraseResolver.resolve(phrase);
+}
+
+/**
+ * Build the filter-then-rank retrieval prefilter, canonicalising the JD's
+ * skills through the SAME cascade the corpus side uses (alias -> embedding
+ * nearest-canonical -> raw) so BOTH sides of `d.skills && query.skills` resolve
+ * to identical canonicals — without this the overlap silently misses any phrase
+ * the corpus collapsed by embedding. Env-gated (RETRIEVAL_PREFILTER=on); absent
+ * => today's pure-vector retrieval. Read-only + fail-open. Extracted from main()
+ * to keep its complexity bounded.
+ */
+async function buildQueryRetrievalPrefilter(
+    pool: Pool,
+    jdExtraction: JdSignal,
+    techGroups: ReadonlyArray<ReadonlyArray<string>>,
+    aliasToCanonical: ReadonlyMap<string, string>,
+): Promise<ReturnType<typeof buildRetrievalPrefilter> | undefined> {
+    if (process.env['RETRIEVAL_PREFILTER'] !== 'on') return undefined;
+    const ti = jdExtraction.technologyInventory;
+    const querySkills = await canonicaliseSkills(
+        [...jdExtraction.requiredSkills, ...jdExtraction.preferredSkills],
+        await new SkillOntologyRepository(pool).loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
+        buildQuerySkillResolver(pool),
+    );
+    return buildRetrievalPrefilter(
+        querySkills,
+        [...ti.tools, ...ti.languages, ...ti.frameworks, ...ti.infrastructure, ...jdExtraction.retrievalKeywords],
+        techGroups, aliasToCanonical,
+    );
+}
 
 /** S3 client for canonical resume PDF storage. */
 const s3 = new S3Client({});
@@ -476,14 +522,7 @@ export async function main(): Promise<void> {
         // Filter-then-rank pre-filter (Increment 2): transfer-aware tech/skill + the
         // structural fork/junk gates over the chunk metadata stamp. Env-gated so it
         // ships dark; absent ⇒ today's pure-vector retrieval (fail-open).
-        const ti = jdExtraction.technologyInventory;
-        const retrievalPrefilter = process.env['RETRIEVAL_PREFILTER'] === 'on'
-            ? buildRetrievalPrefilter(
-                [...jdExtraction.requiredSkills, ...jdExtraction.preferredSkills],
-                [...ti.tools, ...ti.languages, ...ti.frameworks, ...ti.infrastructure, ...jdExtraction.retrievalKeywords],
-                techGroups, aliasToCanonical,
-            )
-            : undefined;
+        const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techGroups, aliasToCanonical);
 
         const research = await executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock);
 
