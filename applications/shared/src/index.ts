@@ -341,6 +341,8 @@ export type {
 export { OntologyResolver, normalizeAlias } from './rds/index.js';
 export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './rds/index.js';
 export type { SkillMatch } from './rds/index.js';
+export { backfillSkillEmbeddings } from './rds/index.js';
+export type { BackfillSkillEmbeddingsOptions } from './rds/index.js';
 export { TechnologyOntologyRepository }     from './rds/index.js';
 export { SkillOntologyRepository }          from './rds/index.js';
 export { TechnologyEvidenceRepository }     from './rds/index.js';
