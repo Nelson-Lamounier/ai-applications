@@ -4,11 +4,14 @@ import type { Pool } from 'pg';
 /**
  * Default cosine-similarity floor for accepting a nearest-canonical match.
  * Conservative on purpose — below this a free-text phrase keeps its raw form
- * rather than risk collapsing two genuinely distinct skills. The production
- * value is set by the resolution eval (sub-slice D) before the enricher is
- * wired (sub-slice C); this default only governs ad-hoc use.
+ * rather than risk collapsing two genuinely distinct skills.
+ *
+ * Set to 0.65 by the resolution eval run on dev (2026-06-19) over the 741-alias
+ * vocabulary: 0.65 drives the false-merge rate to 0 (vs 0.167 at 0.62) for only
+ * a ~0.02 recall cost, with precision 0.877. Overridable per-call + via
+ * SKILL_MATCH_THRESHOLD.
  */
-export const DEFAULT_SKILL_MATCH_THRESHOLD = 0.62;
+export const DEFAULT_SKILL_MATCH_THRESHOLD = 0.65;
 
 export interface SkillMatch {
     readonly canonical: string;

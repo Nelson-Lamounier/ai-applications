@@ -21,6 +21,9 @@
 import {
     BedrockChunkEnricher,
     SkillOntologyRepository,
+    SkillEmbeddingResolver,
+    PhraseSkillResolver,
+    TitanEmbeddingProvider,
     bootstrapK8sObservability,
     pushFinalMetrics,
 } from '@bedrock/shared';
@@ -61,11 +64,22 @@ async function main(): Promise<void> {
         const skillAliasToCanonical = await new SkillOntologyRepository(pgPool)
             .loadAliasToCanonicalMap()
             .catch(() => undefined);
+        // Embedding nearest-canonical fallback, same as inline ingestion — so the
+        // re-enrich path resolves phrases the exact-alias map misses (the ontology
+        // is already embedded; no backfill needed here). Fail-open via the
+        // enricher's resolveSkill catch.
+        const threshold = process.env['SKILL_MATCH_THRESHOLD']
+            ? Number.parseFloat(process.env['SKILL_MATCH_THRESHOLD'])
+            : undefined;
+        const phraseResolver = new PhraseSkillResolver(
+            TitanEmbeddingProvider.fromEnvironment(),
+            new SkillEmbeddingResolver(pgPool, threshold),
+        );
         const enricher = BedrockChunkEnricher.fromEnvironment({
             pool:     pgPool,
             userId,
             repoName: repoFullName ?? 're-enrich',
-        }, skillAliasToCanonical);
+        }, skillAliasToCanonical, (p) => phraseResolver.resolve(p));
 
         const result = await reenrichSkippedChunks(pgPool, enricher, {
             userId,
