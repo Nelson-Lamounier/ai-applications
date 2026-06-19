@@ -46,7 +46,7 @@ Tests/eval ARE requested (Constitution VI — packed-vs-per-chunk recall + attri
 
 ## Phase 6: The eval gate (P1) — spans US1–US3
 
-- [ ] T015 Build `applications/ingestion/src/run-pack-eval.ts` — labelled sample enriched per-chunk (baseline) vs packed; report per-chunk recall + precision + attribution (every chunk got its own skills); sweep `ENRICH_PACK_SIZE`. Reuse `computeEnrichEvalMetrics`.
+- [X] T015 Build `applications/ingestion/src/run-pack-eval.ts` — labelled sample enriched per-chunk (baseline) vs packed; report per-chunk recall + precision + attribution (every chunk got its own skills); sweep `ENRICH_PACK_SIZE`. Reuse `computeEnrichEvalMetrics`.
 - [ ] T016 Run on dev as a K8s Job (ingestion image, Bedrock IRSA); record recall/precision per pack size in `eval-results.md`. GATE: recall ≥ baseline AND zero misattribution before `ENRICH_PACK` is defaulted on; pick the largest pack size that holds recall.
 
 **Checkpoint**: packing proven recall-equivalent; cost collapses ~3–4×.
