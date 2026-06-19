@@ -1,6 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
-import type { IChunkEnricher } from '@bedrock/shared';
+import { type IChunkEnricher, tier1SkillsFromTech } from '@bedrock/shared';
 
 /** Filter + bounds for a re-enrich run. */
 export interface ReenrichOptions {
@@ -29,12 +29,22 @@ export interface ReenrichOptions {
      * DeadlineExceeded. Omit for no time bound.
      */
     readonly deadlineMs?: number;
+    /**
+     * Tier 1 of the tiered cascade (spec 003): tech_canonical -> canonical
+     * skills. When present (ENRICH_TIER1=1), a chunk whose `file_tech_stack`
+     * yields skills is resolved deterministically here — NO model call — and the
+     * LLM enricher is invoked only for the residue. file_tech_stack is on the
+     * chunk by now (stampUserEvidenceMetadata runs before this deferred pass).
+     */
+    readonly tier1Map?: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface ReenrichResult {
     readonly candidates: number;
     readonly enriched: number;
     readonly failed: number;
+    /** Chunks resolved by Tier 1 deterministically (no model call). */
+    readonly tier1Resolved: number;
     /** True when the deadline stopped dispatch before all candidates ran. */
     readonly stoppedEarly: boolean;
     /** Candidates left unprocessed (still `pending`) — resumed next sync. */
@@ -46,6 +56,7 @@ interface SkippedRow {
     file_path: string;
     heading:   string | null;
     content:   string;
+    file_tech_stack: string[] | null;
 }
 
 /**
@@ -81,7 +92,8 @@ export async function reenrichSkippedChunks(
     const limitClause = opts.limit ? `LIMIT ${Math.trunc(opts.limit)}` : '';
 
     const { rows } = await pool.query<SkippedRow>(
-        `SELECT id, file_path, heading, content
+        `SELECT id, file_path, heading, content,
+                metadata->'file_tech_stack' AS file_tech_stack
            FROM document_embeddings
           WHERE ${conditions.join(' AND ')}
           ORDER BY repo_full_name, file_path, chunk_index
@@ -91,10 +103,38 @@ export async function reenrichSkippedChunks(
 
     let enriched = 0;
     let failed = 0;
+    let tier1Resolved = 0;
     let done = 0;
+
+    /** Tier 1 (deterministic, no model call): file_tech_stack -> canonical skills. */
+    function tier1Skills(row: SkippedRow): string[] {
+        if (!opts.tier1Map || !row.file_tech_stack) return [];
+        return tier1SkillsFromTech(row.file_tech_stack, opts.tier1Map);
+    }
+
+    async function writeSkills(id: string, skills: string[]): Promise<void> {
+        await pool.query(
+            `UPDATE document_embeddings
+                SET skills   = $1::text[],
+                    metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb),
+                                         '{enrichment_status}', '"ok"')
+              WHERE id = $2`,
+            [skills, id],
+        );
+    }
 
     async function processRow(row: SkippedRow): Promise<void> {
         try {
+            // Tier 1 first: if the chunk's file tech resolves to skills, write them
+            // and SKIP the LLM (the ~33.5% of chunks with file_tech_stack).
+            const t1 = tier1Skills(row);
+            if (t1.length > 0) {
+                await writeSkills(row.id, t1);
+                tier1Resolved += 1;
+                enriched += 1;
+                return;
+            }
+            // Residue -> the LLM enricher (today's path).
             const { skills } = await enricher.enrich({
                 filePath:    row.file_path,
                 heading:     row.heading ?? undefined,
@@ -102,14 +142,7 @@ export async function reenrichSkippedChunks(
                 chunkIndex:  0,
                 totalChunks: 1,
             });
-            await pool.query(
-                `UPDATE document_embeddings
-                    SET skills   = $1::text[],
-                        metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb),
-                                             '{enrichment_status}', '"ok"')
-                  WHERE id = $2`,
-                [skills, row.id],
-            );
+            await writeSkills(row.id, skills);
             enriched += 1;
         } catch {
             // Leave the row as skipped_quota so the next run retries it.
@@ -139,5 +172,5 @@ export async function reenrichSkippedChunks(
     const workers = Math.max(1, Math.min(opts.concurrency ?? 10, rows.length));
     await Promise.all(Array.from({ length: workers }, () => worker()));
 
-    return { candidates: rows.length, enriched, failed, stoppedEarly, remaining: rows.length - done };
+    return { candidates: rows.length, enriched, failed, tier1Resolved, stoppedEarly, remaining: rows.length - done };
 }
