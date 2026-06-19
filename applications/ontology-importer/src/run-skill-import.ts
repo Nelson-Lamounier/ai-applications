@@ -24,6 +24,7 @@ import {
     OntologyImportRunRepository,
     TitanEmbeddingProvider,
     backfillSkillEmbeddings,
+    dedupeSkillCanonicals,
     bootstrapK8sObservability,
     pushFinalMetrics,
     type ImportRunCounts,
@@ -128,6 +129,31 @@ async function embedNewCanonicals(pool: Pool, region: string, dryRun: boolean): 
     return backfillSkillEmbeddings(new SkillOntologyRepository(pool), embedder);
 }
 
+/**
+ * Near-duplicate pass (FR-006, US3) over the now-embedded canonicals: auto-merge
+ * pairs >= DEDUP_AUTO_MERGE_THRESHOLD (default 0.85), log the [floor, auto) grey
+ * band as review candidates. Runs after the embed (it needs vectors); no-op in
+ * dry-run. Mutates `counts`.
+ */
+async function dedupeImported(pool: Pool, write: SkillOntologyWriteRepository, dryRun: boolean, counts: ImportRunCounts): Promise<void> {
+    if (dryRun) return;
+    const candidates = await new SkillOntologyRepository(pool).loadActiveWithEmbeddings();
+    const actions = dedupeSkillCanonicals(candidates, {
+        autoMergeThreshold: Number.parseFloat(process.env['DEDUP_AUTO_MERGE_THRESHOLD'] ?? '0.85'),
+        reviewFloor:        Number.parseFloat(process.env['DEDUP_REVIEW_FLOOR'] ?? '0.70'),
+    });
+    const nameById = new Map(candidates.map((c) => [c.id, c.canonical]));
+    for (const a of actions) {
+        if (a.kind === 'merge') {
+            await write.mergeCanonical(a.keepId, a.dropId, nameById.get(a.dropId) ?? '', 'auto-dedup');
+            counts.entriesDeactivated++;
+        } else {
+            counts.reviewQueueAdded++;
+            log.info({ keep: nameById.get(a.keepId), drop: nameById.get(a.dropId), similarity: a.similarity }, 'skill_import.dedup_review_candidate');
+        }
+    }
+}
+
 async function main(): Promise<void> {
     const pool = buildPool();
     const dryRun = process.env['DRY_RUN'] === '1';
@@ -143,6 +169,7 @@ async function main(): Promise<void> {
     try {
         for (const src of buildSources(pool, enabled)) await importSource(src, write, dryRun, counts);
         const embedded = await embedNewCanonicals(pool, region, dryRun);
+        await dedupeImported(pool, write, dryRun, counts);
         if (runId) await runs.finish(runId, 'success', counts);
         log.info({ event: 'skill_import.complete', dryRun, counts, embedded }, `imported ${counts.entriesInserted} canonical(s), ${counts.aliasMerges} alias(es); embedded ${embedded}`);
     } catch (err) {

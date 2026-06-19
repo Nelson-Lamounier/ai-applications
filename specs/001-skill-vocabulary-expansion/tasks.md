@@ -43,23 +43,23 @@ Tests are included: the project follows TDD and Constitution VI mandates the res
 **Goal**: every written row carries an approved licence; nothing off-allowlist is written.
 **Independent test**: quickstart §1–2 — off-allowlist source rejected (dry-run), and the SC-003 audit query returns 0.
 
-- [ ] T016 [US2] Enforce the licence allowlist in `run-skill-import.ts`: reject any source/entry whose `licence` ∉ {`CC-BY-4.0`,`curated`} before any write; log + skip (non-fatal).
-- [ ] T017 [US2] Stamp `source`, `source_licence`, `source_url` on every write in `SkillOntologyWriteRepository.insertAutoImported` (provenance, FR-009).
-- [ ] T018 [US2] Unit test in `run-skill-import.test.ts`: a source declaring a non-allowlist licence yields zero writes; written rows all carry an approved `source_licence`.
+- [X] T016 [US2] Enforce the licence allowlist in `run-skill-import.ts`: reject any source/entry whose `licence` ∉ {`CC-BY-4.0`,`curated`} before any write; log + skip (non-fatal).
+- [X] T017 [US2] Stamp `source`, `source_licence`, `source_url` on every write in `SkillOntologyWriteRepository.insertAutoImported` (provenance, FR-009).
+- [X] T018 [US2] Unit test in `run-skill-import.test.ts`: a source declaring a non-allowlist licence yields zero writes; written rows all carry an approved `source_licence`.
 
 ## Phase 5: User Story 3 — preserve curation + de-duplicate (P2)
 
 **Goal**: the 75 curated canonicals survive; the 7 known seed duplicates merge; new near-dups auto-merge/review.
 **Independent test**: quickstart §2 — all 75 curated present + active; known pairs collapsed to one canonical.
 
-- [ ] T019 [US3] Add the explicit seed-dedup SQL to migration `095_skill_ontology_provenance.sql`: for each of the 7 known pairs, re-point aliases → kept canonical, demote the duplicate `canonical_name` to an alias, set the duplicate `is_active=false`; idempotent (`WHERE is_active`).
-- [ ] T020 [US3] Wire `dedupeSkillCanonicals` into `run-skill-import.ts` post-upsert: auto-merge ≥ `DEDUP_AUTO_MERGE_THRESHOLD` via `SkillOntologyWriteRepository`; route the grey band to `OntologyReviewQueueRepository`.
-- [ ] T021 [US3] Guard curation in `SkillOntologyWriteRepository`: an import MUST NOT overwrite or deactivate a `curation_level='curated'` row (FR-008); covered by a test assertion in T006.
+- [X] T019 [US3] Add the explicit seed-dedup SQL to migration `095_skill_ontology_provenance.sql`: for each of the 7 known pairs, re-point aliases → kept canonical, demote the duplicate `canonical_name` to an alias, set the duplicate `is_active=false`; idempotent (`WHERE is_active`).
+- [X] T020 [US3] Wire `dedupeSkillCanonicals` into `run-skill-import.ts` post-upsert: auto-merge ≥ `DEDUP_AUTO_MERGE_THRESHOLD` via `SkillOntologyWriteRepository`; route the grey band to `OntologyReviewQueueRepository`.
+- [X] T021 [US3] Guard curation in `SkillOntologyWriteRepository`: an import MUST NOT overwrite or deactivate a `curation_level='curated'` row (FR-008); covered by a test assertion in T006.
 
 ## Phase 6: Polish & Cross-Cutting
 
 - [ ] T022 [P] Wire the Job into delivery: add the `run-skill-import` command to the `ontology-importer` Dockerfile/build + a dev K8s Job manifest (mirror the existing `run-import` Job).
-- [ ] T023 Run ESLint on all new/changed files; resolve to zero errors (Constitution I).
+- [X] T023 Run ESLint on all new/changed files; resolve to zero errors (Constitution I).
 - [ ] T024 Run the full `shared` + `ontology-importer` jest suites green; then `run-skill-resolution-eval` on dev confirms recall holds/improves with no precision drop (SC-002, Constitution VI gate).
 - [ ] T025 Execute quickstart.md §1–5 on dev (dry-run, import, re-run idempotency, eval, re-enrich coverage); record figures against the captured baseline (SC-001…SC-006).
 

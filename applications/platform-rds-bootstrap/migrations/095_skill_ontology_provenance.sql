@@ -28,3 +28,43 @@ UPDATE skill_ontology
    SET source_licence = 'curated'
  WHERE source_licence IS NULL
    AND curation_level = 'curated';
+
+-- ── Seed de-duplication (FR-006, US3) ───────────────────────────────────────
+-- The 75-row seed contains near-duplicate soft-skill canonicals (verified by the
+-- live cosine separation matrix, 2026-06-19): merge each duplicate INTO the kept
+-- canonical — re-point its aliases, demote its name to an alias of the keep, and
+-- deactivate it (kept for audit, not deleted). Idempotent: a re-run finds the
+-- duplicate already inactive (the WHERE is_active guard) and the alias already
+-- present (ON CONFLICT DO NOTHING).
+--
+--   keep                          <- drop                          (cosine)
+--   cross-functional collaboration <- cross-functional partnership   0.817
+--   cross-functional collaboration <- cross-functional leadership    0.678
+--   data-driven                    <- data-driven decisions          0.738
+--   customer empathy               <- user empathy                   0.692
+
+DO $$
+DECLARE
+    pair RECORD;
+    keep_id UUID;
+    drop_id UUID;
+BEGIN
+    FOR pair IN
+        SELECT * FROM (VALUES
+            ('cross-functional collaboration', 'cross-functional partnership'),
+            ('cross-functional collaboration', 'cross-functional leadership'),
+            ('data-driven',                    'data-driven decisions'),
+            ('customer empathy',               'user empathy')
+        ) AS v(keep_name, drop_name)
+    LOOP
+        SELECT id INTO keep_id FROM skill_ontology WHERE canonical_name = pair.keep_name;
+        SELECT id INTO drop_id FROM skill_ontology WHERE canonical_name = pair.drop_name AND is_active;
+        CONTINUE WHEN keep_id IS NULL OR drop_id IS NULL;
+
+        UPDATE skill_aliases SET skill_id = keep_id WHERE skill_id = drop_id;
+        INSERT INTO skill_aliases (alias, skill_id, source)
+            VALUES (pair.drop_name, keep_id, 'seed-dedup')
+            ON CONFLICT (alias) DO NOTHING;
+        UPDATE skill_ontology SET is_active = false, updated_at = now() WHERE id = drop_id;
+    END LOOP;
+END $$;
