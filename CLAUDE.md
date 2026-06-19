@@ -115,3 +115,8 @@ When you start or refactor any LLM workflow, walk this list:
 3. One tight output schema per phase.
 4. Sonnet by default; justify anything cheaper.
 5. Per-phase evals before you scale the work.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
