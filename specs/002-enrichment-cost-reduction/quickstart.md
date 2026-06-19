@@ -41,3 +41,22 @@ ENRICH_PER_FILE=1 ENRICH_BATCH=1     # cheapest path
 ## Scenario 6 — Cost realised (SC-002)
 - Diff cost-record telemetry for a large-repo enrich, cheap path vs baseline.
 **Expect**: order-of-magnitude drop (~$5.46 → ~$0.74), measured (not asserted).
+
+## Switches & infra prerequisites
+
+| Var | Purpose |
+|---|---|
+| `ENRICH_PER_FILE=1` | per-file granularity (US1) — the ~3.7x lever, no extra infra |
+| `ENRICH_PER_FILE_MAX_CHARS` | file-unit input budget (default 12000) |
+| `ENRICH_BATCH=1` | Bedrock batch (US3) — the ~50% lever; **requires the infra below** |
+| `ENRICH_BATCH_BUCKET` / `ENRICH_BATCH_ROLE_ARN` | S3 bucket for batch JSONL + the Bedrock batch service-role ARN |
+| `ENRICH_BATCH_PREFIX` / `_POLL_MS` / `_DEADLINE_MS` | batch S3 prefix + poll cadence + deadline |
+
+**Deferred (operator/infra):**
+- **Batch infra** — the S3 bucket + Bedrock batch IAM role are NOT provisioned by
+  this feature (CDK change). Until they exist, `ENRICH_BATCH=1` fails closed and
+  falls back to inline per-file (still the ~3.7x win, just not the extra ~50%).
+- **The eval Job (T013)** + **live cost diff (T019)** run on dev after this
+  merges + the ingestion image redeploys.
+- **The corpus re-enrich (roadmap #4)** — the operator runs it via the UI with
+  `ENRICH_PER_FILE=1` (and `ENRICH_BATCH=1` once infra lands).

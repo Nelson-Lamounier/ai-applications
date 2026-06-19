@@ -38,7 +38,7 @@ Tests/eval ARE requested (Constitution VI — the per-file-vs-per-chunk eval is 
 
 - [X] T011 [US2] Build `applications/ingestion/src/run-enrich-eval.ts` — load a labelled chunk sample, enrich per-chunk (baseline) and per-file+assign, compute per-chunk skill recall (vs baseline) + precision (added unevidenced skills), print a verdict + gate.
 - [X] T012 [P] [US2] Add the labelled eval sample fixture (a set of chunks incl. a multi-purpose file where skills differ per chunk) under `applications/ingestion/src/__fixtures__/enrich-eval-sample.json` (or reuse a dev export), referenced by T011.
-- [ ] T013 [US2] Run the eval on dev as a K8s Job (ingestion image, Bedrock IRSA); record recall/precision in a results note. GATE: do not enable `ENRICH_PER_FILE` in any default until recall ≥ baseline AND precision ≥ baseline.
+- [ ] T013 (deferred: post-merge dev Job) [US2] Run the eval on dev as a K8s Job (ingestion image, Bedrock IRSA); record recall/precision in a results note. GATE: do not enable `ENRICH_PER_FILE` in any default until recall ≥ baseline AND precision ≥ baseline.
 
 **Checkpoint**: cost-only equivalence proven on labelled data — the cheap path is now safe to rely on.
 
@@ -56,9 +56,9 @@ Tests/eval ARE requested (Constitution VI — the per-file-vs-per-chunk eval is 
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T018 [P] Document the two switches + the eval gate in the re-enrich/ingestion Job docs and `quickstart.md`; note the operator runs the corpus re-enrich (roadmap #4) via the UI with these enabled.
-- [ ] T019 Run a large-repo enrich on dev with `ENRICH_PER_FILE=1 ENRICH_BATCH=1` and diff the cost-record vs the per-chunk baseline; record the realised $ figure for SC-002 (measured, not asserted).
-- [ ] T020 [P] ESLint + `tsc -b applications/shared applications/ingestion` clean; full shared + ingestion jest green.
+- [X] T018 [P] Document the two switches + the eval gate in the re-enrich/ingestion Job docs and `quickstart.md`; note the operator runs the corpus re-enrich (roadmap #4) via the UI with these enabled.
+- [ ] T019 (deferred: post-merge dev cost diff) Run a large-repo enrich on dev with `ENRICH_PER_FILE=1 ENRICH_BATCH=1` and diff the cost-record vs the per-chunk baseline; record the realised $ figure for SC-002 (measured, not asserted).
+- [X] T020 [P] ESLint + `tsc -b applications/shared applications/ingestion` clean; full shared + ingestion jest green.
 
 ## Dependencies & order
 
