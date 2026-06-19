@@ -1,50 +1,134 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report
+==================
+Version change: (template) → 1.0.0
+Bump rationale: Initial ratification — first concrete constitution derived from
+  the repository's standing CLAUDE.md rules. MAJOR baseline (1.0.0).
+Modified principles: all placeholders replaced with six ratified principles:
+  - [PRINCIPLE_1] → I. ESLint Gate (NON-NEGOTIABLE)
+  - [PRINCIPLE_2] → II. Branch Workflow
+  - [PRINCIPLE_3] → III. Language & Verified-Fact Discipline
+  - [PRINCIPLE_4] → IV. README as Ground Truth
+  - [PRINCIPLE_5] → V. Security & Processing Guardrails
+  - (added)       → VI. LLM / Bedrock Workflow Design
+Added sections: Quality Gates; Governance (amendment + versioning policy).
+Removed sections: none (template placeholders SECTION_2/SECTION_3 repurposed).
+Templates requiring updates:
+  - .specify/templates/plan-template.md ⚠ pending (Constitution Check gate is
+    generic; aligns with these principles, no token edits required)
+  - .specify/templates/spec-template.md ✅ no change required
+  - .specify/templates/tasks-template.md ✅ no change required
+Follow-up TODOs: none — all dates and version concrete.
+-->
+
+# Tucaken AI Applications Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. ESLint Gate (NON-NEGOTIABLE)
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+No code change is complete until ESLint passes. Linting MUST run and be clean
+before any change is considered done, committed, or proposed for review.
+Rationale: a green linter is the cheapest enforceable correctness and
+consistency floor; treating it as optional lets drift accumulate silently.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### II. Branch Workflow
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+All feature work MUST happen on a dedicated branch off `develop`. Feature work
+MUST NOT be committed directly to `develop` or `main`. Merged feature branches
+MUST be deleted (local and remote head). Before deleting any branch, confirm
+nothing is lost: `git rev-list --count <branch> --not --remotes` MUST be `0`;
+unpushed commits MUST be pushed to a same-named remote branch first. Git
+worktrees MUST be removed (`git worktree remove` + `prune`) after their PR
+merges. The only long-lived local branches are `develop` and `main`.
+Rationale: keeps trunk releasable, prevents branch sprawl, and guarantees no
+work is destroyed on cleanup.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### III. Language & Verified-Fact Discipline
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+All prose — docs, READMEs, comments, commit bodies, PR descriptions, user-facing
+copy — MUST be English (UK): `-ise`/`-isation`, `-our`, `-re`, doubled `-ll-`.
+No non-ASCII diacritics in prose or identifiers (`resume`, not the accented
+form). The generated job document is termed `resume` to match the codebase.
+A technical fact MUST NOT be asserted unless verified: check the code, and for
+infrastructure claims (DB engine, cluster type, vector store, region, resource
+names) check the live AWS account. Stale claims MUST NOT be copied forward.
+Rationale: a single misstated stack fact poisons every downstream artefact the
+generator produces from it.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### IV. README as Ground Truth
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Each repo's root `README.md` is ground-truth `productContext` for the
+case-study generator, which reads only the first ~1,400 characters top-down.
+The first ~800 characters MUST answer what the product is, who it is for, the
+problem it solves, and this repo's role in the product. Stack, decisions, and
+architecture detail go below the fold. In multi-repo projects each member
+repo's README head MUST state that repo's role in the product. Every claim in a
+README MUST be verified against code and the live account.
+Rationale: position beats completeness — the head of the README is what becomes
+the public case study, so it must be product-first and accurate.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### V. Security & Processing Guardrails
+
+The following MUST hold:
+
+- `DRY_RUN` is enforced at the tool-dispatch boundary; every write tool is
+  listed in `WRITE_TOOLS` and blocked before the MCP Gateway is called. Prompt
+  wording is not a safety control.
+- Authenticated handlers derive `userId` from verified authorizer claims
+  (`custom:user_id`, `user_id`, or `sub`) and fail closed when the claim is
+  missing or invalid. `PORTFOLIO_OWNER_USER_ID` is used only for owner-only jobs.
+- Postgres RLS context is set inside the transaction with
+  `SELECT set_config('app.current_user_id', $1, true)` — never parameterized
+  `SET LOCAL`.
+- File intake enforces allowlisted content types and byte caps before
+  buffering, comparing stored metadata and upstream object size when both exist.
+- Retryable import persistence is transactional and idempotent, tracking every
+  created row when a schema field promises created IDs.
+- Tarball and repository processing caps compressed size, extracted size,
+  per-file extracted size, and text-read size.
+- Numbered SQL migration runners use a checksum ledger and reject changed
+  historical migrations.
+- Network adapters that buffer responses set request timeouts and
+  response-size caps.
+
+Rationale: these are the load-bearing controls against privilege escalation,
+resource exhaustion, and silent data corruption; they are guardrails, not
+guidelines.
+
+### VI. LLM / Bedrock Workflow Design
+
+Any LLM-backed workflow MUST follow these design principles: assemble
+phase-specific prompts from a shared base plus per-phase deltas, not a fat
+persona full of conditional branches; organise per-phase instructions as
+self-contained Skills/modules; give each phase one tight output schema rather
+than a shared loose one; default to Sonnet for nuanced structured generation and
+justify anything cheaper; and build per-phase evals before scaling scope — no
+prompt change ships without its eval.
+Rationale: most reliability benefits of multi-agent systems without the
+operational complexity — one well-organised model call per unit of work.
+
+## Quality Gates
+
+Before a change is considered complete it MUST satisfy, in order: ESLint clean
+(Principle I); for any LLM workflow change, its per-phase eval run and passing
+(Principle VI); for security-sensitive paths, the relevant Principle V controls
+verified present; for any documentation or README change, UK-English and
+verified-fact checks (Principles III, IV). A change failing any applicable gate
+is not done, regardless of feature completeness.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution is derived from the project's standing CLAUDE.md rules and
+supersedes default agent behaviour where they conflict. User instructions in
+CLAUDE.md remain the source of truth; this document is the ratified, versioned
+expression of them for spec-kit planning.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+Amendments MUST be made by editing this file, recording the change in the Sync
+Impact Report, and bumping the version per semantic versioning: MAJOR for
+backward-incompatible principle removals or redefinitions, MINOR for a new
+principle or materially expanded guidance, PATCH for clarifications and wording.
+Every `/speckit-plan` MUST verify its design against these principles at the
+Constitution Check gate; unjustified violations block the plan.
+
+**Version**: 1.0.0 | **Ratified**: 2026-06-19 | **Last Amended**: 2026-06-19
