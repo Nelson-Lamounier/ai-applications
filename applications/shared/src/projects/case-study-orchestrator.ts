@@ -72,9 +72,49 @@ export interface RunCaseStudyOutput {
     readonly cacheHit:   boolean;
     readonly refined:    boolean;
     readonly caseStudy:  CaseStudy;
+    readonly grounding:  GroundingSummary;
     readonly persisted:  PersistCaseStudySummary;
     readonly inputHash:  string;
     readonly contextLoaded: LoadCaseStudyContextResult;
+}
+
+export interface GroundingSummary {
+    readonly checked: number;
+    readonly grounded: number;
+    readonly flagged: number;
+    readonly notVerified: number;
+}
+
+function updateOptionalHash(hash: ReturnType<typeof createHash>, prefix: string, value: string | null | undefined): void {
+    if (!value) return;
+    hash.update(`${prefix}${value}`);
+}
+
+function updateListHash(hash: ReturnType<typeof createHash>, values: readonly string[], prefix: string): void {
+    if (values.length === 0) return;
+    hash.update(`${prefix}${values.join(',')}`);
+}
+
+function updateComponentHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const component of context.components) hash.update(`${component.kind}:${component.name}`);
+}
+
+function updateRepositoryHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const repo of context.repositories) {
+        hash.update(repo.fullName);
+        hash.update(repo.techStack.join(','));
+        hash.update((repo.topics ?? []).join(','));
+    }
+}
+
+function updateCommitHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const commit of context.commits) hash.update(commit.sha);
+}
+
+function updatePullHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const pull of context.pulls) {
+        hash.update(`pr:${pull.number}:${pull.state}:${pull.mergedAt ?? ''}`);
+    }
 }
 
 /**
@@ -90,22 +130,14 @@ export function computeInputHash(context: LoadCaseStudyContextResult): string {
     h.update(c.tagline ?? '');
     h.update(c.pitch ?? '');
     h.update(c.productContext ?? '');
-    for (const comp of c.components) h.update(`${comp.kind}:${comp.name}`);
-    for (const repo of c.repositories) {
-        h.update(repo.fullName);
-        h.update(repo.techStack.join(','));
-        h.update((repo.topics ?? []).join(','));
-    }
-    for (const commit of c.commits) {
-        h.update(commit.sha);
-    }
-    for (const pr of c.pulls) {
-        h.update(`pr:${pr.number}:${pr.state}:${pr.mergedAt ?? ''}`);
-    }
-    if (c.archetype) h.update(`arch:${c.archetype.id}`);
-    if (c.stage)     h.update(`stage:${c.stage}`);
-    if (c.prioritySections?.length)     h.update(`ps:${c.prioritySections.join(',')}`);
-    if (c.deemphasizedSections?.length) h.update(`ds:${c.deemphasizedSections.join(',')}`);
+    updateComponentHash(h, c);
+    updateRepositoryHash(h, c);
+    updateCommitHash(h, c);
+    updatePullHash(h, c);
+    updateOptionalHash(h, 'arch:', c.archetype?.id);
+    updateOptionalHash(h, 'stage:', c.stage);
+    updateListHash(h, c.prioritySections ?? [], 'ps:');
+    updateListHash(h, c.deemphasizedSections ?? [], 'ds:');
     return h.digest('hex');
 }
 
@@ -151,6 +183,20 @@ async function applyGrounding(
             ...h,
             sourceSignals: await verifyDecision(verifier, `${h.title}. ${h.description}`, h.sourceSignals),
         }))),
+    };
+}
+
+export function summarizeGrounding(caseStudy: CaseStudy): GroundingSummary {
+    const signals = [
+        ...caseStudy.decisions.map((row) => row.sourceSignals),
+        ...caseStudy.highlights.map((row) => row.sourceSignals),
+        ...caseStudy.challenges.map((row) => row.sourceSignals),
+    ];
+    return {
+        checked: signals.filter((s) => s.grounding !== 'NOT_VERIFIED').length,
+        grounded: signals.filter((s) => s.grounding === 'GROUNDED').length,
+        flagged: signals.filter((s) => s.grounding === 'NOT_GROUNDED').length,
+        notVerified: signals.filter((s) => s.grounding === 'NOT_VERIFIED').length,
     };
 }
 
@@ -210,7 +256,15 @@ export async function runCaseStudyOrchestration(
     // 4. Update the cache (fail-open; never for cache hits or refine runs).
     if (cacheable && !cacheHit) await cachePut(input.cache!, cacheKey, caseStudy);
 
-    return { cacheHit, refined, caseStudy, persisted, inputHash, contextLoaded };
+    return {
+        cacheHit,
+        refined,
+        caseStudy,
+        grounding: summarizeGrounding(caseStudy),
+        persisted,
+        inputHash,
+        contextLoaded,
+    };
 }
 
 interface CacheKey { scope: string; kbTag: string; queryText: string }

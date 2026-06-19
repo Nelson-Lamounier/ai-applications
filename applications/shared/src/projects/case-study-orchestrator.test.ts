@@ -5,9 +5,32 @@
  * identity (number/state/mergedAt) must both feed the hash so a change to
  * the underlying evidence busts the semantic cache.
  */
-import { computeInputHash } from './case-study-orchestrator.js';
+const loadCaseStudyContextMock = jest.fn();
+const persistCaseStudyMock = jest.fn();
+const reconstructPriorCaseStudyMock = jest.fn();
+const underrepresentedReposMock = jest.fn(() => []);
+const scopeEvidenceToReposMock = jest.fn((context) => context);
+
+jest.mock('./case-study-loader.js', () => ({
+    loadCaseStudyContext: loadCaseStudyContextMock,
+}));
+jest.mock('./case-study-persistence.js', () => ({
+    persistCaseStudy: persistCaseStudyMock,
+}));
+jest.mock('./case-study-refine.js', () => ({
+    reconstructPriorCaseStudy: reconstructPriorCaseStudyMock,
+    underrepresentedRepos: underrepresentedReposMock,
+    scopeEvidenceToRepos: scopeEvidenceToReposMock,
+}));
+
+import {
+    computeInputHash,
+    runCaseStudyOrchestration,
+    summarizeGrounding,
+} from './case-study-orchestrator.js';
+import type { BasePipelineContext } from '../base-agent.js';
 import type { LoadCaseStudyContextResult } from './case-study-loader.js';
-import type { CaseStudyContext } from './case-study-types.js';
+import type { CaseStudy, CaseStudyContext, SourceSignal } from './case-study-types.js';
 
 type Commit = CaseStudyContext['commits'][number];
 type Pull = CaseStudyContext['pulls'][number];
@@ -64,7 +87,102 @@ const onePull: Pull = {
     htmlUrl:      'https://github.com/acme/api/pull/42',
 };
 
+function makeSignal(grounding: SourceSignal['grounding']): SourceSignal {
+    return {
+        commits: [{ repoFullName: 'acme/api', sha: 'abc1234', authoredAt: '2026-01-01T00:00:00.000Z', message: 'init' }],
+        pulls:   [],
+        files:   [],
+        ungroundedClaims: grounding === 'NOT_GROUNDED' ? ['unsupported claim'] : [],
+        grounding,
+    };
+}
+
+function caseStudyWithVerdicts(
+    decision: SourceSignal['grounding'] = 'NOT_VERIFIED',
+    highlight: SourceSignal['grounding'] = 'NOT_VERIFIED',
+    challenge: SourceSignal['grounding'] = 'NOT_VERIFIED',
+): CaseStudy {
+    return {
+        tagline: 'A recruiter-facing project summary',
+        pitch:   'I built a product that solves a real problem.',
+        stack:   [],
+        decisions: [{
+            title:         'Used queues',
+            context:       'Traffic spikes caused back-pressure.',
+            decision:      'I added a queue.',
+            consequences:  'Workers could retry safely.',
+            confidence:    'high',
+            sourceSignals: makeSignal(decision),
+        }],
+        highlights: [{
+            title:         'Launched self-serve flow',
+            description:   'Customers could onboard without support.',
+            sourceSignals: makeSignal(highlight),
+        }],
+        challenges: [{
+            problem:       'Imports timed out on large payloads.',
+            solution:      'I moved them into a background worker.',
+            sourceSignals: makeSignal(challenge),
+        }],
+        depthMarkers: {
+            hasTests:              true,
+            testCoverageSignal:    'moderate',
+            hasCi:                 true,
+            ciMaturity:            'basic',
+            documentationDensity:  'docs_dir',
+            hasDeploymentEvidence: true,
+            deploymentUrl:         'https://example.com',
+            refactorCount:         1,
+        },
+        architecture: {
+            diagramFormat: 'mermaid',
+            diagramSource: 'graph TD\nA[API] --> B[(DB)]',
+            nodes:         [],
+            edges:         [],
+        },
+        resumeBullets: [{
+            angle:   'backend',
+            bullets: ['Built an asynchronous import pipeline.'],
+        }],
+    };
+}
+
+function makePersisted() {
+    return {
+        stackItemsInserted:        0,
+        decisionsInserted:         0,
+        highlightsInserted:        0,
+        challengesInserted:        0,
+        resumeBulletSetsUpserted:  1,
+        architectureUpserted:      true,
+        depthMarkersUpserted:      true,
+        skippedSections:           [],
+    };
+}
+
+function makePipelineContext(): BasePipelineContext {
+    return {
+        pipelineId: 'pipeline-1',
+        environment: 'test',
+        cumulativeTokens: { input: 0, output: 0, thinking: 0 },
+        cumulativeCostUsd: 0,
+    };
+}
+
+function makePool() {
+    return {
+        connect: jest.fn().mockResolvedValue({ release: jest.fn() }),
+    };
+}
+
 describe('computeInputHash', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        reconstructPriorCaseStudyMock.mockResolvedValue(null);
+        underrepresentedReposMock.mockReturnValue([]);
+        scopeEvidenceToReposMock.mockImplementation((context) => context);
+    });
+
     it('is deterministic for identical input', () => {
         expect(computeInputHash(makeContext())).toBe(computeInputHash(makeContext()));
     });
@@ -111,5 +229,64 @@ describe('computeInputHash', () => {
         expect(withArch).not.toBe(base);
         // Two absent-archetype contexts hash identically (cache back-compat).
         expect(computeInputHash(makeContext())).toBe(base);
+    });
+
+    it('summarizes grounding verdicts across decisions, highlights, and challenges', () => {
+        expect(summarizeGrounding(caseStudyWithVerdicts(
+            'GROUNDED',
+            'NOT_GROUNDED',
+            'NOT_VERIFIED',
+        ))).toEqual({ checked: 2, grounded: 1, flagged: 1, notVerified: 1 });
+    });
+
+    it('returns grounding summary for generated case studies', async () => {
+        const pool = makePool();
+        const caseStudy = caseStudyWithVerdicts('GROUNDED', 'NOT_GROUNDED', 'NOT_VERIFIED');
+        const agent = { invoke: jest.fn().mockResolvedValue({ data: caseStudy }) };
+
+        loadCaseStudyContextMock.mockResolvedValue(makeContext());
+        persistCaseStudyMock.mockResolvedValue(makePersisted());
+
+        const result = await runCaseStudyOrchestration(pool as never, {
+            projectId: 'proj-1',
+            pipelineRunId: 'run-1',
+            model: 'eu.anthropic.claude-sonnet-4-6',
+            kbTag: 'kb-1',
+            agent: agent as never,
+            ctx: makePipelineContext(),
+        });
+
+        expect(result.cacheHit).toBe(false);
+        expect(result.grounding).toEqual({ checked: 2, grounded: 1, flagged: 1, notVerified: 1 });
+        expect(agent.invoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns grounding summary for cached case studies', async () => {
+        const pool = makePool();
+        const caseStudy = caseStudyWithVerdicts('NOT_GROUNDED', 'GROUNDED', 'NOT_VERIFIED');
+        const agent = { invoke: jest.fn() };
+        const cache = {
+            get: jest.fn().mockResolvedValue({ hit: true, response: caseStudy }),
+            put: jest.fn(),
+            invalidate: jest.fn(),
+        };
+
+        loadCaseStudyContextMock.mockResolvedValue(makeContext());
+        persistCaseStudyMock.mockResolvedValue(makePersisted());
+
+        const result = await runCaseStudyOrchestration(pool as never, {
+            projectId: 'proj-1',
+            pipelineRunId: 'run-1',
+            model: 'eu.anthropic.claude-sonnet-4-6',
+            kbTag: 'kb-1',
+            agent: agent as never,
+            cache: cache as never,
+            ctx: makePipelineContext(),
+        });
+
+        expect(result.cacheHit).toBe(true);
+        expect(result.grounding).toEqual({ checked: 2, grounded: 1, flagged: 1, notVerified: 1 });
+        expect(agent.invoke).not.toHaveBeenCalled();
+        expect(cache.put).not.toHaveBeenCalled();
     });
 });

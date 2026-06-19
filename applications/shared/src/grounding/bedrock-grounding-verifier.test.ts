@@ -6,8 +6,12 @@ jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
 const emitMock = jest.fn();
 jest.mock('../emf.js', () => ({ emitEmfMetric: (...a: unknown[]) => emitMock(...a) }));
 const recordCostMock = jest.fn(async () => {});
-jest.mock('../rds/bedrock-cost.js', () => ({ recordBedrockCost: recordCostMock }));
+jest.mock('../rds/bedrock-cost.js', () => ({
+    ...jest.requireActual('../rds/bedrock-cost.js'),
+    recordBedrockCost: recordCostMock,
+}));
 
+import { computeCostCents } from '../rds/bedrock-cost.js';
 import { BedrockGroundingVerifier } from './bedrock-grounding-verifier.js';
 import type { ConverseCommandOutput } from '@aws-sdk/client-bedrock-runtime';
 
@@ -38,8 +42,40 @@ describe('BedrockGroundingVerifier', () => {
         await new BedrockGroundingVerifier({ mode: 'flag' }).verify(input, { pool, userId: 'user-9' });
         expect(recordCostMock).toHaveBeenCalledTimes(1);
         expect(recordCostMock).toHaveBeenCalledWith(pool, expect.objectContaining({
-            userId: 'user-9', pipeline: 'grounding-verify', inputTokens: 320, outputTokens: 12,
+            userId: 'user-9', pipeline: 'grounding-verify', agent: 'grounding-verifier', inputTokens: 320, outputTokens: 12,
         }));
+    });
+
+    it('uses the configured cost context and reports grounding usage', async () => {
+        recordCostMock.mockClear();
+        const onUsage = jest.fn();
+        sendMock.mockResolvedValueOnce(modelReply('GROUNDED\nReason: ok', { inputTokens: 320, outputTokens: 12 }));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pool = {} as any;
+
+        await new BedrockGroundingVerifier({
+            mode: 'flag',
+            costContext: {
+                pool,
+                userId: 'user-9',
+                projectId: '00000000-0000-4000-8000-000000000001',
+                traceId: '0123456789abcdef0123456789abcdef',
+            },
+            onUsage,
+        }).verify(input);
+
+        expect(recordCostMock).toHaveBeenCalledWith(pool, expect.objectContaining({
+            pipeline: 'grounding-verify',
+            agent: 'grounding-verifier',
+            projectId: '00000000-0000-4000-8000-000000000001',
+            traceId: '0123456789abcdef0123456789abcdef',
+        }));
+        expect(onUsage).toHaveBeenCalledWith({
+            calls: 1,
+            inputTokens: 320,
+            outputTokens: 12,
+            costUsd: computeCostCents('eu.anthropic.claude-haiku-4-5-20251001-v1:0', 320, 12).totalCostCents / 100,
+        });
     });
 
     it('does not record cost when no costCtx is supplied', async () => {

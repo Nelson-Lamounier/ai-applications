@@ -15,7 +15,10 @@ import {
 import type { Pool } from 'pg';
 
 import { emitEmfMetric } from '../emf.js';
-import { recordBedrockCost } from '../rds/bedrock-cost.js';
+import {
+    computeCostCents,
+    recordBedrockCost,
+} from '../rds/bedrock-cost.js';
 import {
     DEFAULT_GROUNDING_FALLBACK,
     type GroundingInput,
@@ -32,6 +35,15 @@ const METRIC_NAMESPACE = 'BedrockSharedSafety';
 export interface GroundingCostContext {
     pool:   Pool;
     userId: string;
+    projectId?: string;
+    traceId?: string;
+}
+
+export interface GroundingUsage {
+    calls: 1;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
 }
 
 export interface BedrockGroundingVerifierConfig {
@@ -39,6 +51,8 @@ export interface BedrockGroundingVerifierConfig {
     readonly modelId?: string;
     readonly fallback?: string;
     readonly client?: BedrockRuntimeClient;
+    readonly costContext?: GroundingCostContext;
+    readonly onUsage?: (usage: GroundingUsage) => void;
 }
 
 function buildPrompt(i: GroundingInput): string {
@@ -56,19 +70,56 @@ function buildPrompt(i: GroundingInput): string {
     ].join('\n');
 }
 
-function parse(text: string): { status: 'GROUNDED' | 'NOT_GROUNDED'; reason: string; claims: string[] } {
-    const grounded = /\bGROUNDED\b/.test(text) && !/\bNOT_GROUNDED\b/.test(text);
-    const reason = /Reason:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
+function hasVerdict(text: string): boolean {
+    return /\bGROUNDED\b/.test(text) || /\bNOT_GROUNDED\b/.test(text);
+}
+
+function isGroundedVerdict(text: string): boolean {
+    return /\bGROUNDED\b/.test(text) && !/\bNOT_GROUNDED\b/.test(text);
+}
+
+function parseReason(text: string): string {
+    return /Reason:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
+}
+
+function parseClaims(text: string): string[] {
     const claimsRaw = /Claims:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
-    const claims = claimsRaw ? claimsRaw.split(';').map(c => c.trim()).filter(Boolean) : [];
-    const hasVerdict = /\bGROUNDED\b/.test(text) || /\bNOT_GROUNDED\b/.test(text);
-    if (!hasVerdict) {
-        console.warn(
-            '[grounding-verifier] unparseable model output — defaulting to NOT_GROUNDED:',
-            text.substring(0, 200),
-        );
-    }
-    return { status: grounded ? 'GROUNDED' : 'NOT_GROUNDED', reason, claims };
+    return claimsRaw ? claimsRaw.split(';').map(c => c.trim()).filter(Boolean) : [];
+}
+
+function warnIfUnparseable(text: string): void {
+    if (hasVerdict(text)) return;
+    console.warn(
+        '[grounding-verifier] unparseable model output — defaulting to NOT_GROUNDED:',
+        text.substring(0, 200),
+    );
+}
+
+function parse(text: string): { status: 'GROUNDED' | 'NOT_GROUNDED'; reason: string; claims: string[] } {
+    warnIfUnparseable(text);
+    return {
+        status: isGroundedVerdict(text) ? 'GROUNDED' : 'NOT_GROUNDED',
+        reason: parseReason(text),
+        claims: parseClaims(text),
+    };
+}
+
+function usageFromResponse(modelId: string, response: ConverseCommandOutput): GroundingUsage {
+    const inputTokens = response.usage?.inputTokens ?? 0;
+    const outputTokens = response.usage?.outputTokens ?? 0;
+    const { totalCostCents } = computeCostCents(modelId, inputTokens, outputTokens);
+    return {
+        calls: 1,
+        inputTokens,
+        outputTokens,
+        costUsd: totalCostCents / 100,
+    };
+}
+
+function textFromResponse(response: ConverseCommandOutput): string {
+    return response.output?.message?.content?.find(
+        (block): block is { text: string } => typeof (block as { text?: unknown }).text === 'string',
+    )?.text ?? '';
 }
 
 export class BedrockGroundingVerifier implements IGroundingVerifier {
@@ -76,12 +127,33 @@ export class BedrockGroundingVerifier implements IGroundingVerifier {
     private readonly modelId: string;
     private readonly fallback: string;
     private readonly client: BedrockRuntimeClient;
+    private readonly costContext?: GroundingCostContext;
+    private readonly onUsage?: (usage: GroundingUsage) => void;
 
     constructor(config: BedrockGroundingVerifierConfig) {
         this.mode = config.mode;
         this.modelId = config.modelId ?? process.env.GROUNDING_MODEL_ID ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
         this.fallback = config.fallback ?? DEFAULT_GROUNDING_FALLBACK;
         this.client = config.client ?? new BedrockRuntimeClient({});
+        this.costContext = config.costContext;
+        this.onUsage = config.onUsage;
+    }
+
+    private async recordGroundingCost(
+        usage: GroundingUsage,
+        costContext?: GroundingCostContext,
+    ): Promise<void> {
+        if (!costContext?.userId) return;
+        await recordBedrockCost(costContext.pool, {
+            userId:       costContext.userId,
+            modelId:      this.modelId,
+            pipeline:     'grounding-verify',
+            agent:        'grounding-verifier',
+            projectId:    costContext.projectId,
+            traceId:      costContext.traceId,
+            inputTokens:  usage.inputTokens,
+            outputTokens: usage.outputTokens,
+        }).catch((err) => console.warn('[grounding-verifier] cost record failed (non-fatal)', err));
     }
 
     async verify(input: GroundingInput, costCtx?: GroundingCostContext): Promise<GroundingResult> {
@@ -91,25 +163,16 @@ export class BedrockGroundingVerifier implements IGroundingVerifier {
             inferenceConfig: { maxTokens: 512 },
         });
         const response: ConverseCommandOutput = await this.client.send(command);
+        const resolvedCostContext = costCtx ?? this.costContext;
+        const usage = usageFromResponse(this.modelId, response);
+        this.onUsage?.(usage);
+        // Awaited (not fire-and-forget): the INSERT must finish before the caller
+        // returns, else a short-lived pool (run-coach) can close before the dangling
+        // query runs ("Cannot use a pool after calling end on the pool"). Stays
+        // fail-open via .catch.
+        await this.recordGroundingCost(usage, resolvedCostContext);
 
-        if (costCtx?.userId) {
-            // Awaited (not fire-and-forget): the INSERT must finish before the caller
-            // returns, else a short-lived pool (run-coach) can close before the dangling
-            // query runs ("Cannot use a pool after calling end on the pool"). Stays
-            // fail-open via .catch.
-            await recordBedrockCost(costCtx.pool, {
-                userId:       costCtx.userId,
-                modelId:      this.modelId,
-                pipeline:     'grounding-verify',
-                inputTokens:  response.usage?.inputTokens  ?? 0,
-                outputTokens: response.usage?.outputTokens ?? 0,
-            }).catch((err) => console.warn('[grounding-verifier] cost record failed (non-fatal)', err));
-        }
-
-        const text =
-            response.output?.message?.content?.find(
-                (b): b is { text: string } => typeof (b as { text?: unknown }).text === 'string',
-            )?.text ?? '';
+        const text = textFromResponse(response);
         const { status, reason, claims } = parse(text);
 
         emitEmfMetric(
