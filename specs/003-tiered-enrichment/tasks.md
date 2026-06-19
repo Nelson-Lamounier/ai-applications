@@ -28,11 +28,11 @@ Tests/eval ARE requested (Constitution VI — per-tier recall/precision vs the p
 
 **Goal**: deterministic SKILLS from a chunk's existing `file_tech_stack` (zero LLM) — the real cost lever (skills are the expensive LLM output). The ~33.5% of chunks with file tech can skip the LLM. **Independent test**: a chunk whose `file_tech_stack` contains a mapped tech → the mapped canonical skill, no model call; precision guard holds.
 
-- [ ] T010 [US1] Migration `0NN_tech_skill_map.sql` (ledger + checksum) creating + seeding `tech_skill_map (tech_canonical → skill_canonical)` from `TechnologyDerivedSkillSource` + `mapTechCategoryToSkillCategory`.
-- [ ] T011 [P] [US1] `TechSkillMapRepository.ts` to load the rule map (cached reference read).
-- [ ] T012 [US1] Pure `tier1-skill-rules.ts`: read a chunk's existing `metadata.file_tech_stack` (produced by the parallel `extract_tech`, canonical tech names) + rule map → canonical skills, with the per-chunk evidence guard (FR-008). No JOIN, no model call — the tech is already on the chunk.
-- [ ] T013 [P] [US1] Unit-test `tier1-skill-rules.test.ts` — file_tech_stack tech → mapped skill; over-tag prevented; canonical-only output; chunk with no file_tech_stack → residual.
-- [ ] T014 [US1] Wire Tier 1 behind `ENRICH_TIER1=1` in the cascade; residual chunks (no file_tech_stack or no rule hit) pass down-cascade; record `resolvedBy=tier1`.
+- [X] T010 [US1] Migration `0NN_tech_skill_map.sql` (ledger + checksum) creating + seeding `tech_skill_map (tech_canonical → skill_canonical)` from `TechnologyDerivedSkillSource` + `mapTechCategoryToSkillCategory`.
+- [X] T011 [P] [US1] `TechSkillMapRepository.ts` to load the rule map (cached reference read).
+- [X] T012 [US1] Pure `tier1-skill-rules.ts`: read a chunk's existing `metadata.file_tech_stack` (produced by the parallel `extract_tech`, canonical tech names) + rule map → canonical skills, with the per-chunk evidence guard (FR-008). No JOIN, no model call — the tech is already on the chunk.
+- [X] T013 [P] [US1] Unit-test `tier1-skill-rules.test.ts` — file_tech_stack tech → mapped skill; over-tag prevented; canonical-only output; chunk with no file_tech_stack → residual.
+- [X] T014 [US1] Wire Tier 1 behind `ENRICH_TIER1=1` in the cascade; residual chunks (no file_tech_stack or no rule hit) pass down-cascade; record `resolvedBy=tier1`.
 
 ## Phase 5: User Story 3 — Tier 2 embedding classification (P1)
 

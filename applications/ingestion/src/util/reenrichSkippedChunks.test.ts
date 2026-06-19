@@ -3,7 +3,7 @@ import { reenrichSkippedChunks } from './reenrichSkippedChunks.js';
 import type { Pool } from 'pg';
 import type { IChunkEnricher } from '@bedrock/shared';
 
-function makePool(skippedRows: Array<{ id: string; file_path: string; heading: string | null; content: string }>) {
+function makePool(skippedRows: Array<{ id: string; file_path: string; heading: string | null; content: string; file_tech_stack?: string[] | null }>) {
     const updates: Array<{ skills: string[]; id: string }> = [];
     const query = jest.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('SELECT')) return { rows: skippedRows };
@@ -30,7 +30,7 @@ describe('reenrichSkippedChunks', () => {
 
         const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1 });
 
-        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0, stoppedEarly: false, remaining: 0 });
+        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0, tier1Resolved: 0, stoppedEarly: false, remaining: 0 });
         expect((enricher.enrich as jest.Mock)).toHaveBeenCalledTimes(2);
         expect(updates).toHaveLength(2);
         expect(updates[0]).toEqual({ skills: ['kubernetes networking'], id: 'a' });
@@ -72,7 +72,7 @@ describe('reenrichSkippedChunks', () => {
 
         expect((enricher.enrich as jest.Mock)).not.toHaveBeenCalled();
         expect(updates).toHaveLength(0);
-        expect(result).toEqual({ candidates: 2, enriched: 0, failed: 0, stoppedEarly: true, remaining: 2 });
+        expect(result).toEqual({ candidates: 2, enriched: 0, failed: 0, tier1Resolved: 0, stoppedEarly: true, remaining: 2 });
     });
 
     it('applies a limit clause when provided', async () => {
@@ -80,6 +80,25 @@ describe('reenrichSkippedChunks', () => {
         const enricher: IChunkEnricher = { enrich: jest.fn(async () => ({ skills: [], technologies: [] })) };
         await reenrichSkippedChunks(pool, enricher, { limit: 50 });
         expect(query.mock.calls[0][0] as string).toMatch(/LIMIT 50/);
+    });
+
+    it('Tier 1 resolves chunks with file_tech_stack deterministically — no LLM call', async () => {
+        const tieredRows = [
+            { id: 'a', file_path: 'infra/cdk.ts', heading: null, content: 'cdk app', file_tech_stack: ['aws_cdk'] },
+            { id: 'b', file_path: 'docs/readme.md', heading: null, content: 'prose', file_tech_stack: null },
+        ];
+        const { pool, updates } = makePool(tieredRows);
+        const enrich = jest.fn(async () => ({ skills: ['llm-skill'], technologies: [] }));
+        const enricher: IChunkEnricher = { enrich };
+        const tier1Map = new Map<string, readonly string[]>([['aws_cdk', ['aws cdk', 'infrastructure as code']]]);
+
+        const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1, tier1Map });
+
+        expect(result.tier1Resolved).toBe(1);                       // chunk a via Tier 1
+        expect((enrich as jest.Mock)).toHaveBeenCalledTimes(1);     // only chunk b (no file_tech_stack) hit the LLM
+        expect(updates.find((u) => u.id === 'a')?.skills).toEqual(['aws cdk', 'infrastructure as code']);
+        expect(updates.find((u) => u.id === 'b')?.skills).toEqual(['llm-skill']);
+        expect(result.enriched).toBe(2);
     });
 
     it('reenrichAll drops the status filter — re-processes every chunk (rollout)', async () => {

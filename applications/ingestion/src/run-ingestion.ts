@@ -45,6 +45,7 @@ import {
     RdsRepoActivityStore,
     RdsRepoFileStateRepository,
     stampUserEvidenceMetadata,
+    TechSkillMapRepository,
     reconcileRepoName,
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -210,10 +211,16 @@ async function runDeferredEnrichment(
 ): Promise<void> {
     // Cut-off so the cost sum below counts only THIS pass's enrichment calls.
     const startedAt = new Date().toISOString();
+    // Tier 1 (spec 003): load the tech->skill map so chunks with file_tech_stack
+    // (stamped just above, before this pass) resolve deterministically — no LLM.
+    const tier1Map = process.env['ENRICH_TIER1'] === '1'
+        ? await new TechSkillMapRepository(pgPool).loadTechSkillMap().catch(() => undefined)
+        : undefined;
     try {
         const reenriched = await reenrichSkippedChunks(pgPool, enricher, {
             userId,
             repoFullName,
+            tier1Map,
             deadlineMs: enrichmentDeadlineMs(),
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {
