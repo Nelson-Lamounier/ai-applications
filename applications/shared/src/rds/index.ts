@@ -126,6 +126,8 @@ export { assignSkillsToChunks } from './enrichment/assignSkillsToChunks.js';
 export type { SkillAssignment, SkillEvidence } from './enrichment/assignSkillsToChunks.js';
 export { tier1SkillsFromTech } from './enrichment/tier1-skill-rules.js';
 export { TechSkillMapRepository } from './implementations/TechSkillMapRepository.js';
+export { packChunks } from './enrichment/packChunks.js';
+export type { PackItem, ChunkPack } from './enrichment/packChunks.js';
 export { SkillOntologyWriteRepository } from './implementations/SkillOntologyWriteRepository.js';
 export { scoreSkillResolution } from './ontology/evaluateSkillResolution.js';
 export type { ResolutionOutcome, ResolutionScore } from './ontology/evaluateSkillResolution.js';

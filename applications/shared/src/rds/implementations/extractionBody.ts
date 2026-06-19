@@ -76,3 +76,89 @@ export function parseExtractionSkills(
     const tu = content.find((b) => b.type === 'tool_use' && b.name === 'record_extraction');
     return tu?.input?.skills ?? [];
 }
+
+// =============================================================================
+// Chunk-packing (feature 004): many chunks per call, skills keyed per chunk.
+// =============================================================================
+
+/** Per-chunk extraction tool — skills keyed by the chunk's stable id (not positional). */
+export const ENRICH_PACK_TOOL_SCHEMA = {
+    name:        'record_extractions',
+    description: 'Records the extracted skills for EACH chunk, keyed by its id.',
+    input_schema: {
+        type: 'object',
+        properties: {
+            extractions: {
+                type:  'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        key:    { type: 'string', description: 'The chunk id from its "=== CHUNK <id> ===" header.' },
+                        skills: { type: 'array', items: { type: 'string' }, description: 'Domain capabilities the chunk evidences. Lowercased.' },
+                    },
+                    required: ['key', 'skills'],
+                    additionalProperties: false,
+                },
+            },
+        },
+        required: ['extractions'],
+        additionalProperties: false,
+    },
+};
+
+export interface PackBodyItem { key: string; filePath: string; content: string; heading?: string }
+
+/** User message: a shared instruction + one labelled block per chunk, keyed by id. */
+function buildPackUserMessage(items: readonly PackBodyItem[]): string {
+    const blocks = items.map((it) => [
+        `=== CHUNK ${it.key} ===`,
+        `File: ${it.filePath}`,
+        `Section: ${it.heading ?? '(no heading)'}`,
+        'Content:',
+        '"""',
+        it.content,
+        '"""',
+    ].join('\n'));
+    return [
+        `Extract skills for EACH of the ${items.length} chunks below.`,
+        'Return exactly one entry per chunk via the record_extractions tool, keyed by the exact id in its "=== CHUNK <id> ===" header.',
+        'Judge each chunk ONLY on its own content — do not let one chunk\'s skills bleed into another.',
+        '',
+        ...blocks,
+    ].join('\n\n');
+}
+
+/**
+ * The Anthropic Messages body for a PACK of chunks (feature 004): the SAME system
+ * prompt as the per-chunk call, paid once, with N labelled chunks and a keyed
+ * record_extractions tool. `max_tokens` scales with the pack size so every
+ * chunk's skill list has room (a short response is caught + falls back).
+ */
+export function buildPackExtractionBody(items: readonly PackBodyItem[]): Record<string, unknown> {
+    return {
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens:        Math.min(4000, 128 + items.length * 160),
+        temperature:       0,
+        system:            ENRICH_SYSTEM_PROMPT,
+        tools:             [ENRICH_PACK_TOOL_SCHEMA],
+        tool_choice:       { type: 'tool', name: 'record_extractions' },
+        messages:          [{ role: 'user', content: buildPackUserMessage(items) }],
+    };
+}
+
+/** Pure: key -> raw skills from a record_extractions tool_use. Missing keys absent
+ *  (→ caller fallback), extras ignored, duplicate keys last-wins. Never positional. */
+export function parsePackSkills(
+    content: ReadonlyArray<{ type: string; name?: string; input?: { extractions?: unknown } }>,
+): Map<string, unknown[]> {
+    const out = new Map<string, unknown[]>();
+    const tu = content.find((b) => b.type === 'tool_use' && b.name === 'record_extractions');
+    const arr = tu?.input?.extractions;
+    if (!Array.isArray(arr)) return out;
+    for (const e of arr) {
+        if (e && typeof (e as { key?: unknown }).key === 'string' && Array.isArray((e as { skills?: unknown }).skills)) {
+            out.set((e as { key: string }).key, (e as { skills: unknown[] }).skills);
+        }
+    }
+    return out;
+}

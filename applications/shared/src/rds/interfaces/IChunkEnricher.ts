@@ -21,6 +21,7 @@
 
 import type { RawChunk } from '../types.js';
 import type { BatchEnrichItem } from '../../bedrock/BedrockBatchEnrich.js';
+import type { PackBodyItem } from '../implementations/extractionBody.js';
 
 export interface ChunkEnrichment {
     /** Domain capabilities (e.g. "kubernetes networking"). Lowercased. */
@@ -44,4 +45,12 @@ export interface IChunkEnricher {
      * inline enrich, never zero-skill.
      */
     enrichBatch?(items: readonly BatchEnrichItem[], runKey: string): Promise<Map<string, ChunkEnrichment>>;
+    /**
+     * Enrich a PACK of chunks in ONE model call (feature 004 chunk-packing) —
+     * the shared system prompt is paid once. Returns skills keyed by each item's
+     * stable id. Keys absent from the response are omitted (caller re-enriches
+     * them per-chunk). Optional; may throw on transport error (caller falls the
+     * whole pack back to per-chunk).
+     */
+    enrichPack?(items: readonly PackBodyItem[]): Promise<Map<string, ChunkEnrichment>>;
 }

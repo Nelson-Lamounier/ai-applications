@@ -32,7 +32,7 @@ import type { RawChunk } from '../types.js';
 import type { Pool } from 'pg';
 import { recordBedrockCost } from '../bedrock-cost.js';
 import { canonicaliseSkills } from '../ontology/canonicaliseSkills.js';
-import { buildExtractionBody } from './extractionBody.js';
+import { buildExtractionBody, buildPackExtractionBody, parsePackSkills, type PackBodyItem } from './extractionBody.js';
 import { BedrockBatchEnrich, buildEnrichRecords, type BatchEnrichItem } from '../../bedrock/BedrockBatchEnrich.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -185,6 +185,55 @@ export class BedrockChunkEnricher implements IChunkEnricher {
             // document_embeddings.technologies column.
             technologies: [],
         };
+    }
+
+    /**
+     * Enrich a PACK of chunks in ONE model call (feature 004 chunk-packing).
+     * Sends the chunks under the SAME system prompt (paid once, not per chunk)
+     * and returns skills keyed by each chunk's stable id, canonicalised via the
+     * SAME cascade as the per-chunk path. Books ONE cost record for the call.
+     * Keys absent from the response are simply not in the map — the caller
+     * re-enriches those chunks per-chunk (fail-safe). Throws only on transport
+     * error, so the caller can fall the whole pack back.
+     */
+    async enrichPack(items: readonly PackBodyItem[]): Promise<Map<string, ChunkEnrichment>> {
+        const body = JSON.stringify(buildPackExtractionBody(items));
+
+        const { body: responseBody } = await this.client.send(
+            new InvokeModelCommand({
+                modelId:     this.modelId,
+                contentType: 'application/json',
+                accept:      'application/json',
+                body:        Buffer.from(body),
+            }),
+        );
+
+        const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as AnthropicResponse;
+
+        // ONE cost record for the packed call (FR-009) — accurate per-repo telemetry.
+        if (this.costCtx) {
+            recordBedrockCost(this.costCtx.pool, {
+                userId:       this.costCtx.userId,
+                modelId:      this.modelId,
+                pipeline:     'repo-sync',
+                agent:        'chunk-enrich',
+                inputTokens:  parsed.usage?.input_tokens  ?? 0,
+                outputTokens: parsed.usage?.output_tokens ?? 0,
+                repoName:     this.costCtx.repoName,
+                syncKind:     this.costCtx.syncKind,
+            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
+        }
+
+        // The packed tool_use carries `extractions` (not `skills`); the typed
+        // AnthropicToolUseBlock only models the per-chunk shape, so widen here.
+        const rawByKey = parsePackSkills(
+            parsed.content as unknown as ReadonlyArray<{ type: string; name?: string; input?: { extractions?: unknown } }>,
+        );
+        const out = new Map<string, ChunkEnrichment>();
+        for (const [key, raw] of rawByKey) {
+            out.set(key, { skills: await this.resolveSkills(raw), technologies: [] });
+        }
+        return out;
     }
 
     /**

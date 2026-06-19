@@ -32,6 +32,7 @@ import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { assignSkillsToChunks } from '../enrichment/assignSkillsToChunks.js';
 import { groupChunksByFile } from '../enrichment/groupChunksByFile.js';
+import { packChunks } from '../enrichment/packChunks.js';
 import { computeKbQuality } from '../quality/computeKbQuality.js';
 import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
@@ -458,27 +459,21 @@ export class IngestionPipeline {
             return this.enrichChunksPerFile(userId, repoFullName, chunks);
         }
 
+        // Chunk-packing lever (feature 004): many chunks per model call, skills
+        // keyed per chunk (the recall-safe cost cut — the model still judges each
+        // chunk). Opt-in + requires enrichPack; missing keys + pack errors fall
+        // back to per-chunk (fail-safe).
+        if (process.env.ENRICH_PACK === '1' && this.enricher.enrichPack) {
+            return this.enrichChunksPacked(userId, repoFullName, chunks);
+        }
+
         const out: RawChunk[] = new Array(chunks.length);
         const cap = this.maxEnrichmentPerRun;
         let enrichDone = 0;
 
-        // Batch lever (US3, recall-neutral): submit the per-chunk calls as ONE
-        // Bedrock batch job (~50% cheaper) — identical model calls, just async,
-        // so skills are byte-equivalent to inline. Fail-safe: any batch error
-        // leaves chunkBatch null and the inline enrich below runs.
-        let chunkBatch: Map<string, ChunkEnrichment> | null = null;
-        if (process.env.ENRICH_BATCH === '1' && this.enricher.enrichBatch) {
-            const runKey = `${repoFullName}/${userId}`.replace(/[^a-zA-Z0-9.-]/g, '-');
-            try {
-                const items = chunks.slice(0, cap).map((c) => ({
-                    id: `${c.filePath}::${c.chunkIndex}`, filePath: c.filePath, content: c.content, heading: c.heading,
-                }));
-                chunkBatch = await this.enricher.enrichBatch(items, runKey);
-            } catch (err) {
-                console.warn('[IngestionPipeline.enrichChunks] batch failed — falling back to inline:', err);
-                chunkBatch = null;
-            }
-        }
+        // Batch lever (US3, recall-neutral): the per-chunk calls as ONE Bedrock
+        // batch job (~50% cheaper). Fail-safe — null leaves the inline path below.
+        const chunkBatch = await this.tryChunkBatch(userId, repoFullName, chunks, cap);
 
         const enrichOne = async (idx: number): Promise<void> => {
             const chunk = chunks[idx];
@@ -634,6 +629,89 @@ export class IngestionPipeline {
                 metadata: { ...(c.metadata ?? {}), enrichment_status: statusByKey.get(key) ?? 'ok' },
             };
         });
+    }
+
+    /** Per-chunk Bedrock batch (feature 002 US3) — null when off/failed (caller uses inline). */
+    private async tryChunkBatch(userId: string, repoFullName: string, chunks: RawChunk[], cap: number): Promise<Map<string, ChunkEnrichment> | null> {
+        if (process.env.ENRICH_BATCH !== '1' || !this.enricher!.enrichBatch) return null;
+        const runKey = `${repoFullName}/${userId}`.replace(/[^a-zA-Z0-9.-]/g, '-');
+        try {
+            const items = chunks.slice(0, cap).map((c) => ({
+                id: `${c.filePath}::${c.chunkIndex}`, filePath: c.filePath, content: c.content, heading: c.heading,
+            }));
+            return await this.enricher!.enrichBatch(items, runKey);
+        } catch (err) {
+            console.warn('[IngestionPipeline.enrichChunks] batch failed — falling back to inline:', err);
+            return null;
+        }
+    }
+
+    /**
+     * Packed enrichment (feature 004): group chunks into packs, one model call
+     * per pack via enrichPack, attribute skills back BY KEY (filePath::chunkIndex
+     * — never positional). Missing keys (model dropped/short) and whole-pack
+     * transport errors fall back to per-chunk enrich, so skills are never lost or
+     * mis-mapped. Calls ≈ chunks / packSize.
+     */
+    private async enrichChunksPacked(userId: string, repoFullName: string, chunks: RawChunk[]): Promise<RawChunk[]> {
+        const cap = this.maxEnrichmentPerRun;
+        const packSize = Number.parseInt(process.env.ENRICH_PACK_SIZE ?? '20', 10) || 20;
+        const maxChars = Number.parseInt(process.env.ENRICH_PACK_MAX_CHARS ?? '24000', 10) || 24_000;
+        const out: RawChunk[] = new Array(chunks.length);
+        const keyOf = (c: RawChunk): string => `${c.filePath}::${c.chunkIndex}`;
+
+        const idxByKey = new Map<string, number>();
+        const packable: { key: string; filePath: string; content: string; heading?: string }[] = [];
+        chunks.forEach((c, i) => {
+            if (i >= cap) { out[i] = withMetadata(c, { enrichment_status: 'skipped_quota' }); return; }
+            idxByKey.set(keyOf(c), i);
+            packable.push({ key: keyOf(c), filePath: c.filePath, content: c.content, heading: c.heading });
+        });
+        const packs = packChunks(packable, packSize, maxChars);
+
+        const enrichPackOne = async (pack: { items: { key: string; filePath: string; content: string; heading?: string }[] }): Promise<void> => {
+            let result: Map<string, { skills: string[] }> | null = null;
+            try {
+                result = await this.enricher!.enrichPack!(pack.items);
+            } catch (err) {
+                console.warn('[IngestionPipeline.enrichChunksPacked] pack failed — per-chunk fallback:', err);
+            }
+            for (const item of pack.items) {
+                const idx = idxByKey.get(item.key);
+                if (idx === undefined) continue;
+                try {
+                    const fromPack = result?.get(item.key);
+                    const { skills } = fromPack ?? await this.enricher!.enrich(chunks[idx]);   // missing key -> per-chunk
+                    out[idx] = { ...chunks[idx], skills, technologies: [], metadata: { ...(chunks[idx].metadata ?? {}), enrichment_status: 'ok' } };
+                } catch (err) {
+                    console.error(`[IngestionPipeline.enrichChunksPacked] failed for ${item.key}:`, err);
+                    out[idx] = withMetadata(chunks[idx], { enrichment_status: 'failed' });
+                }
+            }
+        };
+
+        let next = 0;
+        const currentCtx = context.active();
+        await Promise.all(
+            Array.from({ length: Math.min(ENRICHMENT_CONCURRENCY, packs.length) }, () =>
+                context.with(currentCtx, async () => {
+                    while (true) {
+                        const myIdx = next++;
+                        if (myIdx >= packs.length) return;
+                        await enrichPackOne(packs[myIdx]);
+                        await this.syncState
+                            .markPhase(userId, repoFullName, 'enriching', Math.min((myIdx + 1) * packSize, packable.length), packable.length)
+                            .catch(() => { /* advisory progress */ });
+                    }
+                }),
+            ),
+        );
+
+        console.info(
+            `[IngestionPipeline] packed enrichment: ${packs.length} model calls for ${packable.length} chunks ` +
+            `(~${(packable.length / Math.max(packs.length, 1)).toFixed(1)} per call)`,
+        );
+        return out;
     }
 }
 

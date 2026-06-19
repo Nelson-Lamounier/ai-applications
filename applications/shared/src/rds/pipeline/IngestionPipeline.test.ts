@@ -530,3 +530,63 @@ describe('IngestionPipeline — per-file enrichment (feature 002 cost lever)', (
         delete process.env.ENRICH_BATCH;
     });
 });
+
+describe('IngestionPipeline — chunk-packing (feature 004)', () => {
+    let store: FakeVectorStore;
+    let sync:  FakeSyncState;
+    let embed: FakeEmbedder;
+
+    beforeEach(() => { store = new FakeVectorStore(); sync = new FakeSyncState(); embed = new FakeEmbedder(); });
+    afterEach(() => { delete process.env.ENRICH_PACK; jest.restoreAllMocks(); });
+
+    it('ENRICH_PACK=1 attributes packed skills BY KEY and falls back per-chunk for missing keys', async () => {
+        process.env.ENRICH_PACK = '1';
+        const enrichCalls: string[] = [];
+        const enricher: IChunkEnricher = {
+            enrich: async (c: RawChunk) => { enrichCalls.push(`${c.filePath}#${c.chunkIndex}`); return { skills: ['fallback'], technologies: [] }; },
+            // pack returns only a.ts::0; b.ts::0 omitted -> must fall back per-chunk
+            enrichPack: async (items: ReadonlyArray<{ key: string }>) => {
+                const m = new Map<string, ChunkEnrichment>();
+                for (const it of items) if (it.key === 'a.ts::0') m.set(it.key, { skills: ['packed-a'], technologies: [] });
+                return m;
+            },
+        };
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'x'), makeChunk('b.ts', 0, 'y')]);
+
+        const byKey = new Map(store.upserts[0].map((c) => [`${c.filePath}#${c.chunkIndex}`, c.skills]));
+        expect(byKey.get('a.ts#0')).toEqual(['packed-a']);   // from pack, keyed (no cross-leak)
+        expect(byKey.get('b.ts#0')).toEqual(['fallback']);   // missing key -> per-chunk
+        expect(enrichCalls).toEqual(['b.ts#0']);             // only the missing chunk hit per-chunk
+    });
+
+    it('a whole-pack transport error falls every chunk back to per-chunk (SC-006)', async () => {
+        process.env.ENRICH_PACK = '1';
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const enricher: IChunkEnricher = {
+            enrich: async () => ({ skills: ['inline'], technologies: [] }),
+            enrichPack: async () => { throw new Error('pack transport error'); },
+        };
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'x')]);
+
+        expect(store.upserts[0][0].skills).toEqual(['inline']);
+        expect(warn).toHaveBeenCalled();
+    });
+
+    it('off (ENRICH_PACK unset) uses the per-chunk path — no packing', async () => {
+        const packCalls = { n: 0 };
+        const enricher: IChunkEnricher = {
+            enrich: async () => ({ skills: ['per-chunk'], technologies: [] }),
+            enrichPack: async () => { packCalls.n += 1; return new Map(); },
+        };
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'x')]);
+
+        expect(packCalls.n).toBe(0);   // packing not invoked when off
+        expect(store.upserts[0][0].skills).toEqual(['per-chunk']);
+    });
+});
