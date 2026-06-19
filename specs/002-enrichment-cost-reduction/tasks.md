@@ -36,8 +36,8 @@ Tests/eval ARE requested (Constitution VI — the per-file-vs-per-chunk eval is 
 **Goal**: prove per-file skills don't regress recall/precision vs per-chunk.
 **Independent test**: run the eval; recall ≥ baseline AND precision ≥ baseline (SC-003/SC-004).
 
-- [ ] T011 [US2] Build `applications/ingestion/src/run-enrich-eval.ts` — load a labelled chunk sample, enrich per-chunk (baseline) and per-file+assign, compute per-chunk skill recall (vs baseline) + precision (added unevidenced skills), print a verdict + gate.
-- [ ] T012 [P] [US2] Add the labelled eval sample fixture (a set of chunks incl. a multi-purpose file where skills differ per chunk) under `applications/ingestion/src/__fixtures__/enrich-eval-sample.json` (or reuse a dev export), referenced by T011.
+- [X] T011 [US2] Build `applications/ingestion/src/run-enrich-eval.ts` — load a labelled chunk sample, enrich per-chunk (baseline) and per-file+assign, compute per-chunk skill recall (vs baseline) + precision (added unevidenced skills), print a verdict + gate.
+- [X] T012 [P] [US2] Add the labelled eval sample fixture (a set of chunks incl. a multi-purpose file where skills differ per chunk) under `applications/ingestion/src/__fixtures__/enrich-eval-sample.json` (or reuse a dev export), referenced by T011.
 - [ ] T013 [US2] Run the eval on dev as a K8s Job (ingestion image, Bedrock IRSA); record recall/precision in a results note. GATE: do not enable `ENRICH_PER_FILE` in any default until recall ≥ baseline AND precision ≥ baseline.
 
 **Checkpoint**: cost-only equivalence proven on labelled data — the cheap path is now safe to rely on.
