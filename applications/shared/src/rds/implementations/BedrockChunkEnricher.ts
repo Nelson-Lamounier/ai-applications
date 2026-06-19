@@ -31,6 +31,7 @@ import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnrich
 import type { RawChunk } from '../types.js';
 import type { Pool } from 'pg';
 import { recordBedrockCost } from '../bedrock-cost.js';
+import { canonicaliseSkills } from '../ontology/canonicaliseSkills.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
@@ -250,31 +251,12 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     }
 
     /**
-     * Normalise + canonicalise the model's skills, three-stage cascade:
-     *   1. lowercase / trim / drop empties + non-strings
-     *   2. exact alias -> canonical (cheap, deterministic; migration 092)
-     *   3. residual only: embedding nearest-canonical (resolveSkill), else raw
-     *
-     * The Set dedups variants that collapse to the same canonical. Stage 3 is
-     * skipped entirely when no resolver is wired, preserving alias-only
-     * behaviour. Async because stage 3 embeds + queries pgvector.
+     * Canonicalise the model's skills via the SHARED cascade (alias -> embedding
+     * nearest-canonical -> raw). Delegates to canonicaliseSkills so the corpus
+     * (write) side and the query (read) side resolve identically — the two sides
+     * of `d.skills && query.skills` cannot drift.
      */
-    private async resolveSkills(raw: unknown): Promise<string[]> {
-        if (!Array.isArray(raw)) return [];
-        const seen = new Set<string>();
-        for (const v of raw) {
-            if (typeof v !== 'string') continue;
-            const cleaned = v.toLowerCase().trim();
-            if (!cleaned) continue;
-            const alias = this.aliasToCanonical?.get(cleaned);
-            if (alias) { seen.add(alias); continue; }
-            // Exact alias missed — try the fuzzy resolver (fail-safe: any error
-            // keeps the raw phrase, never blocks enrichment).
-            const fuzzy = this.resolveSkill
-                ? await this.resolveSkill(cleaned).catch(() => null)
-                : null;
-            seen.add(fuzzy ?? cleaned);
-        }
-        return Array.from(seen);
+    private resolveSkills(raw: unknown): Promise<string[]> {
+        return canonicaliseSkills(raw, this.aliasToCanonical, this.resolveSkill);
     }
 }

@@ -117,6 +117,7 @@ export { OntologyResolver, normalizeAlias } from './ontology/OntologyResolver.js
 export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './ontology/SkillEmbeddingResolver.js';
 export type { SkillMatch } from './ontology/SkillEmbeddingResolver.js';
 export { PhraseSkillResolver } from './ontology/PhraseSkillResolver.js';
+export { canonicaliseSkills } from './ontology/canonicaliseSkills.js';
 export { scoreSkillResolution } from './ontology/evaluateSkillResolution.js';
 export type { ResolutionOutcome, ResolutionScore } from './ontology/evaluateSkillResolution.js';
 export { backfillSkillEmbeddings } from './ontology/backfillSkillEmbeddings.js';
