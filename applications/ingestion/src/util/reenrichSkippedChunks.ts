@@ -58,6 +58,30 @@ interface SkippedRow {
  * whose enrich call failed (e.g. real Bedrock throttling) stays a candidate and
  * is retried next run. Cheap (~$0.001/chunk).
  */
+/**
+ * Submit all candidate chunks as ONE Bedrock batch job when ENRICH_BATCH=1 and
+ * the enricher supports it (feature 002 US3). Returns row-id → skills, or null
+ * when batching is off or fails (caller falls back to inline per-chunk enrich —
+ * skills never lost). Keyed by the chunk's DB id.
+ */
+async function tryBatchEnrich(
+    rows: readonly SkippedRow[],
+    enricher: IChunkEnricher,
+    opts: ReenrichOptions,
+): Promise<Map<string, string[]> | null> {
+    if (process.env['ENRICH_BATCH'] !== '1' || !enricher.enrichBatch || rows.length === 0) return null;
+    const runKey = `reenrich-${opts.repoFullName ?? 'all'}-${opts.userId ?? 'all'}-${Date.now()}`
+        .replace(/[^a-zA-Z0-9.-]/g, '-');
+    try {
+        const items = rows.map((r) => ({ id: r.id, filePath: r.file_path, content: r.content, heading: r.heading ?? undefined }));
+        const res = await enricher.enrichBatch(items, runKey);
+        return new Map([...res].map(([id, e]) => [id, e.skills]));
+    } catch (err) {
+        console.warn('[reenrichSkippedChunks] batch failed — falling back to inline:', err);
+        return null;
+    }
+}
+
 export async function reenrichSkippedChunks(
     pool: Pool,
     enricher: IChunkEnricher,
@@ -93,15 +117,20 @@ export async function reenrichSkippedChunks(
     let failed = 0;
     let done = 0;
 
+    // Batch lever (feature 002 US3): one Bedrock batch job for all candidates
+    // (~50% cheaper, recall-neutral). Null when off/failed → inline fallback.
+    const batchByRowId = await tryBatchEnrich(rows, enricher, opts);
+
     async function processRow(row: SkippedRow): Promise<void> {
         try {
-            const { skills } = await enricher.enrich({
+            const fromBatch = batchByRowId?.get(row.id);
+            const skills = fromBatch ?? (await enricher.enrich({
                 filePath:    row.file_path,
                 heading:     row.heading ?? undefined,
                 content:     row.content,
                 chunkIndex:  0,
                 totalChunks: 1,
-            });
+            })).skills;
             await pool.query(
                 `UPDATE document_embeddings
                     SET skills   = $1::text[],

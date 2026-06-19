@@ -90,4 +90,42 @@ describe('reenrichSkippedChunks', () => {
         expect(selectSql).not.toMatch(/enrichment_status/);  // no status gate
         expect(selectSql).toMatch(/repo_full_name = \$1/);     // still repo-scoped
     });
+
+    it('ENRICH_BATCH=1 batches all chunks by row id and skips inline enrich', async () => {
+        process.env.ENRICH_BATCH = '1';
+        const { pool, updates } = makePool(rows);
+        const enrich = jest.fn(async () => ({ skills: ['SHOULD-NOT-RUN'], technologies: [] }));
+        const enricher: IChunkEnricher = {
+            enrich,
+            enrichBatch: jest.fn(async (items: ReadonlyArray<{ id: string }>) =>
+                new Map(items.map((it) => [it.id, { skills: [`skill-${it.id}`], technologies: [] }]))),
+        };
+
+        const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1 });
+
+        expect((enricher.enrichBatch as jest.Mock)).toHaveBeenCalledTimes(1);
+        expect(enrich).not.toHaveBeenCalled();                 // batch supplied all skills
+        expect(result.enriched).toBe(2);
+        expect(updates).toEqual([{ skills: ['skill-a'], id: 'a' }, { skills: ['skill-b'], id: 'b' }]);
+        delete process.env.ENRICH_BATCH;
+    });
+
+    it('a failing batch falls back to inline enrich — chunks still enriched (SC-006)', async () => {
+        process.env.ENRICH_BATCH = '1';
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const { pool, updates } = makePool(rows);
+        const enricher: IChunkEnricher = {
+            enrich: jest.fn(async () => ({ skills: ['inline'], technologies: [] })),
+            enrichBatch: jest.fn(async () => { throw new Error('batch infra down'); }),
+        };
+
+        const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1 });
+
+        expect(result.enriched).toBe(2);
+        expect((enricher.enrich as jest.Mock)).toHaveBeenCalledTimes(2);  // fell back inline
+        expect(warn).toHaveBeenCalled();
+        expect(updates[0].skills).toEqual(['inline']);
+        delete process.env.ENRICH_BATCH;
+        warn.mockRestore();
+    });
 });
