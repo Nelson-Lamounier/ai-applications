@@ -75,8 +75,9 @@ describe('recordInvocationToRds', () => {
     expect(insert!.params[11]).toBeNull();                  // $12 application_id (no context supplied)
     expect(insert!.params[12]).toBeNull();                  // $13 project_id
     expect(insert!.params[13]).toBeNull();                  // $14 sync_kind
-    expect(insert!.params[14]).toBe(100);                   // $15 user_message_tokens = 80 + 20
-    expect(insert!.params[15]).toBe(50);                    // $16 output_tokens
+    expect(insert!.params[14]).toBeNull();                  // $15 trace_id
+    expect(insert!.params[15]).toBe(100);                   // $16 user_message_tokens = 80 + 20
+    expect(insert!.params[16]).toBe(50);                    // $17 output_tokens
   });
 
   it('threads applicationId/projectId/syncKind from the context into the INSERT', async () => {
@@ -88,6 +89,18 @@ describe('recordInvocationToRds', () => {
     expect(insert!.params[11]).toBe('app-1');               // $12 application_id
     expect(insert!.params[12]).toBe('proj-1');              // $13 project_id
     expect(insert!.params[13]).toBe('initial');             // $14 sync_kind
+    expect(insert!.params[14]).toBeNull();                  // $15 trace_id
+  });
+
+  it('writes trace_id on the prompt invocation', async () => {
+    const { pool, queries } = fakePool();
+    await recordInvocationToRds(pool, 'project-case-study', {
+      projectId: '00000000-0000-4000-8000-000000000001',
+      traceId: '0123456789abcdef0123456789abcdef',
+    })({ ...baseLog, traceId: undefined });
+    const insert = queries.find((query) => /INSERT INTO prompt_invocations/.test(query.sql))!;
+    expect(insert.sql).toMatch(/trace_id/);
+    expect(insert.params).toContain('0123456789abcdef0123456789abcdef');
   });
 
   it('skips recording (no query) when the log has no userId', async () => {

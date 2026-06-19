@@ -7,6 +7,7 @@ export { bootstrapK8sObservability, type ObservabilityHandle, type BootstrapOpti
 export { pushFinalMetrics } from './pushgateway';
 export { jobLogger, type JobLogger } from './logger';
 export { activeTraceContext, withSpan, captureAwsClient } from './lambda';
+export { currentTraceContext, withWorkflowTrace, type WorkflowTrace } from './workflow-trace';
 export {
     recordBedrockUsage,
     setBedrockMetricsRegistry,

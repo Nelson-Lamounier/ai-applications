@@ -38,6 +38,7 @@ import type { DocumentType as __DocumentType } from '@smithy/types';
 import { estimateInvocationCost } from './metrics.js';
 import type { TokenUsage } from './metrics.js';
 import { recordBedrockUsage } from './observability/bedrock.js';
+import { currentTraceContext } from './observability/workflow-trace.js';
 import type { AgentConfig, AgentResult, AgentInvocationLog } from './types.js';
 import type { BasePipelineContext } from './base-agent.js';
 
@@ -493,7 +494,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
                 totalCostCents,
                 latencyMs:          durationMs,
                 cacheHit,
-                traceId:            process.env['_X_AMZN_TRACE_ID'],
+                traceId:            currentTraceContext().traceId,
                 userId,
                 resumeGenerationId,
             };
