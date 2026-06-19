@@ -10,6 +10,12 @@ export interface ReenrichOptions {
     readonly repoFullName?: string;
     /** Cap chunks processed this run (omit = no cap). */
     readonly limit?: number;
+    /**
+     * Re-enrich EVERY chunk in scope, not just `skipped_quota`/`pending` — used
+     * to re-apply an updated skill vocabulary/resolver to an already-enriched
+     * corpus (a rollout). Still no re-embedding; overwrites `skills` in place.
+     */
+    readonly reenrichAll?: boolean;
     /** Concurrent enrich calls. Default 10. */
     readonly concurrency?: number;
     /** Progress callback (done, total). */
@@ -60,7 +66,9 @@ export async function reenrichSkippedChunks(
     // Backfill targets: chunks the cap skipped ('skipped_quota') AND chunks that
     // deferred enrichment to this background pass ('pending', set by the pipeline
     // when DEFER_ENRICHMENT is on for a fast first scan).
-    const conditions = [`metadata->>'enrichment_status' IN ('skipped_quota', 'pending')`];
+    const conditions = opts.reenrichAll
+        ? [`true`]   // rollout: every chunk in scope, regardless of enrichment_status
+        : [`metadata->>'enrichment_status' IN ('skipped_quota', 'pending')`];
     const params: unknown[] = [];
     if (opts.userId) {
         params.push(opts.userId);
