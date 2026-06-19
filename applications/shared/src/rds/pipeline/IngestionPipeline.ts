@@ -26,7 +26,7 @@
 import { createHash } from 'crypto';
 
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
-import type { IChunkEnricher } from '../interfaces/IChunkEnricher.js';
+import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnricher.js';
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
@@ -536,6 +536,20 @@ export class IngestionPipeline {
         // embedding lane is needed. Deterministic + cheap (no extra model call).
         const noExtraEvidence = (): boolean => false;
 
+        // Batch lever (US3): one Bedrock batch job for all units (~50% cheaper).
+        // Fail-safe — any batch error leaves batchSkills null and the per-unit
+        // inline enrichText path below runs, so skills are never lost.
+        let batchSkills: Map<string, ChunkEnrichment> | null = null;
+        if (process.env.ENRICH_BATCH === '1' && this.enricher!.enrichBatch) {
+            const runKey = `${repoFullName}/${userId}`.replace(/[^a-zA-Z0-9.-]/g, '-');
+            try {
+                batchSkills = await this.enricher!.enrichBatch(units.slice(0, cap), runKey);
+            } catch (err) {
+                console.warn('[IngestionPipeline.enrichChunksPerFile] batch failed — falling back to inline:', err);
+                batchSkills = null;
+            }
+        }
+
         const byKey = new Map<string, string[]>();   // `${filePath}::${chunkIndex}` -> skills
         const statusByKey = new Map<string, string>();
         let callsDone = 0;
@@ -551,7 +565,9 @@ export class IngestionPipeline {
             };
             if (unitIdx >= cap) { tag('skipped_quota', () => []); return; }
             try {
-                const { skills } = await this.enricher!.enrichText!(unit.filePath, unit.text, unit.chunks[0]?.heading);
+                const fromBatch = batchSkills?.get(unit.filePath);
+                const { skills } = fromBatch
+                    ?? await this.enricher!.enrichText!(unit.filePath, unit.text, unit.chunks[0]?.heading);
                 const assigned = assignSkillsToChunks(unit, skills, noExtraEvidence);
                 const byIndex = new Map(assigned.map(a => [a.chunkIndex, a.skills]));
                 tag('ok', (c) => byIndex.get(c.chunkIndex) ?? []);

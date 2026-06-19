@@ -84,7 +84,23 @@ class FakeEnricher implements IChunkEnricher {
 /** Enricher with the per-file enrichText seam (feature 002). Records text calls. */
 class FakeTextEnricher implements IChunkEnricher {
     public textCalls: { filePath: string; content: string }[] = [];
-    constructor(private readonly skillsForFile: (filePath: string) => string[]) {}
+    public batchCalls = 0;
+    /** Assigned in the constructor only when a batchMode is given (else absent). */
+    public enrichBatch?: (units: readonly { filePath: string }[]) => Promise<Map<string, ChunkEnrichment>>;
+
+    constructor(
+        private readonly skillsForFile: (filePath: string) => string[],
+        /** undefined = no batch; 'throw' = batch fails (test fallback); 'ok' = batch returns skills. */
+        batchMode?: 'throw' | 'ok',
+    ) {
+        if (batchMode) {
+            this.enrichBatch = async (units): Promise<Map<string, ChunkEnrichment>> => {
+                this.batchCalls++;
+                if (batchMode === 'throw') throw new Error('batch infra unavailable');
+                return new Map(units.map((u) => [u.filePath, { skills: this.skillsForFile(u.filePath), technologies: [] }]));
+            };
+        }
+    }
     async enrich(_chunk: RawChunk): Promise<ChunkEnrichment> { return { skills: [], technologies: [] }; }
     async enrichText(filePath: string, content: string): Promise<ChunkEnrichment> {
         this.textCalls.push({ filePath, content });
@@ -450,5 +466,36 @@ describe('IngestionPipeline — per-file enrichment (feature 002 cost lever)', (
         await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'x'), makeChunk('a.ts', 1, 'y')]);
 
         expect(enricher.calls).toBe(2);  // per-chunk path, not per-file
+    });
+
+    it('ENRICH_BATCH=1 uses the batch result and skips inline enrichText calls', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        process.env.ENRICH_BATCH = '1';
+        const enricher = new FakeTextEnricher((fp) => (fp === 'a.ts' ? ['kubernetes'] : ['react']), 'ok');
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'uses kubernetes here'), makeChunk('b.ts', 0, 'a react app')]);
+
+        expect(enricher.batchCalls).toBe(1);
+        expect(enricher.textCalls).toHaveLength(0);  // batch supplied skills — no inline calls
+        const byKey = new Map(store.upserts[0].map((c) => [`${c.filePath}#${c.chunkIndex}`, c.skills]));
+        expect(byKey.get('a.ts#0')).toEqual(['kubernetes']);
+        delete process.env.ENRICH_BATCH;
+    });
+
+    it('a failing batch falls back to inline enrichText — skills never lost (SC-006)', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        process.env.ENRICH_BATCH = '1';
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const enricher = new FakeTextEnricher((fp) => (fp === 'a.ts' ? ['kubernetes'] : ['react']), 'throw');
+        const pipeline = new IngestionPipeline(store, sync, embed, { enricher });
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0, 'uses kubernetes here')]);
+
+        expect(enricher.batchCalls).toBe(1);            // tried batch
+        expect(enricher.textCalls).toHaveLength(1);     // fell back to inline
+        expect(warn).toHaveBeenCalled();                // surfaced, not silent
+        expect(store.upserts[0][0].skills).toEqual(['kubernetes']);  // skills still correct
+        delete process.env.ENRICH_BATCH;
     });
 });

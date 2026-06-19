@@ -47,10 +47,10 @@ Tests/eval ARE requested (Constitution VI — the per-file-vs-per-chunk eval is 
 **Goal**: the cheapest path (batch) with a correctness fallback; gradual rollout.
 **Independent test**: disable → today's path; enable + force batch failure → still correct skills via fallback (SC-006).
 
-- [ ] T014 [US3] Port `BedrockBatchClassifier` into `applications/shared/src/bedrock/BedrockBatchEnrich.ts` — per-unit Messages bodies → S3 JSONL (size-capped) → `CreateModelInvocationJob` → poll → map `recordId`→unit; one job per run, run-scoped keys (FR-008).
-- [ ] T015 [P] [US3] Unit-test `BedrockBatchEnrich` in `applications/shared/src/bedrock/BedrockBatchEnrich.test.ts` (mock S3 + Bedrock) — record building, recordId mapping, malformed-line + job-error paths.
-- [ ] T016 [US3] Wire `ENRICH_BATCH=1` into `enrichChunks`: submit the (per-file or per-chunk) calls via `BedrockBatchEnrich`; on any batch error/timeout/malformed output fall back to inline `enrichText` for the affected units, `warn` log (never silent, never zero-skill) (FR-007).
-- [ ] T017 [P] [US3] Integration test asserting the fallback: `ENRICH_BATCH=1` with a forced batch failure still yields correct skills for every chunk and logs the warning.
+- [X] T014 [US3] Port `BedrockBatchClassifier` into `applications/shared/src/bedrock/BedrockBatchEnrich.ts` — per-unit Messages bodies → S3 JSONL (size-capped) → `CreateModelInvocationJob` → poll → map `recordId`→unit; one job per run, run-scoped keys (FR-008).
+- [X] T015 [P] [US3] Unit-test `BedrockBatchEnrich` in `applications/shared/src/bedrock/BedrockBatchEnrich.test.ts` (mock S3 + Bedrock) — record building, recordId mapping, malformed-line + job-error paths.
+- [X] T016 [US3] Wire `ENRICH_BATCH=1` into `enrichChunks`: submit the (per-file or per-chunk) calls via `BedrockBatchEnrich`; on any batch error/timeout/malformed output fall back to inline `enrichText` for the affected units, `warn` log (never silent, never zero-skill) (FR-007).
+- [X] T017 [P] [US3] Integration test asserting the fallback: `ENRICH_BATCH=1` with a forced batch failure still yields correct skills for every chunk and logs the warning.
 
 **Checkpoint**: cheapest path available; correctness guaranteed by fallback; both levers opt-in.
 
