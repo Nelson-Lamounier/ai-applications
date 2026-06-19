@@ -44,7 +44,7 @@ Tests/eval ARE requested (Constitution VI — per-tier recall/precision vs the p
 
 ## Phase 6: The eval gate (P1) — spans US1–US3
 
-- [ ] T018 Extend `applications/ingestion/src/run-enrich-eval.ts` to score EACH enabled tier vs the per-chunk LLM baseline on a labelled sample: recall + precision + `resolvedBy` coverage (≤25% residual target).
+- [X] T018 Extend `applications/ingestion/src/run-enrich-eval.ts` to score EACH enabled tier vs the per-chunk LLM baseline on a labelled sample: recall + precision + `resolvedBy` coverage (≤25% residual target).
 - [ ] T019 Tune `TIER2_THRESHOLD` on dev via the eval; record the chosen value + per-tier recall/precision in `eval-results.md`. GATE: a tier is not relied upon until recall ≥ baseline AND precision not below.
 
 **Checkpoint**: Tiers 0–2 proven quality-equivalent + cheap; cost already collapses (no LLM for the resolved majority).
