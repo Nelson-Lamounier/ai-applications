@@ -31,8 +31,9 @@ Tests are included: the project follows TDD and Constitution VI mandates the res
 **Goal**: a comprehensive vocabulary is imported + embedded so the resolver collapses far more phrases.
 **Independent test**: run the Job, then `run-skill-resolution-eval` + a re-enrich coverage check show substantial gains over the 28-of-75 / ~534 baseline (quickstart §4–5).
 
-- [ ] T011 [P] [US1] `applications/ontology-importer/src/sources/OnetSkillSource.ts`: fetch the O*NET CC-BY bundle via capped-fetch, parse Skills/Abilities + Technology-Skills layers into `RawImportEntry[]` with altLabels as aliases.
-- [X] T012 [P] [US1] `applications/ontology-importer/src/sources/CuratedSkillSource.ts`: load the project's curated engineering-tail canonicals + aliases (the moat layer) as `RawImportEntry[]`.
+- [ ] ~~T011 OnetSkillSource~~ DROPPED (research D7 — real O*NET 29.1 too coarse: 35 generic skills, 135 coarse software categories; 8,768 tools belong in technology_ontology). REPLACED by T011b.
+- [ ] T011b [US1] `applications/ontology-importer/src/sources/TechnologyDerivedSkillSource.ts`: read `technology_ontology` canonicals + categories (already registry-imported) and emit them as skill capability `RawImportEntry[]`, so tool-centric skill phrases collapse in the skill lane. Needs a technology_ontology read (local export for offline preview).
+- [X] T012 [P] [US1] `applications/ontology-importer/src/sources/CuratedSkillSource.ts`: load the project's curated engineering-tail canonicals + aliases (the moat layer — now PRIMARY) as `RawImportEntry[]`.
 - [ ] T013 [US1] Wire the import loop in `run-skill-import.ts`: for each source → capped fetch → `Categorizer` (reuse L1–3 + Bedrock Haiku batch for residual) → `SkillOntologyWriteRepository` upsert; record `ImportRunCounts` via `OntologyImportRunRepository`.
 - [ ] T014 [US1] After upsert, call `backfillSkillEmbeddings` in `run-skill-import.ts` to embed new `embedding IS NULL` canonicals (no new embedding code).
 - [ ] T015 [US1] Integration test `applications/ontology-importer/src/run-skill-import.test.ts` (mocked sources + pg): a fixture source yields entries → upserted + categorised + counts recorded; `DRY_RUN=1` writes nothing.

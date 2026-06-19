@@ -38,6 +38,17 @@ Resolves the open decisions in the plan's Technical Context.
 - **Decision**: After upsert, the Job calls the existing **`backfillSkillEmbeddings`** (roadmap #2) — idempotent, embeds only `embedding IS NULL` rows. No new embedding code.
 - **Rationale**: the resolver is already a working socket; the only thing standing between a new canonical and resolution is a vector, which the backfill fills. This is the whole "feed the socket, don't rebuild it" thesis.
 
+## D7 — O*NET DROPPED after inspecting the real bundle (supersedes D1–D2 on O*NET)
+
+- **Decision**: Do **not** import O*NET into `skill_ontology`. The capability primary becomes the **project curated vocabulary**; tool-centric skill phrases are covered by **deriving skill canonicals from the already-imported `technology_ontology`**.
+- **Evidence (O*NET database 29.1, downloaded + inspected 2026-06-19)** — verified bytes, not assumption:
+  - `Skills.txt` — **35 distinct** Element Names, all generic work skills ("Active Learning", "Critical Thinking", "Coordination"). Zero software-engineering granularity.
+  - `Technology Skills.txt` "Example" — **8,768 distinct tools** ("Adobe Acrobat"…). These are *tools* → `technology_ontology` (already imported from registries), not the capability layer.
+  - `Technology Skills.txt` "Commodity Title" — **135 software categories** ("Application server software"…), of which only ~30–40 are software-engineering-adjacent and all are **coarse** (none is "kubernetes networking" / "rest api design").
+- **Rationale**: the 17,138 LLM skill surface-forms cluster at fine engineering granularity that O*NET simply does not contain — importing it would add coarse noise, not coverage, and risk *reducing* resolution precision. The "understand the data before ingesting" preview caught this before a single row was written.
+- **Revised source set**: (1) **curated** engineering vocabulary (primary, the moat — expand it); (2) **technology_ontology-derived** skill canonicals (the registry tools already canonicalised, surfaced into the skill lane so tool-centric phrases collapse). Both are commercially safe (own-curated; registry-derived). O*NET attribution is no longer needed.
+- **Spec impact**: FR-001 (O*NET capability import) is withdrawn; FR-002's "technology layer" is now satisfied by deriving from `technology_ontology` rather than re-importing registries. SC-003 (licence audit) is unchanged and easier — only `curated` + the registry-derived provenance remain.
+
 ## Resolved unknowns
 
-All Technical-Context items are resolved; **no `NEEDS CLARIFICATION` remain**. The one material refinement vs the spec: **package registries are not a source for `skill_ontology`** (D2) — the tech axis is reused from `technology_ontology`. This narrows scope without weakening any success criterion (SC-001 coverage is driven by O*NET + curated capability canonicals, which is where the 17,138 surface-forms actually cluster).
+All Technical-Context items are resolved; **no `NEEDS CLARIFICATION` remain**. The material change vs the original spec: **O*NET is dropped (D7, on verified data)** and the vocabulary is **curated + technology_ontology-derived**. SC-001 coverage is now driven by the curated engineering tail (exact granularity) plus the registry tool canonicals — where the 17,138 surface-forms actually cluster.
