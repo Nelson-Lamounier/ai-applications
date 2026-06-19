@@ -46,9 +46,9 @@ ENRICH_PER_FILE=1 ENRICH_BATCH=1     # cheapest path
 
 | Var | Purpose |
 |---|---|
-| `ENRICH_PER_FILE=1` | per-file granularity (US1) — the ~3.7x lever, no extra infra |
-| `ENRICH_PER_FILE_MAX_CHARS` | file-unit input budget (default 12000) |
-| `ENRICH_BATCH=1` | Bedrock batch (US3) — the ~50% lever; **requires the infra below** |
+| `ENRICH_BATCH=1` | **the shipped lever** — batch the PER-CHUNK calls (recall-neutral ~50%); requires the infra below |
+| `ENRICH_PER_FILE=1` | per-file granularity — **FAILED the eval (recall 0.118), keep OFF** (see eval-results.md) |
+| `ENRICH_PER_FILE_MAX_CHARS` | file-unit input budget (default 12000), only if per-file is ever revisited |
 | `ENRICH_BATCH_BUCKET` / `ENRICH_BATCH_ROLE_ARN` | S3 bucket for batch JSONL + the Bedrock batch service-role ARN |
 | `ENRICH_BATCH_PREFIX` / `_POLL_MS` / `_DEADLINE_MS` | batch S3 prefix + poll cadence + deadline |
 

@@ -33,8 +33,7 @@ import type { Pool } from 'pg';
 import { recordBedrockCost } from '../bedrock-cost.js';
 import { canonicaliseSkills } from '../ontology/canonicaliseSkills.js';
 import { buildExtractionBody } from './extractionBody.js';
-import type { FileEnrichUnit } from '../enrichment/groupChunksByFile.js';
-import { BedrockBatchEnrich, buildEnrichRecords } from '../../bedrock/BedrockBatchEnrich.js';
+import { BedrockBatchEnrich, buildEnrichRecords, type BatchEnrichItem } from '../../bedrock/BedrockBatchEnrich.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
@@ -189,13 +188,14 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     }
 
     /**
-     * Enrich many file units in ONE Bedrock batch job (feature 002 US3). Reuses
-     * the SHARED extraction body (so a batched call == an inline one) and the
-     * SAME canonicalisation cascade, then keys canonicalised skills by filePath.
-     * Throws when batch infra is unconfigured or the job fails/expires — the
-     * pipeline falls back to inline enrichText (never zero-skill).
+     * Enrich many items in ONE Bedrock batch job (feature 002 US3). Reuses the
+     * SHARED extraction body (so a batched call == an inline one) and the SAME
+     * canonicalisation cascade, then keys canonicalised skills by the caller's
+     * item id (a chunk id for the per-chunk lever — recall-neutral). Throws when
+     * batch infra is unconfigured or the job fails/expires — the pipeline falls
+     * back to inline enrich (never zero-skill).
      */
-    async enrichBatch(units: readonly FileEnrichUnit[], runKey: string): Promise<Map<string, ChunkEnrichment>> {
+    async enrichBatch(items: readonly BatchEnrichItem[], runKey: string): Promise<Map<string, ChunkEnrichment>> {
         const bucket  = process.env.ENRICH_BATCH_BUCKET;
         const roleArn = process.env.ENRICH_BATCH_ROLE_ARN;
         if (!bucket || !roleArn) {
@@ -208,15 +208,15 @@ export class BedrockChunkEnricher implements IChunkEnricher {
             roleArn,
             modelId: this.modelId,
         });
-        const { records, recordToFile } = buildEnrichRecords(units);
+        const { records, recordToId } = buildEnrichRecords(items);
         const jobArn = await batch.submit(records, runKey);
         await this.pollBatch(batch, jobArn);
         const rawByRecord = await batch.collect(runKey);
 
         const out = new Map<string, ChunkEnrichment>();
-        for (const [recordId, file] of Object.entries(recordToFile)) {
+        for (const [recordId, id] of Object.entries(recordToId)) {
             const raw = rawByRecord.get(recordId) ?? [];
-            out.set(file, { skills: await this.resolveSkills(raw), technologies: [] });
+            out.set(id, { skills: await this.resolveSkills(raw), technologies: [] });
         }
         return out;
     }
