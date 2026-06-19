@@ -25,6 +25,7 @@ function makeClient(): {
             calls.push({ sql, params: params ?? [] });
             // user_overrides lookup → no sticky flags.
             if (/SELECT user_overrides/.test(sql)) return { rows: [{ user_overrides: {} }] };
+            if (/DELETE FROM project_/.test(sql)) return { rows: [], rowCount: 2 };
             return { rows: [], rowCount: 0 };
         },
     };
@@ -117,7 +118,7 @@ function deletesFor(calls: CapturedQuery[], table: string): CapturedQuery[] {
 describe('persistCaseStudy — replace/prune semantics (no accumulation)', () => {
     it('prunes superseded rows so a section reflects only the current run', async () => {
         const { client, calls } = makeClient();
-        await persistCaseStudy(client, {
+        const persisted = await persistCaseStudy(client, {
             projectId: 'proj-1', userId: 'user-1', pipelineRunId: 'run-2', model: 'sonnet', inputHash: 'h',
             caseStudy: {
                 ...emptyCaseStudy,
@@ -137,6 +138,11 @@ describe('persistCaseStudy — replace/prune semantics (no accumulation)', () =>
         expect(hiDel).toHaveLength(1);
         expect(hiDel[0].sql).toMatch(/content_hash <> ALL\(\$2::text\[\]\)/);
         expect(hiDel[0].sql).not.toMatch(/is_user_confirmed/);
+
+        expect(persisted.stackItemsPruned).toBe(2);
+        expect(persisted.decisionsPruned).toBe(2);
+        expect(persisted.highlightsPruned).toBe(2);
+        expect(persisted.challengesPruned).toBe(2);
     });
 
     it('clears stale machine rows when a section comes back empty (keeps NULL-hash user rows)', async () => {
@@ -162,7 +168,7 @@ describe('persistCaseStudy — replace/prune semantics (no accumulation)', () =>
                 return { rows: [], rowCount: 0 };
             },
         };
-        await persistCaseStudy(client, {
+        const persisted = await persistCaseStudy(client, {
             projectId: 'proj-1', userId: 'user-1', pipelineRunId: 'run-4', model: 'sonnet', inputHash: 'h',
             caseStudy: {
                 ...emptyCaseStudy,
@@ -171,5 +177,7 @@ describe('persistCaseStudy — replace/prune semantics (no accumulation)', () =>
         });
         // highlights is sticky → neither inserted nor pruned.
         expect(deletesFor(calls, 'project_highlights')).toHaveLength(0);
+        expect(persisted.highlightsInserted).toBe(0);
+        expect(persisted.highlightsPruned).toBe(0);
     });
 });
