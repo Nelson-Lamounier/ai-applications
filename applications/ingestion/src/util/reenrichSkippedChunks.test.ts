@@ -81,4 +81,13 @@ describe('reenrichSkippedChunks', () => {
         await reenrichSkippedChunks(pool, enricher, { limit: 50 });
         expect(query.mock.calls[0][0] as string).toMatch(/LIMIT 50/);
     });
+
+    it('reenrichAll drops the status filter — re-processes every chunk (rollout)', async () => {
+        const { pool, query } = makePool(rows);
+        const enricher: IChunkEnricher = { enrich: jest.fn(async () => ({ skills: ['observability'], technologies: [] })) };
+        await reenrichSkippedChunks(pool, enricher, { reenrichAll: true, repoFullName: 'o/r' });
+        const selectSql = query.mock.calls[0][0] as string;
+        expect(selectSql).not.toMatch(/enrichment_status/);  // no status gate
+        expect(selectSql).toMatch(/repo_full_name = \$1/);     // still repo-scoped
+    });
 });
