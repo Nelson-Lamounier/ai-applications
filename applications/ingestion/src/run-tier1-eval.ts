@@ -30,6 +30,8 @@ import {
 import { Pool } from 'pg';
 
 import { computeEnrichEvalMetrics } from './util/enrichEvalMetrics.js';
+import { computeSemanticEvalMetrics } from './util/semanticEvalMetrics.js';
+import { buildSkillSim } from './util/buildSkillSim.js';
 
 const obs = bootstrapK8sObservability({ serviceName: 'tier1-eval' });
 const log = obs.logger;
@@ -77,6 +79,28 @@ async function buildEnricher(pool: Pool, userId: string, repo: string | undefine
     return BedrockChunkEnricher.fromEnvironment({ pool, userId, repoName: repo ?? 'tier1-eval' }, aliasMap, (p) => resolver.resolve(p));
 }
 
+async function logTier1Result(baseline: Map<string, string[]>, candidate: Map<string, string[]>, sampleN: number, tier1Empty: number, mapSize: number): Promise<void> {
+    const exact = computeEnrichEvalMetrics(baseline, candidate);
+    // Semantic re-score (the metric fix): Tier 1 emits CANONICAL terms, the
+    // baseline emits RAW Haiku phrasing — exact-string between dialects is
+    // near-zero by construction. Match by embedding cosine instead.
+    const semThreshold = Number.parseFloat(process.env['SEM_THRESHOLD'] ?? '0.82');
+    const sim = await buildSkillSim([baseline, candidate], TitanEmbeddingProvider.fromEnvironment());
+    const sem = computeSemanticEvalMetrics(baseline, candidate, sim, semThreshold);
+    log.info(
+        {
+            event: 'tier1_eval.result',
+            exactRecall: exact.recall, exactPrecision: exact.precision,
+            semanticRecall: sem.recall, semanticPrecision: sem.precision, semThreshold,
+            coverage: sampleN === 0 ? 0 : 1 - tier1Empty / sampleN,
+            tier1MapSize: mapSize,
+        },
+        `tier1 eval: EXACT recall=${exact.recall.toFixed(3)} prec=${exact.precision.toFixed(3)} | ` +
+        `SEMANTIC recall=${sem.recall.toFixed(3)} prec=${sem.precision.toFixed(3)} (cos>=${semThreshold}) over ${sampleN} chunks — ` +
+        `if semantic >> exact, the 0.16 was a dialect artifact (Tier1 canonical vs raw baseline)`,
+    );
+}
+
 async function main(): Promise<void> {
     const userId = requireEnv('USER_ID');
     const repo = process.env['REPO_FULL_NAME'] || undefined;
@@ -101,18 +125,7 @@ async function main(): Promise<void> {
             baseline.set(r.id, skills);
         }
 
-        const m = computeEnrichEvalMetrics(baseline, candidate);
-        log.info(
-            {
-                event: 'tier1_eval.result',
-                ...m,
-                coverage: rows.length === 0 ? 0 : 1 - tier1Empty / rows.length,  // chunks Tier 1 produced ANY skill for
-                tier1MapSize: map.size,
-            },
-            `tier1 eval: recall=${m.recall.toFixed(3)} precision=${m.precision.toFixed(3)} ` +
-            `added(tier1-only)=${m.addedSkills} dropped(llm-only)=${m.droppedSkills} over ${rows.length} chunks — ` +
-            `JUDGE: recall = LLM skills Tier 1 kept; precision = Tier 1 skills the LLM also emitted (low precision = tech-implied extras, not necessarily wrong)`,
-        );
+        await logTier1Result(baseline, candidate, rows.length, tier1Empty, map.size);
         await pool.end().catch(() => { /* drain */ });
         await obs.shutdown().catch(() => { /* flush */ });
         process.exit(0);
