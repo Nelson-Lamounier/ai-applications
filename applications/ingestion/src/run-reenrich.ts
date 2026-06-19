@@ -85,6 +85,7 @@ async function main(): Promise<void> {
             userId,
             repoFullName,
             limit,
+            reenrichAll: process.env['REENRICH_ALL'] === '1',
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {
                     log.info({ done, total, userId }, 're_enrich.progress');
