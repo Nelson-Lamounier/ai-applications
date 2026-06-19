@@ -3768,6 +3768,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@bedrock/shared@workspace:applications/shared"
   dependencies:
+    "@aws-sdk/client-bedrock": "npm:^3.1001.0"
     "@aws-sdk/client-bedrock-agent-runtime": "npm:^3.1001.0"
     "@aws-sdk/client-bedrock-runtime": "npm:^3.1001.0"
     "@aws-sdk/client-dynamodb": "npm:^3.1001.0"
