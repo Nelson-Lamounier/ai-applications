@@ -30,7 +30,9 @@ import type {
     IRepoAdapter,
     ListCommitsOptions,
     ListPullRequestsOptions,
+    ListContributorsOptions,
     RepoCommit,
+    RepoContributor,
     RepoFile,
     RepoPullRequest,
     CommitDetail,
@@ -119,6 +121,12 @@ interface GitHubPullRequestListItem {
     created_at:   string;
     merged_at:    string | null;
     html_url:     string;
+}
+
+/** Subset of GitHub's contributor-list-item shape we consume. */
+interface GitHubContributorListItem {
+    login:         string | null;
+    contributions: number;
 }
 
 // =============================================================================
@@ -477,6 +485,48 @@ export class GitHubAdapter implements IRepoAdapter {
                     authorLogin: p.user?.login ?? null,
                     htmlUrl:     p.html_url,
                 });
+            }
+
+            if (batch.length < perPage) break;
+        }
+
+        return out;
+    }
+
+    // =========================================================================
+    // IRepoAdapter.listContributors
+    // =========================================================================
+
+    /**
+     * List contributors (login + contribution count), highest first. Paginates
+     * 100/page like listCommits; stops on the first short page or when
+     * `maxContributors` is reached. Anonymous contributors are excluded (GitHub's
+     * default, `anon` omitted) so every row has a login for role inference.
+     *
+     * @param opts.maxContributors - default 100
+     */
+    async listContributors(
+        repoFullName: string,
+        opts: ListContributorsOptions = {},
+    ): Promise<RepoContributor[]> {
+        const max     = opts.maxContributors ?? 100;
+        const perPage = 100;
+
+        const out: RepoContributor[] = [];
+        for (let page = 1; out.length < max; page++) {
+            const batch = this.assertArray<GitHubContributorListItem>(
+                await this.get<GitHubContributorListItem[]>(
+                    `/repos/${repoFullName}/contributors?per_page=${perPage}&page=${page}`,
+                ),
+                `/repos/${repoFullName}/contributors`,
+                'expected an array of contributors (repo may be renamed or moved)',
+            );
+
+            if (batch.length === 0) break;
+
+            for (const c of batch) {
+                if (out.length >= max) break;
+                out.push({ login: c.login ?? null, contributions: c.contributions ?? 0 });
             }
 
             if (batch.length < perPage) break;

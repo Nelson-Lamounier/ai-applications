@@ -79,6 +79,23 @@ export interface ListPullRequestsOptions {
     readonly since?: string;
 }
 
+/**
+ * One contributor to the repository (from the contributors endpoint). Used for
+ * deterministic role inference + a collaboration signal — who built it and how
+ * many hands. Intentionally minimal: login + commit-contribution count.
+ */
+export interface RepoContributor {
+    /** GitHub login; null only for anonymous/ghost contributors (excluded by default). */
+    readonly login:         string | null;
+    /** Number of commits GitHub attributes to this contributor on the default branch. */
+    readonly contributions: number;
+}
+
+export interface ListContributorsOptions {
+    /** Hard cap on contributors returned. Default 100. */
+    readonly maxContributors?: number;
+}
+
 /** One file's change within a commit (from the per-commit detail endpoint). */
 export interface CommitFileChange {
     readonly filePath:          string;
@@ -144,6 +161,13 @@ export interface IRepoAdapter {
      * empty array if the source has no concept of pull requests.
      */
     listPullRequests?(repoFullName: string, opts?: ListPullRequestsOptions): Promise<RepoPullRequest[]>;
+
+    /**
+     * List contributors (login + contribution count), highest first. Optional —
+     * adapters without a concept of contributors omit it. Used for deterministic
+     * role inference + a collaboration/team-size signal.
+     */
+    listContributors?(repoFullName: string, opts?: ListContributorsOptions): Promise<RepoContributor[]>;
 
     /**
      * Fetch per-commit detail (stats + per-file diffs) from the source's

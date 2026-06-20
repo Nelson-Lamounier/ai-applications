@@ -248,3 +248,33 @@ describe('GitHubAdapter.getCommitDetail', () => {
         expect(d).toMatchObject({ additions: 4, deletions: 1, filesChanged: 1 });
     });
 });
+
+describe('GitHubAdapter.listContributors', () => {
+    it('throws GitHubResponseShapeError when the response is not an array', async () => {
+        const adapter = routedAdapter({
+            '/repos/o/r/contributors?per_page=100&page=1': { message: 'Moved Permanently' },
+        });
+        await expect(adapter.listContributors('o/r')).rejects.toBeInstanceOf(GitHubResponseShapeError);
+    });
+
+    it('maps login + contributions for a valid array response', async () => {
+        const adapter = routedAdapter({
+            '/repos/o/r/contributors?per_page=100&page=1': [
+                { login: 'me', contributions: 880 },
+                { login: 'other', contributions: 14 },
+            ],
+        });
+        const c = await adapter.listContributors('o/r');
+        expect(c).toEqual([{ login: 'me', contributions: 880 }, { login: 'other', contributions: 14 }]);
+    });
+
+    it('caps at maxContributors', async () => {
+        const fullPage = Array.from({ length: 100 }, (_v, i) => ({ login: `u${i}`, contributions: 100 - i }));
+        const adapter = routedAdapter({
+            '/repos/o/r/contributors?per_page=100&page=1': fullPage,
+        });
+        const c = await adapter.listContributors('o/r', { maxContributors: 3 });
+        expect(c).toHaveLength(3);
+        expect(c[0]).toEqual({ login: 'u0', contributions: 100 });
+    });
+});
