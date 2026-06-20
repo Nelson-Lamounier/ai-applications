@@ -40,6 +40,20 @@ export class SkillOntologyRepository {
     }
 
     /**
+     * Load the active canonical skill names (lowercased) — the CONTROLLED
+     * VOCABULARY for controlled-vocab enrichment (feature: the vocabulary fix).
+     * The SAME vocabulary the JD extractor canonicalises into, so corpus + query
+     * speak one language and `d.skills && query.skills` overlaps. Grows with the
+     * application's JD/repo usage (proprietary), so this is read fresh per Job.
+     */
+    async loadCanonicalNames(): Promise<string[]> {
+        const { rows } = await this.pool.query<{ canonical_name: string }>(
+            `SELECT canonical_name FROM skill_ontology WHERE is_active ORDER BY canonical_name`,
+        );
+        return rows.map((r) => r.canonical_name.toLowerCase());
+    }
+
+    /**
      * Load active canonical skills that still lack an embedding (migration 094),
      * for the Titan backfill. Bounded by `limit` so the backfill drains in
      * batches. Empty array once every active skill is embedded.

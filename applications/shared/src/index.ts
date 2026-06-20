@@ -348,6 +348,8 @@ export { groupChunksByFile, assignSkillsToChunks } from './rds/index.js';
 export { tier1SkillsFromTech, TechSkillMapRepository } from './rds/index.js';
 export { packChunks } from './rds/index.js';
 export type { PackItem, ChunkPack } from './rds/index.js';
+export { buildCanonicalExtractionBody, parseCanonicalSkills } from './rds/index.js';
+export type { CanonicalSplit } from './rds/index.js';
 export type { FileEnrichUnit, SkillAssignment, SkillEvidence } from './rds/index.js';
 export type { DedupCandidate, DedupAction, DedupOptions } from './rds/index.js';
 export { SkillOntologyWriteRepository } from './rds/index.js';
