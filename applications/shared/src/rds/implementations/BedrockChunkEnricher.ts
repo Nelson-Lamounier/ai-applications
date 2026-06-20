@@ -33,6 +33,7 @@ import type { Pool } from 'pg';
 import { recordBedrockCost } from '../bedrock-cost.js';
 import { canonicaliseSkills } from '../ontology/canonicaliseSkills.js';
 import { buildExtractionBody, buildPackExtractionBody, parsePackSkills, type PackBodyItem } from './extractionBody.js';
+import { buildCanonicalExtractionBody, parseCanonicalSkills, type CanonicalSplit } from './canonicalVocabExtraction.js';
 import { BedrockBatchEnrich, buildEnrichRecords, type BatchEnrichItem } from '../../bedrock/BedrockBatchEnrich.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -185,6 +186,40 @@ export class BedrockChunkEnricher implements IChunkEnricher {
             // document_embeddings.technologies column.
             technologies: [],
         };
+    }
+
+    /**
+     * Controlled-vocabulary extraction (the vocabulary fix): the model emits
+     * skills ONLY from `vocabulary` (the canonical skill_ontology the JD extractor
+     * shares), so output is canonical by construction — no resolver cascade
+     * needed. Returns the canonical skills (written to the chunk) PLUS the NEW:
+     * gaps the model surfaced (the proprietary growth queue — JD demand + recurring
+     * repo NEW: grow the vocabulary; no external registry). One call, one cost record.
+     */
+    async enrichTextCanonical(vocabulary: readonly string[], filePath: string, content: string, heading?: string): Promise<CanonicalSplit> {
+        const body = JSON.stringify(buildCanonicalExtractionBody(vocabulary, filePath, content, heading));
+
+        const { body: responseBody } = await this.client.send(
+            new InvokeModelCommand({ modelId: this.modelId, contentType: 'application/json', accept: 'application/json', body: Buffer.from(body) }),
+        );
+        const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as AnthropicResponse;
+
+        if (this.costCtx) {
+            recordBedrockCost(this.costCtx.pool, {
+                userId:       this.costCtx.userId,
+                modelId:      this.modelId,
+                pipeline:     'repo-sync',
+                agent:        'chunk-enrich',
+                inputTokens:  parsed.usage?.input_tokens  ?? 0,
+                outputTokens: parsed.usage?.output_tokens ?? 0,
+                repoName:     this.costCtx.repoName,
+                syncKind:     this.costCtx.syncKind,
+            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
+        }
+
+        const toolUse = parsed.content.find((b): b is AnthropicToolUseBlock => b.type === 'tool_use');
+        if (!toolUse) return { canonical: [], newSkills: [] };
+        return parseCanonicalSkills(toolUse.input.skills ?? [], new Set(vocabulary));
     }
 
     /**

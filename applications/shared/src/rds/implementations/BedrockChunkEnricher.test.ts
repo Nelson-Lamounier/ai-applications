@@ -200,4 +200,15 @@ describe('BedrockChunkEnricher', () => {
         expect(mockSend).toHaveBeenCalledTimes(1);            // ONE model call for the whole pack
         expect(mockRecordBedrockCost).toHaveBeenCalledTimes(1); // ONE cost record (FR-009)
     });
+
+    it('enrichTextCanonical: in-vocab terms -> canonical, others -> NEW growth queue', async () => {
+        mockSend.mockResolvedValueOnce(bedrockReply({ skills: ['kubernetes', 'NEW: webassembly', 'iac with cdk'] }));
+
+        const result = await new BedrockChunkEnricher({}, { pool: {} as Pool, userId: 'u', repoName: 'r' })
+            .enrichTextCanonical(['kubernetes', 'terraform'], 'a.ts', 'k8s manifest');
+
+        expect(result.canonical).toEqual(['kubernetes']);               // only in-vocab kept
+        expect([...result.newSkills].sort((a, b) => a.localeCompare(b))).toEqual(['iac with cdk', 'webassembly']); // gaps queued
+        expect(mockRecordBedrockCost).toHaveBeenCalledTimes(1);
+    });
 });
