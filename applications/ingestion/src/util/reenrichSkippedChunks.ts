@@ -123,7 +123,14 @@ export async function reenrichSkippedChunks(
 
     // WS5 content-hash dedup: pre-load the cache for this run's content hashes,
     // and accumulate freshly-enriched (hash -> skills) to write back at the end.
-    const modelId = enricher.modelId ?? 'unknown';
+    // Cache scope is METHOD-aware: canonical and free-text enrichment use the same
+    // Bedrock model but produce DIFFERENT skills, so the key folds in the method
+    // (+ vocab size, so vocabulary growth re-enriches rather than serving stale
+    // canonical skills). Without this, flipping ENRICH_CANONICAL would copy the
+    // old free-text skills out of the cache.
+    const modelId = opts.canonicalVocab
+        ? `${enricher.modelId ?? 'unknown'}#canon:${opts.canonicalVocab.length}`
+        : (enricher.modelId ?? 'unknown');
     const cache = await loadEnrichmentCache(pool, opts, rows, modelId);
     const freshCache = new Map<string, string[]>();
     const remember = (hash: string | null, skills: string[]): void => {
