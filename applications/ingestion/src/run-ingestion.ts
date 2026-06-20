@@ -855,6 +855,9 @@ async function main(): Promise<void> {
         // Job as Failed — see the DeadlineExceeded incident on repos that had
         // already written 'complete'). Each step gets its own bound so one
         // hung pool drain can't consume the whole budget.
+        // Drain in-flight cost-record writes before the pool they share closes —
+        // else the last enriched chunks' cost INSERTs race the close and are lost.
+        await withTimeout(enricher?.flushCosts?.() ?? Promise.resolve(), 5_000, 'cost-flush').catch(() => { /* non-fatal */ });
         await withTimeout(
             Promise.allSettled([vectorStore.end(), syncState.end(), pgPool.end()]),
             10_000, 'db-pools',

@@ -57,25 +57,32 @@ export interface CanonicalSplit {
 
 /**
  * Split the model's raw output into in-vocabulary canonical skills and NEW: gaps.
- * A term counts as canonical ONLY if it is in the vocabulary verbatim (lowercased)
- * — anything else (an explicit "NEW: x", OR a non-vocab term the model emitted
- * without the prefix) goes to the growth queue, so non-canonical strings never
- * pollute the corpus. Pure + deterministic.
+ * A term resolves to canonical if it is in the vocabulary verbatim OR maps to a
+ * canonical via `aliasToCanonical` — the model is given only canonical NAMES but
+ * naturally emits alias phrasings ("aws dynamodb" for canonical "dynamodb"), so
+ * without alias resolution those real skills get wrongly queued as NEW: (and the
+ * canonical match lost — the precision drag observed live). Only a term that
+ * resolves to NO canonical is a genuine gap. Pure + deterministic.
  */
-export function parseCanonicalSkills(rawSkills: readonly unknown[], vocabulary: ReadonlySet<string>): CanonicalSplit {
+export function parseCanonicalSkills(
+    rawSkills: readonly unknown[],
+    vocabulary: ReadonlySet<string>,
+    aliasToCanonical?: ReadonlyMap<string, string>,
+): CanonicalSplit {
     const canonical = new Set<string>();
     const newSkills = new Set<string>();
     for (const raw of rawSkills) {
         if (typeof raw !== 'string') continue;
         const s = raw.trim().toLowerCase();
         if (s.length === 0) continue;
-        if (s.startsWith('new:')) {
-            const term = s.slice(4).trim();
-            if (term) newSkills.add(term);
-        } else if (vocabulary.has(s)) {
-            canonical.add(s);
+        const core = s.startsWith('new:') ? s.slice(4).trim() : s;
+        if (!core) continue;
+        // Resolve verbatim-canonical first, then alias -> canonical.
+        const resolved = vocabulary.has(core) ? core : aliasToCanonical?.get(core);
+        if (resolved && vocabulary.has(resolved)) {
+            canonical.add(resolved);          // real skill (possibly via alias) -> corpus
         } else {
-            newSkills.add(s);   // off-vocab without the prefix -> still a gap, never a corpus skill
+            newSkills.add(core);              // resolves to no canonical -> genuine growth-queue gap
         }
     }
     return { canonical: [...canonical], newSkills: [...newSkills] };

@@ -60,4 +60,10 @@ export interface IChunkEnricher {
      * the NEW: gaps (the vocabulary growth queue). Optional.
      */
     enrichTextCanonical?(vocabulary: readonly string[], filePath: string, content: string, heading?: string): Promise<{ canonical: string[]; newSkills: string[] }>;
+    /**
+     * Drain in-flight cost-record writes. Cost recording is non-blocking, but the
+     * writes share the caller's pool — call this before ending that pool so the
+     * last chunks' cost INSERTs aren't lost to "pool after end". Optional.
+     */
+    flushCosts?(): Promise<void>;
 }

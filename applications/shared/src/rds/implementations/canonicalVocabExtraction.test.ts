@@ -38,6 +38,14 @@ describe('parseCanonicalSkills', () => {
         expect(r.newSkills).toEqual(['iac with cdk']);   // not in vocab -> gap, not a corpus skill
     });
 
+    it('resolves an alias phrasing to its canonical instead of queuing it as NEW:', () => {
+        const aliases = new Map([['aws dynamodb', 'dynamodb'], ['amazon dynamodb', 'dynamodb']]);
+        const v = new Set(['kubernetes', 'dynamodb']);
+        const r = parseCanonicalSkills(['aws dynamodb', 'NEW: amazon dynamodb', 'webassembly'], v, aliases);
+        expect([...r.canonical].sort((a, b) => a.localeCompare(b))).toEqual(['dynamodb']);  // both alias forms -> canonical, deduped
+        expect(r.newSkills).toEqual(['webassembly']);                                   // only the true gap remains
+    });
+
     it('lowercases, trims, dedupes, drops empties/non-strings', () => {
         const r = parseCanonicalSkills(['  Kubernetes ', 'kubernetes', '', 42, 'NEW:  Rust '], vocab);
         expect(r.canonical).toEqual(['kubernetes']);

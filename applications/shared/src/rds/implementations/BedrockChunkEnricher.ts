@@ -97,6 +97,14 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     private readonly costCtx?: ChunkEnricherCostContext;
     private readonly aliasToCanonical?: ReadonlyMap<string, string>;
     private readonly resolveSkill?: (phrase: string) => Promise<string | null>;
+    /**
+     * In-flight cost-record writes. recordBedrockCost is non-blocking (a cost
+     * failure must never break enrichment), but the writes share the caller's
+     * pool — a caller that ends the pool in a `finally` would race them ("Cannot
+     * use a pool after calling end on the pool"). Track them so the caller can
+     * `await flushCosts()` before closing the pool.
+     */
+    private readonly pendingCosts: Promise<void>[] = [];
 
     constructor(config: BedrockChunkEnricherConfig = {}, costCtx?: ChunkEnricherCostContext) {
         const region = config.region ?? process.env.AWS_REGION ?? 'us-east-1';
@@ -119,6 +127,36 @@ export class BedrockChunkEnricher implements IChunkEnricher {
             ...(aliasToCanonical ? { aliasToCanonical } : {}),
             ...(resolveSkill ? { resolveSkill } : {}),
         }, costCtx);
+    }
+
+    /**
+     * Book one InvokeModel's spend without blocking the enrichment path. The
+     * promise is tracked so {@link flushCosts} can drain it before the caller
+     * closes the shared pool. A cost-record failure is swallowed (non-fatal).
+     */
+    private bookCost(parsed: AnthropicResponse): void {
+        if (!this.costCtx) return;
+        this.pendingCosts.push(
+            recordBedrockCost(this.costCtx.pool, {
+                userId:       this.costCtx.userId,
+                modelId:      this.modelId,
+                pipeline:     'repo-sync',
+                agent:        'chunk-enrich',
+                inputTokens:  parsed.usage?.input_tokens  ?? 0,
+                outputTokens: parsed.usage?.output_tokens ?? 0,
+                repoName:     this.costCtx.repoName,
+                syncKind:     this.costCtx.syncKind,
+            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err)),
+        );
+    }
+
+    /**
+     * Await all in-flight cost-record writes. Call before ending the pool these
+     * writes share — otherwise the last chunks' cost INSERTs race the close and
+     * are silently lost. Idempotent + safe to call when no costs are pending.
+     */
+    async flushCosts(): Promise<void> {
+        await Promise.allSettled(this.pendingCosts);
     }
 
     // =========================================================================
@@ -152,20 +190,8 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         ) as AnthropicResponse;
 
         // Book the spend BEFORE branching on tool_use — the call costs money
-        // whether or not the model returned a usable extraction. Non-fatal:
-        // a cost-record failure must never break ingestion.
-        if (this.costCtx) {
-            recordBedrockCost(this.costCtx.pool, {
-                userId:       this.costCtx.userId,
-                modelId:      this.modelId,
-                pipeline:     'repo-sync',
-                agent:        'chunk-enrich',
-                inputTokens:  parsed.usage?.input_tokens  ?? 0,
-                outputTokens: parsed.usage?.output_tokens ?? 0,
-                repoName:     this.costCtx.repoName,
-                syncKind:     this.costCtx.syncKind,
-            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
-        }
+        // whether or not the model returned a usable extraction.
+        this.bookCost(parsed);
 
         const toolUse = parsed.content.find(
             (b): b is AnthropicToolUseBlock => b.type === 'tool_use',
@@ -204,22 +230,13 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         );
         const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as AnthropicResponse;
 
-        if (this.costCtx) {
-            recordBedrockCost(this.costCtx.pool, {
-                userId:       this.costCtx.userId,
-                modelId:      this.modelId,
-                pipeline:     'repo-sync',
-                agent:        'chunk-enrich',
-                inputTokens:  parsed.usage?.input_tokens  ?? 0,
-                outputTokens: parsed.usage?.output_tokens ?? 0,
-                repoName:     this.costCtx.repoName,
-                syncKind:     this.costCtx.syncKind,
-            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
-        }
+        this.bookCost(parsed);
 
         const toolUse = parsed.content.find((b): b is AnthropicToolUseBlock => b.type === 'tool_use');
         if (!toolUse) return { canonical: [], newSkills: [] };
-        return parseCanonicalSkills(toolUse.input.skills ?? [], new Set(vocabulary));
+        // Pass the alias map so alias phrasings ("aws dynamodb") resolve to their
+        // canonical ("dynamodb") instead of being mis-queued as NEW: gaps.
+        return parseCanonicalSkills(toolUse.input.skills ?? [], new Set(vocabulary), this.aliasToCanonical);
     }
 
     /**
@@ -246,18 +263,7 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as AnthropicResponse;
 
         // ONE cost record for the packed call (FR-009) — accurate per-repo telemetry.
-        if (this.costCtx) {
-            recordBedrockCost(this.costCtx.pool, {
-                userId:       this.costCtx.userId,
-                modelId:      this.modelId,
-                pipeline:     'repo-sync',
-                agent:        'chunk-enrich',
-                inputTokens:  parsed.usage?.input_tokens  ?? 0,
-                outputTokens: parsed.usage?.output_tokens ?? 0,
-                repoName:     this.costCtx.repoName,
-                syncKind:     this.costCtx.syncKind,
-            }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err));
-        }
+        this.bookCost(parsed);
 
         // The packed tool_use carries `extractions` (not `skills`); the typed
         // AnthropicToolUseBlock only models the per-chunk shape, so widen here.
