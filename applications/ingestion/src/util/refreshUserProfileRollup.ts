@@ -8,6 +8,7 @@
  * MUST NOT throw — a rollup failure must never fail ingestion (same
  * best-effort contract as the retrieval probe).
  */
+import { createHash } from 'node:crypto';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
 import type { Span } from '@opentelemetry/api';
 import { computeUserProfileRollup, computeUserDiagnostic } from '@bedrock/shared';
@@ -119,6 +120,24 @@ function reportPartialSynthesis(
     console.warn(`[refreshUserProfileRollup] synthesis incomplete for user ${userId} — empty: ${failed.join(', ')}`);
 }
 
+/**
+ * WS4 synthesis-skip gate: if the aggregate rollup hash is unchanged AND synthesis
+ * already exists, re-stamp the rollup (COALESCE preserves prior synthesis) and
+ * return true so the caller skips the 3-4 LLM calls. Keyed on the aggregate, so
+ * add/delete/modify of any repo changes the hash and forces a re-synthesis.
+ */
+async function trySkipSynthesis(
+    repo: IUserProfileRollupRepository,
+    userId: string,
+    result: ReturnType<typeof computeUserProfileRollup>,
+    rollupHash: string,
+): Promise<boolean> {
+    const prior = (await repo.getSynthesisState?.(userId)) ?? null;
+    if (!prior || prior.inputHash !== rollupHash || !prior.hasSynthesis) return false;
+    await repo.upsert(userId, result, undefined, undefined, undefined, undefined, undefined, rollupHash);
+    return true;
+}
+
 export async function refreshUserProfileRollup(
     repo: IUserProfileRollupRepository,
     userId: string,
@@ -133,6 +152,19 @@ export async function refreshUserProfileRollup(
         try {
             const rows   = await repo.listProfilesForRollup(userId);
             const result = computeUserProfileRollup(rows);
+
+            // Skip-unchanged gate (WS4): the synthesis LLMs are a pure function of
+            // the aggregate rollup. Hash it; if unchanged AND synthesis already
+            // exists, skip the 3-4 LLM calls and just re-stamp the rollup (COALESCE
+            // preserves the prior synthesis). Keyed on the AGGREGATE, so adding,
+            // deleting, or modifying ANY repo changes the hash and forces a re-run.
+            const rollupHash = createHash('sha256').update(JSON.stringify(result.rollup)).digest('hex');
+            if (await trySkipSynthesis(repo, userId, result, rollupHash)) {
+                span.setAttribute('profile_rollup.synthesis_skipped', true);
+                console.info(`[refreshUserProfileRollup] rollup unchanged for user ${userId} — synthesis skipped (no LLM calls)`);
+                return;
+            }
+
             const synthMetric = synthesisOutcomeTotal();
 
             // Mirror, direction, and reconciliation are independent layers over
@@ -158,7 +190,7 @@ export async function refreshUserProfileRollup(
                 reconciliation: recon?.reconciliation ?? null,
             }, diagnosticInputsRepo, narrator);
 
-            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation, diagnostic);
+            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation, diagnostic, rollupHash);
             span.setAttributes({
                 'profile_rollup.project_repos': result.projectRepoCount,
                 'profile_rollup.synthesized':   Boolean(synth),

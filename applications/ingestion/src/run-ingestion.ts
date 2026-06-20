@@ -51,8 +51,11 @@ import {
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
 
+import { createHash } from 'node:crypto';
 import { parseEnv } from './env.js';
 import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
+import type { ProfileInputBundle } from './agents/ProfileInputCollector.js';
+import type { RepoClassification } from './util/classifyRepo.js';
 import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
 import { RetrievalProbe } from './agents/RetrievalProbe.js';
 import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
@@ -311,6 +314,90 @@ async function embedProfile(
     }
 
     await embRepo.upsertBatch(userId, rows);
+}
+
+/**
+ * Decide whether profile extraction can be skipped (WS4 Gate 1). The extract LLM
+ * is a pure function of the repo HEAD + extractor version/model; if that hash is
+ * unchanged since a completed extraction (and not a forced reindex), skip it.
+ * Returns the hash so the caller can stamp it when it does extract.
+ */
+async function evaluateExtractSkip(
+    profileRepo: RepositoryProfileRepository,
+    env: { userId: string; repoFullName: string; profileExtractorModelId?: string; forceReindex: boolean },
+    commitSha: string | null,
+    extractorVersion: string,
+): Promise<{ skip: boolean; inputHash: string }> {
+    const inputHash = createHash('sha256')
+        .update(`${commitSha ?? ''}|${extractorVersion}|${env.profileExtractorModelId ?? ''}`)
+        .digest('hex');
+    const prior = await profileRepo.getInputState(env.userId, env.repoFullName).catch(() => null);
+    const skip = !env.forceReindex && !!commitSha
+        && prior?.inputHash === inputHash && prior.extractionStatus === 'completed';
+    return { skip, inputHash };
+}
+
+/**
+ * Run profile extraction + embedding for one repo (the LLM-calling core of Phase
+ * 0). Stamps `profileInputHash` on the persisted profile so the next unchanged
+ * sync can skip this entirely. Extracted from main so the Phase-0 skip gate keeps
+ * run-ingestion's complexity flat.
+ */
+async function doExtractAndEmbed(
+    deps: {
+        profileRepo: RepositoryProfileRepository;
+        profileExtractor: ProfileExtractor;
+        embedder: TitanEmbeddingProvider;
+        embRepo: RepositoryProfileEmbeddingsRepository;
+    },
+    env: { userId: string; repoFullName: string; profileExtractorModelId?: string },
+    bundle: ProfileInputBundle,
+    classification: RepoClassification,
+    inputHash: string,
+): Promise<void> {
+    const { id: profileId } = await deps.profileRepo.upsert({
+        userId:           env.userId,
+        repoFullName:     env.repoFullName,
+        extractionStatus: 'extracting',
+        extractorModel:   env.profileExtractorModelId,
+        extractorVersion: deps.profileExtractor.version,
+    });
+    try {
+        const stopExtract = profileExtractDurationSeconds().startTimer();
+        const extracted   = await deps.profileExtractor.extract(env.userId, bundle);
+        stopExtract();
+        const { score, breakdown } = scoreProfile(extracted, bundle);
+        kbQualityScoreHist().observe(score);
+
+        await deps.profileRepo.upsert({
+            userId:           env.userId,
+            repoFullName:     env.repoFullName,
+            extracted,
+            classification,
+            qualityScore:     score,
+            qualityBreakdown: breakdown,
+            extractionStatus: 'ready_for_review',
+            extractedAt:      new Date(),
+            extractorModel:   env.profileExtractorModelId,
+            extractorVersion: deps.profileExtractor.version,
+            profileInputHash: inputHash,
+        });
+
+        const stopEmbed = profileEmbedDurationSeconds().startTimer();
+        await embedProfile(env.userId, profileId, extracted, deps.embedder, deps.embRepo);
+        stopEmbed();
+        await deps.profileRepo.updateStatus(profileId, env.userId, 'completed');
+        profileExtractCallsTotal().inc({ outcome: 'success' });
+
+        log.info({
+            repoFullName: env.repoFullName, classification,
+            qualityScore: score, domain: extracted.domain, confidence: extracted.confidence,
+        }, 'profile_extraction.complete');
+    } catch (profileErr) {
+        profileExtractCallsTotal().inc({ outcome: 'failed' });
+        await deps.profileRepo.updateStatus(profileId, env.userId, 'failed', String(profileErr));
+        throw profileErr;
+    }
 }
 
 /**
@@ -626,56 +713,19 @@ async function main(): Promise<void> {
             prefetchedFiles = undefined;
         }
 
-        const stopCollect    = profileCollectDurationSeconds().startTimer();
-        const bundle         = await profileCollector.collect(env.repoFullName, prefetchedFiles);
-        stopCollect();
-        const classification = classifyRepo(bundle);
+        // Skip-unchanged gate (WS4): no LLM when the repo HEAD + extractor are
+        // unchanged since a completed extraction. Any new commit changes HEAD.
+        const { skip: skipExtract, inputHash: profileInputHash } =
+            await evaluateExtractSkip(profileRepo, env, commitSha, profileExtractor.version);
 
-        const { id: profileId } = await profileRepo.upsert({
-            userId:           env.userId,
-            repoFullName:     env.repoFullName,
-            extractionStatus: 'extracting',
-            extractorModel:   env.profileExtractorModelId,
-            extractorVersion: profileExtractor.version,
-        });
-
-        try {
-            const stopExtract = profileExtractDurationSeconds().startTimer();
-            const extracted   = await profileExtractor.extract(env.userId, bundle);
-            stopExtract();
-            const { score, breakdown } = scoreProfile(extracted, bundle);
-            kbQualityScoreHist().observe(score);
-
-            await profileRepo.upsert({
-                userId:           env.userId,
-                repoFullName:     env.repoFullName,
-                extracted,
-                classification,
-                qualityScore:     score,
-                qualityBreakdown: breakdown,
-                extractionStatus: 'ready_for_review',
-                extractedAt:      new Date(),
-                extractorModel:   env.profileExtractorModelId,
-                extractorVersion: profileExtractor.version,
-            });
-
-            const stopEmbed = profileEmbedDurationSeconds().startTimer();
-            await embedProfile(env.userId, profileId, extracted, embedder, embRepo);
-            stopEmbed();
-            await profileRepo.updateStatus(profileId, env.userId, 'completed');
-            profileExtractCallsTotal().inc({ outcome: 'success' });
-
-            log.info({
-                repoFullName:  env.repoFullName,
-                classification,
-                qualityScore:  score,
-                domain:        extracted.domain,
-                confidence:    extracted.confidence,
-            }, 'profile_extraction.complete');
-        } catch (profileErr) {
-            profileExtractCallsTotal().inc({ outcome: 'failed' });
-            await profileRepo.updateStatus(profileId, env.userId, 'failed', String(profileErr));
-            throw profileErr;
+        if (skipExtract) {
+            log.info({ repoFullName: env.repoFullName, commitSha }, 'profile_extraction.skipped_unchanged');
+        } else {
+            const stopCollect    = profileCollectDurationSeconds().startTimer();
+            const bundle         = await profileCollector.collect(env.repoFullName, prefetchedFiles);
+            stopCollect();
+            const classification = classifyRepo(bundle);
+            await doExtractAndEmbed({ profileRepo, profileExtractor, embedder, embRepo }, env, bundle, classification, profileInputHash);
         }
 
         // Surface file-fetch progress to the UI (the 'fetching' phase). Fire-
