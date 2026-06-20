@@ -27,9 +27,11 @@ import {
     bedrockClusteringAgent,
     bootstrapK8sObservability,
     isFeatureEnabled,
+    OutputSanitiser,
     pushFinalMetrics,
     recordInvocationToRds,
     runClusteringOrchestration,
+    withWorkflowTrace,
 } from '@bedrock/shared';
 import type { BasePipelineContext } from '@bedrock/shared';
 
@@ -44,6 +46,7 @@ const FEATURE_FLAG = 'projects.clustering.enabled';
 
 const obs = bootstrapK8sObservability({ serviceName: 'project-clustering' });
 const log = obs.logger;
+const outputSanitiser = new OutputSanitiser();
 
 const clusteringRuns = new Counter({
     name:       'project_clustering_runs_total',
@@ -77,34 +80,73 @@ const cacheEnabled = new Gauge({
 // Seed result series so panels render 0 instead of "No data".
 for (const result of ['hit', 'miss', 'error'] as const) cacheRequests.inc({ cache: CACHE_NAME, result }, 0);
 
+function successfulOutcome(cacheHit: boolean): 'success' | 'cache_hit' {
+    return cacheHit ? 'cache_hit' : 'success';
+}
+
+function clusteringModel(): string {
+    return process.env.CLUSTERING_MODEL ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+}
+
 async function main(): Promise<void> {
     const env  = parseClusteringEnv();
     const pool = getPool(env.pg);
     const start = process.hrtime.bigint();
+    const model = clusteringModel();
     let outcome: 'success' | 'skipped' | 'failed' | 'cache_hit' = 'failed';
+    let traceId: string | undefined;
+    const ctx: BasePipelineContext = {
+        pipelineId:        env.pipelineRunId,
+        environment:       env.environment,
+        cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+        cumulativeCostUsd: 0,
+        userId:            env.userId,
+    };
+    let terminalCacheHit = false;
+    let terminalCounts = {
+        digestsLoaded: 0,
+        proposalsEmitted: 0,
+        proposalsInserted: 0,
+        componentsInserted: 0,
+        linksInserted: 0,
+        proposalsSkipped: 0,
+        priorProposalsCleared: 0,
+    };
 
     try {
         const enabled = await isFeatureEnabled(pool, FEATURE_FLAG, env.userId);
         if (!enabled) {
-            log.info({ userId: env.userId, flag: FEATURE_FLAG }, 'clustering disabled — skipping');
-            await updatePipelineRunMetadata(pool, env.pipelineRunId, { skipped: 'feature_disabled' });
-            await updatePipelineRun(pool, env.pipelineRunId, 'complete');
             outcome = 'skipped';
+            await withWorkflowTrace({
+                name: 'project.clustering.run',
+                parentContext: obs.parentContext,
+                attributes: {
+                    'pipeline.run_id': env.pipelineRunId,
+                    'workflow.type':   'clustering',
+                },
+            }, async (workflow) => {
+                traceId = workflow.traceId;
+                workflow.setAttributes({ 'workflow.outcome': outcome });
+                await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+                    traceId,
+                    skipped: 'feature_disabled',
+                });
+                await updatePipelineRun(pool, env.pipelineRunId, 'complete');
+                log.info({
+                    trace_id:       traceId,
+                    pipelineRunId:  env.pipelineRunId,
+                    outcome,
+                    durationMs:     Number(process.hrtime.bigint() - start) / 1e6,
+                    cacheHit:       terminalCacheHit,
+                    model,
+                    ...terminalCounts,
+                    tokens:         ctx.cumulativeTokens,
+                    costUsd:        0,
+                    skipped:        'feature_disabled',
+                }, 'project.clustering.complete');
+            });
             return;
         }
-
-        await updatePipelineRun(pool, env.pipelineRunId, 'signals_extracting');
-
-        const ctx: BasePipelineContext = {
-            pipelineId:        env.pipelineRunId,
-            environment:       env.environment,
-            cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
-            cumulativeCostUsd: 0,
-            userId:            env.userId,
-            onInvocationComplete: recordInvocationToRds(pool, 'project-clustering'),
-        };
-
-        await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
         // Exact-key Redis cache. Reads REDIS_CACHE_* from env; disabled (and
         // therefore a no-op) when REDIS_CACHE_HOST is unset, so the job is
@@ -118,48 +160,100 @@ async function main(): Promise<void> {
         });
         cacheEnabled.set({ cache: CACHE_NAME }, cache.enabled ? 1 : 0);
 
-        const out = await runClusteringOrchestration(pool, {
-            userId:        env.userId,
-            pipelineRunId: env.pipelineRunId,
-            agent:         bedrockClusteringAgent,
-            ctx,
-            cache,
-            kbTag:         env.environment,
+        await withWorkflowTrace({
+            name: 'project.clustering.run',
+            parentContext: obs.parentContext,
+            attributes: {
+                'pipeline.run_id': env.pipelineRunId,
+                'workflow.type':   'clustering',
+            },
+        }, async (workflow) => {
+            traceId = workflow.traceId;
+            await updatePipelineRunMetadata(pool, env.pipelineRunId, { traceId });
+            ctx.onInvocationComplete = recordInvocationToRds(pool, 'project-clustering', { traceId });
+
+            const out = await runClusteringOrchestration(pool, {
+                userId:        env.userId,
+                pipelineRunId: env.pipelineRunId,
+                agent:         bedrockClusteringAgent,
+                ctx,
+                cache,
+                kbTag:         env.environment,
+                workflow,
+                onStage: (stage) => updatePipelineRun(pool, env.pipelineRunId, stage),
+            });
+            terminalCacheHit = out.cacheHit;
+            terminalCounts = {
+                digestsLoaded: out.digests.length,
+                proposalsEmitted: out.result.proposals.length,
+                proposalsInserted: out.persisted.proposalsInserted,
+                componentsInserted: out.persisted.componentsInserted,
+                linksInserted: out.persisted.linksInserted,
+                proposalsSkipped: out.persisted.proposalsSkipped,
+                priorProposalsCleared: out.persisted.priorProposalsCleared,
+            };
+
+            const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+            await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+                traceId,
+                cacheHit:               out.cacheHit,
+                inputHash:              out.inputHash,
+                model,
+                ...terminalCounts,
+                tokens:                 ctx.cumulativeTokens,
+                costUsd:                ctx.cumulativeCostUsd,
+                durationMs,
+            });
+
+            await updatePipelineRun(pool, env.pipelineRunId, 'complete');
+            outcome = successfulOutcome(out.cacheHit);
+            workflow.setAttributes({
+                'workflow.outcome': outcome,
+                'cache.hit':        out.cacheHit,
+                'cost.usd':         ctx.cumulativeCostUsd,
+            });
+            log.info({
+                trace_id:      traceId,
+                pipelineRunId: env.pipelineRunId,
+                outcome,
+                durationMs,
+                cacheHit:      out.cacheHit,
+                model,
+                ...terminalCounts,
+                tokens:        ctx.cumulativeTokens,
+                costUsd:       ctx.cumulativeCostUsd,
+            }, 'project.clustering.complete');
         });
-
-        await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
-
-        await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            cacheHit:               out.cacheHit,
-            inputHash:              out.inputHash,
-            digestsLoaded:          out.digests.length,
-            proposalsEmitted:       out.result.proposals.length,
-            proposalsInserted:      out.persisted.proposalsInserted,
-            componentsInserted:     out.persisted.componentsInserted,
-            linksInserted:          out.persisted.linksInserted,
-            proposalsSkipped:       out.persisted.proposalsSkipped,
-            priorProposalsCleared:  out.persisted.priorProposalsCleared,
-            tokens:                 ctx.cumulativeTokens,
-            costUsd:                ctx.cumulativeCostUsd,
-        });
-
-        await updatePipelineRun(pool, env.pipelineRunId, 'complete');
-        outcome = out.cacheHit ? 'cache_hit' : 'success';
-
-        log.info({
-            userId:                env.userId,
-            digests:               out.digests.length,
-            proposalsInserted:     out.persisted.proposalsInserted,
-            proposalsSkipped:      out.persisted.proposalsSkipped,
-            priorProposalsCleared: out.persisted.priorProposalsCleared,
-        }, 'clustering complete');
     } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log.error({ err: message, userId: env.userId }, 'clustering failed');
+        const rawMessage = err instanceof Error ? err.message : String(err);
+        const errorMessage = outputSanitiser.sanitise(rawMessage).slice(0, 500);
+        const errorClass = err instanceof Error ? err.name : 'Error';
+        log.error({
+            trace_id:      traceId,
+            pipelineRunId: env.pipelineRunId,
+            outcome:       'failed',
+            durationMs:    Number(process.hrtime.bigint() - start) / 1e6,
+            cacheHit:      terminalCacheHit,
+            model,
+            ...terminalCounts,
+            tokens:        ctx.cumulativeTokens,
+            costUsd:       ctx.cumulativeCostUsd,
+            error: {
+                class:   errorClass,
+                message: errorMessage,
+            },
+        }, 'project.clustering.failed');
         try {
-            await updatePipelineRun(pool, env.pipelineRunId, 'failed', message);
+            await updatePipelineRun(pool, env.pipelineRunId, 'failed', errorMessage);
         } catch (innerErr) {
-            log.error({ err: innerErr }, 'failed to mark pipeline_run failed');
+            const statusError = outputSanitiser.sanitise(
+                innerErr instanceof Error ? innerErr.message : String(innerErr),
+            ).slice(0, 500);
+            log.error({
+                trace_id: traceId,
+                pipelineRunId: env.pipelineRunId,
+                error: statusError,
+            }, 'project.clustering.status_update_failed');
         }
         throw err;
     } finally {
@@ -169,14 +263,12 @@ async function main(): Promise<void> {
         try {
             await pushFinalMetrics(obs.registry, 'project-clustering', env.pipelineRunId);
         } catch (err) {
-            log.warn({ err }, 'pushFinalMetrics failed');
+            const message = outputSanitiser.sanitise(err instanceof Error ? err.message : String(err));
+            log.warn({ error: message }, 'pushFinalMetrics failed');
         }
+        await obs.shutdown();
         await closePool();
     }
 }
 
-main().catch((err) => {
-     
-    console.error('clustering Job failed:', err);
-    process.exit(1);
-});
+main().catch(() => process.exit(1));
