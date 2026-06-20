@@ -37,7 +37,9 @@ export {
     pushFinalMetrics,
     jobLogger,
     activeTraceContext,
+    currentTraceContext,
     withSpan,
+    withWorkflowTrace,
     captureAwsClient,
     recordBedrockUsage,
     setBedrockMetricsRegistry,
@@ -47,6 +49,7 @@ export type {
     ObservabilityHandle,
     BootstrapOptions,
     JobLogger,
+    WorkflowTrace,
     BedrockUsage,
     RecordBedrockUsageArgs,
 } from './observability/index.js';

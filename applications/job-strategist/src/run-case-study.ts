@@ -28,10 +28,12 @@ import {
     bedrockSystemTourAgent,
     bootstrapK8sObservability,
     isFeatureEnabled,
+    OutputSanitiser,
     pushFinalMetrics,
     recordInvocationToRds,
     runCaseStudyOrchestration,
     runSystemTour,
+    withWorkflowTrace,
     RdsSystemTourRepository,
     loadRepoRoleSignals,
     recomputeConfirmedProjectComponents,
@@ -49,6 +51,7 @@ const FEATURE_FLAG = 'projects.case_study.enabled';
 
 const obs = bootstrapK8sObservability({ serviceName: 'project-case-study' });
 const log = obs.logger;
+const outputSanitiser = new OutputSanitiser();
 
 const caseStudyRuns = new Counter({
     name:       'project_case_study_runs_total',
@@ -116,29 +119,78 @@ async function main(): Promise<void> {
     const pool = getPool(env.pg);
     const start = process.hrtime.bigint();
     let outcome: 'success' | 'skipped' | 'failed' | 'cache_hit' = 'failed';
+    let traceId: string | undefined;
+    const ctx: BasePipelineContext = {
+        pipelineId:        env.pipelineRunId,
+        environment:       env.environment,
+        cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+        cumulativeCostUsd: 0,
+        userId:            env.userId,
+    };
+    const groundingUsage = {
+        calls:        0,
+        inputTokens:  0,
+        outputTokens: 0,
+        costUsd:      0,
+    };
+    let terminalCacheHit = false;
+    let terminalGenerationMode: 'unknown' | 'cache_hit' | 'refine' | 'full' = 'unknown';
+    let terminalCounts = {
+        stackItemsInserted: 0,
+        stackItemsPruned: 0,
+        decisionsInserted: 0,
+        decisionsPruned: 0,
+        highlightsInserted: 0,
+        highlightsPruned: 0,
+        challengesInserted: 0,
+        challengesPruned: 0,
+    };
+    let terminalGrounding = {
+        checked: 0,
+        grounded: 0,
+        flagged: 0,
+        notVerified: 0,
+    };
 
     try {
         const enabled = await isFeatureEnabled(pool, FEATURE_FLAG, env.userId);
         if (!enabled) {
-            log.info({ userId: env.userId, flag: FEATURE_FLAG }, 'case-study disabled — skipping');
-            await updatePipelineRunMetadata(pool, env.pipelineRunId, { skipped: 'feature_disabled' });
-            await updatePipelineRun(pool, env.pipelineRunId, 'complete');
             outcome = 'skipped';
+            await withWorkflowTrace({
+                name: 'project.case_study.run',
+                parentContext: obs.parentContext,
+                attributes: {
+                    'pipeline.run_id': env.pipelineRunId,
+                    'project.id':      env.projectId,
+                    'workflow.type':   'case_study',
+                },
+            }, async (workflow) => {
+                traceId = workflow.traceId;
+                workflow.setAttributes({ 'workflow.outcome': outcome });
+                await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+                    traceId,
+                    skipped: 'feature_disabled',
+                });
+                await updatePipelineRun(pool, env.pipelineRunId, 'complete');
+                log.info({
+                    trace_id:       traceId,
+                    pipelineRunId:  env.pipelineRunId,
+                    projectId:      env.projectId,
+                    outcome,
+                    durationMs:     Number(process.hrtime.bigint() - start) / 1e6,
+                    cacheHit:       terminalCacheHit,
+                    generationMode: terminalGenerationMode,
+                    ...terminalCounts,
+                    grounding:      terminalGrounding,
+                    groundingCalls: groundingUsage.calls,
+                    tokens:         ctx.cumulativeTokens,
+                    costUsd:        0,
+                    skipped:        'feature_disabled',
+                }, 'project.case_study.complete');
+            });
             return;
         }
 
-        await updatePipelineRun(pool, env.pipelineRunId, 'fetching_context');
-
-        const ctx: BasePipelineContext = {
-            pipelineId:        env.pipelineRunId,
-            environment:       env.environment,
-            cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
-            cumulativeCostUsd: 0,
-            userId:            env.userId,
-            onInvocationComplete: recordInvocationToRds(pool, 'project-case-study', { projectId: env.projectId }),
-        };
-
-        const verifier = new BedrockGroundingVerifier({ mode: 'flag' });
         // Exact-key Redis cache. Reads REDIS_CACHE_* from env; disabled (and
         // therefore a no-op) when REDIS_CACHE_HOST is unset, so the job is
         // safe to deploy ahead of the cluster-side Redis wiring.
@@ -152,94 +204,209 @@ async function main(): Promise<void> {
         cacheEnabled.set({ cache: CACHE_NAME }, cache.enabled ? 1 : 0);
         const kbTag = `${env.environment}:${env.kbVersion}:${env.model}`;
 
-        await updatePipelineRun(pool, env.pipelineRunId, 'generating');
-
-        // Refresh THIS project's components from current code-grounded signals
-        // (archetype/fileClass) before generating — so the case study reads
-        // role-correct structure (e.g. a GitOps-infra repo no longer filed as
-        // 'shared'). Best-effort: a refresh failure must not fail the case study.
-        await refreshProjectComponentsBestEffort(pool, env.userId, env.projectId);
-
-        // Incremental refine by default: when the project already has a
-        // completed case study, the agent updates it (preserving grounded rows)
-        // instead of regenerating from scratch. First-ever generation falls back
-        // to full. Set CASE_STUDY_DISABLE_REFINE=true to force a full rewrite.
-        const refine = process.env.CASE_STUDY_DISABLE_REFINE !== 'true';
-
-        const out = await runCaseStudyOrchestration(pool, {
-            projectId:     env.projectId,
-            pipelineRunId: env.pipelineRunId,
-            model:         env.model,
-            kbTag,
-            agent:         bedrockCaseStudyAgent,
-            verifier,
-            cache,
-            ctx,
-            refine,
-        });
-
-        // S7b: generate the project's system-tour walkthrough from the fresh case study.
-        // Fail-open — the case study is already persisted; a tour failure must not fail the job.
-        let systemTourGenerated = false;
-        try {
-            await runSystemTour({
+        await withWorkflowTrace({
+            name: 'project.case_study.run',
+            parentContext: obs.parentContext,
+            attributes: {
+                'pipeline.run_id': env.pipelineRunId,
+                'project.id':      env.projectId,
+                'workflow.type':   'case_study',
+            },
+        }, async (workflow) => {
+            traceId = workflow.traceId;
+            await updatePipelineRunMetadata(pool, env.pipelineRunId, { traceId });
+            ctx.onInvocationComplete = recordInvocationToRds(pool, 'project-case-study', {
                 projectId: env.projectId,
-                userId:    env.userId,
-                caseStudy: out.caseStudy,
-                agent:     bedrockSystemTourAgent,
-                repo:      new RdsSystemTourRepository(pool),
-                ctx,
+                traceId,
             });
-            systemTourGenerated = true;
-        } catch (err) {
-            log.warn({ err: String(err) }, 'system-tour generation failed (non-fatal)');
-        }
 
-        await updatePipelineRun(
-            pool,
-            env.pipelineRunId,
-            out.cacheHit ? 'persisting' : 'grounding',
-        );
+            const verifier = new BedrockGroundingVerifier({
+                mode: 'flag',
+                costContext: {
+                    pool,
+                    userId:    env.userId,
+                    projectId: env.projectId,
+                    traceId,
+                },
+                onUsage: (usage) => {
+                    groundingUsage.calls += usage.calls;
+                    groundingUsage.inputTokens += usage.inputTokens;
+                    groundingUsage.outputTokens += usage.outputTokens;
+                    groundingUsage.costUsd += usage.costUsd;
+                },
+            });
 
-        await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            cacheHit:                  out.cacheHit,
-            refined:                   out.refined,
-            inputHash:                 out.inputHash,
-            stackItemsInserted:        out.persisted.stackItemsInserted,
-            decisionsInserted:         out.persisted.decisionsInserted,
-            highlightsInserted:        out.persisted.highlightsInserted,
-            challengesInserted:        out.persisted.challengesInserted,
-            resumeBulletSetsUpserted:  out.persisted.resumeBulletSetsUpserted,
-            architectureUpserted:      out.persisted.architectureUpserted,
-            depthMarkersUpserted:      out.persisted.depthMarkersUpserted,
-            skippedSections:           out.persisted.skippedSections,
-            systemTourGenerated,
-            commitsLoaded:             out.contextLoaded.context.commits.length,
-            kbChunksLoaded:            out.contextLoaded.context.kbChunks.length,
-            tokens:                    ctx.cumulativeTokens,
-            costUsd:                   ctx.cumulativeCostUsd,
+            // Refresh THIS project's components from current code-grounded signals
+            // (archetype/fileClass) before generating — so the case study reads
+            // role-correct structure (e.g. a GitOps-infra repo no longer filed as
+            // 'shared'). Best-effort: a refresh failure must not fail the case study.
+            await refreshProjectComponentsBestEffort(pool, env.userId, env.projectId);
+
+            // Incremental refine by default: when the project already has a
+            // completed case study, the agent updates it (preserving grounded rows)
+            // instead of regenerating from scratch. First-ever generation falls back
+            // to full. Set CASE_STUDY_DISABLE_REFINE=true to force a full rewrite.
+            const refine = process.env.CASE_STUDY_DISABLE_REFINE !== 'true';
+
+            const out = await runCaseStudyOrchestration(pool, {
+                projectId:     env.projectId,
+                pipelineRunId: env.pipelineRunId,
+                model:         env.model,
+                kbTag,
+                agent:         bedrockCaseStudyAgent,
+                verifier,
+                cache,
+                ctx,
+                refine,
+                workflow,
+                onStage: (stage) => updatePipelineRun(pool, env.pipelineRunId, stage),
+            });
+            terminalCacheHit = out.cacheHit;
+            terminalGenerationMode = out.cacheHit ? 'cache_hit' : out.refined ? 'refine' : 'full';
+            terminalCounts = {
+                stackItemsInserted: out.persisted.stackItemsInserted,
+                stackItemsPruned: out.persisted.stackItemsPruned,
+                decisionsInserted: out.persisted.decisionsInserted,
+                decisionsPruned: out.persisted.decisionsPruned,
+                highlightsInserted: out.persisted.highlightsInserted,
+                highlightsPruned: out.persisted.highlightsPruned,
+                challengesInserted: out.persisted.challengesInserted,
+                challengesPruned: out.persisted.challengesPruned,
+            };
+            terminalGrounding = out.grounding;
+
+            // S7b: generate the project's system-tour walkthrough from the fresh case study.
+            // Fail-open — the case study is already persisted; a tour failure must not fail the job.
+            let systemTourGenerated = false;
+            try {
+                await workflow.stage('project.case_study.system_tour', {}, async () => {
+                    await runSystemTour({
+                        projectId: env.projectId,
+                        userId:    env.userId,
+                        caseStudy: out.caseStudy,
+                        agent:     bedrockSystemTourAgent,
+                        repo:      new RdsSystemTourRepository(pool),
+                        ctx,
+                    });
+                });
+                systemTourGenerated = true;
+            } catch (err) {
+                const message = outputSanitiser.sanitise(err instanceof Error ? err.message : String(err));
+                log.warn({
+                    trace_id: traceId,
+                    pipelineRunId: env.pipelineRunId,
+                    projectId: env.projectId,
+                    error: message,
+                }, 'project.case_study.system_tour_failed');
+            }
+
+            const generationMode = terminalGenerationMode;
+            const totalCostUsd = ctx.cumulativeCostUsd + groundingUsage.costUsd;
+
+            await updatePipelineRunMetadata(pool, env.pipelineRunId, {
+                traceId,
+                cacheHit:                  out.cacheHit,
+                refined:                   out.refined,
+                generationMode,
+                inputHash:                 out.inputHash,
+                stackItemsInserted:        out.persisted.stackItemsInserted,
+                stackItemsPruned:          out.persisted.stackItemsPruned,
+                decisionsInserted:         out.persisted.decisionsInserted,
+                decisionsPruned:           out.persisted.decisionsPruned,
+                highlightsInserted:        out.persisted.highlightsInserted,
+                highlightsPruned:          out.persisted.highlightsPruned,
+                challengesInserted:        out.persisted.challengesInserted,
+                challengesPruned:          out.persisted.challengesPruned,
+                resumeBulletSetsUpserted:  out.persisted.resumeBulletSetsUpserted,
+                architectureUpserted:      out.persisted.architectureUpserted,
+                depthMarkersUpserted:      out.persisted.depthMarkersUpserted,
+                skippedSections:           out.persisted.skippedSections,
+                systemTourGenerated,
+                groundingChecked:          out.grounding.checked,
+                groundingGrounded:         out.grounding.grounded,
+                groundingFlagged:          out.grounding.flagged,
+                groundingNotVerified:      out.grounding.notVerified,
+                groundingCalls:            groundingUsage.calls,
+                groundingInputTokens:      groundingUsage.inputTokens,
+                groundingOutputTokens:     groundingUsage.outputTokens,
+                groundingCostUsd:          groundingUsage.costUsd,
+                commitsLoaded:             out.contextLoaded.context.commits.length,
+                kbChunksLoaded:            out.contextLoaded.context.kbChunks.length,
+                tokens:                    ctx.cumulativeTokens,
+                generationCostUsd:         ctx.cumulativeCostUsd,
+                totalCostUsd,
+                costUsd:                   totalCostUsd,
+            });
+
+            await updatePipelineRun(pool, env.pipelineRunId, 'complete');
+            outcome = out.cacheHit ? 'cache_hit' : 'success';
+
+            const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+            workflow.setAttributes({
+                'workflow.outcome': outcome,
+                'cache.hit':        out.cacheHit,
+                'generation.mode':  generationMode,
+                'cost.usd':         totalCostUsd,
+            });
+            log.info({
+                trace_id:             traceId,
+                pipelineRunId:        env.pipelineRunId,
+                projectId:            env.projectId,
+                outcome,
+                durationMs,
+                cacheHit:             out.cacheHit,
+                generationMode,
+                stackItemsInserted:   out.persisted.stackItemsInserted,
+                stackItemsPruned:     out.persisted.stackItemsPruned,
+                decisionsInserted:    out.persisted.decisionsInserted,
+                decisionsPruned:      out.persisted.decisionsPruned,
+                highlightsInserted:   out.persisted.highlightsInserted,
+                highlightsPruned:     out.persisted.highlightsPruned,
+                challengesInserted:   out.persisted.challengesInserted,
+                challengesPruned:     out.persisted.challengesPruned,
+                grounding:            out.grounding,
+                groundingCalls:       groundingUsage.calls,
+                tokens:               ctx.cumulativeTokens,
+                costUsd:              totalCostUsd,
+                systemTourGenerated,
+                skippedSections:      out.persisted.skippedSections,
+            }, 'project.case_study.complete');
         });
-
-        await updatePipelineRun(pool, env.pipelineRunId, 'complete');
-        outcome = out.cacheHit ? 'cache_hit' : 'success';
-
-        log.info({
-            userId:               env.userId,
-            projectId:            env.projectId,
-            cacheHit:             out.cacheHit,
-            refined:              out.refined,
-            decisionsInserted:    out.persisted.decisionsInserted,
-            highlightsInserted:   out.persisted.highlightsInserted,
-            challengesInserted:   out.persisted.challengesInserted,
-            skippedSections:      out.persisted.skippedSections,
-        }, 'case-study complete');
     } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log.error({ err: message, projectId: env.projectId }, 'case-study failed');
+        const rawMessage = err instanceof Error ? err.message : String(err);
+        const errorMessage = outputSanitiser.sanitise(rawMessage).slice(0, 500);
+        const errorClass = err instanceof Error ? err.name : 'Error';
+        const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+        log.error({
+            trace_id:      traceId,
+            pipelineRunId: env.pipelineRunId,
+            projectId:     env.projectId,
+            outcome:       'failed',
+            durationMs,
+            cacheHit:      terminalCacheHit,
+            generationMode: terminalGenerationMode,
+            ...terminalCounts,
+            grounding:      terminalGrounding,
+            groundingCalls: groundingUsage.calls,
+            tokens:         ctx.cumulativeTokens,
+            costUsd:        ctx.cumulativeCostUsd + groundingUsage.costUsd,
+            error: {
+                class:   errorClass,
+                message: errorMessage,
+            },
+        }, 'project.case_study.failed');
         try {
-            await updatePipelineRun(pool, env.pipelineRunId, 'failed', message);
+            await updatePipelineRun(pool, env.pipelineRunId, 'failed', errorMessage);
         } catch (innerErr) {
-            log.error({ err: innerErr }, 'failed to mark pipeline_run failed');
+            const statusError = outputSanitiser.sanitise(
+                innerErr instanceof Error ? innerErr.message : String(innerErr),
+            ).slice(0, 500);
+            log.error({
+                trace_id: traceId,
+                pipelineRunId: env.pipelineRunId,
+                projectId: env.projectId,
+                error: statusError,
+            }, 'project.case_study.status_update_failed');
         }
         throw err;
     } finally {
@@ -249,13 +416,12 @@ async function main(): Promise<void> {
         try {
             await pushFinalMetrics(obs.registry, 'project-case-study', env.pipelineRunId);
         } catch (err) {
-            log.warn({ err }, 'pushFinalMetrics failed');
+            const message = outputSanitiser.sanitise(err instanceof Error ? err.message : String(err));
+            log.warn({ error: message }, 'pushFinalMetrics failed');
         }
+        await obs.shutdown();
         await closePool();
     }
 }
 
-main().catch((err) => {
-    console.error('case-study Job failed:', err);
-    process.exit(1);
-});
+main().catch(() => process.exit(1));

@@ -80,9 +80,13 @@ export interface PersistCaseStudyInput {
 
 export interface PersistCaseStudySummary {
     readonly stackItemsInserted:   number;
+    readonly stackItemsPruned:     number;
     readonly decisionsInserted:    number;
+    readonly decisionsPruned:      number;
     readonly highlightsInserted:   number;
+    readonly highlightsPruned:     number;
     readonly challengesInserted:   number;
+    readonly challengesPruned:     number;
     readonly resumeBulletSetsUpserted: number;
     readonly architectureUpserted: boolean;
     readonly depthMarkersUpserted: boolean;
@@ -168,7 +172,7 @@ async function upsertProjectTopFields(
  *
  * Two rows are never pruned: NULL-content_hash rows (user-authored — `NULL <> x`
  * is NULL, so they fall out of the delete) and, when `preserveUserConfirmed`,
- * rows the user has confirmed. Returns the number of NEW rows inserted.
+ * rows the user has confirmed. Returns the numbers inserted and pruned.
  */
 async function insertGenerated(
     client: PoolClient,
@@ -180,7 +184,7 @@ async function insertGenerated(
         columns:       Record<string, unknown>;
     }>,
     opts: { preserveUserConfirmed?: boolean } = {},
-): Promise<number> {
+): Promise<{ inserted: number; pruned: number }> {
     let inserted = 0;
     const currentHashes: string[] = [];
     for (let i = 0; i < rows.length; i++) {
@@ -219,24 +223,27 @@ async function insertGenerated(
 
     // Prune superseded machine rows so the section reflects only the current run.
     const preserveClause = opts.preserveUserConfirmed ? ' AND is_user_confirmed = FALSE' : '';
+    let pruned = 0;
     if (currentHashes.length > 0) {
-        await client.query(
+        const deleted = await client.query(
             `DELETE FROM ${table}
               WHERE project_id = $1
                 AND content_hash <> ALL($2::text[])${preserveClause}`,
             [input.projectId, currentHashes],
         );
+        pruned = deleted.rowCount ?? 0;
     } else {
         // The agent produced no rows for this section — clear stale machine rows
         // (NULL-hash user rows and, if requested, user-confirmed rows survive).
-        await client.query(
+        const deleted = await client.query(
             `DELETE FROM ${table}
               WHERE project_id = $1
                 AND content_hash IS NOT NULL${preserveClause}`,
             [input.projectId],
         );
+        pruned = deleted.rowCount ?? 0;
     }
-    return inserted;
+    return { inserted, pruned };
 }
 
 async function upsertDepthMarkers(
@@ -342,6 +349,7 @@ export async function persistCaseStudy(
         skip('pitch');
 
         let stackItemsInserted = 0;
+        let stackItemsPruned = 0;
         if (!isSticky(overrides, 'stack')) {
             // SBOM-ground each stack item: stamp its real version + purl +
             // declaration file:line when it matches a code dependency, or flag
@@ -360,14 +368,17 @@ export async function persistCaseStudy(
                     },
                 })),
             );
-            stackItemsInserted = await insertGenerated(client, 'project_stack_items', input, stackRows);
+            const stackSummary = await insertGenerated(client, 'project_stack_items', input, stackRows);
+            stackItemsInserted = stackSummary.inserted;
+            stackItemsPruned = stackSummary.pruned;
         } else {
             skippedSections.push('stack');
         }
 
         let decisionsInserted = 0;
+        let decisionsPruned = 0;
         if (!isSticky(overrides, 'decisions')) {
-            decisionsInserted = await insertGenerated(client, 'project_decisions', input,
+            const decisionsSummary = await insertGenerated(client, 'project_decisions', input,
                 input.caseStudy.decisions.map((d) => ({
                     contentFields: [d.title, d.context, d.decision, d.consequences],
                     signals:       d.sourceSignals,
@@ -382,13 +393,16 @@ export async function persistCaseStudy(
                 })),
                 { preserveUserConfirmed: true },
             );
+            decisionsInserted = decisionsSummary.inserted;
+            decisionsPruned = decisionsSummary.pruned;
         } else {
             skippedSections.push('decisions');
         }
 
         let highlightsInserted = 0;
+        let highlightsPruned = 0;
         if (!isSticky(overrides, 'highlights')) {
-            highlightsInserted = await insertGenerated(client, 'project_highlights', input,
+            const highlightsSummary = await insertGenerated(client, 'project_highlights', input,
                 input.caseStudy.highlights.map((h) => ({
                     contentFields: [h.title, h.description],
                     signals:       h.sourceSignals,
@@ -398,13 +412,16 @@ export async function persistCaseStudy(
                     },
                 })),
             );
+            highlightsInserted = highlightsSummary.inserted;
+            highlightsPruned = highlightsSummary.pruned;
         } else {
             skippedSections.push('highlights');
         }
 
         let challengesInserted = 0;
+        let challengesPruned = 0;
         if (!isSticky(overrides, 'challenges')) {
-            challengesInserted = await insertGenerated(client, 'project_challenges', input,
+            const challengesSummary = await insertGenerated(client, 'project_challenges', input,
                 input.caseStudy.challenges.map((c) => ({
                     contentFields: [c.problem, c.solution],
                     signals:       c.sourceSignals,
@@ -414,6 +431,8 @@ export async function persistCaseStudy(
                     },
                 })),
             );
+            challengesInserted = challengesSummary.inserted;
+            challengesPruned = challengesSummary.pruned;
         } else {
             skippedSections.push('challenges');
         }
@@ -442,9 +461,13 @@ export async function persistCaseStudy(
         await client.query('COMMIT');
         return {
             stackItemsInserted,
+            stackItemsPruned,
             decisionsInserted,
+            decisionsPruned,
             highlightsInserted,
+            highlightsPruned,
             challengesInserted,
+            challengesPruned,
             resumeBulletSetsUpserted,
             architectureUpserted,
             depthMarkersUpserted,

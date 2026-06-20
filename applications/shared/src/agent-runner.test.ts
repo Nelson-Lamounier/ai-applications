@@ -36,6 +36,12 @@ jest.mock('./metrics.js', () => ({
     estimateInvocationCost: jest.fn(() => 0.001),
 }));
 
+const currentTraceContextMock = jest.fn(() => ({}));
+
+jest.mock('./observability/workflow-trace.js', () => ({
+    currentTraceContext: currentTraceContextMock,
+}));
+
 // Import AFTER mocks are set up
 import { runAgent, parseJsonResponse, AgentExecutionError } from './agent-runner';
 
@@ -725,6 +731,7 @@ describe('runAgent — forced tool_use', () => {
 describe('runAgent — cost recording via pipeline context', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        currentTraceContextMock.mockReturnValue({});
     });
 
     it('invokes ctx.onInvocationComplete with the ctx userId and token usage', async () => {
@@ -744,6 +751,28 @@ describe('runAgent — cost recording via pipeline context', () => {
         expect(log.userId).toBe('user-42');
         expect(log.systemPromptTokens).toBe(500);
         expect(log.outputTokens).toBe(200);
+    });
+
+    it('uses the active OTel trace for the invocation log', async () => {
+        currentTraceContextMock.mockReturnValue({
+            traceId: '0123456789abcdef0123456789abcdef',
+        });
+        const sink = jest.fn(async () => {});
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse('ok'));
+
+        await runAgent({
+            config: buildConfig(VALID_MAX_TOKENS, DISABLED_THINKING_BUDGET),
+            userMessage: TEST_USER_MESSAGE,
+            parseResponse: (text: string) => text,
+            pipelineContext: {
+                ...buildPipelineContext(),
+                userId: 'user-42',
+                onInvocationComplete: sink,
+            },
+        });
+
+        const [log] = sink.mock.calls[0] as unknown as [{ traceId?: string }];
+        expect(log.traceId).toBe('0123456789abcdef0123456789abcdef');
     });
 
     it('per-call onInvocationComplete option overrides the ctx sink', async () => {

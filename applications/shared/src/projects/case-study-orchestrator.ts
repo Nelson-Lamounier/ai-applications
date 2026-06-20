@@ -28,6 +28,7 @@ import type { Pool } from 'pg';
 import type { BasePipelineContext } from '../base-agent.js';
 import type { ISemanticCache } from '../cache/cache-types.js';
 import type { IGroundingVerifier } from '../grounding/grounding-types.js';
+import type { WorkflowTrace } from '../observability/workflow-trace.js';
 
 import type { CaseStudyAgent } from './case-study-agent.js';
 import {
@@ -49,6 +50,12 @@ import {
     mergeGroundingResult,
 } from './source-signals.js';
 
+export type RunCaseStudyStage =
+    | 'fetching_context'
+    | 'generating'
+    | 'grounding'
+    | 'persisting';
+
 export interface RunCaseStudyInput {
     readonly projectId:     string;
     readonly pipelineRunId: string;
@@ -57,7 +64,9 @@ export interface RunCaseStudyInput {
     readonly agent:         CaseStudyAgent;
     readonly verifier?:     IGroundingVerifier;
     readonly cache?:        ISemanticCache;
-    readonly ctx:               BasePipelineContext;
+    readonly ctx:           BasePipelineContext;
+    readonly workflow?:     WorkflowTrace;
+    readonly onStage?:      (stage: RunCaseStudyStage) => Promise<void>;
     /**
      * Incremental refine: when true and the project already has a completed
      * case study, the agent updates that prior study (preserving grounded rows)
@@ -72,9 +81,49 @@ export interface RunCaseStudyOutput {
     readonly cacheHit:   boolean;
     readonly refined:    boolean;
     readonly caseStudy:  CaseStudy;
+    readonly grounding:  GroundingSummary;
     readonly persisted:  PersistCaseStudySummary;
     readonly inputHash:  string;
     readonly contextLoaded: LoadCaseStudyContextResult;
+}
+
+export interface GroundingSummary {
+    readonly checked: number;
+    readonly grounded: number;
+    readonly flagged: number;
+    readonly notVerified: number;
+}
+
+function updateOptionalHash(hash: ReturnType<typeof createHash>, prefix: string, value: string | null | undefined): void {
+    if (!value) return;
+    hash.update(`${prefix}${value}`);
+}
+
+function updateListHash(hash: ReturnType<typeof createHash>, values: readonly string[], prefix: string): void {
+    if (values.length === 0) return;
+    hash.update(`${prefix}${values.join(',')}`);
+}
+
+function updateComponentHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const component of context.components) hash.update(`${component.kind}:${component.name}`);
+}
+
+function updateRepositoryHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const repo of context.repositories) {
+        hash.update(repo.fullName);
+        hash.update(repo.techStack.join(','));
+        hash.update((repo.topics ?? []).join(','));
+    }
+}
+
+function updateCommitHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const commit of context.commits) hash.update(commit.sha);
+}
+
+function updatePullHash(hash: ReturnType<typeof createHash>, context: LoadCaseStudyContextResult['context']): void {
+    for (const pull of context.pulls) {
+        hash.update(`pr:${pull.number}:${pull.state}:${pull.mergedAt ?? ''}`);
+    }
 }
 
 /**
@@ -90,22 +139,14 @@ export function computeInputHash(context: LoadCaseStudyContextResult): string {
     h.update(c.tagline ?? '');
     h.update(c.pitch ?? '');
     h.update(c.productContext ?? '');
-    for (const comp of c.components) h.update(`${comp.kind}:${comp.name}`);
-    for (const repo of c.repositories) {
-        h.update(repo.fullName);
-        h.update(repo.techStack.join(','));
-        h.update((repo.topics ?? []).join(','));
-    }
-    for (const commit of c.commits) {
-        h.update(commit.sha);
-    }
-    for (const pr of c.pulls) {
-        h.update(`pr:${pr.number}:${pr.state}:${pr.mergedAt ?? ''}`);
-    }
-    if (c.archetype) h.update(`arch:${c.archetype.id}`);
-    if (c.stage)     h.update(`stage:${c.stage}`);
-    if (c.prioritySections?.length)     h.update(`ps:${c.prioritySections.join(',')}`);
-    if (c.deemphasizedSections?.length) h.update(`ds:${c.deemphasizedSections.join(',')}`);
+    updateComponentHash(h, c);
+    updateRepositoryHash(h, c);
+    updateCommitHash(h, c);
+    updatePullHash(h, c);
+    updateOptionalHash(h, 'arch:', c.archetype?.id);
+    updateOptionalHash(h, 'stage:', c.stage);
+    updateListHash(h, c.prioritySections ?? [], 'ps:');
+    updateListHash(h, c.deemphasizedSections ?? [], 'ds:');
     return h.digest('hex');
 }
 
@@ -154,14 +195,39 @@ async function applyGrounding(
     };
 }
 
+export function summarizeGrounding(caseStudy: CaseStudy): GroundingSummary {
+    const signals = [
+        ...caseStudy.decisions.map((row) => row.sourceSignals),
+        ...caseStudy.highlights.map((row) => row.sourceSignals),
+        ...caseStudy.challenges.map((row) => row.sourceSignals),
+    ];
+    return {
+        checked: signals.filter((s) => s.grounding !== 'NOT_VERIFIED').length,
+        grounded: signals.filter((s) => s.grounding === 'GROUNDED').length,
+        flagged: signals.filter((s) => s.grounding === 'NOT_GROUNDED').length,
+        notVerified: signals.filter((s) => s.grounding === 'NOT_VERIFIED').length,
+    };
+}
+
 const CACHE_SCOPE_PREFIX = 'casestudy';
+
+async function runStage<T>(
+    workflow: WorkflowTrace | undefined,
+    name: string,
+    work: () => Promise<T>,
+): Promise<T> {
+    return workflow ? workflow.stage(name, {}, work) : work();
+}
 
 export async function runCaseStudyOrchestration(
     pool: Pool,
     input: RunCaseStudyInput,
 ): Promise<RunCaseStudyOutput> {
-    const baseContext = await loadCaseStudyContext(pool, input.projectId);
-    const { contextLoaded, refined } = await resolveRefineContext(pool, baseContext, input);
+    await input.onStage?.('fetching_context');
+    const { contextLoaded, refined } = await runStage(input.workflow, 'project.case_study.load_context', async () => {
+        const baseContext = await loadCaseStudyContext(pool, input.projectId);
+        return resolveRefineContext(pool, baseContext, input);
+    });
     const inputHash = computeInputHash(contextLoaded);
 
     const cacheKey = {
@@ -174,13 +240,21 @@ export async function runCaseStudyOrchestration(
     const cacheable = Boolean(input.cache) && !refined;
 
     // 1. Try the cache.
-    let caseStudy = cacheable ? await cacheGet(input.cache!, cacheKey) : undefined;
+    let caseStudy = await runStage(input.workflow, 'project.case_study.cache_lookup', async () =>
+        cacheable ? cacheGet(input.cache!, cacheKey) : undefined,
+    );
     const cacheHit = caseStudy !== undefined;
 
     // 2. Run the agent if the cache missed.
     if (!caseStudy) {
-        const agentResult = await input.agent.invoke(contextLoaded.context, input.ctx);
-        caseStudy = await applyGrounding(agentResult.data, input.verifier);
+        await input.onStage?.('generating');
+        const agentResult = await runStage(input.workflow, 'project.case_study.generate', async () =>
+            input.agent.invoke(contextLoaded.context, input.ctx),
+        );
+        await input.onStage?.('grounding');
+        caseStudy = await runStage(input.workflow, 'project.case_study.ground', async () =>
+            applyGrounding(agentResult.data, input.verifier),
+        );
     }
 
     // 2b. Override depthMarkers with the deterministic, code-grounded values
@@ -190,27 +264,41 @@ export async function runCaseStudyOrchestration(
     if (groundedDepth) caseStudy = { ...caseStudy, depthMarkers: groundedDepth };
 
     // 3. Persist.
-    const client = await pool.connect();
-    let persisted: PersistCaseStudySummary;
-    try {
-        persisted = await persistCaseStudy(client, {
-            projectId:     input.projectId,
-            userId:        contextLoaded.userId,
-            pipelineRunId: input.pipelineRunId,
-            model:         input.model,
-            inputHash,
-            caseStudy,
-            computedArchetype: contextLoaded.context.archetype?.id ?? null,
-            computedStage:     contextLoaded.context.stage ?? null,
-        });
-    } finally {
-        client.release();
-    }
+    await input.onStage?.('persisting');
+    const persisted = await runStage(input.workflow, 'project.case_study.persist', async () => {
+        const client = await pool.connect();
+        try {
+            return await persistCaseStudy(client, {
+                projectId:     input.projectId,
+                userId:        contextLoaded.userId,
+                pipelineRunId: input.pipelineRunId,
+                model:         input.model,
+                inputHash,
+                caseStudy,
+                computedArchetype: contextLoaded.context.archetype?.id ?? null,
+                computedStage:     contextLoaded.context.stage ?? null,
+            });
+        } finally {
+            client.release();
+        }
+    });
 
     // 4. Update the cache (fail-open; never for cache hits or refine runs).
-    if (cacheable && !cacheHit) await cachePut(input.cache!, cacheKey, caseStudy);
+    if (cacheable && !cacheHit) {
+        await runStage(input.workflow, 'project.case_study.cache_write', async () =>
+            cachePut(input.cache!, cacheKey, caseStudy),
+        );
+    }
 
-    return { cacheHit, refined, caseStudy, persisted, inputHash, contextLoaded };
+    return {
+        cacheHit,
+        refined,
+        caseStudy,
+        grounding: summarizeGrounding(caseStudy),
+        persisted,
+        inputHash,
+        contextLoaded,
+    };
 }
 
 interface CacheKey { scope: string; kbTag: string; queryText: string }

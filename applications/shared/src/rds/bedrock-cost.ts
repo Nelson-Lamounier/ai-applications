@@ -58,6 +58,7 @@ export interface CostRecord {
   agent?:            string;
   systemPromptHash?: string;
   latencyMs?:        number;
+  traceId?:          string;
 }
 
 export function computeCostCents(
@@ -121,10 +122,10 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
   await pool.query(
     `INSERT INTO prompt_invocations
        (pipeline, agent, model_id, system_prompt_hash, input_cost_cents, output_cost_cents,
-        total_cost_cents, latency_ms, user_id, import_id, repo_name,
-        application_id, project_id, sync_kind,
+       total_cost_cents, latency_ms, user_id, import_id, repo_name,
+        application_id, project_id, sync_kind, trace_id,
         system_prompt_tokens, user_message_tokens, output_tokens)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, 0, $15, $16)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, $15, 0, $16, $17)`,
     [
       record.pipeline,                            // $1  pipeline
       record.agent ?? '__direct_invoke__',        // $2  agent
@@ -140,8 +141,9 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
       record.applicationId ?? null,               // $12 application_id
       record.projectId ?? null,                   // $13 project_id
       record.syncKind ?? null,                    // $14 sync_kind
-      record.inputTokens,                         // $15 user_message_tokens
-      record.outputTokens,                        // $16 output_tokens
+      record.traceId ?? null,                     // $15 trace_id
+      record.inputTokens,                         // $16 user_message_tokens
+      record.outputTokens,                        // $17 output_tokens
     ],
   );
 
@@ -182,7 +184,7 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
 export function recordInvocationToRds(
   pool: Pool,
   pipeline: CostRecord['pipeline'],
-  context?: { applicationId?: string; projectId?: string; syncKind?: string },
+  context?: { applicationId?: string; projectId?: string; syncKind?: string; traceId?: string },
 ): (log: AgentInvocationLog) => Promise<void> {
   return async (log) => {
     if (!log.userId) {
@@ -201,6 +203,7 @@ export function recordInvocationToRds(
       applicationId:    context?.applicationId,
       projectId:        context?.projectId,
       syncKind:         context?.syncKind,
+      traceId:          log.traceId ?? context?.traceId,
       // Converse reports a single input figure; the runner stores it under
       // systemPromptTokens with userMessageTokens = 0.
       inputTokens:  log.systemPromptTokens + log.userMessageTokens,
