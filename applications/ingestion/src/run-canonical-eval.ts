@@ -64,11 +64,15 @@ async function main(): Promise<void> {
     const golden = goldenToMap(loadGoldenSet());
     const pool = buildPool();
     try {
-        const vocabulary = await new SkillOntologyRepository(pool).loadCanonicalNames();
+        const ontology = new SkillOntologyRepository(pool);
+        const vocabulary = await ontology.loadCanonicalNames();
+        // Alias map so the enricher resolves alias phrasings ("aws dynamodb") to
+        // their canonical instead of mis-queuing them as NEW: (the precision drag).
+        const aliasToCanonical = await ontology.loadAliasToCanonicalMap().catch(() => undefined);
         const rows = await loadChunks(pool, [...golden.keys()]);
-        log.info({ golden: golden.size, loaded: rows.length, vocab: vocabulary.length }, 'canonical_eval.sample');
+        log.info({ golden: golden.size, loaded: rows.length, vocab: vocabulary.length, aliases: aliasToCanonical?.size ?? 0 }, 'canonical_eval.sample');
 
-        const enricher = BedrockChunkEnricher.fromEnvironment({ pool, userId, repoName: 'canonical-eval' });
+        const enricher = BedrockChunkEnricher.fromEnvironment({ pool, userId, repoName: 'canonical-eval' }, aliasToCanonical);
         const candidate = new Map<string, string[]>();
         let newTotal = 0;
         const newSamples = new Set<string>();
@@ -92,6 +96,7 @@ async function main(): Promise<void> {
             `SEMANTIC recall=${sem.recall.toFixed(3)} prec=${sem.precision.toFixed(3)} | ` +
             `NEW:/chunk=${rows.length === 0 ? 0 : (newTotal / rows.length).toFixed(2)} (vocabulary growth queue)`,
         );
+        await enricher.flushCosts().catch(() => { /* drain cost writes before pool close */ });
         await pool.end().catch(() => { /* drain */ });
         await obs.shutdown().catch(() => { /* flush */ });
         process.exit(0);

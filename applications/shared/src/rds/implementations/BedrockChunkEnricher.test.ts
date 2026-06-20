@@ -211,4 +211,17 @@ describe('BedrockChunkEnricher', () => {
         expect([...result.newSkills].sort((a, b) => a.localeCompare(b))).toEqual(['iac with cdk', 'webassembly']); // gaps queued
         expect(mockRecordBedrockCost).toHaveBeenCalledTimes(1);
     });
+
+    it('flushCosts awaits in-flight cost writes (no pool-after-end race)', async () => {
+        let settled = false;
+        mockRecordBedrockCost.mockImplementationOnce(() => new Promise<void>((res) => { setTimeout(() => { settled = true; res(); }, 20); }));
+        mockSend.mockResolvedValueOnce(bedrockReply({ skills: ['kubernetes'] }));
+
+        const enricher = new BedrockChunkEnricher({}, { pool: {} as Pool, userId: 'u', repoName: 'r' });
+        await enricher.enrichTextCanonical(['kubernetes'], 'a.ts', 'k8s');
+        expect(settled).toBe(false);   // cost write still in flight right after enrich
+
+        await enricher.flushCosts();
+        expect(settled).toBe(true);    // flushCosts drained it before the pool would close
+    });
 });

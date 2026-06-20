@@ -101,6 +101,9 @@ async function main(): Promise<void> {
         });
 
         log.info({ event: 're_enrich.complete', userId, ...result }, 're-enrich complete');
+        // Drain in-flight cost-record writes BEFORE ending the pool they share —
+        // otherwise the last chunks' cost INSERTs race the close and are lost.
+        await enricher.flushCosts?.();
     } finally {
         await pgPool.end().catch(() => { /* best-effort drain */ });
         await pushFinalMetrics(obs.registry, 're-enrich', userId).catch(() => { /* best-effort */ });
