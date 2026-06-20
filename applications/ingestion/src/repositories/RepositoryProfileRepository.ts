@@ -16,6 +16,8 @@ export interface UpsertProfileInput {
     extractedAt?:       Date | null;
     extractorModel?:    string;
     extractorVersion?:  string;
+    /** Skip-unchanged hash of the extract inputs (HEAD sha + extractor version/model). */
+    profileInputHash?:  string;
 }
 
 export interface RepositoryProfile {
@@ -40,13 +42,15 @@ export class RepositoryProfileRepository {
                     extracted, classification,
                     quality_score, quality_breakdown,
                     extraction_status, extraction_error,
-                    extracted_at, extractor_model, extractor_version
+                    extracted_at, extractor_model, extractor_version,
+                    profile_input_hash
                 ) VALUES (
                     $1::uuid, $2::uuid, $3,
                     $4::jsonb, $5,
                     $6, $7::jsonb,
                     $8, $9,
-                    $10, $11, $12
+                    $10, $11, $12,
+                    $13
                 )
                 ON CONFLICT (user_id, repo_full_name) DO UPDATE SET
                     repository_id      = COALESCE(EXCLUDED.repository_id, repository_profiles.repository_id),
@@ -59,6 +63,7 @@ export class RepositoryProfileRepository {
                     extracted_at       = COALESCE(EXCLUDED.extracted_at, repository_profiles.extracted_at),
                     extractor_model    = COALESCE(EXCLUDED.extractor_model, repository_profiles.extractor_model),
                     extractor_version  = COALESCE(EXCLUDED.extractor_version, repository_profiles.extractor_version),
+                    profile_input_hash = COALESCE(EXCLUDED.profile_input_hash, repository_profiles.profile_input_hash),
                     updated_at         = now()
                 RETURNING id`,
                 [
@@ -74,6 +79,7 @@ export class RepositoryProfileRepository {
                     input.extractedAt ?? null,
                     input.extractorModel ?? null,
                     input.extractorVersion ?? null,
+                    input.profileInputHash ?? null,
                 ],
             );
 
@@ -117,6 +123,23 @@ export class RepositoryProfileRepository {
         } finally {
             client.release();
         }
+    }
+
+    /**
+     * Read the skip-unchanged state for the extract gate (WS4): the stored input
+     * hash + current extraction status. Null when the repo has no profile yet.
+     */
+    async getInputState(
+        userId: string,
+        repoFullName: string,
+    ): Promise<{ inputHash: string | null; extractionStatus: string } | null> {
+        const { rows } = await this.pool.query<{ profile_input_hash: string | null; extraction_status: string }>(
+            `SELECT profile_input_hash, extraction_status
+               FROM repository_profiles WHERE user_id = $1::uuid AND repo_full_name = $2`,
+            [userId, repoFullName],
+        );
+        if (rows.length === 0) return null;
+        return { inputHash: rows[0].profile_input_hash ?? null, extractionStatus: rows[0].extraction_status };
     }
 
     async updateStatus(

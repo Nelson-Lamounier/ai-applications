@@ -62,6 +62,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
         direction?: DirectionJson,
         reconciliation?: ReconciliationJson,
         diagnostic?: DiagnosticJson,
+        synthesisInputHash?: string | null,
     ): Promise<void> {
         const client = await this.pool.connect();
         try {
@@ -80,8 +81,9 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                 `INSERT INTO user_profile_rollup (
                      user_id, project_repo_count, total_repo_count,
                      methodology_version, rollup, refreshed_at,
-                     mirror, reveal, synthesis_refreshed_at, direction, reconciliation, diagnostic
-                 ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, now(), $6::jsonb, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11::jsonb)
+                     mirror, reveal, synthesis_refreshed_at, direction, reconciliation, diagnostic,
+                     synthesis_input_hash
+                 ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, now(), $6::jsonb, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12)
                  ON CONFLICT (user_id) DO UPDATE SET
                      project_repo_count     = EXCLUDED.project_repo_count,
                      total_repo_count       = EXCLUDED.total_repo_count,
@@ -93,7 +95,8 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                      synthesis_refreshed_at = COALESCE(EXCLUDED.synthesis_refreshed_at, user_profile_rollup.synthesis_refreshed_at),
                      direction              = COALESCE(EXCLUDED.direction, user_profile_rollup.direction),
                      reconciliation         = COALESCE(EXCLUDED.reconciliation, user_profile_rollup.reconciliation),
-                     diagnostic             = COALESCE(EXCLUDED.diagnostic, user_profile_rollup.diagnostic)`,
+                     diagnostic             = COALESCE(EXCLUDED.diagnostic, user_profile_rollup.diagnostic),
+                     synthesis_input_hash   = COALESCE(EXCLUDED.synthesis_input_hash, user_profile_rollup.synthesis_input_hash)`,
                 [
                     userId,
                     result.projectRepoCount,
@@ -106,6 +109,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                     directionVal,
                     reconciliationVal,
                     diagnosticVal,
+                    synthesisInputHash ?? null,
                 ],
             );
             await client.query('COMMIT');
@@ -149,5 +153,21 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
         } finally {
             client.release();
         }
+    }
+
+    /**
+     * Read the synthesis-skip state: the stored aggregate-rollup hash and whether
+     * any synthesis output already exists. Used to skip the synthesis LLMs when
+     * the rollup is unchanged AND synthesis is already present (so a NULL-synthesis
+     * row is never skipped — it still needs its first generation).
+     */
+    async getSynthesisState(userId: string): Promise<{ inputHash: string | null; hasSynthesis: boolean } | null> {
+        const { rows } = await this.pool.query<{ synthesis_input_hash: string | null; has_synth: boolean }>(
+            `SELECT synthesis_input_hash, (mirror IS NOT NULL) AS has_synth
+               FROM user_profile_rollup WHERE user_id = $1::uuid`,
+            [userId],
+        );
+        if (rows.length === 0) return null;
+        return { inputHash: rows[0].synthesis_input_hash ?? null, hasSynthesis: rows[0].has_synth };
     }
 }

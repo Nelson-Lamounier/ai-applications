@@ -76,8 +76,36 @@ describe('refreshUserProfileRollup', () => {
         const upsert = jest.fn(async () => {});
         const repo = { listProfilesForRollup: jest.fn(async () => rows as never), upsert, getRollup: jest.fn() } as never;
         await expect(refreshUserProfileRollup(repo, 'u1')).resolves.toBeUndefined();
-        const noSynthArgs = (upsert.mock.calls[0] as unknown[]).slice(2);
-        expect(noSynthArgs.every((a) => a === undefined)).toBe(true);
+        const args = upsert.mock.calls[0] as unknown[];
+        // The 5 synthesis args (mirror, reveal, direction, reconciliation, diagnostic) are undefined...
+        expect(args.slice(2, 7).every((a) => a === undefined)).toBe(true);
+        // ...but the WS4 synthesis-input hash (8th arg) is always stamped.
+        expect(typeof args[7]).toBe('string');
+    });
+
+    it('WS4: skips synthesis when the rollup hash is unchanged and synthesis exists', async () => {
+        let storedHash: string | null = null;
+        let storedMirror: unknown = null;
+        const synth = jest.fn(async () => ({
+            mirror: { paragraph: 'x'.repeat(130) },
+            reveal: { reveals: [{ insight: 'works across the stack', evidence: 'language share' }] },
+        }));
+        const synthesizer = { synthesize: synth } as never;
+        const repo = {
+            listProfilesForRollup: jest.fn(async () => rows as never),
+            upsert: jest.fn(async (...args: unknown[]) => {
+                if (args[2]) storedMirror = args[2];          // mirror (3rd arg)
+                if (args[7]) storedHash = args[7] as string;  // synthesisInputHash (8th arg)
+            }),
+            getRollup: jest.fn(),
+            getSynthesisState: jest.fn(async () =>
+                storedHash ? { inputHash: storedHash, hasSynthesis: !!storedMirror } : null),
+        } as never;
+
+        await refreshUserProfileRollup(repo, 'u1', synthesizer);   // 1st: synthesise + stamp hash
+        await refreshUserProfileRollup(repo, 'u1', synthesizer);   // 2nd: unchanged + synthesis exists → skip
+
+        expect(synth).toHaveBeenCalledTimes(1);   // the LLM ran only once
     });
 
     it('synthesizer throws → still rollup-only, never throws', async () => {

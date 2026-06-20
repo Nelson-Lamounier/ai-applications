@@ -46,7 +46,10 @@ export interface IUserProfileRollupRepository {
     /** Upsert the precomputed rollup for the user (one row per user). */
     upsert(userId: string, result: UserProfileRollupResult,
            mirror?: MirrorJson, reveal?: RevealJson, direction?: DirectionJson,
-           reconciliation?: ReconciliationJson, diagnostic?: DiagnosticJson): Promise<void>;
+           reconciliation?: ReconciliationJson, diagnostic?: DiagnosticJson,
+           synthesisInputHash?: string | null): Promise<void>;
     /** Read the persisted rollup row for the user, or null if absent. */
     getRollup(userId: string): Promise<RollupRow | null>;
+    /** Synthesis-skip state: stored aggregate-rollup hash + whether synthesis exists. */
+    getSynthesisState?(userId: string): Promise<{ inputHash: string | null; hasSynthesis: boolean } | null>;
 }
