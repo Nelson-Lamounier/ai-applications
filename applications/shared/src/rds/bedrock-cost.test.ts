@@ -103,6 +103,19 @@ describe('recordInvocationToRds', () => {
     expect(insert.params).toContain('0123456789abcdef0123456789abcdef');
   });
 
+  it('prefers the invocation trace over fallback context', async () => {
+    const { pool, queries } = fakePool();
+    await recordInvocationToRds(pool, 'project-case-study', {
+      traceId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    })({
+      ...baseLog,
+      traceId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    });
+    const insert = queries.find((query) => /INSERT INTO prompt_invocations/.test(query.sql))!;
+    expect(insert.params[14]).toBe('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  });
+
+
   it('skips recording (no query) when the log has no userId', async () => {
     const { pool, query } = fakePool();
     await recordInvocationToRds(pool, 'job-strategist')({ ...baseLog, userId: undefined });
