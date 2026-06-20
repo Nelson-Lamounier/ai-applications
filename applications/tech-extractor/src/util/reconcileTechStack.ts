@@ -31,6 +31,40 @@ interface EvidenceTech { readonly canonical: string; readonly display: string }
  * profile term counts as verified only if it resolves to a canonical that has
  * evidence; everything else is llmOnly.
  */
+/**
+ * Normalise an LLM tech name toward its canonical form so version-tagged /
+ * qualified product names match file-cited evidence: strips a trailing version
+ * ("React 19" -> "react", "Tailwind CSS 4" -> "tailwind css", "v2") and a
+ * parenthetical qualifier ("Redis (ioredis)" -> "redis"). The leading-space guard
+ * on the version regex protects names that legitimately end in digits (s3, ec2,
+ * log4j). Without this the divergence over-reports same-tech-different-granularity
+ * as unbacked claims.
+ */
+export function normalizeTechName(s: string): string {
+    return s.toLowerCase().trim()
+        .replace(/\s*\([^)]*\)/g, '')        // drop "(ioredis)"
+        .replace(/\s+v?\d+(\.\d+)*$/, '')      // drop trailing " 19" / " 4.1" / " v2"
+        .replace(/\s+/g, ' ').trim();
+}
+
+/** Map one key to an evidenced canonical (alias-hit or self-canonical), else null. */
+function lookupCanon(
+    key: string, aliasToCanonical: ReadonlyMap<string, string>, evByCanon: ReadonlyMap<string, string>,
+): string | null {
+    const c = aliasToCanonical.get(key) ?? (evByCanon.has(key) ? key : null);
+    return c && evByCanon.has(c) ? c : null;
+}
+
+/** Resolve a profile term to an evidenced canonical, trying the raw key then the normalised form. */
+function resolveProfileTerm(
+    key: string, aliasToCanonical: ReadonlyMap<string, string>, evByCanon: ReadonlyMap<string, string>,
+): string | null {
+    const direct = lookupCanon(key, aliasToCanonical, evByCanon);
+    if (direct) return direct;
+    const norm = normalizeTechName(key);
+    return norm === key ? null : lookupCanon(norm, aliasToCanonical, evByCanon);
+}
+
 export function diffTechSets(
     evidence: readonly EvidenceTech[],
     profile: readonly string[],
@@ -46,8 +80,8 @@ export function diffTechSets(
         if (typeof raw !== 'string') continue;
         const key = raw.trim().toLowerCase();
         if (!key) continue;
-        const canon = aliasToCanonical.get(key) ?? (evByCanon.has(key) ? key : null);
-        if (canon && evByCanon.has(canon)) {
+        const canon = resolveProfileTerm(key, aliasToCanonical, evByCanon);
+        if (canon) {
             profileCanon.add(canon);                       // verified by evidence
         } else if (!seenLlm.has(key)) {
             seenLlm.add(key);
