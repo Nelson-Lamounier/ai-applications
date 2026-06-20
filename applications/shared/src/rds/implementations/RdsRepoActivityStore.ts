@@ -1,6 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
-import type { RepoCommit, RepoPullRequest, CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
+import type { RepoCommit, RepoPullRequest, RepoContributor, CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
 
 /** A measured performance metric recorded at a commit SHA (never LLM-produced). */
 export interface PerfMetric {
@@ -159,6 +159,52 @@ export class RdsRepoActivityStore {
 
             await client.query('COMMIT');
             return pulls.length;
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    async upsertContributors(
+        userId:       string,
+        repositoryId: string,
+        repoFullName: string,
+        contributors: readonly RepoContributor[],
+    ): Promise<number> {
+        const rows = contributors.filter((c): c is RepoContributor & { login: string } => !!c.login);
+        if (rows.length === 0) return 0;
+
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+
+            const valuePlaceholders = rows.map((_, i) => {
+                const base = i * 6;
+                return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}::int, $${base + 6})`;
+            }).join(', ');
+
+            const values: unknown[] = [];
+            for (const c of rows) {
+                values.push(userId, repositoryId, repoFullName, c.login, c.contributions, this.githubRepoId);
+            }
+
+            await client.query(
+                `INSERT INTO repo_contributors
+                    (user_id, repository_id, repo_full_name, login, contributions, github_repo_id)
+                 VALUES ${valuePlaceholders}
+                 ON CONFLICT (repository_id, login) DO UPDATE
+                     SET contributions  = EXCLUDED.contributions,
+                         repo_full_name = EXCLUDED.repo_full_name,
+                         github_repo_id = COALESCE(EXCLUDED.github_repo_id, repo_contributors.github_repo_id),
+                         fetched_at     = now()`,
+                values,
+            );
+
+            await client.query('COMMIT');
+            return rows.length;
         } catch (err) {
             await client.query('ROLLBACK');
             throw err;

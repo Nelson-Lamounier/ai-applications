@@ -25,7 +25,7 @@
 import type { IngestionReport, RawChunk } from '../../rds/types.js';
 import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
 import type { IFileFilter }   from '../interfaces/IFileFilter.js';
-import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoFile, CommitDetail }  from '../interfaces/IRepoAdapter.js';
+import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoContributor, RepoFile, CommitDetail }  from '../interfaces/IRepoAdapter.js';
 import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
 import { deriveRepoSignals }  from '../../projects/repo-signals.js';
@@ -77,6 +77,8 @@ export interface CommitWatermarkStore {
 export interface RepoActivityStore {
     upsertCommits(userId: string, repositoryId: string, repoFullName: string, commits: readonly RepoCommit[]): Promise<number>;
     upsertPullRequests(userId: string, repositoryId: string, repoFullName: string, pulls: readonly RepoPullRequest[]): Promise<number>;
+    /** Persist the contributor roster (login + contributions). Optional. */
+    upsertContributors?(userId: string, repositoryId: string, repoFullName: string, contributors: readonly RepoContributor[]): Promise<number>;
     /** Of the given shas, those still needing a per-commit detail fetch. Optional. */
     selectShasMissingStats?(userId: string, repoFullName: string, shas: string[]): Promise<string[]>;
     /** Persist per-commit stats + per-file diffs. Optional. */
@@ -344,6 +346,8 @@ export class RepoIngestionOrchestrator {
                 await this.activityStore.upsertCommits(userId, this.repositoryId, repoFullName, commits);
                 // Per-commit diffs/stats — best-effort, never aborts the run.
                 await this.fetchAndPersistCommitDetails(userId, repoFullName, commits);
+                // Contributor roster — deterministic role + collaboration signal.
+                await this.fetchAndPersistContributors(userId, repoFullName);
             }
             const chunks = this.commitChunker.chunkWeekly(commits);
             console.info(
@@ -357,6 +361,25 @@ export class RepoIngestionOrchestrator {
                 err,
             );
             return [];
+        }
+    }
+
+    /**
+     * Fetch + persist the contributor roster (login + contribution count).
+     * Best-effort + capability-gated: a missing adapter method, a store without
+     * upsertContributors, or a fetch failure logs and returns. Never aborts a run.
+     */
+    private async fetchAndPersistContributors(userId: string, repoFullName: string): Promise<void> {
+        const store = this.activityStore;
+        if (!store || !this.repositoryId) return;
+        if (typeof this.repoAdapter.listContributors !== 'function' || !store.upsertContributors) return;
+
+        try {
+            const contributors: readonly RepoContributor[] = await this.repoAdapter.listContributors(repoFullName);
+            const n = await store.upsertContributors(userId, this.repositoryId, repoFullName, contributors);
+            console.info(`[RepoIngestionOrchestrator] ${repoFullName}: ${n} contributors persisted`);
+        } catch (err) {
+            console.error(`[RepoIngestionOrchestrator] contributors unavailable for ${repoFullName}:`, err);
         }
     }
 
