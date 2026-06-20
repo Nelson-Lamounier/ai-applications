@@ -15,6 +15,7 @@ import { AiPatternExtractor } from './extractors/AiPatternExtractor.js';
 import { Counter, Gauge } from 'prom-client';
 
 import { parseEnv } from './env.js';
+import { reconcileTechStack } from './util/reconcileTechStack.js';
 import { fetchTarball } from './tarball/fetchTarball.js';
 import { safeExtract } from './tarball/safeExtract.js';
 import { walkTextFiles } from './util/fileWalk.js';
@@ -105,6 +106,24 @@ function iacExtractor(rootDir: string, files: string[], proseSafeAliases: Readon
             return out;
         },
     };
+}
+
+/**
+ * Best-effort tech_stack reconciliation: write the evidence-backed verified stack
+ * + divergence onto the profile. Never fatal — a failure leaves the LLM stack.
+ */
+async function runTechStackReconciliation(pool: Pool, userId: string, repoFullName: string): Promise<void> {
+    try {
+        const recon = await reconcileTechStack(pool, userId, repoFullName);
+        if (recon) {
+            log.info({
+                repo: repoFullName, verified: recon.reconciled.length,
+                llmOnly: recon.llmOnly.length, evidenceOnly: recon.evidenceOnly.length,
+            }, 'tech-extract.reconciled');
+        }
+    } catch (e) {
+        log.warn({ err: String(e) }, 'tech_stack reconciliation skipped (non-fatal)');
+    }
 }
 
 async function main(): Promise<void> {
@@ -218,6 +237,10 @@ async function main(): Promise<void> {
                 repo: env.repoFullName, sha, matched: result.matched, unmatched: result.unmatched,
                 recall: parity.recall, failed: result.failedExtractors, llm_only: parity.llmOnlyExamples,
             }, 'tech-extract.complete');
+
+            // Reconcile the profile's LLM tech_stack against the file-cited
+            // technology_evidence just written — evidence is fresh only here.
+            await runTechStackReconciliation(pool, env.userId, env.repoFullName);
         } else {
             log.info({ repo: env.repoFullName, sha }, 'tech lane: evidence exists, skipped (dsa backfill run)');
         }
