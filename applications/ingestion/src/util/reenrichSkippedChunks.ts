@@ -44,6 +44,14 @@ export interface ReenrichOptions {
      * `d.skills && query.skills` overlap lane fires) + a NEW: growth queue.
      */
     readonly canonicalVocab?: readonly string[];
+    /**
+     * Content-hash enrichment dedup (WS5). When true, a chunk whose content_hash
+     * is already in chunk_enrichment_cache (same user + model) copies the cached
+     * skills instead of calling the LLM — so a force-reindex of an unchanged repo
+     * is near-free. Requires `userId`. Strictly a cost optimisation: identical
+     * content yields identical skills.
+     */
+    readonly dedupCache?: boolean;
 }
 
 export interface ReenrichResult {
@@ -54,6 +62,8 @@ export interface ReenrichResult {
     readonly tier1Resolved: number;
     /** Out-of-vocabulary capabilities surfaced by controlled-vocab enrichment (growth queue). */
     readonly newSkillsQueued: number;
+    /** Chunks served from the content-hash cache — no LLM call (WS5). */
+    readonly cacheHits: number;
     /** True when the deadline stopped dispatch before all candidates ran. */
     readonly stoppedEarly: boolean;
     /** Candidates left unprocessed (still `pending`) — resumed next sync. */
@@ -65,6 +75,7 @@ interface SkippedRow {
     file_path: string;
     heading:   string | null;
     content:   string;
+    content_hash: string | null;
     file_tech_stack: string[] | null;
 }
 
@@ -101,7 +112,7 @@ export async function reenrichSkippedChunks(
     const limitClause = opts.limit ? `LIMIT ${Math.trunc(opts.limit)}` : '';
 
     const { rows } = await pool.query<SkippedRow>(
-        `SELECT id, file_path, heading, content,
+        `SELECT id, file_path, heading, content, content_hash,
                 metadata->'file_tech_stack' AS file_tech_stack
            FROM document_embeddings
           WHERE ${conditions.join(' AND ')}
@@ -110,10 +121,20 @@ export async function reenrichSkippedChunks(
         params,
     );
 
+    // WS5 content-hash dedup: pre-load the cache for this run's content hashes,
+    // and accumulate freshly-enriched (hash -> skills) to write back at the end.
+    const modelId = enricher.modelId ?? 'unknown';
+    const cache = await loadEnrichmentCache(pool, opts, rows, modelId);
+    const freshCache = new Map<string, string[]>();
+    const remember = (hash: string | null, skills: string[]): void => {
+        if (hash) { cache.set(hash, skills); freshCache.set(hash, skills); }
+    };
+
     let enriched = 0;
     let failed = 0;
     let tier1Resolved = 0;
     let newSkillsQueued = 0;
+    let cacheHits = 0;
     let done = 0;
 
     /** Tier 1 (deterministic, no model call): file_tech_stack -> canonical skills. */
@@ -135,11 +156,21 @@ export async function reenrichSkippedChunks(
 
     async function processRow(row: SkippedRow): Promise<void> {
         try {
-            // Tier 1 first: if the chunk's file tech resolves to skills, write them
+            // WS5 content-hash dedup: if this exact content was already enriched
+            // (same user + model), copy those skills — NO LLM call. This is what
+            // makes a force-reindex of unchanged content near-free.
+            if (row.content_hash && cache.has(row.content_hash)) {
+                await writeSkills(row.id, cache.get(row.content_hash) as string[]);
+                cacheHits += 1;
+                enriched += 1;
+                return;
+            }
+            // Tier 1: if the chunk's file tech resolves to skills, write them
             // and SKIP the LLM (the ~33.5% of chunks with file_tech_stack).
             const t1 = tier1Skills(row);
             if (t1.length > 0) {
                 await writeSkills(row.id, t1);
+                remember(row.content_hash, t1);
                 tier1Resolved += 1;
                 enriched += 1;
                 return;
@@ -149,6 +180,7 @@ export async function reenrichSkippedChunks(
             if (opts.canonicalVocab && enricher.enrichTextCanonical) {
                 const { canonical, newSkills } = await enricher.enrichTextCanonical(opts.canonicalVocab, row.file_path, row.content, row.heading ?? undefined);
                 await writeSkills(row.id, canonical);
+                remember(row.content_hash, canonical);
                 newSkillsQueued += newSkills.length;
                 enriched += 1;
                 return;
@@ -162,6 +194,7 @@ export async function reenrichSkippedChunks(
                 totalChunks: 1,
             });
             await writeSkills(row.id, skills);
+            remember(row.content_hash, skills);
             enriched += 1;
         } catch {
             // Leave the row as skipped_quota so the next run retries it.
@@ -191,5 +224,80 @@ export async function reenrichSkippedChunks(
     const workers = Math.max(1, Math.min(opts.concurrency ?? 10, rows.length));
     await Promise.all(Array.from({ length: workers }, () => worker()));
 
-    return { candidates: rows.length, enriched, failed, tier1Resolved, newSkillsQueued, stoppedEarly, remaining: rows.length - done };
+    // WS5: persist the freshly-enriched (content_hash -> skills) so the next run
+    // (incl. a force-reindex) copies them instead of re-invoking the LLM.
+    await persistFreshCache(pool, opts, modelId, freshCache);
+
+    return { candidates: rows.length, enriched, failed, tier1Resolved, newSkillsQueued, cacheHits, stoppedEarly, remaining: rows.length - done };
+}
+
+/** Persist freshly-enriched cache entries when dedup is enabled. Best-effort. */
+async function persistFreshCache(
+    pool: Pool, opts: ReenrichOptions, modelId: string, fresh: ReadonlyMap<string, string[]>,
+): Promise<void> {
+    if (!opts.dedupCache || !opts.userId || fresh.size === 0) return;
+    await saveEnrichmentCache(pool, opts.userId, modelId, fresh)
+        .catch((err) => console.warn('[reenrichSkippedChunks] enrichment-cache write failed (non-fatal)', err));
+}
+
+/**
+ * Load cached skills for this run's content hashes (same user + model). One query
+ * on a dedicated connection that sets the RLS user context. Returns a hash->skills
+ * map; empty when dedup is disabled or on any failure (degrades to full
+ * enrichment, never breaks it).
+ */
+async function loadEnrichmentCache(
+    pool: Pool, opts: ReenrichOptions, rows: readonly SkippedRow[], modelId: string,
+): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    if (!opts.dedupCache || !opts.userId) return out;
+    const userId = opts.userId;
+    const hashes = [...new Set(rows.map((r) => r.content_hash).filter((h): h is string => !!h))];
+    if (hashes.length === 0) return out;
+    const client = await pool.connect();
+    try {
+        await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        const { rows: cached } = await client.query<{ content_hash: string; skills: string[] }>(
+            `SELECT content_hash, skills FROM chunk_enrichment_cache
+              WHERE user_id = $1::uuid AND model_id = $2 AND content_hash = ANY($3::text[])`,
+            [userId, modelId, hashes],
+        );
+        for (const c of cached) out.set(c.content_hash, c.skills);
+    } catch (err) {
+        console.warn('[reenrichSkippedChunks] enrichment-cache read failed (non-fatal)', err);
+    } finally {
+        client.release();
+    }
+    return out;
+}
+
+/** Batch-upsert freshly-enriched (content_hash -> skills) for this user + model. */
+async function saveEnrichmentCache(
+    pool: Pool, userId: string, modelId: string, entries: ReadonlyMap<string, string[]>,
+): Promise<void> {
+    const items = [...entries.entries()];
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        const values: unknown[] = [];
+        const placeholders = items.map((_, i) => {
+            const b = i * 4;
+            return `($${b + 1}::uuid, $${b + 2}, $${b + 3}::text[], $${b + 4})`;
+        }).join(', ');
+        for (const [hash, skills] of items) values.push(userId, hash, skills, modelId);
+        await client.query(
+            `INSERT INTO chunk_enrichment_cache (user_id, content_hash, skills, model_id)
+             VALUES ${placeholders}
+             ON CONFLICT (user_id, content_hash) DO UPDATE
+                 SET skills = EXCLUDED.skills, model_id = EXCLUDED.model_id, updated_at = now()`,
+            values,
+        );
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
 }

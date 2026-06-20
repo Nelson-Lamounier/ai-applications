@@ -231,6 +231,9 @@ async function runDeferredEnrichment(
             repoFullName,
             tier1Map,
             canonicalVocab,
+            // WS5 content-hash dedup: copy skills for byte-identical chunks instead
+            // of re-invoking the LLM. On by default; ENRICH_DEDUP=0 disables.
+            dedupCache: process.env['ENRICH_DEDUP'] !== '0',
             deadlineMs: enrichmentDeadlineMs(),
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {

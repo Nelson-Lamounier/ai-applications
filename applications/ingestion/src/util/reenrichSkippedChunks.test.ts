@@ -21,6 +21,42 @@ const rows = [
     { id: 'b', file_path: 'src/y.ts', heading: null, content: 'cdk stack' },
 ];
 
+describe('reenrichSkippedChunks WS5 content-hash dedup', () => {
+    it('copies cached skills for a known content_hash — no LLM call', async () => {
+        const updates: Array<{ skills: string[]; id: string }> = [];
+        // Connect-capable fake: main query returns the chunk; the dedicated client
+        // returns a cache hit for content_hash 'h1'.
+        const client = {
+            query: jest.fn(async (sql: string) => {
+                if (sql.includes('chunk_enrichment_cache') && sql.includes('SELECT')) {
+                    return { rows: [{ content_hash: 'h1', skills: ['cached:kubernetes'] }] };
+                }
+                return { rows: [] };   // set_config, INSERT, BEGIN/COMMIT
+            }),
+            release: jest.fn(),
+        };
+        const pool = {
+            query: jest.fn(async (sql: string, params?: unknown[]) => {
+                if (sql.includes('SELECT') && sql.includes('document_embeddings')) {
+                    return { rows: [{ id: 'a', file_path: 'x.ts', heading: null, content: 'k8s', content_hash: 'h1', file_tech_stack: null }] };
+                }
+                if (sql.includes('UPDATE')) { updates.push({ skills: params?.[0] as string[], id: params?.[1] as string }); return { rows: [] }; }
+                return { rows: [] };
+            }),
+            connect: jest.fn(async () => client),
+        } as unknown as Pool;
+
+        const enrich = jest.fn(async () => ({ skills: ['fresh'], technologies: [] }));
+        const enricher: IChunkEnricher = { modelId: 'haiku', enrich };
+
+        const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1, dedupCache: true });
+
+        expect(enrich).not.toHaveBeenCalled();                       // LLM skipped — the whole point
+        expect(result.cacheHits).toBe(1);
+        expect(updates[0]).toEqual({ skills: ['cached:kubernetes'], id: 'a' });  // cached skills copied
+    });
+});
+
 describe('reenrichSkippedChunks', () => {
     it('enriches each skipped chunk and flips status to ok', async () => {
         const { pool, query, updates } = makePool(rows);
@@ -30,7 +66,7 @@ describe('reenrichSkippedChunks', () => {
 
         const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1 });
 
-        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0, tier1Resolved: 0, newSkillsQueued: 0, stoppedEarly: false, remaining: 0 });
+        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0, tier1Resolved: 0, newSkillsQueued: 0, cacheHits: 0, stoppedEarly: false, remaining: 0 });
         expect((enricher.enrich as jest.Mock)).toHaveBeenCalledTimes(2);
         expect(updates).toHaveLength(2);
         expect(updates[0]).toEqual({ skills: ['kubernetes networking'], id: 'a' });
@@ -72,7 +108,7 @@ describe('reenrichSkippedChunks', () => {
 
         expect((enricher.enrich as jest.Mock)).not.toHaveBeenCalled();
         expect(updates).toHaveLength(0);
-        expect(result).toEqual({ candidates: 2, enriched: 0, failed: 0, tier1Resolved: 0, newSkillsQueued: 0, stoppedEarly: true, remaining: 2 });
+        expect(result).toEqual({ candidates: 2, enriched: 0, failed: 0, tier1Resolved: 0, newSkillsQueued: 0, cacheHits: 0, stoppedEarly: true, remaining: 2 });
     });
 
     it('applies a limit clause when provided', async () => {
