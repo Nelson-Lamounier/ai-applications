@@ -237,13 +237,17 @@ async function main(): Promise<void> {
                 repo: env.repoFullName, sha, matched: result.matched, unmatched: result.unmatched,
                 recall: parity.recall, failed: result.failedExtractors, llm_only: parity.llmOnlyExamples,
             }, 'tech-extract.complete');
-
-            // Reconcile the profile's LLM tech_stack against the file-cited
-            // technology_evidence just written — evidence is fresh only here.
-            await runTechStackReconciliation(pool, env.userId, env.repoFullName);
         } else {
             log.info({ repo: env.repoFullName, sha }, 'tech lane: evidence exists, skipped (dsa backfill run)');
         }
+
+        // Reconcile the profile's LLM tech_stack against the file-cited
+        // technology_evidence. Runs OUTSIDE the !techDone gate: the reconciliation
+        // depends on the profile's (freshly re-extracted) tech_stack + EXISTING
+        // evidence, not on whether evidence was just written — so a resync of an
+        // unchanged commit (techDone=true, evidence already present) must still
+        // reconcile. reconcileTechStack is a no-op when no evidence exists.
+        await runTechStackReconciliation(pool, env.userId, env.repoFullName);
 
         // ── DSA real-work pattern lane (fail-open: never breaks tech-extract) ──
         // Own idempotency via the scan marker, so it backfills commits tech already scanned.
