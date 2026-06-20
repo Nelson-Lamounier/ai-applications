@@ -64,6 +64,7 @@ import { classifyRepo } from './util/classifyRepo.js';
 import { scoreProfile } from './util/scoreProfile.js';
 import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
 import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
+import { patchDeterministicProfileFacts } from './util/patchProfileFacts.js';
 import { friendlyIngestionError } from './friendly-error.js';
 import type { RepoFile } from '@bedrock/shared';
 import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
@@ -324,6 +325,22 @@ async function resolveRepositoryId(pool: Pool, userId: string, repoFullName: str
         [userId, repoFullName],
     );
     return r.rows[0]?.id ?? null;
+}
+
+/**
+ * Best-effort deterministic profile-facts patch (workstream 1). Overwrites the
+ * profile's commit_count + role_inferred from the freshly-written repo_commits.
+ * Never fatal — a failure leaves the LLM's values until the next run.
+ */
+async function applyDeterministicProfileFacts(
+    pool: Pool, userId: string, repoFullName: string, repositoryId: string | null,
+): Promise<void> {
+    try {
+        const facts = await patchDeterministicProfileFacts(pool, { userId, repoFullName, repositoryId });
+        log.info({ event: 'profile_facts.patched', repoFullName, ...facts }, 'deterministic profile facts patched');
+    } catch (err) {
+        log.warn({ event: 'profile_facts.skipped', repoFullName, err }, 'deterministic profile-facts patch skipped (non-fatal)');
+    }
 }
 
 /**
@@ -688,6 +705,11 @@ async function main(): Promise<void> {
 
         await syncRepositoryIndexStatus(pgPool, env.userId, env.repoFullName, 'complete');
         outcome = 'success';
+
+        // Deterministic profile facts: now that the orchestrator has written
+        // repo_commits, overwrite the profile's commit_count (was a 30-capped
+        // sentinel) + role_inferred (was LLM-guessed) from the real history.
+        await applyDeterministicProfileFacts(pgPool, env.userId, env.repoFullName, repositoryId);
 
         // Stamp evidence metadata (verified-authorship + tech) onto this repo's chunks
         // so filter-then-rank retrieval can gate fork/low-trust evidence + pre-filter by
