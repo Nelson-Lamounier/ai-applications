@@ -29,6 +29,7 @@ import {
     summarizeGrounding,
 } from './case-study-orchestrator.js';
 import type { BasePipelineContext } from '../base-agent.js';
+import type { WorkflowTrace } from '../observability/workflow-trace.js';
 import type { LoadCaseStudyContextResult } from './case-study-loader.js';
 import type { CaseStudy, CaseStudyContext, SourceSignal } from './case-study-types.js';
 
@@ -150,9 +151,13 @@ function caseStudyWithVerdicts(
 function makePersisted() {
     return {
         stackItemsInserted:        0,
+        stackItemsPruned:          0,
         decisionsInserted:         0,
+        decisionsPruned:           0,
         highlightsInserted:        0,
+        highlightsPruned:          0,
         challengesInserted:        0,
+        challengesPruned:          0,
         resumeBulletSetsUpserted:  1,
         architectureUpserted:      true,
         depthMarkersUpserted:      true,
@@ -172,6 +177,18 @@ function makePipelineContext(): BasePipelineContext {
 function makePool() {
     return {
         connect: jest.fn().mockResolvedValue({ release: jest.fn() }),
+    };
+}
+
+function makeWorkflow(stages: string[]): WorkflowTrace {
+    return {
+        traceId: '0123456789abcdef0123456789abcdef',
+        rootSpan: {} as WorkflowTrace['rootSpan'],
+        setAttributes: jest.fn(),
+        stage: jest.fn(async (name, _attributes, work) => {
+            stages.push(name);
+            return work();
+        }),
     };
 }
 
@@ -288,5 +305,81 @@ describe('computeInputHash', () => {
         expect(result.grounding).toEqual({ checked: 2, grounded: 1, flagged: 1, notVerified: 1 });
         expect(agent.invoke).not.toHaveBeenCalled();
         expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('traces cache-miss stages in execution order and reports real statuses', async () => {
+        const stages: string[] = [];
+        const statuses: string[] = [];
+        const caseStudy = caseStudyWithVerdicts();
+        const agent = { invoke: jest.fn().mockResolvedValue({ data: caseStudy }) };
+        const cache = {
+            get: jest.fn().mockResolvedValue({ hit: false }),
+            put: jest.fn().mockResolvedValue(undefined),
+            invalidate: jest.fn(),
+        };
+
+        loadCaseStudyContextMock.mockResolvedValue(makeContext());
+        persistCaseStudyMock.mockResolvedValue(makePersisted());
+
+        await runCaseStudyOrchestration(makePool() as never, {
+            projectId: 'proj-1',
+            pipelineRunId: 'run-1',
+            model: 'eu.anthropic.claude-sonnet-4-6',
+            kbTag: 'kb-1',
+            agent: agent as never,
+            cache: cache as never,
+            ctx: makePipelineContext(),
+            workflow: makeWorkflow(stages),
+            onStage: async (stage) => {
+                statuses.push(stage);
+            },
+        });
+
+        expect(stages).toEqual([
+            'project.case_study.load_context',
+            'project.case_study.cache_lookup',
+            'project.case_study.generate',
+            'project.case_study.ground',
+            'project.case_study.persist',
+            'project.case_study.cache_write',
+        ]);
+        expect(statuses).toEqual(['fetching_context', 'generating', 'grounding', 'persisting']);
+    });
+
+    it('traces cache-hit load, lookup, and persistence without generation or grounding', async () => {
+        const stages: string[] = [];
+        const statuses: string[] = [];
+        const caseStudy = caseStudyWithVerdicts();
+        const agent = { invoke: jest.fn() };
+        const cache = {
+            get: jest.fn().mockResolvedValue({ hit: true, response: caseStudy }),
+            put: jest.fn(),
+            invalidate: jest.fn(),
+        };
+
+        loadCaseStudyContextMock.mockResolvedValue(makeContext());
+        persistCaseStudyMock.mockResolvedValue(makePersisted());
+
+        await runCaseStudyOrchestration(makePool() as never, {
+            projectId: 'proj-1',
+            pipelineRunId: 'run-1',
+            model: 'eu.anthropic.claude-sonnet-4-6',
+            kbTag: 'kb-1',
+            agent: agent as never,
+            cache: cache as never,
+            ctx: makePipelineContext(),
+            workflow: makeWorkflow(stages),
+            onStage: async (stage) => {
+                statuses.push(stage);
+            },
+        });
+
+        expect(stages).toEqual([
+            'project.case_study.load_context',
+            'project.case_study.cache_lookup',
+            'project.case_study.persist',
+        ]);
+        expect(statuses).toEqual(['fetching_context', 'persisting']);
+        expect(agent.invoke).not.toHaveBeenCalled();
     });
 });

@@ -28,6 +28,7 @@ import type { Pool } from 'pg';
 import type { BasePipelineContext } from '../base-agent.js';
 import type { ISemanticCache } from '../cache/cache-types.js';
 import type { IGroundingVerifier } from '../grounding/grounding-types.js';
+import type { WorkflowTrace } from '../observability/workflow-trace.js';
 
 import type { CaseStudyAgent } from './case-study-agent.js';
 import {
@@ -49,6 +50,12 @@ import {
     mergeGroundingResult,
 } from './source-signals.js';
 
+export type RunCaseStudyStage =
+    | 'fetching_context'
+    | 'generating'
+    | 'grounding'
+    | 'persisting';
+
 export interface RunCaseStudyInput {
     readonly projectId:     string;
     readonly pipelineRunId: string;
@@ -57,7 +64,9 @@ export interface RunCaseStudyInput {
     readonly agent:         CaseStudyAgent;
     readonly verifier?:     IGroundingVerifier;
     readonly cache?:        ISemanticCache;
-    readonly ctx:               BasePipelineContext;
+    readonly ctx:           BasePipelineContext;
+    readonly workflow?:     WorkflowTrace;
+    readonly onStage?:      (stage: RunCaseStudyStage) => Promise<void>;
     /**
      * Incremental refine: when true and the project already has a completed
      * case study, the agent updates that prior study (preserving grounded rows)
@@ -202,12 +211,23 @@ export function summarizeGrounding(caseStudy: CaseStudy): GroundingSummary {
 
 const CACHE_SCOPE_PREFIX = 'casestudy';
 
+async function runStage<T>(
+    workflow: WorkflowTrace | undefined,
+    name: string,
+    work: () => Promise<T>,
+): Promise<T> {
+    return workflow ? workflow.stage(name, {}, work) : work();
+}
+
 export async function runCaseStudyOrchestration(
     pool: Pool,
     input: RunCaseStudyInput,
 ): Promise<RunCaseStudyOutput> {
-    const baseContext = await loadCaseStudyContext(pool, input.projectId);
-    const { contextLoaded, refined } = await resolveRefineContext(pool, baseContext, input);
+    await input.onStage?.('fetching_context');
+    const { contextLoaded, refined } = await runStage(input.workflow, 'project.case_study.load_context', async () => {
+        const baseContext = await loadCaseStudyContext(pool, input.projectId);
+        return resolveRefineContext(pool, baseContext, input);
+    });
     const inputHash = computeInputHash(contextLoaded);
 
     const cacheKey = {
@@ -220,13 +240,21 @@ export async function runCaseStudyOrchestration(
     const cacheable = Boolean(input.cache) && !refined;
 
     // 1. Try the cache.
-    let caseStudy = cacheable ? await cacheGet(input.cache!, cacheKey) : undefined;
+    let caseStudy = await runStage(input.workflow, 'project.case_study.cache_lookup', async () =>
+        cacheable ? cacheGet(input.cache!, cacheKey) : undefined,
+    );
     const cacheHit = caseStudy !== undefined;
 
     // 2. Run the agent if the cache missed.
     if (!caseStudy) {
-        const agentResult = await input.agent.invoke(contextLoaded.context, input.ctx);
-        caseStudy = await applyGrounding(agentResult.data, input.verifier);
+        await input.onStage?.('generating');
+        const agentResult = await runStage(input.workflow, 'project.case_study.generate', async () =>
+            input.agent.invoke(contextLoaded.context, input.ctx),
+        );
+        await input.onStage?.('grounding');
+        caseStudy = await runStage(input.workflow, 'project.case_study.ground', async () =>
+            applyGrounding(agentResult.data, input.verifier),
+        );
     }
 
     // 2b. Override depthMarkers with the deterministic, code-grounded values
@@ -236,25 +264,31 @@ export async function runCaseStudyOrchestration(
     if (groundedDepth) caseStudy = { ...caseStudy, depthMarkers: groundedDepth };
 
     // 3. Persist.
-    const client = await pool.connect();
-    let persisted: PersistCaseStudySummary;
-    try {
-        persisted = await persistCaseStudy(client, {
-            projectId:     input.projectId,
-            userId:        contextLoaded.userId,
-            pipelineRunId: input.pipelineRunId,
-            model:         input.model,
-            inputHash,
-            caseStudy,
-            computedArchetype: contextLoaded.context.archetype?.id ?? null,
-            computedStage:     contextLoaded.context.stage ?? null,
-        });
-    } finally {
-        client.release();
-    }
+    await input.onStage?.('persisting');
+    const persisted = await runStage(input.workflow, 'project.case_study.persist', async () => {
+        const client = await pool.connect();
+        try {
+            return await persistCaseStudy(client, {
+                projectId:     input.projectId,
+                userId:        contextLoaded.userId,
+                pipelineRunId: input.pipelineRunId,
+                model:         input.model,
+                inputHash,
+                caseStudy,
+                computedArchetype: contextLoaded.context.archetype?.id ?? null,
+                computedStage:     contextLoaded.context.stage ?? null,
+            });
+        } finally {
+            client.release();
+        }
+    });
 
     // 4. Update the cache (fail-open; never for cache hits or refine runs).
-    if (cacheable && !cacheHit) await cachePut(input.cache!, cacheKey, caseStudy);
+    if (cacheable && !cacheHit) {
+        await runStage(input.workflow, 'project.case_study.cache_write', async () =>
+            cachePut(input.cache!, cacheKey, caseStudy),
+        );
+    }
 
     return {
         cacheHit,
