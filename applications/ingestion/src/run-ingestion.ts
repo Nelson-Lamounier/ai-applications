@@ -216,11 +216,17 @@ async function runDeferredEnrichment(
     const tier1Map = process.env['ENRICH_TIER1'] === '1'
         ? await new TechSkillMapRepository(pgPool).loadTechSkillMap().catch(() => undefined)
         : undefined;
+    // Controlled-vocab enrichment (the vocabulary fix): emit ONLY canonical
+    // skill_ontology terms so the chunk is canonical and the && lane fires.
+    const canonicalVocab = process.env['ENRICH_CANONICAL'] === '1'
+        ? await new SkillOntologyRepository(pgPool).loadCanonicalNames().catch(() => undefined)
+        : undefined;
     try {
         const reenriched = await reenrichSkippedChunks(pgPool, enricher, {
             userId,
             repoFullName,
             tier1Map,
+            canonicalVocab,
             deadlineMs: enrichmentDeadlineMs(),
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {

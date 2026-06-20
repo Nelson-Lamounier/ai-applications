@@ -30,7 +30,7 @@ describe('reenrichSkippedChunks', () => {
 
         const result = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1 });
 
-        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0, tier1Resolved: 0, stoppedEarly: false, remaining: 0 });
+        expect(result).toEqual({ candidates: 2, enriched: 2, failed: 0, tier1Resolved: 0, newSkillsQueued: 0, stoppedEarly: false, remaining: 0 });
         expect((enricher.enrich as jest.Mock)).toHaveBeenCalledTimes(2);
         expect(updates).toHaveLength(2);
         expect(updates[0]).toEqual({ skills: ['kubernetes networking'], id: 'a' });
@@ -72,7 +72,7 @@ describe('reenrichSkippedChunks', () => {
 
         expect((enricher.enrich as jest.Mock)).not.toHaveBeenCalled();
         expect(updates).toHaveLength(0);
-        expect(result).toEqual({ candidates: 2, enriched: 0, failed: 0, tier1Resolved: 0, stoppedEarly: true, remaining: 2 });
+        expect(result).toEqual({ candidates: 2, enriched: 0, failed: 0, tier1Resolved: 0, newSkillsQueued: 0, stoppedEarly: true, remaining: 2 });
     });
 
     it('applies a limit clause when provided', async () => {
@@ -80,6 +80,22 @@ describe('reenrichSkippedChunks', () => {
         const enricher: IChunkEnricher = { enrich: jest.fn(async () => ({ skills: [], technologies: [] })) };
         await reenrichSkippedChunks(pool, enricher, { limit: 50 });
         expect(query.mock.calls[0][0] as string).toMatch(/LIMIT 50/);
+    });
+
+    it('ENRICH_CANONICAL: controlled-vocab path writes canonical skills + counts NEW: queue', async () => {
+        const { pool, updates } = makePool(rows);
+        const enrich = jest.fn(async () => ({ skills: ['raw-llm'], technologies: [] }));
+        const enricher: IChunkEnricher = {
+            enrich,
+            enrichTextCanonical: jest.fn(async () => ({ canonical: ['kubernetes', 'argocd'], newSkills: ['webassembly'] })),
+        };
+
+        const result = await reenrichSkippedChunks(pool, enricher, { concurrency: 1, canonicalVocab: ['kubernetes', 'argocd'] });
+
+        expect((enricher.enrichTextCanonical as jest.Mock)).toHaveBeenCalledTimes(2);  // both via controlled-vocab
+        expect(enrich).not.toHaveBeenCalled();                                          // free-text LLM bypassed
+        expect(updates[0]).toEqual({ skills: ['kubernetes', 'argocd'], id: 'a' });      // canonical written
+        expect(result.newSkillsQueued).toBe(2);                                         // 1 NEW: x 2 chunks
     });
 
     it('Tier 1 resolves chunks with file_tech_stack deterministically — no LLM call', async () => {

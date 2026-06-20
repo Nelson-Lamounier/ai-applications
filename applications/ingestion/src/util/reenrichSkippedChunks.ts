@@ -37,6 +37,13 @@ export interface ReenrichOptions {
      * chunk by now (stampUserEvidenceMetadata runs before this deferred pass).
      */
     readonly tier1Map?: ReadonlyMap<string, readonly string[]>;
+    /**
+     * Controlled vocabulary (the vocabulary fix). When present (ENRICH_CANONICAL=1),
+     * each chunk is enriched via enrichTextCanonical — the model emits ONLY these
+     * canonical skill_ontology terms (canonical by construction, so the
+     * `d.skills && query.skills` overlap lane fires) + a NEW: growth queue.
+     */
+    readonly canonicalVocab?: readonly string[];
 }
 
 export interface ReenrichResult {
@@ -45,6 +52,8 @@ export interface ReenrichResult {
     readonly failed: number;
     /** Chunks resolved by Tier 1 deterministically (no model call). */
     readonly tier1Resolved: number;
+    /** Out-of-vocabulary capabilities surfaced by controlled-vocab enrichment (growth queue). */
+    readonly newSkillsQueued: number;
     /** True when the deadline stopped dispatch before all candidates ran. */
     readonly stoppedEarly: boolean;
     /** Candidates left unprocessed (still `pending`) — resumed next sync. */
@@ -104,6 +113,7 @@ export async function reenrichSkippedChunks(
     let enriched = 0;
     let failed = 0;
     let tier1Resolved = 0;
+    let newSkillsQueued = 0;
     let done = 0;
 
     /** Tier 1 (deterministic, no model call): file_tech_stack -> canonical skills. */
@@ -134,7 +144,16 @@ export async function reenrichSkippedChunks(
                 enriched += 1;
                 return;
             }
-            // Residue -> the LLM enricher (today's path).
+            // Controlled-vocabulary LLM (the vocabulary fix): emit ONLY canonical
+            // skill_ontology terms -> the chunk is canonical, so the && lane fires.
+            if (opts.canonicalVocab && enricher.enrichTextCanonical) {
+                const { canonical, newSkills } = await enricher.enrichTextCanonical(opts.canonicalVocab, row.file_path, row.content, row.heading ?? undefined);
+                await writeSkills(row.id, canonical);
+                newSkillsQueued += newSkills.length;
+                enriched += 1;
+                return;
+            }
+            // Residue -> the free-text LLM enricher (today's path).
             const { skills } = await enricher.enrich({
                 filePath:    row.file_path,
                 heading:     row.heading ?? undefined,
@@ -172,5 +191,5 @@ export async function reenrichSkippedChunks(
     const workers = Math.max(1, Math.min(opts.concurrency ?? 10, rows.length));
     await Promise.all(Array.from({ length: workers }, () => worker()));
 
-    return { candidates: rows.length, enriched, failed, tier1Resolved, stoppedEarly, remaining: rows.length - done };
+    return { candidates: rows.length, enriched, failed, tier1Resolved, newSkillsQueued, stoppedEarly, remaining: rows.length - done };
 }

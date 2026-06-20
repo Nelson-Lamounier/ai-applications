@@ -81,10 +81,17 @@ async function main(): Promise<void> {
             repoName: repoFullName ?? 're-enrich',
         }, skillAliasToCanonical, (p) => phraseResolver.resolve(p));
 
+        // Controlled-vocab re-enrich (the vocabulary fix): rewrite the corpus to
+        // canonical skill_ontology terms so d.skills && query.skills overlaps.
+        const canonicalVocab = process.env['ENRICH_CANONICAL'] === '1'
+            ? await new SkillOntologyRepository(pgPool).loadCanonicalNames().catch(() => undefined)
+            : undefined;
+
         const result = await reenrichSkippedChunks(pgPool, enricher, {
             userId,
             repoFullName,
             limit,
+            canonicalVocab,
             reenrichAll: process.env['REENRICH_ALL'] === '1',
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {

@@ -47,6 +47,17 @@ vocabulary is the moat; it cannot be bought, only grown from traffic.
 - **The golden set** grows the same way — as users run JDs, the JD-anchored chunks +
   labels extend the hand-truth (the user's note); it is not a one-off fixture.
 
+## JD-demand seed (migration 097)
+The first JD-demand injection: ~55 canonical skills the 2026 technical job market
+actually asks for — DevOps, LLM/AI, SRE/Platform/MLOps, Technical Support, Data/Cloud
+Security (large language models, langchain, rag terms, vector stores, mlops, etl
+pipelines, cloud security, devsecops, …). Synthesised from live 2026 JD specs
+(Indeed/roadmap.sh/CIO/Robert Half/Pluralsight), NOT an external taxonomy —
+`curation_level='auto_imported'`, `source='jd_market_2026'`, idempotent + curated-safe
+(`ON CONFLICT DO NOTHING`). This lifts the live ceiling (recall was capped at 0.54 by a
+209-term vocabulary). New canonicals need the Titan skill-embedding backfill before the
+resolver/classifier use them; the controlled-vocab enricher uses the NAMES directly.
+
 ## Growth queue (next increment — not in this PR)
 A `skill_growth_queue` (term, occurrences, first_seen, source: jd|repo) accumulates
 JD skills + repo `NEW:` items; a term promotes into `skill_ontology` once it recurs
