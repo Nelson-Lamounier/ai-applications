@@ -1,5 +1,31 @@
 /** @format */
-import { diffTechSets } from './reconcileTechStack.js';
+import { diffTechSets, normalizeTechName } from './reconcileTechStack.js';
+
+describe('normalizeTechName', () => {
+    it('strips trailing versions + parentheticals, preserves digit-bearing names', () => {
+        expect(normalizeTechName('React 19')).toBe('react');
+        expect(normalizeTechName('Tailwind CSS 4')).toBe('tailwind css');
+        expect(normalizeTechName('Next.js 14.2')).toBe('next.js');
+        expect(normalizeTechName('Redis (ioredis)')).toBe('redis');
+        expect(normalizeTechName('Titan v2')).toBe('titan');
+        expect(normalizeTechName('AWS S3')).toBe('aws s3');   // digit is part of the name — kept
+        expect(normalizeTechName('EC2')).toBe('ec2');
+    });
+});
+
+describe('diffTechSets name normalization (WS3 refinement)', () => {
+    it('matches a version-tagged / qualified LLM name to the evidenced canonical', () => {
+        const aliases = new Map<string, string>([['react', 'react'], ['redis', 'redis']]);
+        const evidence = [
+            { canonical: 'react', display: 'React' },
+            { canonical: 'redis', display: 'Redis' },
+        ];
+        const r = diffTechSets(evidence, ['React 19', 'Redis (ioredis)'], aliases);
+        expect(r.llmOnly).toEqual([]);                       // both normalise + verify — no over-report
+        expect(r.reconciled).toEqual(['React', 'Redis']);
+        expect(r.evidenceOnly).toEqual([]);
+    });
+});
 
 describe('diffTechSets', () => {
     // alias map: lowercased alias/canonical -> canonical_name (lowercased)
