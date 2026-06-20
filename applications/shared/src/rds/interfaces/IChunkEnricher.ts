@@ -53,4 +53,11 @@ export interface IChunkEnricher {
      * whole pack back to per-chunk).
      */
     enrichPack?(items: readonly PackBodyItem[]): Promise<Map<string, ChunkEnrichment>>;
+    /**
+     * Controlled-vocabulary extraction (the vocabulary fix): emit ONLY skills from
+     * `vocabulary` (the shared skill_ontology) — canonical by construction, so the
+     * `d.skills && query.skills` overlap lane fires. Returns the canonical skills +
+     * the NEW: gaps (the vocabulary growth queue). Optional.
+     */
+    enrichTextCanonical?(vocabulary: readonly string[], filePath: string, content: string, heading?: string): Promise<{ canonical: string[]; newSkills: string[] }>;
 }
