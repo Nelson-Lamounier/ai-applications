@@ -55,6 +55,32 @@ describe('reenrichSkippedChunks WS5 content-hash dedup', () => {
         expect(result.cacheHits).toBe(1);
         expect(updates[0]).toEqual({ skills: ['cached:kubernetes'], id: 'a' });  // cached skills copied
     });
+
+    it('scopes the cache by method: canonical uses a #canon: model key (no free-text cross-contamination)', async () => {
+        let cacheLookupModel = '';
+        const client = {
+            query: jest.fn(async (sql: string, p?: unknown[]) => {
+                if (sql.includes('chunk_enrichment_cache') && sql.includes('SELECT')) { cacheLookupModel = p?.[1] as string; return { rows: [] }; }
+                return { rows: [] };
+            }),
+            release: jest.fn(),
+        };
+        const pool = {
+            query: jest.fn(async (sql: string) => sql.includes('document_embeddings')
+                ? { rows: [{ id: 'a', file_path: 'x.ts', heading: null, content: 'k8s', content_hash: 'h1', file_tech_stack: null }] }
+                : { rows: [] }),
+            connect: jest.fn(async () => client),
+        } as unknown as Pool;
+        const enricher: IChunkEnricher = {
+            modelId: 'haiku',
+            enrich: jest.fn(async () => ({ skills: [], technologies: [] })),
+            enrichTextCanonical: jest.fn(async () => ({ canonical: ['kubernetes'], newSkills: [] })),
+        };
+
+        await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1, dedupCache: true, canonicalVocab: ['kubernetes', 'terraform'] });
+
+        expect(cacheLookupModel).toBe('haiku#canon:2');   // method + vocab-size scoped, NOT plain 'haiku'
+    });
 });
 
 describe('reenrichSkippedChunks', () => {
