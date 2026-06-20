@@ -550,7 +550,16 @@ async function main(): Promise<void> {
         database: env.pg.database,
         user:     env.pg.user,
         password: env.pg.password,
-        max:      3,
+        // Pool must cover the deferred-enrichment worker fan-out. reenrichSkippedChunks
+        // runs up to `concurrency` (default 10) workers in parallel, each doing a
+        // writeSkills UPDATE + a fire-and-forget cost-record + a WS5 cache write — all
+        // from this pool. At max:3, 10 workers contended for 3 connections and most
+        // could not acquire one in time; the per-chunk error was swallowed (silent
+        // catch) and the chunk stayed `pending`. On a force-reindex of 2,511 chunks
+        // ~46% failed this way (db_errors=0 — not the server, the client pool). Sized
+        // to concurrency + headroom for the cost/cache writes; one ingestion Job runs
+        // at a time, well under the instance max_connections.
+        max:      16,
     });
 
     // Classify the run for sync/resync metrics: 'initial' (repo never embedded),

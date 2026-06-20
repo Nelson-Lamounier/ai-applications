@@ -143,6 +143,17 @@ export async function reenrichSkippedChunks(
     let newSkillsQueued = 0;
     let cacheHits = 0;
     let done = 0;
+    // Sample the first few per-chunk failures so a silent mass-failure is
+    // diagnosable (previously the catch swallowed every error, hiding a pool
+    // exhaustion that left ~46% of a repo `pending` with no log trail).
+    const failureSamples: string[] = [];
+    const recordFailure = (err: unknown): void => {
+        failed += 1;
+        if (failureSamples.length < 5) failureSamples.push(err instanceof Error ? err.message : String(err));
+    };
+    const logFailures = (total: number): void => {
+        if (failed > 0) console.warn(`[reenrichSkippedChunks] ${failed}/${total} chunks failed enrichment; sample errors: ${JSON.stringify(failureSamples)}`);
+    };
 
     /** Tier 1 (deterministic, no model call): file_tech_stack -> canonical skills. */
     function tier1Skills(row: SkippedRow): string[] {
@@ -203,9 +214,9 @@ export async function reenrichSkippedChunks(
             await writeSkills(row.id, skills);
             remember(row.content_hash, skills);
             enriched += 1;
-        } catch {
+        } catch (err) {
             // Leave the row as skipped_quota so the next run retries it.
-            failed += 1;
+            recordFailure(err);
         } finally {
             done += 1;
             opts.onProgress?.(done, rows.length);
@@ -234,6 +245,10 @@ export async function reenrichSkippedChunks(
     // WS5: persist the freshly-enriched (content_hash -> skills) so the next run
     // (incl. a force-reindex) copies them instead of re-invoking the LLM.
     await persistFreshCache(pool, opts, modelId, freshCache);
+
+    // Surface why chunks failed — a high `failed` with no trail previously masked
+    // pool exhaustion as a benign "pending tail".
+    logFailures(rows.length);
 
     return { candidates: rows.length, enriched, failed, tier1Resolved, newSkillsQueued, cacheHits, stoppedEarly, remaining: rows.length - done };
 }
