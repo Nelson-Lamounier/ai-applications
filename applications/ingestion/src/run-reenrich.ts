@@ -92,6 +92,7 @@ async function main(): Promise<void> {
             repoFullName,
             limit,
             canonicalVocab,
+            dedupCache: process.env['ENRICH_DEDUP'] !== '0',   // WS5 content-hash dedup (on by default)
             reenrichAll: process.env['REENRICH_ALL'] === '1',
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {

@@ -31,6 +31,8 @@ export interface ChunkEnrichment {
 }
 
 export interface IChunkEnricher {
+    /** Enrichment model id — used to scope the content-hash dedup cache (WS5). Optional. */
+    readonly modelId?: string;
     enrich(chunk: RawChunk): Promise<ChunkEnrichment>;
     /**
      * Extract skill evidence from arbitrary text (feature 002 per-file lever).
