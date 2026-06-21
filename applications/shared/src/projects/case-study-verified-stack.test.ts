@@ -38,12 +38,14 @@ describe('buildVerifiedStackMap', () => {
 describe('stampStackSignals', () => {
     const map = buildVerifiedStackMap(rows);
 
-    it('stamps verifiedTech when the stack name matches a code dependency', () => {
+    it('stamps verifiedTech AND marks GROUNDED when the stack name matches a code dependency', () => {
         const out = stampStackSignals('React', signals(), map);
         expect(out.verifiedTech).toEqual([
             { name: 'React', version: '18.3.1', purl: 'pkg:npm/react@18.3.1', path: 'package.json', line: 24 },
         ]);
-        // A match never weakens grounding or invents a claim.
+        // An SBOM match (version + purl + file:line) is the strongest grounding —
+        // it is marked GROUNDED, not left at the model's guess, and invents nothing.
+        expect(out.grounding).toBe('GROUNDED');
         expect(out.ungroundedClaims).toEqual([]);
     });
 

@@ -104,6 +104,10 @@ export function stampStackSignals(
     if (hit) {
         return {
             ...signals,
+            // A code-declared dependency matched in the SBOM (version + purl +
+            // file:line) is the STRONGEST grounding available — mark it grounded
+            // rather than leaving the model's guess.
+            grounding:    'GROUNDED',
             verifiedTech: [{ name, version: hit.version, purl: hit.purl, path: hit.path, line: hit.line }],
         };
     }
