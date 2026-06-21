@@ -21,7 +21,7 @@
  * up Bedrock.
  */
 import { runAgent, parseJsonResponse } from '../agent-runner.js';
-import { clampOversizedFields } from './case-study-schema-repair.js';
+import { clampOversizedFields, coerceArchitectureString } from './case-study-schema-repair.js';
 import type { BasePipelineContext } from '../base-agent.js';
 import type { AgentConfig, AgentResult } from '../types.js';
 
@@ -457,6 +457,49 @@ export interface CaseStudyAgent {
     ): Promise<AgentResult<CaseStudy>>;
 }
 
+/**
+ * A schema-validation failure that survived the deterministic repair pass.
+ * Carries the formatted Zod issue detail so the bounded retry can feed it back
+ * to the model.
+ */
+export class CaseStudySchemaError extends Error {
+    constructor(public readonly detail: string) {
+        super(`case-study output failed schema: ${detail}`);
+        this.name = 'CaseStudySchemaError';
+    }
+}
+
+/**
+ * Parse + validate the model's `emit_case_study` payload. Applies the zero-cost
+ * deterministic repairs first (coerce a string `architecture` into its object
+ * form; clamp length overruns) and re-validates once. Throws
+ * {@link CaseStudySchemaError} with the remaining issues if it still fails — the
+ * caller can feed that detail back for ONE bounded model retry.
+ */
+export function parseCaseStudyResponse(text: string): CaseStudy {
+    const raw = parseJsonResponse<unknown>(text, 'project-case-study');
+    let parsed = CaseStudySchema.safeParse(raw);
+    if (!parsed.success) {
+        // Deterministic, zero-cost repairs, then re-validate once. No model call.
+        let repaired = coerceArchitectureString(raw, parsed.error.issues);
+        repaired = clampOversizedFields(repaired, parsed.error.issues);
+        parsed = CaseStudySchema.safeParse(repaired);
+    }
+    if (!parsed.success) {
+        throw new CaseStudySchemaError(JSON.stringify(parsed.error.issues));
+    }
+    return parsed.data;
+}
+
+/** Schema-issue detail if `err` is a case-study schema failure, else null. */
+function schemaFailureDetail(err: unknown): string | null {
+    // runAgent wraps parseResponse's throw in AgentExecutionError (.cause).
+    const cause = (err as { cause?: unknown })?.cause;
+    if (cause instanceof CaseStudySchemaError) return cause.detail;
+    if (err instanceof CaseStudySchemaError)   return err.detail;
+    return null;
+}
+
 export const bedrockCaseStudyAgent: CaseStudyAgent = {
     async invoke(context, ctx) {
         const config: AgentConfig = {
@@ -474,28 +517,30 @@ export const bedrockCaseStudyAgent: CaseStudyAgent = {
         // is the allowable project types.
         void PROJECT_TYPES;
 
-        return runAgent<CaseStudy>({
-            config,
-            userMessage:    buildUserMessage(context),
-            pipelineContext: ctx,
-            parseResponse: (text) => {
-                const raw = parseJsonResponse<unknown>(text, 'project-case-study');
-                let parsed = CaseStudySchema.safeParse(raw);
-                if (!parsed.success) {
-                    // ONE deterministic, zero-cost repair pass: clamp length
-                    // overruns (a forced-tool maxLength is a hint the model can
-                    // exceed) and re-validate — salvages the (already paid-for)
-                    // generation without another model call. No loop, no retry.
-                    const repaired = clampOversizedFields(raw, parsed.error.issues);
-                    parsed = CaseStudySchema.safeParse(repaired);
-                }
-                if (!parsed.success) {
-                    throw new Error(
-                        `case-study output failed schema: ${parsed.error.message}`,
-                    );
-                }
-                return parsed.data;
-            },
-        });
+        const userMessage = buildUserMessage(context);
+        try {
+            return await runAgent<CaseStudy>({
+                config, userMessage, pipelineContext: ctx,
+                parseResponse: parseCaseStudyResponse,
+            });
+        } catch (err) {
+            const detail = schemaFailureDetail(err);
+            if (!detail) throw err;   // not a schema failure — propagate untouched
+
+            // ONE bounded repair retry: feed the exact violations back so the
+            // model fixes ONLY those, keeping the (already-paid-for) content.
+            // Single attempt, agent-only — it never re-triggers the pipeline, and
+            // both calls' Bedrock cost is booked by runAgent regardless of outcome.
+            console.warn(`[project-case-study] schema repair retry (1/1): ${detail}`);
+            const retryMessage =
+                `${userMessage}\n\nYour previous emit_case_study call FAILED schema validation:\n${detail}\n` +
+                'Return a corrected emit_case_study tool call. Fix ONLY those violations — in ' +
+                'particular `architecture` MUST be an object {diagramFormat, diagramSource, nodes, edges} ' +
+                '(never a bare string), and every string must respect its maxLength. Keep all other content identical.';
+            return await runAgent<CaseStudy>({
+                config, userMessage: retryMessage, pipelineContext: ctx,
+                parseResponse: parseCaseStudyResponse,
+            });
+        }
     },
 };

@@ -1,6 +1,15 @@
 /** @format */
 import { z } from 'zod';
-import { clampOversizedFields } from './case-study-schema-repair.js';
+import { clampOversizedFields, coerceArchitectureString } from './case-study-schema-repair.js';
+
+const ArchSchema = z.object({
+    architecture: z.object({
+        diagramFormat: z.enum(['mermaid', 'svg']),
+        diagramSource: z.string().min(1),
+        nodes: z.array(z.unknown()),
+        edges: z.array(z.unknown()),
+    }),
+}).strict();
 
 // A miniature schema mirroring the case-study shape: capped strings at the top
 // level and inside an array of objects. Enough to exercise nested paths.
@@ -77,5 +86,49 @@ describe('clampOversizedFields', () => {
 
         clampOversizedFields(raw, parsed.error.issues);
         expect(raw.tagline).toBe('x'.repeat(40));   // original untouched (clone-based)
+    });
+});
+
+describe('coerceArchitectureString', () => {
+    it('wraps a bare-string architecture into the object form so re-validation passes', () => {
+        const raw = { architecture: 'graph LR; A-->B' };
+        const parsed = ArchSchema.safeParse(raw);
+        expect(parsed.success).toBe(false);
+        if (parsed.success) return;
+
+        const repaired = coerceArchitectureString(raw, parsed.error.issues);
+        const reparsed = ArchSchema.safeParse(repaired);
+
+        expect(reparsed.success).toBe(true);
+        if (!reparsed.success) return;
+        expect(reparsed.data.architecture).toEqual({
+            diagramFormat: 'mermaid', diagramSource: 'graph LR; A-->B', nodes: [], edges: [],
+        });
+    });
+
+    it('leaves a valid object architecture untouched (no matching issue)', () => {
+        const raw = { architecture: { diagramFormat: 'mermaid', diagramSource: 'x', nodes: [], edges: [] } };
+        const parsed = ArchSchema.safeParse(raw);
+        if (!parsed.success) throw new Error('fixture should be valid');
+        // No issues -> coercion is a no-op passthrough.
+        expect(coerceArchitectureString(raw, [])).toBe(raw);
+    });
+
+    it('does not coerce an empty string (would fail min(1)) — leaves it for the retry', () => {
+        const raw = { architecture: '' };
+        const parsed = ArchSchema.safeParse(raw);
+        if (parsed.success) throw new Error('expected failure');
+
+        const repaired = coerceArchitectureString(raw, parsed.error.issues);
+        expect(repaired).toBe(raw);   // unchanged; structural fix deferred to the bounded retry
+    });
+
+    it('does not mutate the original input', () => {
+        const raw = { architecture: 'graph TD; X-->Y' };
+        const parsed = ArchSchema.safeParse(raw);
+        if (parsed.success) throw new Error('expected failure');
+
+        coerceArchitectureString(raw, parsed.error.issues);
+        expect(raw.architecture).toBe('graph TD; X-->Y');   // original untouched
     });
 });

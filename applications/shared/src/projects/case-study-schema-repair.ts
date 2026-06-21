@@ -83,3 +83,33 @@ export function clampOversizedFields(raw: unknown, issues: readonly ZodIssue[]):
 
     return clone;
 }
+
+/**
+ * Coerce a top-level `architecture` field that the model returned as a bare
+ * STRING into the object shape the schema requires. Sonnet intermittently emits
+ * the Mermaid source directly (`architecture: "graph LR; ..."`) instead of
+ * `{ diagramFormat, diagramSource, nodes, edges }` — an `invalid_type` violation
+ * the length-clamp cannot touch. The string IS the diagram, so wrapping it is a
+ * safe, zero-cost repair: the diagram still renders from `diagramSource`; the
+ * structured nodes/edges (used only for interactivity) start empty.
+ *
+ * Scoped narrowly to this one known, safe coercion — we do NOT generically turn
+ * strings into objects. Any other structural violation is left for the caller to
+ * fail fast on (or the bounded model retry to fix).
+ */
+export function coerceArchitectureString(raw: unknown, issues: readonly ZodIssue[]): unknown {
+    const hit = issues.some((i) =>
+        i.code === 'invalid_type' &&
+        i.path.length === 1 && i.path[0] === 'architecture' &&
+        (i as { received?: unknown }).received === 'string',
+    );
+    if (!hit || raw === null || typeof raw !== 'object') return raw;
+
+    const source = (raw as Record<string, unknown>).architecture;
+    if (typeof source !== 'string' || source.length === 0) return raw;
+
+    const clone = structuredClone(raw) as Record<string, unknown>;
+    clone.architecture = { diagramFormat: 'mermaid', diagramSource: source, nodes: [], edges: [] };
+    console.warn('[case-study] coerced string architecture into { diagramFormat, diagramSource, nodes, edges }');
+    return clone;
+}
