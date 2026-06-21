@@ -803,4 +803,28 @@ describe('runAgent — cost recording via pipeline context', () => {
         });
         expect(result.data).toBe('ok');
     });
+
+    it('records cost + invokes the sink even when parseResponse throws (paid call must be booked)', async () => {
+        // Regression: the Bedrock call succeeded (tokens billed), but a strict
+        // schema rejection in parseResponse previously skipped ALL cost
+        // recording, reporting $0 for a real, paid generation.
+        const sink = jest.fn(async () => {});
+        const ctx = { ...buildPipelineContext(), userId: 'user-7', onInvocationComplete: sink };
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse('ok'));
+
+        await expect(
+            runAgent({
+                config: buildConfig(VALID_MAX_TOKENS, DISABLED_THINKING_BUDGET),
+                userMessage: TEST_USER_MESSAGE,
+                parseResponse: () => { throw new Error('schema rejected'); },
+                pipelineContext: ctx,
+            }),
+        ).rejects.toThrow('schema rejected');
+
+        // Cost was still accumulated and the invocation logged — the spend is visible.
+        expect(ctx.cumulativeCostUsd).toBe(0.001);
+        expect(sink).toHaveBeenCalledTimes(1);
+        const [log] = sink.mock.calls[0] as unknown as [{ outputTokens?: number }];
+        expect(log.outputTokens).toBe(200);
+    });
 });

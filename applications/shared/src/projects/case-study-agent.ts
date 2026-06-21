@@ -21,6 +21,7 @@
  * up Bedrock.
  */
 import { runAgent, parseJsonResponse } from '../agent-runner.js';
+import { clampOversizedFields } from './case-study-schema-repair.js';
 import type { BasePipelineContext } from '../base-agent.js';
 import type { AgentConfig, AgentResult } from '../types.js';
 
@@ -479,7 +480,15 @@ export const bedrockCaseStudyAgent: CaseStudyAgent = {
             pipelineContext: ctx,
             parseResponse: (text) => {
                 const raw = parseJsonResponse<unknown>(text, 'project-case-study');
-                const parsed = CaseStudySchema.safeParse(raw);
+                let parsed = CaseStudySchema.safeParse(raw);
+                if (!parsed.success) {
+                    // ONE deterministic, zero-cost repair pass: clamp length
+                    // overruns (a forced-tool maxLength is a hint the model can
+                    // exceed) and re-validate — salvages the (already paid-for)
+                    // generation without another model call. No loop, no retry.
+                    const repaired = clampOversizedFields(raw, parsed.error.issues);
+                    parsed = CaseStudySchema.safeParse(repaired);
+                }
                 if (!parsed.success) {
                     throw new Error(
                         `case-study output failed schema: ${parsed.error.message}`,

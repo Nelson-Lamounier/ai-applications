@@ -429,10 +429,11 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             ? extractToolUseInput(outputBlocks, tool.name, agentName)
             : extractTextFromResponse(outputBlocks, agentName);
 
-        // Parse agent-specific response
-        const data = parseResponse(textContent);
-
-        // Calculate cost
+        // Calculate cost — done BEFORE parsing/validation. The Bedrock call has
+        // already consumed (and billed) tokens; if the downstream parseResponse
+        // throws (e.g. a strict-schema rejection a deterministic repair could
+        // not salvage), the spend must still be recorded. Booking cost only on
+        // the success path silently reported $0 for real, paid calls.
         const costUsd = estimateInvocationCost(modelId, tokenUsage);
 
         // Accumulate onto pipeline context
@@ -503,6 +504,11 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
                 console.warn(`[${agentName}] onInvocationComplete failed (non-fatal)`, err);
             });
         }
+
+        // Parse + validate the agent-specific output LAST, so a parse/schema
+        // failure cannot discard the cost recorded above. A throw here surfaces
+        // in the catch block (and the spend is already booked).
+        const data = parseResponse(textContent);
 
         return {
             data,
