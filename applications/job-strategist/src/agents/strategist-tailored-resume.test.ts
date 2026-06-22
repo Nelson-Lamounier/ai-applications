@@ -70,4 +70,15 @@ describe('extractTailoredResumeJson', () => {
         expect((r as unknown as Record<string, unknown>)['someNewTopLevelField']).toBeUndefined();
         expect((r?.experience[0] as unknown as Record<string, unknown>)['newNestedField']).toBeUndefined();
     });
+
+    it('caps paid experience roles to 5 highlights (first 5 kept)', () => {
+        const seven = Array.from({ length: 7 }, (_, i) => `Bullet ${i + 1}`);
+        const payload = {
+            ...VALID_RESUME,
+            experience: [{ company: 'Freelance', title: 'Eng', period: '2020-2024', highlights: seven }],
+        };
+        const r = extractTailoredResumeJson(wrap(JSON.stringify(payload)));
+        expect(r?.experience[0].highlights).toHaveLength(5);
+        expect(r?.experience[0].highlights).toEqual(seven.slice(0, 5));
+    });
 });
