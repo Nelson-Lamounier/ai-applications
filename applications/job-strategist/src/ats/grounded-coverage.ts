@@ -24,6 +24,7 @@ export function groundedAtsCoverage(
 	if (jdKeywords.length === 0) return { covered: [], missing: [], coverageRate: 1 };
 
 	// Canonicalise every word in the resume once.
+	// The dot in the regex keeps dotted tokens like Node.js and .NET intact after canonicalisation.
 	const resumeCanon = new Set(
 		(resumeText.toLowerCase().match(/[a-z0-9+#.]+/g) ?? []).map((w) => canon(w, aliasToCanonical)),
 	);

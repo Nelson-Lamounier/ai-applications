@@ -25,4 +25,10 @@ describe('groundedAtsCoverage', () => {
 		const r = groundedAtsCoverage('anything', [], new Map());
 		expect(r).toEqual({ covered: [], missing: [], coverageRate: 1 });
 	});
+
+	it('strips sentence-final punctuation so "AWS." is covered by keyword "aws"', () => {
+		const r = groundedAtsCoverage('We use AWS.', ['aws'], new Map([['aws', 'aws']]));
+		expect(r.covered).toEqual(['aws']);
+		expect(r.missing).toEqual([]);
+	});
 });
