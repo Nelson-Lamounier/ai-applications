@@ -6,10 +6,13 @@
  * judge (mocked here) covers the subjective "reads as grounded narrative".
  */
 import { describe, it, expect } from '@jest/globals';
-import { gradeFreeResume } from './free-resume-writer.js';
+import { gradeFreeResume, parseFreeResumeResponse } from './free-resume-writer.js';
 import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
 import type { FreeEvidence } from '../free/gather-evidence.js';
 import type { FreeResumeOutput } from './free-resume-writer.js';
+
+/** Serialise a FreeResumeOutput as the raw JSON the emit_free_resume tool returns. */
+const toToolJson = (out: FreeResumeOutput): string => JSON.stringify(out);
 
 const EV: FreeEvidence = {
 	kbPassages: ['[Source: me/infra/eks.tf]\nProvisioned EKS with Karpenter.'],
@@ -263,6 +266,55 @@ describe('free writer eval — grounded narrative', () => {
 		const result = gradeFreeResume(bad, EV_POSITIONED);
 		expect(result.pass).toBe(false);
 		expect(result.failures.some((f) => f.includes('Fabricated metric'))).toBe(true);
+	});
+
+	// -----------------------------------------------------------------------
+	// Pillar A — experience selection: an over-long role is truncated to the
+	// first 5 (relevance-ordered) bullets by the deterministic cap, and the
+	// grounding grader still passes.
+	// -----------------------------------------------------------------------
+	it('eval: an 8-bullet role is capped to the first 5 (relevance-ordered)', () => {
+		const verbs = ['Provisioned', 'Hardened', 'Automated', 'Migrated', 'Optimised', 'Designed', 'Deployed', 'Built'];
+		const eight = verbs.map((v) => `${v} EKS with Karpenter on AWS, improving autoscaling.`);
+		const out = parseFreeResumeResponse(
+			toToolJson({
+				...GOOD,
+				resume: {
+					...GOOD.resume,
+					experience: [{ company: 'Acme Corp', title: 'Platform Engineer', period: '2022–2025', highlights: eight }],
+				},
+			}),
+		);
+		expect(out.resume.experience[0]?.highlights).toEqual(eight.slice(0, 5));
+		expect(gradeFreeResume(out, EV).pass).toBe(true);
+	});
+
+	// -----------------------------------------------------------------------
+	// Pillar B — JD optimisation / ATS: the optimise-but-don't-fabricate
+	// contract. An evidence-backed JD keyword (IAM) is surfaced and covered,
+	// while an unsupported one (GraphQL) stays out — the grounding gate holds.
+	// -----------------------------------------------------------------------
+	it('eval: surfaces an evidence-backed JD keyword and omits an unsupported one', () => {
+		const aliasIdentity = new Map<string, string>(); // identity alias map for the test
+		const jdKeywords = ['IAM', 'GraphQL']; // IAM is in evidence, GraphQL is not
+		const resumeWithIam: FreeResumeOutput = {
+			...GOOD,
+			resume: {
+				...GOOD.resume,
+				skills: [{ category: 'Cloud', skills: ['AWS', 'IAM', 'Kubernetes'] }],
+				experience: [
+					{
+						company: 'Acme Corp',
+						title: 'Platform Engineer',
+						period: '2022–2025',
+						highlights: ['Hardened IAM policies on AWS, scoping least-privilege access.'],
+					},
+				],
+			},
+		};
+		const cov = groundedAtsCoverage(JSON.stringify(resumeWithIam), jdKeywords, aliasIdentity);
+		expect(cov.covered).toEqual(expect.arrayContaining(['IAM']));
+		expect(cov.covered).not.toContain('GraphQL');
 	});
 
 	it('combined-overview judge (mocked) gates on threshold', async () => {

@@ -18,6 +18,7 @@ import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
 import type { StructuredResumeData, CoverLetter } from '@bedrock/shared';
 import { FREE_RESUME_SYSTEM_PROMPT } from '../prompts/free-resume-persona.js';
 import { capHighlights } from './experience-cap.js';
+import { jdAtsKeywords } from '../ats/jd-keywords-union.js';
 import { CoverLetterSchema } from './strategist-agent.js';
 import type { FreeEvidence } from '../free/gather-evidence.js';
 
@@ -382,11 +383,17 @@ export function gradeFreeResume(
 
 function buildUserMessage(input: FreeWriterInput): string {
     const { jdSignal, evidence, targetRole, targetCompany } = input;
+    const mustHave = jdSignal.hardRequirements.map((r) => r.skill).filter((s) => s.length > 0);
+    const atsKeywords = jdAtsKeywords(jdSignal);
     return [
         `<target_role>${targetRole}</target_role>`,
         `<target_company>${targetCompany}</target_company>`,
         `<company_problem>${jdSignal.companyProblem}</company_problem>`,
         `<required_skills>${jdSignal.requiredSkills.join(', ')}</required_skills>`,
+        mustHave.length ? `<must_have_skills>${mustHave.join(', ')}</must_have_skills>` : '',
+        jdSignal.tools.length ? `<jd_tools>${jdSignal.tools.join(', ')}</jd_tools>` : '',
+        jdSignal.concepts.length ? `<jd_concepts>${jdSignal.concepts.join(', ')}</jd_concepts>` : '',
+        atsKeywords.length ? `<ats_keywords>${atsKeywords.join(', ')}</ats_keywords>` : '',
         '<evidence>',
         `<kb_passages>\n${evidence.kbPassages.join('\n\n')}\n</kb_passages>`,
         `<project_evidence>${evidence.projectEvidence}</project_evidence>`,

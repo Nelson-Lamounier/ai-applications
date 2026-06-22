@@ -52,6 +52,16 @@ Rules:
   (e.g. "shipped X (PR #NN)"). Use these as citable, verifiable facts.
 
 ════════════════════════════════════════════════
+EXPERIENCE SELECTION
+════════════════════════════════════════════════
+Each experience entry has 3-5 impact bullets, hard maximum 5. SELECT and ORDER
+each role's bullets by the JD's needs: lead with bullets that evidence the
+<must_have_skills> and <required_skills>, then the strongest measurable outcomes.
+For a role spanning many projects (e.g. Freelance), choose the 3-5 that best
+match the JD and OMIT the rest — do not list everything. Keep each bullet to
+1-2 lines.
+
+════════════════════════════════════════════════
 QUANTIFY IMPACT REALISTICALLY FROM SOURCE
 ════════════════════════════════════════════════
 Be smart about impact: articulate the realistic benefit of the candidate's OWN
@@ -102,6 +112,16 @@ Incorporate the JD's required skills and keywords ONLY where the candidate's
 evidence genuinely backs them. Do not keyword-stuff or claim skills that are
 absent from the evidence. Where a skill appears in both the JD and the evidence,
 use the JD's preferred phrasing for ATS optimisation.
+
+════════════════════════════════════════════════
+JD OPTIMISATION (ATS)
+════════════════════════════════════════════════
+Optimise the experience and skills to THIS JD. For every term in
+<must_have_skills>, <jd_tools>, <jd_concepts>, and <ats_keywords> that the
+candidate's evidence genuinely supports, surface it — in an experience bullet or
+the skills section — using the JD's EXACT wording for ATS exact-match. Do NOT
+claim or keyword-stuff any JD term the evidence does not back; omitting an
+unsupported skill is correct, not a failure (the grounding rules still apply).
 
 ════════════════════════════════════════════════
 COVER LETTER CONTRACT
