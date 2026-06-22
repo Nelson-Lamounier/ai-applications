@@ -31,8 +31,8 @@ import { guardCoverLetter } from '../agents/cover-letter-guard.js';
 // =============================================================================
 
 export interface RunFreeDeps {
-    /** Extract the full JD signal from a raw job description. */
-    extractJdSignal(jd: string): Promise<JdSignal>;
+    /** Extract the full JD signal from a raw job description; accrues cost on ctx. */
+    extractJdSignal(jd: string, ctx: BasePipelineContext): Promise<JdSignal>;
 
     /** Gather RAG + project + career + education evidence for the JD. */
     gather(pool: Pool, env: StrategistEnv, jdSignal: JdSignal): Promise<FreeEvidence>;
@@ -100,6 +100,7 @@ function buildFreeMetadata(
     coverLetter: CoverLetter | null,
     ats:         AtsCoverage,
     jdSignal:    JdSignal,
+    ctx:         BasePipelineContext,
 ): Record<string, unknown> {
     return {
         analysis: {
@@ -109,6 +110,9 @@ function buildFreeMetadata(
             mode:               'free',
         },
         jdExtraction: jdSignal,
+        // LLM-agent cost (extraction + writer); excludes embeddings/rerank.
+        tokens:  ctx.cumulativeTokens,
+        costUsd: ctx.cumulativeCostUsd,
     };
 }
 
@@ -127,19 +131,22 @@ export async function runFreeTier(
     env:  StrategistEnv,
     deps: RunFreeDeps,
 ): Promise<void> {
-    // 1. Extract JD signal
-    const jdSignal = await deps.extractJdSignal(env.jobDescription);
-
-    // 2. Gather evidence
-    const evidence = await deps.gather(pool, env, jdSignal);
-
-    // 3. Write resume + cover letter (single Sonnet call)
+    // Shared cost accumulator — threaded through all LLM calls so metadata
+    // captures the full per-run cost (extraction + writer).
     const ctx: BasePipelineContext = {
         pipelineId:        env.pipelineId,
         environment:       env.environment ?? 'production',
         cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
         cumulativeCostUsd: 0,
     };
+
+    // 1. Extract JD signal (cost accrues on ctx)
+    const jdSignal = await deps.extractJdSignal(env.jobDescription, ctx);
+
+    // 2. Gather evidence
+    const evidence = await deps.gather(pool, env, jdSignal);
+
+    // 3. Write resume + cover letter (single Sonnet call; cost accrues on ctx)
     const { resume, coverLetter } = await deps.writer.invoke(
         { jdSignal, evidence, targetRole: env.targetRole, targetCompany: env.targetCompany },
         ctx,
@@ -172,11 +179,11 @@ export async function runFreeTier(
         tailoredResume: resume,
     });
 
-    // 7. Persist pipeline run metadata
+    // 7. Persist pipeline run metadata (includes LLM-agent cost from ctx)
     await deps.persistMeta(
         pool,
         env.pipelineRunId,
-        buildFreeMetadata(resume, guardedLetter, ats, jdSignal),
+        buildFreeMetadata(resume, guardedLetter, ats, jdSignal, ctx),
     );
 
     // 8. Mark job application as 'analysis-ready'
