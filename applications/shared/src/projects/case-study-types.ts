@@ -234,6 +234,7 @@ export interface CaseStudyContext {
         readonly sha:          string;
         readonly authoredAt:   string;
         readonly authorName:   string;
+        readonly authorLogin?: string | null;
         readonly message:      string;
     }>;
 
@@ -252,6 +253,7 @@ export interface CaseStudyContext {
         readonly state:        'open' | 'closed' | 'merged';
         readonly mergedAt:     string | null;
         readonly htmlUrl:      string;
+        readonly authorLogin?: string | null;
     }>;
 
     /**

@@ -402,8 +402,8 @@ export async function loadCaseStudyContext(
 
     // Commit evidence now lives in RDS (`repo_commits`, populated by
     // ingestion). Newest first across all member repos.
-    const commitRows = (await pool.query<{ repo_full_name: string; sha: string; author_name: string; authored_at: Date | string; message: string }>(
-        `SELECT repo_full_name, sha, author_name, authored_at, message
+    const commitRows = (await pool.query<{ repo_full_name: string; sha: string; author_name: string; author_login: string | null; authored_at: Date | string; message: string }>(
+        `SELECT repo_full_name, sha, author_name, author_login, authored_at, message
            FROM repo_commits
           WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
           ORDER BY authored_at DESC`,
@@ -414,13 +414,14 @@ export async function loadCaseStudyContext(
         sha:          r.sha,
         authoredAt:   r.authored_at instanceof Date ? r.authored_at.toISOString() : String(r.authored_at),
         authorName:   r.author_name,
+        authorLogin:  r.author_login,
         message:      r.message,
     }));
 
     // PR evidence likewise from RDS (`repo_pull_requests`). Newest merged
     // first; open/unmerged PRs sort last via NULLS LAST.
-    const pullRows = (await pool.query<{ repo_full_name: string; number: number; title: string; body: string | null; state: string; merged_at: Date | string | null; html_url: string }>(
-        `SELECT repo_full_name, number, title, body, state, merged_at, html_url
+    const pullRows = (await pool.query<{ repo_full_name: string; number: number; title: string; body: string | null; state: string; author_login: string | null; merged_at: Date | string | null; html_url: string }>(
+        `SELECT repo_full_name, number, title, body, state, author_login, merged_at, html_url
            FROM repo_pull_requests
           WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
           ORDER BY merged_at DESC NULLS LAST`,
@@ -432,6 +433,7 @@ export async function loadCaseStudyContext(
         title:        r.title,
         body:         r.body,
         state:        r.state as 'open' | 'closed' | 'merged',
+        authorLogin:  r.author_login,
         mergedAt:     r.merged_at ? (r.merged_at instanceof Date ? r.merged_at.toISOString() : String(r.merged_at)) : null,
         htmlUrl:      r.html_url,
     }));

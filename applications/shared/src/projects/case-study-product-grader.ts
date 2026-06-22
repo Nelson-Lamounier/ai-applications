@@ -47,7 +47,7 @@ const mk = (grader: string, failures: string[], score?: number): ProductGradeRes
 });
 
 /** Tech/infra tokens that read as "how it's built", never "what it is". */
-const TECH_TOKENS: ReadonlySet<string> = new Set([
+export const TECH_TOKENS: ReadonlySet<string> = new Set([
     'kubernetes', 'k8s', 'aws', 'cdk', 'eks', 'postgres', 'aurora', 'pgvector',
     'redis', 'pinecone', 'bedrock', 'argocd', 'argo', 'terraform', 'helm',
     'prometheus', 'grafana', 'loki', 'tempo', 'pyroscope', 'karpenter', 'waf',
@@ -63,14 +63,14 @@ const STOPWORDS: ReadonlySet<string> = new Set([
     'applications', 'app', 'using', 'via', 'through', 'over', 'which', 'they',
 ]);
 
-const words = (s: string): string[] =>
+export const words = (s: string): string[] =>
     s.toLowerCase().match(/[a-z0-9+]+/g) ?? [];
 
-const significant = (s: string): string[] =>
+export const significant = (s: string): string[] =>
     words(s).filter((w) => w.length > 3 && !STOPWORDS.has(w) && !TECH_TOKENS.has(w));
 
 /** First paragraph of a pitch (split on blank line; falls back to the head). */
-function firstParagraph(pitch: string): string {
+export function firstParagraph(pitch: string): string {
     const para = pitch.split(/\n\s*\n/)[0]?.trim() ?? '';
     return para.length > 0 ? para : pitch.slice(0, 400);
 }

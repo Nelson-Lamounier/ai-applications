@@ -44,6 +44,11 @@ import {
     SourceSignalSchema,
     runCaseStudyOrchestration,
 } from '../applications/shared/src/index.js';
+import {
+    runNarrativeGraders,
+    judgeCombinedOverview,
+    bedrockCombinedOverviewJudge,
+} from '../applications/shared/src/projects/case-study-narrative-grader.js';
 import type {
     BasePipelineContext,
     CaseStudy,
@@ -705,6 +710,25 @@ async function assertPullRequestLoaderFailure(pool: Pool, seed: Seed): Promise<v
     assert.ok(out.inputHash, 'orchestration still produced an input hash');
 }
 
+// ─── Narrative grader report ─────────────────────────────────────────────────
+
+async function reportNarrativeGraders(caseStudy: CaseStudy): Promise<void> {
+    const narrative = runNarrativeGraders({ caseStudy });
+    for (const r of narrative.results) {
+        const suffix = r.failures.length ? ` — ${r.failures.join('; ')}` : '';
+        console.log(`  ${r.pass ? 'PASS' : 'FAIL'} ${r.grader}${suffix}`);
+    }
+    assert.equal(narrative.results.length, 3);
+    if (process.env.CASE_STUDY_EVAL_JUDGE !== '1') return;
+    try {
+        const judged = await judgeCombinedOverview(caseStudy, bedrockCombinedOverviewJudge);
+        const suffix = judged.failures.length ? ` — ${judged.failures.join('; ')}` : '';
+        console.log(`  ${judged.pass ? 'PASS' : 'FAIL'} ${judged.grader} (score ${judged.score.toFixed(2)})${suffix}`);
+    } catch (err) {
+        console.log(`  SKIP combinedOverview judge — ${(err as Error).message}`);
+    }
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -760,6 +784,10 @@ async function main(): Promise<void> {
 
             console.log('Asserting PR-loader failure is non-fatal...');
             await assertPullRequestLoaderFailure(pool, seedResult);
+
+            console.log('Running narrative graders...');
+            // Assert plumbing only (3 deterministic graders); mock fixture is not a regression gate.
+            await reportNarrativeGraders(out.caseStudy);
 
             console.log('OK — all assertions passed.');
         } finally {

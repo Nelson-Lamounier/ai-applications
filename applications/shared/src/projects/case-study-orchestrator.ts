@@ -29,7 +29,7 @@ import type { BasePipelineContext } from '../base-agent.js';
 import type { ISemanticCache } from '../cache/cache-types.js';
 import type { WorkflowTrace } from '../observability/workflow-trace.js';
 
-import type { CaseStudyAgent } from './case-study-agent.js';
+import { CASE_STUDY_PROMPT_VERSION, type CaseStudyAgent } from './case-study-agent.js';
 import {
     loadCaseStudyContext,
     type LoadCaseStudyContextResult,
@@ -123,11 +123,17 @@ function updatePullHash(hash: ReturnType<typeof createHash>, context: LoadCaseSt
 /**
  * Stable hash over the inputs that influence the model's output. If two
  * runs hash identically we can serve from the semantic cache instead of
- * re-invoking Sonnet.
+ * re-invoking Sonnet. The prompt version is part of the key so a prompt
+ * change busts the cache — an otherwise-unchanged project then re-runs
+ * Sonnet on the new prompt instead of serving a stale cached case study.
  */
-export function computeInputHash(context: LoadCaseStudyContextResult): string {
+export function computeInputHash(
+    context: LoadCaseStudyContextResult,
+    promptVersion: string = CASE_STUDY_PROMPT_VERSION,
+): string {
     const h = createHash('sha256');
     const c = context.context;
+    h.update(`prompt:${promptVersion}`);
     h.update(c.projectId);
     h.update(c.projectName);
     h.update(c.tagline ?? '');
