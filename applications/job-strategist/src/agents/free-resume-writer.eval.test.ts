@@ -17,6 +17,8 @@ const EV: FreeEvidence = {
 	extractedTech: 'aws kubernetes terraform bedrock',
 	careerFacts: 'Acme Corp — Platform Engineer — 2022–2025',
 	educationFacts: 'BSc CS — Example University',
+	commitPrEvidence: '',
+	profileIntelligence: '',
 };
 
 const GOOD: FreeResumeOutput = {

@@ -21,6 +21,8 @@ describe('gatherFreeEvidence', () => {
         expect(ev.kbPassages).toEqual([]);
         expect(typeof ev.projectEvidence).toBe('string');
         expect(typeof ev.extractedTech).toBe('string');
+        expect(typeof ev.commitPrEvidence).toBe('string');
+        expect(typeof ev.profileIntelligence).toBe('string');
     });
 
     it('collects RAG passages from the injected retriever across the JD-derived queries', async () => {

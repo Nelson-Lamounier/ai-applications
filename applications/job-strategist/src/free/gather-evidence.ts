@@ -18,6 +18,8 @@ import {
     formatEducation,
 } from '../agents/career-history.js';
 import { buildCodeStackContext } from '../ats/code-truth.js';
+import { loadCommitPrEvidence } from './commit-pr-evidence.js';
+import { loadProfilePositioning } from './profile-intelligence.js';
 
 export interface FreeEvidence {
     readonly kbPassages: string[];
@@ -25,6 +27,8 @@ export interface FreeEvidence {
     readonly extractedTech: string;
     readonly careerFacts: string;
     readonly educationFacts: string;
+    readonly commitPrEvidence: string;
+    readonly profileIntelligence: string;
 }
 
 export interface GatherDeps {
@@ -39,7 +43,7 @@ export async function gatherFreeEvidence(
 ): Promise<FreeEvidence> {
     const q = jdRetrievalQueries(jdSignal);
 
-    const [passageGroups, projectEvidence, careerEntries, educationEntries, codeTechByRepo] =
+    const [passageGroups, projectEvidence, careerEntries, educationEntries, codeTechByRepo, commitPrEvidence, profileIntelligence] =
         await Promise.all([
             Promise.all([
                 deps.retrieve(q.skill),
@@ -52,6 +56,8 @@ export async function gatherFreeEvidence(
             new TechnologyOntologyRepository(pool)
                 .loadRepoCodeTech(env.userId)
                 .catch(() => new Map<string, Set<string>>()),
+            loadCommitPrEvidence(pool, env.userId),
+            loadProfilePositioning(pool, env.userId),
         ]);
 
     const kbPassages = passageGroups.flat();
@@ -59,5 +65,5 @@ export async function gatherFreeEvidence(
     const careerFacts = formatExperienceFacts(careerEntries);
     const educationFacts = formatEducation(educationEntries);
 
-    return { kbPassages, projectEvidence, extractedTech, careerFacts, educationFacts };
+    return { kbPassages, projectEvidence, extractedTech, careerFacts, educationFacts, commitPrEvidence, profileIntelligence };
 }

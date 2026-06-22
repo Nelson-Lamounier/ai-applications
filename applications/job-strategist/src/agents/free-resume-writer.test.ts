@@ -23,6 +23,8 @@ const evidence: FreeEvidence = {
     extractedTech: 'aws, kubernetes, terraform, bedrock',
     careerFacts: 'Acme Corp — Platform Engineer — 2022–2025',
     educationFacts: 'BSc Computer Science — Example University',
+    commitPrEvidence: '',
+    profileIntelligence: '',
 };
 
 const good: FreeResumeOutput = {
