@@ -20,6 +20,8 @@
  * interface so tests can inject a mock implementation without spinning
  * up Bedrock.
  */
+import { createHash } from 'node:crypto';
+
 import { runAgent, parseJsonResponse } from '../agent-runner.js';
 import { clampOversizedFields, coerceArchitectureString } from './case-study-schema-repair.js';
 import type { BasePipelineContext } from '../base-agent.js';
@@ -177,6 +179,19 @@ Produce the UPDATED full case study, not a fresh one:
     challenge, grounded in its commits/pulls/files — drop or merge a weaker prior
     item to make room within the caps if needed. A new repo that only shows up in
     the stack list is NOT sufficient.`;
+
+// A short, deterministic fingerprint of the static prompt surface
+// (SYSTEM_PROMPT_TEXT + REFINE_PROMPT_BLOCK). Folded into the case-study cache
+// key (`computeInputHash`) so that ANY edit to the prompt automatically busts
+// the semantic cache — a prompt refinement then takes effect on the next
+// regenerate of an otherwise-unchanged project, with no manual version bump.
+// The dynamic calibration block is already reflected in the cache key via the
+// archetype/stage/section fields, so it is intentionally excluded here.
+export const CASE_STUDY_PROMPT_VERSION = createHash('sha256')
+    .update(SYSTEM_PROMPT_TEXT)
+    .update(REFINE_PROMPT_BLOCK)
+    .digest('hex')
+    .slice(0, 12);
 
 export function buildSystemPrompt(context: CaseStudyContext): string {
     let prompt = SYSTEM_PROMPT_TEXT;

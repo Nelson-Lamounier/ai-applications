@@ -28,6 +28,7 @@ import {
     runCaseStudyOrchestration,
     summarizeGrounding,
 } from './case-study-orchestrator.js';
+import { CASE_STUDY_PROMPT_VERSION } from './case-study-agent.js';
 import type { BasePipelineContext } from '../base-agent.js';
 import type { WorkflowTrace } from '../observability/workflow-trace.js';
 import type { LoadCaseStudyContextResult } from './case-study-loader.js';
@@ -246,6 +247,23 @@ describe('computeInputHash', () => {
         expect(withArch).not.toBe(base);
         // Two absent-archetype contexts hash identically (cache back-compat).
         expect(computeInputHash(makeContext())).toBe(base);
+    });
+
+    it('folds the prompt version into the hash so a prompt change busts the cache', () => {
+        const v1 = computeInputHash(makeContext(), 'prompt-v1');
+        const v2 = computeInputHash(makeContext(), 'prompt-v2');
+        expect(v2).not.toBe(v1);
+        // Same version → same hash (deterministic).
+        expect(computeInputHash(makeContext(), 'prompt-v1')).toBe(v1);
+    });
+
+    it('defaults the prompt version to CASE_STUDY_PROMPT_VERSION', () => {
+        expect(computeInputHash(makeContext()))
+            .toBe(computeInputHash(makeContext(), CASE_STUDY_PROMPT_VERSION));
+    });
+
+    it('CASE_STUDY_PROMPT_VERSION is a stable non-empty hex digest', () => {
+        expect(CASE_STUDY_PROMPT_VERSION).toMatch(/^[0-9a-f]{8,}$/);
     });
 
     it('summarizes grounding verdicts across decisions, highlights, and challenges', () => {
