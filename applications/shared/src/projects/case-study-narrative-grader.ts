@@ -78,7 +78,7 @@ function hedgesIn(text: string): string[] {
 export function gradeConfidentVoice(input: NarrativeGradeInput): NarrativeGradeResult {
     const cs = input.caseStudy;
     const failures: string[] = [];
-    const corpus = [cs.pitch, ...cs.highlights.map((h) => h.description), ...cs.decisions.map((d) => `${d.context} ${d.decision} ${d.consequences}`)];
+    const corpus = [cs.pitch, ...cs.highlights.map((h) => h.description), ...cs.challenges.map((c) => `${c.problem} ${c.solution}`), ...cs.decisions.map((d) => `${d.context} ${d.decision} ${d.consequences}`)];
     corpus.forEach((t) => { for (const h of hedgesIn(t)) failures.push(`hedged phrasing "${h}" — state evidenced work plainly`); });
     return mk('confidentVoice', failures);
 }

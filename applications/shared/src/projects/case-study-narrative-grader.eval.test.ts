@@ -54,6 +54,11 @@ describe('case-study narrative eval — one bad fixture per grader', () => {
         const bad = { ...GOOD, pitch: 'We built a tool that appears to help engineers.' };
         expect(gradeConfidentVoice({ caseStudy: bad }).pass).toBe(false);
     });
+
+    it('gradeConfidentVoice fails on a hedged challenge', () => {
+        const bad = { ...GOOD, challenges: [{ ...GOOD.challenges[0], solution: 'I attempted to fix it but it appears to work.' }] };
+        expect(gradeConfidentVoice({ caseStudy: bad }).pass).toBe(false);
+    });
 });
 
 describe('case-study narrative eval — combined-overview judge (mocked)', () => {
