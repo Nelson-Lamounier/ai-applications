@@ -364,6 +364,8 @@ function gradeBulletCap(out: FreeResumeOutput): string[] {
  *   2. Every numeric token in highlights/summary must appear in the evidence corpus.
  *   3. Cover-letter paragraphs must not contain fabricated numeric tokens.
  *   4. Every highlight must open with an alphabetic action verb.
+ *   5. No experience role exceeds the per-role highlight cap.
+ *   6. The summary leads with a positioning line when positioning evidence exists.
  *
  * Returns { pass: true, failures: [] } when all checks pass.
  *
