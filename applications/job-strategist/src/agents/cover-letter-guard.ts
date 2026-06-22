@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import { runAgent, log, normalizeProse } from '@bedrock/shared';
-import type { AgentConfig, BasePipelineContext, CoverLetter, CoverLetterSignoff } from '@bedrock/shared';
+import type { AgentConfig, BasePipelineContext, CoverLetter } from '@bedrock/shared';
 
 export type { CoverLetter } from '@bedrock/shared';
 export type { CoverLetterSignoff } from '@bedrock/shared';
@@ -18,8 +18,35 @@ const GAP_PATTERNS: ReadonlyArray<RegExp> = [
     /while I (?:do not|have not|don['’]t|haven['’]t|lack)\b/i,
 ];
 const UNREALISED = /pending (?:security )?review|not yet (?:shipped|deployed|in production)|once (?:approved|shipped)/i;
+// Forward-looking skill-acquisition claim — the candidate states they are
+// learning/onboarding a skill they lack (e.g. "actively beginning Azure
+// onboarding"). Two-part check: an intent adverb must appear within 40 chars
+// of an acquisition verb, so legitimate "new engineer onboarding" (people,
+// not a skill) does NOT fire (no intent adverb present).
+const FORWARD_LOOKING_INTENT = /\b(actively|currently|presently|now)\b/i;
+const FORWARD_LOOKING_ACQUIRE = /\b(beginning|starting|pursuing|onboarding|learning|studying|ramping up|upskilling|self-teaching)\b/i;
+
+/** Returns true when an intent adverb and an acquisition verb appear within 40 chars of each other. */
+function hasForwardLookingSkillClaim(text: string): boolean {
+    const intentMatch = FORWARD_LOOKING_INTENT.exec(text);
+    const acquireMatch = FORWARD_LOOKING_ACQUIRE.exec(text);
+    if (!intentMatch || !acquireMatch) return false;
+    return Math.abs(intentMatch.index - acquireMatch.index) <= 40;
+}
 /** Any markdown the agent should NOT emit (formatting belongs to the UI/PDF). */
 const MARKDOWN = /\*\*|__|##|^\s*[-*+]\s+/m;
+
+/** Push title violations (missing_title, wrong_title) onto out. */
+function checkTitleViolations(out: CoverLetterViolation[], lower: string, targetRole: string, leadIdentity: string): void {
+    if (targetRole && !lower.includes(targetRole.toLowerCase())) {
+        out.push({ code: 'missing_title', detail: `Body never names the target role "${targetRole}".` });
+    }
+    if (!leadIdentity || leadIdentity.toLowerCase() === targetRole.toLowerCase()) return;
+    const li = leadIdentity.toLowerCase();
+    if (lower.includes(`${li} role`) || lower.includes(`${li} position`)) {
+        out.push({ code: 'wrong_title', detail: `Body uses the positioning identity "${leadIdentity}" as the role name.` });
+    }
+}
 
 /**
  * Deterministic checks on the STRUCTURED cover letter. Content rules (title,
@@ -31,18 +58,11 @@ export function validateCoverLetter(letter: CoverLetter, targetRole: string, lea
     const text  = [letter.greeting, ...letter.paragraphs].join('\n');
     const lower = text.toLowerCase();
 
-    if (targetRole && !lower.includes(targetRole.toLowerCase())) {
-        out.push({ code: 'missing_title', detail: `Body never names the target role "${targetRole}".` });
-    }
-    if (leadIdentity && leadIdentity.toLowerCase() !== targetRole.toLowerCase()) {
-        const li = leadIdentity.toLowerCase();
-        if (lower.includes(`${li} role`) || lower.includes(`${li} position`)) {
-            out.push({ code: 'wrong_title', detail: `Body uses the positioning identity "${leadIdentity}" as the role name.` });
-        }
-    }
+    checkTitleViolations(out, lower, targetRole, leadIdentity);
     for (const re of GAP_PATTERNS) {
         if (re.test(text)) { out.push({ code: 'names_gap', detail: `Matched self-rejection/arguing pattern: ${re}` }); break; }
     }
+    if (hasForwardLookingSkillClaim(text)) out.push({ code: 'forward_looking_skill_claim', detail: 'Claims to be actively learning/onboarding a skill — omit unevidenced forward-looking acquisition; use grounded transferable framing instead.' });
     if (UNREALISED.test(text)) out.push({ code: 'unrealised_impact', detail: 'Claims not-yet-realised impact.' });
     if (MARKDOWN.test(text))   out.push({ code: 'has_markdown', detail: 'Agent emitted markdown formatting — the UI/PDF owns formatting; output must be plain text.' });
 

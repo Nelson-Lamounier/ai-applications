@@ -38,6 +38,16 @@ describe('validateCoverLetter', () => {
     it('clean structured letter → no violations', () => {
         expect(codes('I build production AI support systems. The AI Support Engineer role at OpenAI fits exactly.')).toEqual([]);
     });
+    it('flags a forward-looking skill-acquisition claim (the Azure/GCP fabrication)', () => {
+        const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['My AWS depth is strong and I am actively beginning Azure and GCP onboarding, pursued with urgency.'], signoff: SIGNOFF } as never;
+        const v = validateCoverLetter(letter, 'Solutions Support Engineer', '');
+        expect(v.some((x) => x.code === 'forward_looking_skill_claim')).toBe(true);
+    });
+    it('does NOT flag legitimate "onboarding" usage (people, not a skill the candidate lacks)', () => {
+        const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['I authored the runbook adopted for new engineer onboarding across the team.'], signoff: SIGNOFF } as never;
+        const v = validateCoverLetter(letter, 'Solutions Support Engineer', '');
+        expect(v.some((x) => x.code === 'forward_looking_skill_claim')).toBe(false);
+    });
 });
 
 const mockRun = runAgent as jest.Mock;
