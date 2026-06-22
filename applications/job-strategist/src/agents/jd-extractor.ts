@@ -253,11 +253,18 @@ const SYSTEM_PROMPT = [
 /**
  * Extract the complete JD signal from a job description.
  *
+ * Accepts an optional `ctx` so the caller can capture extraction cost into its
+ * own run context. When omitted, a throwaway context is used (back-compat —
+ * existing callers that pass no ctx are unaffected).
+ *
  * FAIL-OPEN: always returns a valid JdSignal. On any error (sanitiser,
  * Bedrock, schema) it returns a minimal JdSignal with all empty fields so
  * the pipeline can continue.
  */
-export async function extractJdSignal(jobDescription: string): Promise<JdSignal> {
+export async function extractJdSignal(
+    jobDescription: string,
+    ctx?: BasePipelineContext,
+): Promise<JdSignal> {
     const safe = piiScrubber.scrub(jobDescription).redacted.slice(0, MAX_JD_CHARS);
     if (safe.trim().length === 0) return { ...MINIMAL_JD_SIGNAL };
 
@@ -279,7 +286,9 @@ export async function extractJdSignal(jobDescription: string): Promise<JdSignal>
             inputSchema: TOOL_SCHEMA.input_schema as Record<string, unknown>,
         },
     };
-    const ctx: BasePipelineContext = {
+    // Use the caller's run context so extraction cost is captured; fall back to a
+    // throwaway context for standalone callers (back-compat).
+    const pipelineContext: BasePipelineContext = ctx ?? {
         pipelineId:        'jd-extract',
         environment:       process.env['DEPLOY_ENV'] ?? 'dev',
         cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
@@ -290,7 +299,7 @@ export async function extractJdSignal(jobDescription: string): Promise<JdSignal>
         const result = await runAgent<JdSignal>({
             config,
             userMessage:     `<job_description>\n${safe}\n</job_description>`,
-            pipelineContext: ctx,
+            pipelineContext,
             parseResponse: (s) => {
                 const v = JdExtractionSchema.safeParse(JSON.parse(s));
                 if (!v.success) throw new Error(`jd-extractor: schema validation failed: ${v.error.message}`);
@@ -320,7 +329,7 @@ export async function extractJdSignal(jobDescription: string): Promise<JdSignal>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** @deprecated Use extractJdSignal. Kept for run-pipeline.ts back-compat until Task 5. */
-export const extractJobDescription: (jd: string) => Promise<JdSignal> = extractJdSignal;
+export const extractJobDescription = (jd: string, ctx?: BasePipelineContext): Promise<JdSignal> => extractJdSignal(jd, ctx);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utility helpers (unchanged — callers in research-agent.ts / ats/ still use these)
