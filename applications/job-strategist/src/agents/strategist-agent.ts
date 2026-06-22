@@ -347,7 +347,7 @@ function extractMetadataFromXml(xml: string): StrategistAnalysisResult['metadata
     };
 }
 
-const CoverLetterSchema = z.object({
+export const CoverLetterSchema = z.object({
     greeting:   z.string(),
     paragraphs: z.array(z.string()),
     signoff:    z.object({ name: z.string(), email: z.string(), linkedin: z.string(), github: z.string() }),

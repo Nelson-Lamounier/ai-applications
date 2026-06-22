@@ -35,6 +35,9 @@ function required(name: string): string {
     return v;
 }
 
+/** Returns true when the pipeline is running in free-tier mode. */
+export const isFreeMode = (env: { mode: string }): boolean => env.mode === 'free';
+
 export function parseEnv(): StrategistEnv {
     const pipelineRunId = required('PIPELINE_RUN_ID');
     return {

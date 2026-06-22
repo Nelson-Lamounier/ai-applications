@@ -15,7 +15,7 @@
  */
 import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import type { JdSignal } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
@@ -27,11 +27,11 @@ import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock, loadProjectLaneIndex } from './agents/project-evidence-block.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
 import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
-import { extractJobDescription } from './agents/jd-extractor.js';
+import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js';
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import { guardResume } from './agents/resume-guard.js';
-import { parseEnv }               from './env.js';
+import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
 import { loadIngestedPaths }      from './lib/path-grounding-loader.js';
@@ -60,6 +60,10 @@ import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
 import { attachSourceLanes } from './ats/evidence-lane.js';
 import { applyDegreeReconcile } from './ats/education-reconcile.js';
 import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
+import { runFreeTier }             from './free/run-free.js';
+import { gatherFreeEvidence }      from './free/gather-evidence.js';
+import { bedrockFreeResumeWriter } from './agents/free-resume-writer.js';
+import { querySingleRds }          from './agents/research-agent.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -316,6 +320,37 @@ async function verifyAnalysisPaths(
 export async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
+
+    // ── Free-tier fast path — early return, never falls through to the paid pipeline ──
+    if (isFreeMode(env)) {
+        const store = RdsVectorStore.fromEnvironment();
+        try {
+            await runFreeTier(pool, env, {
+                extractJdSignal,
+                gather: (p, e, jd) => gatherFreeEvidence(p, e, jd, {
+                    retrieve: (query) => querySingleRds(query, e.userId, store),
+                }),
+                writer:        bedrockFreeResumeWriter,
+                aliasMap:      (p) => new SkillOntologyRepository(p).loadAliasToCanonicalMap(),
+                persistResume: persistTailoredResume,
+                persistMeta:   updatePipelineRunMetadata,
+                setStatus:     updateJobApplicationStatus,
+                complete:      updatePipelineRun,
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            const clientMessage = outputSanitiser.sanitise(message).slice(0, 500);
+            await updatePipelineRun(pool, env.pipelineRunId, 'failed', clientMessage)
+                .catch(() => { /* swallow — already failing */ });
+            await updateJobApplicationStatus(pool, env.applicationId, 'failed')
+                .catch(() => { /* swallow — already failing */ });
+            throw err;
+        } finally {
+            await closePool();
+        }
+        return; // free path is terminal — never falls through to the paid pipeline
+    }
+
     const start = process.hrtime.bigint();
     let outcome: 'success' | 'failed' = 'failed';
 

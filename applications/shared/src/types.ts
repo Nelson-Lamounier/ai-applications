@@ -160,7 +160,9 @@ export type AgentName =
     // grounded change-impact narration over a commit's diff facts.
     | 'change-impact'
     // narrative eval: LLM judge for combined-overview quality.
-    | 'case-study-overview-judge';
+    | 'case-study-overview-judge'
+    // free-tier narrative resume + cover letter writer.
+    | 'free-resume-writer';
 
 /**
  * Model-agnostic configuration for a single agent.
