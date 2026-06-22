@@ -27,7 +27,6 @@ import type { Pool } from 'pg';
 
 import type { BasePipelineContext } from '../base-agent.js';
 import type { ISemanticCache } from '../cache/cache-types.js';
-import type { IGroundingVerifier } from '../grounding/grounding-types.js';
 import type { WorkflowTrace } from '../observability/workflow-trace.js';
 
 import { CASE_STUDY_PROMPT_VERSION, type CaseStudyAgent } from './case-study-agent.js';
@@ -45,10 +44,6 @@ import {
     type CaseStudy,
     type SourceSignal,
 } from './case-study-types.js';
-import {
-    flattenSignalToContext,
-    mergeGroundingResult,
-} from './source-signals.js';
 
 export type RunCaseStudyStage =
     | 'fetching_context'
@@ -62,7 +57,6 @@ export interface RunCaseStudyInput {
     readonly model:         string;
     readonly kbTag:         string;
     readonly agent:         CaseStudyAgent;
-    readonly verifier?:     IGroundingVerifier;
     readonly cache?:        ISemanticCache;
     readonly ctx:           BasePipelineContext;
     readonly workflow?:     WorkflowTrace;
@@ -156,48 +150,31 @@ export function computeInputHash(
     return h.digest('hex');
 }
 
-async function verifyDecision(
-    verifier: IGroundingVerifier | undefined,
-    answer: string,
-    signal: SourceSignal,
-): Promise<SourceSignal> {
-    if (!verifier) return signal;
-    const contextChunks = flattenSignalToContext(signal);
-    if (contextChunks.length === 0) {
-        // Nothing for the verifier to anchor against; record verdict explicitly.
-        return { ...signal, grounding: 'NOT_VERIFIED' };
-    }
-    const result = await verifier.verify({
-        query: 'Was every claim in this answer supported by the cited evidence?',
-        contextChunks,
-        answer,
-    });
-    return mergeGroundingResult(signal, result);
+/**
+ * Deterministic grounding: a row is GROUNDED when it cites at least one piece of
+ * evidence (commit / PR / file), else NOT_VERIFIED.
+ *
+ * The case-study agent is constrained by its schema + system prompt to narrate
+ * ONLY from the supplied evidence and to drop any row it cannot cite, so
+ * citation-presence IS the grounding signal. The previous per-row LLM verifier
+ * re-judged rich prose against thin citation labels (commit subject, PR title,
+ * bare file path) and flagged ~100% as NOT_GROUNDED — noise that misrepresented
+ * genuinely-evidenced rows and burned ~15 Haiku calls per run. The
+ * hallucination safety net is being redesigned separately; until then, grounding
+ * reflects whether the model cited evidence, which is what the schema enforces.
+ */
+function groundFromCitations(signal: SourceSignal): SourceSignal {
+    const hasEvidence =
+        signal.commits.length > 0 || signal.pulls.length > 0 || signal.files.length > 0;
+    return { ...signal, grounding: hasEvidence ? 'GROUNDED' : 'NOT_VERIFIED' };
 }
 
-async function applyGrounding(
-    caseStudy: CaseStudy,
-    verifier?: IGroundingVerifier,
-): Promise<CaseStudy> {
-    if (!verifier) return caseStudy;
+function applyGrounding(caseStudy: CaseStudy): CaseStudy {
     return {
         ...caseStudy,
-        decisions: await Promise.all(caseStudy.decisions.map(async (d) => ({
-            ...d,
-            sourceSignals: await verifyDecision(
-                verifier,
-                `${d.title}. ${d.context} ${d.decision} ${d.consequences}`,
-                d.sourceSignals,
-            ),
-        }))),
-        challenges: await Promise.all(caseStudy.challenges.map(async (c) => ({
-            ...c,
-            sourceSignals: await verifyDecision(verifier, `${c.problem} ${c.solution}`, c.sourceSignals),
-        }))),
-        highlights: await Promise.all(caseStudy.highlights.map(async (h) => ({
-            ...h,
-            sourceSignals: await verifyDecision(verifier, `${h.title}. ${h.description}`, h.sourceSignals),
-        }))),
+        decisions:  caseStudy.decisions.map((d)  => ({ ...d, sourceSignals: groundFromCitations(d.sourceSignals) })),
+        challenges: caseStudy.challenges.map((c) => ({ ...c, sourceSignals: groundFromCitations(c.sourceSignals) })),
+        highlights: caseStudy.highlights.map((h) => ({ ...h, sourceSignals: groundFromCitations(h.sourceSignals) })),
     };
 }
 
@@ -259,7 +236,7 @@ export async function runCaseStudyOrchestration(
         );
         await input.onStage?.('grounding');
         caseStudy = await runStage(input.workflow, 'project.case_study.ground', async () =>
-            applyGrounding(agentResult.data, input.verifier),
+            applyGrounding(agentResult.data),
         );
     }
 

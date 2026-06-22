@@ -22,7 +22,6 @@
 import { Counter, Gauge, Histogram } from 'prom-client';
 
 import {
-    BedrockGroundingVerifier,
     RedisExactCache,
     bedrockCaseStudyAgent,
     bedrockSystemTourAgent,
@@ -127,12 +126,6 @@ async function main(): Promise<void> {
         cumulativeCostUsd: 0,
         userId:            env.userId,
     };
-    const groundingUsage = {
-        calls:        0,
-        inputTokens:  0,
-        outputTokens: 0,
-        costUsd:      0,
-    };
     let terminalCacheHit = false;
     let terminalGenerationMode: 'unknown' | 'cache_hit' | 'refine' | 'full' = 'unknown';
     let terminalCounts = {
@@ -182,7 +175,6 @@ async function main(): Promise<void> {
                     generationMode: terminalGenerationMode,
                     ...terminalCounts,
                     grounding:      terminalGrounding,
-                    groundingCalls: groundingUsage.calls,
                     tokens:         ctx.cumulativeTokens,
                     costUsd:        0,
                     skipped:        'feature_disabled',
@@ -220,22 +212,6 @@ async function main(): Promise<void> {
                 traceId,
             });
 
-            const verifier = new BedrockGroundingVerifier({
-                mode: 'flag',
-                costContext: {
-                    pool,
-                    userId:    env.userId,
-                    projectId: env.projectId,
-                    traceId,
-                },
-                onUsage: (usage) => {
-                    groundingUsage.calls += usage.calls;
-                    groundingUsage.inputTokens += usage.inputTokens;
-                    groundingUsage.outputTokens += usage.outputTokens;
-                    groundingUsage.costUsd += usage.costUsd;
-                },
-            });
-
             // Refresh THIS project's components from current code-grounded signals
             // (archetype/fileClass) before generating — so the case study reads
             // role-correct structure (e.g. a GitOps-infra repo no longer filed as
@@ -254,7 +230,6 @@ async function main(): Promise<void> {
                 model:         env.model,
                 kbTag,
                 agent:         bedrockCaseStudyAgent,
-                verifier,
                 cache,
                 ctx,
                 refine,
@@ -301,7 +276,7 @@ async function main(): Promise<void> {
             }
 
             const generationMode = terminalGenerationMode;
-            const totalCostUsd = ctx.cumulativeCostUsd + groundingUsage.costUsd;
+            const totalCostUsd = ctx.cumulativeCostUsd;
 
             await updatePipelineRunMetadata(pool, env.pipelineRunId, {
                 traceId,
@@ -326,10 +301,6 @@ async function main(): Promise<void> {
                 groundingGrounded:         out.grounding.grounded,
                 groundingFlagged:          out.grounding.flagged,
                 groundingNotVerified:      out.grounding.notVerified,
-                groundingCalls:            groundingUsage.calls,
-                groundingInputTokens:      groundingUsage.inputTokens,
-                groundingOutputTokens:     groundingUsage.outputTokens,
-                groundingCostUsd:          groundingUsage.costUsd,
                 commitsLoaded:             out.contextLoaded.context.commits.length,
                 kbChunksLoaded:            out.contextLoaded.context.kbChunks.length,
                 tokens:                    ctx.cumulativeTokens,
@@ -365,7 +336,6 @@ async function main(): Promise<void> {
                 challengesInserted:   out.persisted.challengesInserted,
                 challengesPruned:     out.persisted.challengesPruned,
                 grounding:            out.grounding,
-                groundingCalls:       groundingUsage.calls,
                 tokens:               ctx.cumulativeTokens,
                 costUsd:              totalCostUsd,
                 systemTourGenerated,
@@ -387,9 +357,8 @@ async function main(): Promise<void> {
             generationMode: terminalGenerationMode,
             ...terminalCounts,
             grounding:      terminalGrounding,
-            groundingCalls: groundingUsage.calls,
             tokens:         ctx.cumulativeTokens,
-            costUsd:        ctx.cumulativeCostUsd + groundingUsage.costUsd,
+            costUsd:        ctx.cumulativeCostUsd,
             error: {
                 class:   errorClass,
                 message: errorMessage,

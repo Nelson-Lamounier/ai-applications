@@ -90,8 +90,12 @@ const onePull: Pull = {
 };
 
 function makeSignal(grounding: SourceSignal['grounding']): SourceSignal {
+    // Deterministic grounding keys off citation presence: a row with no evidence
+    // resolves to NOT_VERIFIED. Model the `NOT_VERIFIED` verdict as an
+    // evidence-less signal so the generated-path tests exercise both outcomes.
+    const hasEvidence = grounding !== 'NOT_VERIFIED';
     return {
-        commits: [{ repoFullName: 'acme/api', sha: 'abc1234', authoredAt: '2026-01-01T00:00:00.000Z', message: 'init' }],
+        commits: hasEvidence ? [{ repoFullName: 'acme/api', sha: 'abc1234', authoredAt: '2026-01-01T00:00:00.000Z', message: 'init' }] : [],
         pulls:   [],
         files:   [],
         ungroundedClaims: grounding === 'NOT_GROUNDED' ? ['unsupported claim'] : [],
@@ -274,8 +278,12 @@ describe('computeInputHash', () => {
         ))).toEqual({ checked: 2, grounded: 1, flagged: 1, notVerified: 1 });
     });
 
-    it('returns grounding summary for generated case studies', async () => {
+    it('grounds generated rows deterministically by citation presence (no LLM verifier)', async () => {
         const pool = makePool();
+        // The model's per-row verdict is IGNORED — grounding is derived from
+        // whether the row cites evidence. Rows 1+2 carry a commit → GROUNDED
+        // (even the one the model labelled NOT_GROUNDED); row 3 has no evidence
+        // → NOT_VERIFIED.
         const caseStudy = caseStudyWithVerdicts('GROUNDED', 'NOT_GROUNDED', 'NOT_VERIFIED');
         const agent = { invoke: jest.fn().mockResolvedValue({ data: caseStudy }) };
 
@@ -292,7 +300,7 @@ describe('computeInputHash', () => {
         });
 
         expect(result.cacheHit).toBe(false);
-        expect(result.grounding).toEqual({ checked: 2, grounded: 1, flagged: 1, notVerified: 1 });
+        expect(result.grounding).toEqual({ checked: 2, grounded: 2, flagged: 0, notVerified: 1 });
         expect(agent.invoke).toHaveBeenCalledTimes(1);
     });
 
