@@ -66,6 +66,8 @@ export interface StrategistAgentInput {
     readonly yearsGapFraming?: string;
     /** Authoritative current code stack per repo (doc-vs-code drift). Optional. */
     readonly codeStackContext?: string;
+    /** Grounded achievement & impact evidence (challenges, decisions, highlights) for the cover letter. Optional. */
+    readonly achievementEvidence?: string;
 }
 
 // =============================================================================
@@ -115,7 +117,7 @@ const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? 
  * @param ctx - Pipeline context
  * @returns Formatted user message
  */
-function buildStrategistMessage(
+export function buildStrategistMessage(
     research: StrategistResearchResult,
     ctx: StrategistPipelineContext,
     projectEvidence = '',
@@ -124,6 +126,7 @@ function buildStrategistMessage(
     roleEvidence = '',
     yearsGapFraming = '',
     codeStackContext = '',
+    achievementEvidence = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -291,6 +294,14 @@ function buildStrategistMessage(
             '--- BEGIN PROJECT CASE STUDIES ---',
             projectEvidence,
             '--- END PROJECT CASE STUDIES ---',
+        );
+    }
+
+    if (achievementEvidence) {
+        sections.push(
+            '',
+            '### Achievement & Impact Evidence (use for the cover letter: lead with a challenge overcome; surface decision impacts relevant to the JD)',
+            achievementEvidence,
         );
     }
 
@@ -687,7 +698,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence);
     }
 
     /**
@@ -811,6 +822,7 @@ export async function executeStrategistAgent(
     roleEvidenceBlock = '',
     yearsGap: YearsGap | null = null,
     codeStackContext = '',
+    achievementEvidence = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine, codeStackContext }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine, codeStackContext, achievementEvidence }, ctx);
 }
