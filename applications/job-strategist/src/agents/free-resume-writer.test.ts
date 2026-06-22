@@ -91,6 +91,14 @@ describe('parseFreeResumeResponse', () => {
         const payload = { coverLetter: good.coverLetter };
         expect(() => parseFreeResumeResponse(JSON.stringify(payload))).toThrow();
     });
+
+    it('parseFreeResumeResponse caps each experience role to 5 highlights', () => {
+        const eight = Array.from({ length: 8 }, (_, i) => `Bullet ${i + 1} starts with a verb.`);
+        const input: FreeResumeOutput = { ...good, resume: { ...good.resume, experience: [{ company: 'Freelance', title: 'Eng', period: '2018-Now', highlights: eight }] } };
+        const out = parseFreeResumeResponse(JSON.stringify(input));
+        expect(out.resume.experience[0].highlights).toHaveLength(5);
+        expect(out.resume.experience[0].highlights).toEqual(eight.slice(0, 5));
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -310,5 +318,11 @@ describe('gradeFreeResume', () => {
         const result = gradeFreeResume(bad, evidence);
         expect(result.pass).toBe(false);
         expect(result.failures.length).toBeGreaterThan(1);
+    });
+
+    it('gradeFreeResume flags a role with more than 5 highlights', () => {
+        const six = Array.from({ length: 6 }, (_, i) => `Did thing ${i + 1}.`);
+        const bad = { ...good, resume: { ...good.resume, experience: [{ company: 'Freelance', title: 'Eng', period: 'p', highlights: six }] } } as never;
+        expect(gradeFreeResume(bad, evidence).failures.some((f) => /more than 5|exceeds 5|bullet/i.test(f))).toBe(true);
     });
 });

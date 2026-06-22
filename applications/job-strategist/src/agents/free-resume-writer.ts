@@ -17,6 +17,7 @@ import type { JdSignal } from '@bedrock/shared';
 import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
 import type { StructuredResumeData, CoverLetter } from '@bedrock/shared';
 import { FREE_RESUME_SYSTEM_PROMPT } from '../prompts/free-resume-persona.js';
+import { capHighlights } from './experience-cap.js';
 import { CoverLetterSchema } from './strategist-agent.js';
 import type { FreeEvidence } from '../free/gather-evidence.js';
 
@@ -104,7 +105,7 @@ const FREE_RESUME_TOOL: AgentConfig['tool'] = {
                                 company:    { type: 'string' },
                                 title:      { type: 'string' },
                                 period:     { type: 'string' },
-                                highlights: { type: 'array', items: { type: 'string' } },
+                                highlights: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 5 },
                             },
                         },
                     },
@@ -209,7 +210,9 @@ export function parseFreeResumeResponse(text: string): FreeResumeOutput {
             `free-resume-writer: schema validation failed: ${validated.error.message}`,
         );
     }
-    return validated.data as FreeResumeOutput;
+    const data = validated.data as FreeResumeOutput;
+    // Deterministic per-role bullet cap — independent of whether the model honoured maxItems.
+    return { ...data, resume: { ...data.resume, experience: capHighlights(data.resume.experience) } };
 }
 
 // =============================================================================
@@ -360,7 +363,14 @@ export function gradeFreeResume(
         }
     }
 
-    // 4. Positioning lead — only when positioning evidence exists
+    // 4. Per-role bullet cap check
+    for (const e of out.resume.experience) {
+        if (e.highlights.length > 5) {
+            failures.push(`experience role "${e.company}" has more than 5 highlights (${e.highlights.length}) — cap to the 5 most JD-relevant`);
+        }
+    }
+
+    // 5. Positioning lead — only when positioning evidence exists
     failures.push(...gradePositioning(out, evidence));
 
     return { pass: failures.length === 0, failures };
