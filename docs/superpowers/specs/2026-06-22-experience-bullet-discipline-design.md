@@ -1,4 +1,4 @@
-# Experience Bullet Discipline — per-role cap + JD-relevance selection
+# Experience Bullet Discipline + JD-aware optimisation
 
 - **Date:** 2026-06-22
 - **Status:** Design approved, awaiting spec review
@@ -32,13 +32,25 @@ Root cause (verified in code):
 
 ## Goals
 
+**Pillar A — bullet discipline:**
 - Enforce **2-5 bullets per experience role** (hard cap 5, floor 2) on **both**
   the free and paid resume writers.
 - Make bullet selection **JD-relevance-led**: lead each role with bullets that
   serve the JD's must-have skills; for multi-project roles (e.g. Freelance) pick
   the strongest JD-matched and omit the rest.
 - Make the cap **deterministic** (not reliant on the LLM honouring `maxItems`).
-- Cover with eval per CLAUDE.md (no prompt change without its eval).
+
+**Pillar B — JD-aware optimisation (free path; closes the "blind to the JD" gap):**
+- Give the free writer the **full JD view** it is graded on, not just
+  `requiredSkills`: pass `tools`, `concepts`, and `hardRequirements` (the
+  must-haves), and the **same keyword universe the ATS check scores**
+  (`requiredSkills + tools + concepts`).
+- Make the persona **actively optimise** experience skills/technology/ATS
+  wording to the JD — surface evidence-backed JD must-haves and named
+  technologies using the JD's exact phrasing (ATS exact-match), never fabricating
+  unsupported ones.
+
+- Cover both pillars with eval per CLAUDE.md (no prompt change without its eval).
 
 ## Non-goals
 
@@ -87,15 +99,48 @@ Prompt-only, both personas:
   first); when over the word budget, the per-role max 5 applies before the
   generic trim order."
 
-### 4. Grader + eval
+### 4. Pillar B — widen the free writer's JD view + active ATS optimisation
+The free writer is graded on ATS keywords (`requiredSkills + tools + concepts`)
+it is never shown — it only receives `requiredSkills` + `companyProblem`. Close
+this in the single generation pass (no new LLM call, no repair loop):
+
+- **Envelope (`free-resume-writer.ts` `buildUserMessage`):** add JD blocks from
+  the existing `JdSignal`:
+  - `<must_have_skills>` = `jdSignal.hardRequirements[].skill` (the disqualifying
+    must-haves), distinct from
+  - `<required_skills>` (existing), plus `<jd_tools>` = `jdSignal.tools` and
+    `<jd_concepts>` = `jdSignal.concepts`.
+  - `<ats_keywords>` = the **same union the ATS check scores**
+    (`requiredSkills ∪ tools ∪ concepts`), so the writer optimises for exactly
+    what is measured. Build this union once and share it with the ATS step to
+    avoid drift (single source of truth).
+- **Persona (`free-resume-persona.ts`) — active optimisation rule:** "Optimise
+  the experience + skills to THIS JD: for every JD must-have / tool / concept the
+  candidate's evidence genuinely supports, surface it — in an experience bullet
+  or the skills section — using the JD's **exact wording** (`<ats_keywords>`) for
+  ATS exact-match. Lead each role's bullets with the JD must-haves it can
+  evidence. Do NOT claim or keyword-stuff any JD term the evidence does not back
+  (the grounding gate still applies); omission of an unsupported skill is correct,
+  not a failure."
+- **Paid:** already JD-aware via the research brief (verified/partial/gap +
+  technology inventory) — no envelope change; only the Pillar A cap line is added
+  to its persona.
+
+### 5. Grader + eval
 - **Free grader `gradeFreeResume`:** add a check that no role exceeds 5
   highlights (defensive — truncation makes this always pass, but it documents the
   contract and catches a regression if truncation is removed). Optionally flag a
   role with <2.
-- **Eval:** extend `free-resume-writer.eval.test.ts` — a fixture whose writer
-  output has a role with 8 highlights is truncated to 5 by `capHighlights`; assert
-  the kept 5 are the first 5 (relevance order preserved); assert the grader passes
-  post-cap and would flag pre-cap. Add a paid-side unit test for `capHighlights`.
+- **Eval (Pillar A):** extend `free-resume-writer.eval.test.ts` — a fixture whose
+  writer output has a role with 8 highlights is truncated to 5 by `capHighlights`;
+  assert the kept 5 are the first 5 (relevance order preserved); assert the grader
+  passes post-cap and would flag pre-cap. Add a paid-side unit test for
+  `capHighlights`.
+- **Eval (Pillar B):** with a JD whose `<ats_keywords>` includes an
+  evidence-backed must-have (e.g. "IAM") and an unsupported one (e.g. "GraphQL"),
+  assert the writer surfaces the supported keyword in experience/skills using the
+  JD's wording AND does NOT introduce the unsupported one (grounding holds).
+  Reuse `groundedAtsCoverage` to assert covered ⊇ the evidence-backed must-haves.
 
 ## Architecture / data flow (unchanged except the cap)
 
@@ -124,8 +169,13 @@ writer output (LLM) → parse → capHighlights(experience, 5)  ← NEW determin
 ## Acceptance criteria
 - No experience role in free or paid output exceeds 5 highlights (deterministic).
 - Free/paid personas instruct JD-relevance-led selection + omission for rich roles.
-- `capHighlights` is shared (DRY) and unit-tested; eval extended; grader documents
-  the cap.
+- The free writer receives the full JD view it is scored on (`must_have_skills`,
+  `jd_tools`, `jd_concepts`, `ats_keywords`); the ATS keyword union is a single
+  source of truth shared with the ATS check (no drift).
+- The free persona actively optimises evidence-backed JD skills/tech/keywords to
+  the JD's exact wording, with the grounding gate still blocking unsupported terms.
+- `capHighlights` is shared (DRY) and unit-tested; both eval pillars added; grader
+  documents the cap.
 - No new LLM call; no migration; ESLint + typecheck clean.
 
 ## Risks & mitigations
