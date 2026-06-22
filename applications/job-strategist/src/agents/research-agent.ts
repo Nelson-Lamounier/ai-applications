@@ -222,6 +222,14 @@ async function querySingleRds(
     maxPassages: number = MAX_KB_PASSAGES,
     prefilter?: RetrievalPrefilter,
 ): Promise<string[]> {
+    // Defence in depth: a blank query embeds to nothing and Bedrock Titan rejects
+    // it with "minLength: 1, actual: 0", crashing the pipeline. No query string
+    // (from any caller) should ever reach the embedder empty — skip retrieval.
+    if (query.trim().length === 0) {
+        log('INFO', 'Empty retrieval query — skipping embedding/rerank', { agent: 'strategist-research' });
+        return [];
+    }
+
     const finalK = Math.max(1, maxPassages);
     const overfetch = finalK * RETRIEVE_OVERFETCH;
 

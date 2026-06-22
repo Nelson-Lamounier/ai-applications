@@ -39,11 +39,16 @@ describe('jdRetrievalQueries', () => {
         expect(q.project).toContain('portfolio project');
         expect(q.project).toContain('Terraform');
     });
-    it('handles empty extraction without crashing', () => {
+    it('never returns an empty skill query — a truncated/minimal extraction must still embed', () => {
+        // A truncated JD extraction (stopReason=max_tokens) falls open to an
+        // all-empty JdSignal. An empty skill query was sent to Bedrock Titan and
+        // crashed the pipeline with "minLength: 1, actual: 0". The skill query
+        // must always be non-empty so the embedding call is valid.
         const empty = JdExtractionSchema.parse({});
         const q = jdRetrievalQueries(empty);
-        expect(q.skill).toBe('');
+        expect(q.skill.trim().length).toBeGreaterThan(0);
         expect(q.experience).toContain('professional experience');
+        expect(q.project).toContain('portfolio project');
     });
 });
 

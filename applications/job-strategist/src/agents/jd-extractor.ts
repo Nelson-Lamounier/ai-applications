@@ -264,7 +264,12 @@ export async function extractJdSignal(jobDescription: string): Promise<JdSignal>
     const config: AgentConfig = {
         agentName:      'jd-extractor',
         modelId:        MODEL_ID,
-        maxTokens:      2048,
+        // 2048 truncated the structured extraction on skill-dense JDs
+        // (stopReason=max_tokens → fail-open to an empty JdSignal → empty skill
+        // retrieval query → Bedrock Titan minLength crash). A full JdSignal for a
+        // dense JD (many skills/tools/concepts/hardRequirements) needs more room;
+        // 8192 clears it with ample headroom while staying well under the model cap.
+        maxTokens:      8192,
         thinkingBudget: 0,
         systemPrompt:   [{ text: SYSTEM_PROMPT }],
         pipeline:       'job-strategist',
@@ -326,11 +331,19 @@ export const extractJobDescription: (jd: string) => Promise<JdSignal> = extractJ
  * legacy raw-JD substring queries. Returns the three keyword-driven queries
  * (skills, experience, projects); the DORA query stays static in the agent.
  */
+// Fallback skill query for a truncated/minimal JdSignal (all skill arrays empty).
+// The experience/project queries carry static anchor phrases and are never empty;
+// the skill query is pure terms, so it needs its own non-empty floor. An empty
+// query reaches Bedrock Titan embeddings and throws "minLength: 1, actual: 0",
+// which previously crashed the whole strategist pipeline.
+const SKILL_QUERY_FALLBACK = 'core technical skills tools and technologies';
+
 export function jdRetrievalQueries(jd: JdExtraction): { skill: string; experience: string; project: string } {
     const dedupe = (xs: string[]): string => [...new Set(xs.map((s) => s.trim()).filter(Boolean))].join(' ');
     const skillTerms = [...jd.requiredSkills, ...jd.preferredSkills, ...jd.tools, ...jd.retrievalKeywords];
+    const skill = dedupe(skillTerms);
     return {
-        skill:      dedupe(skillTerms),
+        skill:      skill.length > 0 ? skill : SKILL_QUERY_FALLBACK,
         experience: `professional experience skills qualifications ${dedupe([...jd.responsibilities, ...jd.concepts])}`,
         project:    `portfolio project implementation achievements ${dedupe([...jd.tools, ...jd.concepts])}`,
     };
