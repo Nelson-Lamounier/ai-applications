@@ -251,9 +251,22 @@ function isKnownEmployer(company: string, careerFacts: string): boolean {
     return careerFacts.toLowerCase().includes(company.toLowerCase());
 }
 
-/** Return true when the number token appears anywhere in the evidence corpus. */
-function isMetricGrounded(token: string, corpus: string): boolean {
-    return corpus.includes(token.toLowerCase());
+/**
+ * Return true when the number token is an exact member of the corpus number-token set.
+ *
+ * Builds a Set<string> from the corpus's numeric tokens so that "4" is only
+ * grounded when "4" appears as a standalone token — not as a digit-substring of
+ * a PR number like "42".  This closes the substring-collision false-negative
+ * that allowed fabricated small integers to pass whenever their digits were
+ * embedded in a larger number in the evidence.
+ */
+function buildCorpusNumberTokenSet(corpus: string): Set<string> {
+    return new Set(extractNumberTokens(corpus).map((t) => t.toLowerCase()));
+}
+
+/** Return true when the number token is an exact member of the corpus token set. */
+function isMetricGrounded(token: string, corpusTokens: Set<string>): boolean {
+    return corpusTokens.has(token.toLowerCase());
 }
 
 /** Return true when the first word of a bullet is an alphabetic action verb. */
@@ -317,7 +330,8 @@ export function gradeFreeResume(
     out: FreeResumeOutput,
     evidence: FreeEvidence,
 ): GradeResult {
-    const corpus    = buildEvidenceCorpus(evidence);
+    const corpus         = buildEvidenceCorpus(evidence);
+    const corpusTokens   = buildCorpusNumberTokenSet(corpus);
     const failures: string[] = [];
 
     // 1. Employer grounding
@@ -328,10 +342,12 @@ export function gradeFreeResume(
     }
 
     // 2. Metric grounding — summary, bullets, achievements, projects
+    //    Uses token-exact Set membership so "4" is only grounded when "4"
+    //    appears as a standalone token, not as a substring of "42".
     const allText = collectGradedText(out);
     for (const text of allText) {
         for (const token of extractNumberTokens(text)) {
-            if (!isMetricGrounded(token, corpus)) {
+            if (!isMetricGrounded(token, corpusTokens)) {
                 failures.push(`Fabricated metric "${token}" in: "${text}".`);
             }
         }
