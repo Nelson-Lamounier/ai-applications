@@ -215,7 +215,7 @@ const reranker: IReranker | null = RERANKER_DISABLED
  * @param store  - RdsVectorStore instance backed by the pipeline PG pool
  * @returns Annotated passage strings ready for LLM context injection
  */
-async function querySingleRds(
+export async function querySingleRds(
     query: string,
     userId: string,
     store: { querySimilar(p: QueryParams): Promise<SimilarityResult[]> },
