@@ -78,11 +78,15 @@ Bedrock honours `maxItems`.
   `applications/job-strategist/src/agents/experience-cap.ts`) — DRY.
 
 ### 2. Schema advisory bound
-Add `minItems: 2, maxItems: 5` to the `highlights` array:
-- Free raw tool schema (`free-resume-writer.ts:107`): `{ type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 5 }`.
-- Paid Zod schema (`strategist-agent.ts:573`): `z.array(z.string()).min(2).max(5)`.
-This nudges the model and (for paid Zod) makes >5 a parse error caught by the
-existing schema-repair/retry; the deterministic truncation remains the backstop.
+Add `minItems: 2, maxItems: 5` to the **free tool inputSchema** `highlights`
+array only (`free-resume-writer.ts:107`): `{ type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 5 }`.
+This nudges the model during generation; it is advisory because the separate Zod
+parse schema is NOT bounded, so a stray >5 is truncated, not hard-rejected.
+
+Do **not** add a Zod `.max(5)` to the paid schema (`strategist-agent.ts:573`):
+it would hard-reject a >5 output and trigger needless schema-repair retries.
+Paid relies on the deterministic truncation + persona + its existing word budget.
+Truncation is the guarantee for both paths.
 
 ### 3. Persona JD-relevance selection rule (proactive)
 Prompt-only, both personas:
