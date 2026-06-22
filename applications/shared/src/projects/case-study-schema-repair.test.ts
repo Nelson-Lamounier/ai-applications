@@ -106,6 +106,32 @@ describe('coerceArchitectureString', () => {
         });
     });
 
+    it('parses a JSON-stringified architecture OBJECT instead of dumping the whole JSON into diagramSource', () => {
+        // Sonnet sometimes emits the full architecture object as a JSON *string*
+        // (invalid_type: expected object, received string). The string is NOT a
+        // bare Mermaid diagram — wrapping it verbatim poisons diagramSource with
+        // the entire JSON and leaves nodes/edges empty, which fails to render.
+        const inner = {
+            diagramFormat: 'mermaid',
+            diagramSource: 'graph LR\n  A-->B',
+            nodes: [{ id: 'A' }, { id: 'B' }],
+            edges: [{ from: 'A', to: 'B' }],
+        };
+        const raw = { architecture: JSON.stringify(inner) };
+        const parsed = ArchSchema.safeParse(raw);
+        expect(parsed.success).toBe(false);
+        if (parsed.success) return;
+
+        const repaired = coerceArchitectureString(raw, parsed.error.issues);
+        const reparsed = ArchSchema.safeParse(repaired);
+
+        expect(reparsed.success).toBe(true);
+        if (!reparsed.success) return;
+        expect(reparsed.data.architecture.diagramSource).toBe('graph LR\n  A-->B'); // the real diagram, not the JSON
+        expect(reparsed.data.architecture.nodes).toHaveLength(2);                    // recovered, not empty
+        expect(reparsed.data.architecture.edges).toHaveLength(1);
+    });
+
     it('leaves a valid object architecture untouched (no matching issue)', () => {
         const raw = { architecture: { diagramFormat: 'mermaid', diagramSource: 'x', nodes: [], edges: [] } };
         const parsed = ArchSchema.safeParse(raw);

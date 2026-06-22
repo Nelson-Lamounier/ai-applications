@@ -96,7 +96,50 @@ export function clampOversizedFields(raw: unknown, issues: readonly ZodIssue[]):
  * Scoped narrowly to this one known, safe coercion — we do NOT generically turn
  * strings into objects. Any other structural violation is left for the caller to
  * fail fast on (or the bounded model retry to fix).
+ *
+ * Two string shapes occur in practice and must be told apart:
+ *   - a BARE Mermaid diagram (`"graph LR; A-->B"`) — wrap it; nodes/edges empty.
+ *   - the FULL architecture object emitted as a JSON STRING
+ *     (`'{"diagramFormat":"mermaid","diagramSource":"graph LR…","nodes":[…]}'`) —
+ *     parse it back. Wrapping THIS verbatim would dump the entire JSON into
+ *     `diagramSource` and leave nodes/edges empty, so the renderer receives the
+ *     JSON object as the diagram text ("No diagram type detected") instead of a
+ *     Mermaid graph.
  */
+type ArchitectureObject = {
+    diagramFormat: 'mermaid' | 'svg';
+    diagramSource: string;
+    nodes: unknown[];
+    edges: unknown[];
+};
+
+/** Parse a string that is a JSON-encoded architecture object; null if it isn't one. */
+function parseArchitectureJson(source: string): ArchitectureObject | null {
+    let obj: unknown;
+    try {
+        obj = JSON.parse(source);
+    } catch {
+        return null; // not JSON — a bare Mermaid string
+    }
+    if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return null;
+    const o = obj as Record<string, unknown>;
+    if (typeof o.diagramSource !== 'string' || o.diagramSource.length === 0) return null;
+    return {
+        diagramFormat: o.diagramFormat === 'svg' ? 'svg' : 'mermaid',
+        diagramSource: o.diagramSource,
+        nodes: Array.isArray(o.nodes) ? o.nodes : [],
+        edges: Array.isArray(o.edges) ? o.edges : [],
+    };
+}
+
+/** Turn a string architecture into its object form: parse JSON first, else wrap. */
+function architectureFromString(source: string): ArchitectureObject {
+    return (
+        parseArchitectureJson(source) ??
+        { diagramFormat: 'mermaid', diagramSource: source, nodes: [], edges: [] }
+    );
+}
+
 export function coerceArchitectureString(raw: unknown, issues: readonly ZodIssue[]): unknown {
     const hit = issues.some((i) =>
         i.code === 'invalid_type' &&
@@ -109,7 +152,7 @@ export function coerceArchitectureString(raw: unknown, issues: readonly ZodIssue
     if (typeof source !== 'string' || source.length === 0) return raw;
 
     const clone = structuredClone(raw) as Record<string, unknown>;
-    clone.architecture = { diagramFormat: 'mermaid', diagramSource: source, nodes: [], edges: [] };
+    clone.architecture = architectureFromString(source);
     console.warn('[case-study] coerced string architecture into { diagramFormat, diagramSource, nodes, edges }');
     return clone;
 }
