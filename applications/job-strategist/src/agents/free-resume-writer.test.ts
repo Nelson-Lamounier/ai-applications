@@ -1,0 +1,201 @@
+/**
+ * @format
+ * Unit tests for the free-tier resume writer agent.
+ *
+ * Covers:
+ *   - parseFreeResumeResponse — JSON → FreeResumeOutput with validation
+ *   - gradeFreeResume — deterministic anti-fabrication grader
+ */
+import { describe, it, expect } from '@jest/globals';
+import { gradeFreeResume, parseFreeResumeResponse } from './free-resume-writer.js';
+import type { FreeEvidence } from '../free/gather-evidence.js';
+import type { FreeResumeOutput } from './free-resume-writer.js';
+
+// ---------------------------------------------------------------------------
+// Shared fixtures
+// ---------------------------------------------------------------------------
+
+const evidence: FreeEvidence = {
+    kbPassages: [
+        '[Source: me/infra/eks.tf]\nProvisioned an EKS cluster with Karpenter autoscaling.',
+    ],
+    projectEvidence: 'Tucaken — SaaS for code-grounded resumes; 16-CDK-stack AWS, EKS, Bedrock.',
+    extractedTech: 'aws, kubernetes, terraform, bedrock',
+    careerFacts: 'Acme Corp — Platform Engineer — 2022–2025',
+    educationFacts: 'BSc Computer Science — Example University',
+};
+
+const good: FreeResumeOutput = {
+    resume: {
+        profile: {
+            name: 'X',
+            title: 'Platform Engineer',
+            email: 'x@example.com',
+            location: 'London, UK',
+        },
+        summary: 'I built grounded resume tooling.',
+        experience: [
+            {
+                company: 'Acme Corp',
+                title: 'Platform Engineer',
+                period: '2022–2025',
+                highlights: [
+                    'Provisioned EKS with Karpenter on AWS, improving autoscaling.',
+                ],
+            },
+        ],
+        skills: [],
+        education: [],
+        certifications: [],
+        projects: [],
+        keyAchievements: [],
+    },
+    coverLetter: {
+        greeting: 'Dear Hiring Manager',
+        paragraphs: ['I build code-grounded tooling.'],
+        signoff: { name: 'X', email: '', linkedin: '', github: '' },
+    },
+};
+
+// ---------------------------------------------------------------------------
+// parseFreeResumeResponse
+// ---------------------------------------------------------------------------
+
+describe('parseFreeResumeResponse', () => {
+    it('parses + validates a {resume, coverLetter} tool payload', () => {
+        const out = parseFreeResumeResponse(JSON.stringify(good));
+        expect(out.coverLetter.greeting).toBe('Dear Hiring Manager');
+    });
+
+    it('returns the resume summary field intact', () => {
+        const out = parseFreeResumeResponse(JSON.stringify(good));
+        expect(out.resume.summary).toBe('I built grounded resume tooling.');
+    });
+
+    it('throws on missing coverLetter', () => {
+        const payload = { resume: good.resume };
+        expect(() => parseFreeResumeResponse(JSON.stringify(payload))).toThrow();
+    });
+
+    it('throws on invalid JSON', () => {
+        expect(() => parseFreeResumeResponse('not json')).toThrow();
+    });
+
+    it('throws on missing resume', () => {
+        const payload = { coverLetter: good.coverLetter };
+        expect(() => parseFreeResumeResponse(JSON.stringify(payload))).toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// gradeFreeResume
+// ---------------------------------------------------------------------------
+
+describe('gradeFreeResume', () => {
+    it('passes when bullets are evidence-grounded and action-verb led', () => {
+        const result = gradeFreeResume(good, evidence, ['AWS', 'Kubernetes']);
+        expect(result.pass).toBe(true);
+        expect(result.failures).toHaveLength(0);
+    });
+
+    it('fails on a fabricated employer not in the career facts', () => {
+        const bad: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Google',
+                        title: 'SRE',
+                        period: '2020–2022',
+                        highlights: ['Built reliable systems.'],
+                    },
+                ],
+            },
+        };
+        const result = gradeFreeResume(bad, evidence, []);
+        expect(result.pass).toBe(false);
+        expect(result.failures.some((f) => f.toLowerCase().includes('employer'))).toBe(true);
+    });
+
+    it('fails on a fabricated metric absent from evidence', () => {
+        const bad: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Acme Corp',
+                        title: 'Platform Engineer',
+                        period: '2022–2025',
+                        highlights: ['Cut costs by 93% across 4000 servers.'],
+                    },
+                ],
+            },
+        };
+        const result = gradeFreeResume(bad, evidence, []);
+        expect(result.pass).toBe(false);
+        expect(result.failures.some((f) => f.toLowerCase().includes('metric'))).toBe(true);
+    });
+
+    it('fails on a bullet that does not start with an action verb', () => {
+        const bad: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Acme Corp',
+                        title: 'Platform Engineer',
+                        period: '2022–2025',
+                        highlights: ['The EKS cluster was provisioned using Karpenter.'],
+                    },
+                ],
+            },
+        };
+        const result = gradeFreeResume(bad, evidence, []);
+        expect(result.pass).toBe(false);
+        expect(result.failures.some((f) => f.toLowerCase().includes('action verb'))).toBe(true);
+    });
+
+    it('passes with multiple grounded experience entries', () => {
+        const multi: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Acme Corp',
+                        title: 'Platform Engineer',
+                        period: '2022–2025',
+                        highlights: [
+                            'Provisioned EKS with Karpenter autoscaling on AWS.',
+                            'Deployed Terraform infrastructure for Kubernetes workloads.',
+                        ],
+                    },
+                ],
+            },
+        };
+        expect(gradeFreeResume(multi, evidence, ['AWS', 'Kubernetes']).pass).toBe(true);
+    });
+
+    it('returns all failures when multiple violations exist', () => {
+        const bad: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Google',                   // fabricated employer
+                        title: 'SRE',
+                        period: '2020–2022',
+                        highlights: ['The system handled 50000 requests.'], // non-verb + fabricated metric
+                    },
+                ],
+            },
+        };
+        const result = gradeFreeResume(bad, evidence, []);
+        expect(result.pass).toBe(false);
+        expect(result.failures.length).toBeGreaterThan(1);
+    });
+});
