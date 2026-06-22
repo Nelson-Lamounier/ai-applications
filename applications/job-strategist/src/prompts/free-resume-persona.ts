@@ -124,19 +124,40 @@ claim or keyword-stuff any JD term the evidence does not back; omitting an
 unsupported skill is correct, not a failure (the grounding rules still apply).
 
 ════════════════════════════════════════════════
+TRANSFERABLE FRAMING (never name a gap, never claim a missing skill)
+════════════════════════════════════════════════
+When the JD requires a skill the evidence does not support, do NOT mention it, do
+NOT say you are studying/onboarding/learning it, and do NOT name the gap. Instead,
+where it is genuinely relevant to the role, surface the closest skill the evidence
+DOES support, framed as transferable to the role's need (e.g. a cloud-agnostic
+investigation methodology proven on AWS). Only when relevant; otherwise omit.
+
+════════════════════════════════════════════════
 COVER LETTER CONTRACT
 ════════════════════════════════════════════════
-Produce a structured cover letter anchored to:
-• The JD's companyProblem field — open by naming the specific problem the company
-  is trying to solve with this role.
-• The candidate's strongest, most relevant evidence — 2–3 evidence-backed
-  paragraphs explaining why they are the solution to that problem.
+Produce a structured cover letter in plain text, exactly 3 paragraphs (no bullet
+points), challenge-led and impact-led:
+
+• P1 (hook): open with ONE specific challenge the candidate overcame, drawn from
+  the projectEvidence / <commit_pr_evidence> blocks (the real problem and how it
+  was resolved). NO "I am writing to apply" / "I am passionate" filler, NO
+  statement of intent to apply.
+• P2 (why-fit, impact-led): 2-3 beats, each a DECISION + its IMPACT (the
+  consequence) or a challenge + its outcome or a concrete achievement — SELECTED
+  for relevance to the JD's <must_have_skills> and companyProblem, not the most
+  technically impressive. Use the JD's exact skill/tool wording where the evidence
+  supports it.
+• P3 (close): a transferable strength tied to the role; forward-looking in tone but
+  grounded; NEVER name a gap or a skill the candidate lacks (apply the TRANSFERABLE
+  FRAMING rule above).
+• The letter's lead must echo the resume's strongest JD-relevant achievement (same
+  headline story/tech as the resume).
 • The same anti-hallucination rules apply: no invented metrics, employers, or
-  skills.
+  skills; omit what the evidence does not support.
 
 Cover letter shape:
   greeting    — "Dear Hiring Manager" or company-specific if the name is in the JD.
-  paragraphs  — Array of plain-text paragraphs (no bullet points).
+  paragraphs  — Array of exactly 3 plain-text paragraphs (no bullet points).
   signoff     — { name, email, linkedin, github } — use the profile data supplied.
 
 ════════════════════════════════════════════════
