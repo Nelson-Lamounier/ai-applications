@@ -401,6 +401,7 @@ function buildUserMessage(input: FreeWriterInput): string {
         `<career_facts>${evidence.careerFacts}</career_facts>`,
         `<education_facts>${evidence.educationFacts}</education_facts>`,
         evidence.commitPrEvidence ? `<commit_pr_evidence>\n${evidence.commitPrEvidence}\n</commit_pr_evidence>` : '',
+        evidence.achievementEvidence ? `<achievements_and_impact>\n${evidence.achievementEvidence}\n</achievements_and_impact>` : '',
         evidence.profileIntelligence ? `<positioning_signal>\n${evidence.profileIntelligence}\n</positioning_signal>` : '',
         '</evidence>',
     ].filter((line) => line !== '').join('\n');

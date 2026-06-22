@@ -25,6 +25,7 @@ const evidence: FreeEvidence = {
     educationFacts: 'BSc Computer Science — Example University',
     commitPrEvidence: '',
     profileIntelligence: '',
+    achievementEvidence: '',
 };
 
 const good: FreeResumeOutput = {

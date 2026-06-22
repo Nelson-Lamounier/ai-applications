@@ -20,6 +20,7 @@ import {
 import { buildCodeStackContext } from '../ats/code-truth.js';
 import { loadCommitPrEvidence } from './commit-pr-evidence.js';
 import { loadProfilePositioning } from './profile-intelligence.js';
+import { loadAchievementEvidence } from '../agents/achievement-evidence.js';
 
 export interface FreeEvidence {
     readonly kbPassages: string[];
@@ -29,6 +30,7 @@ export interface FreeEvidence {
     readonly educationFacts: string;
     readonly commitPrEvidence: string;
     readonly profileIntelligence: string;
+    readonly achievementEvidence: string;
 }
 
 export interface GatherDeps {
@@ -43,7 +45,7 @@ export async function gatherFreeEvidence(
 ): Promise<FreeEvidence> {
     const q = jdRetrievalQueries(jdSignal);
 
-    const [passageGroups, projectEvidence, careerEntries, educationEntries, codeTechByRepo, commitPrEvidence, profileIntelligence] =
+    const [passageGroups, projectEvidence, careerEntries, educationEntries, codeTechByRepo, commitPrEvidence, profileIntelligence, achievementEvidence] =
         await Promise.all([
             Promise.all([
                 deps.retrieve(q.skill),
@@ -58,6 +60,7 @@ export async function gatherFreeEvidence(
                 .catch(() => new Map<string, Set<string>>()),
             loadCommitPrEvidence(pool, env.userId),
             loadProfilePositioning(pool, env.userId),
+            loadAchievementEvidence(pool, env.userId),
         ]);
 
     const kbPassages = passageGroups.flat();
@@ -65,5 +68,5 @@ export async function gatherFreeEvidence(
     const careerFacts = formatExperienceFacts(careerEntries);
     const educationFacts = formatEducation(educationEntries);
 
-    return { kbPassages, projectEvidence, extractedTech, careerFacts, educationFacts, commitPrEvidence, profileIntelligence };
+    return { kbPassages, projectEvidence, extractedTech, careerFacts, educationFacts, commitPrEvidence, profileIntelligence, achievementEvidence };
 }
