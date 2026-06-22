@@ -324,19 +324,30 @@ export async function main(): Promise<void> {
     // ── Free-tier fast path — early return, never falls through to the paid pipeline ──
     if (isFreeMode(env)) {
         const store = RdsVectorStore.fromEnvironment();
-        await runFreeTier(pool, env, {
-            extractJdSignal,
-            gather: (p, e, jd) => gatherFreeEvidence(p, e, jd, {
-                retrieve: (query) => querySingleRds(query, e.userId, store),
-            }),
-            writer:        bedrockFreeResumeWriter,
-            aliasMap:      (p) => new SkillOntologyRepository(p).loadAliasToCanonicalMap(),
-            persistResume: persistTailoredResume,
-            persistMeta:   updatePipelineRunMetadata,
-            setStatus:     updateJobApplicationStatus,
-            complete:      updatePipelineRun,
-        });
-        await closePool();
+        try {
+            await runFreeTier(pool, env, {
+                extractJdSignal,
+                gather: (p, e, jd) => gatherFreeEvidence(p, e, jd, {
+                    retrieve: (query) => querySingleRds(query, e.userId, store),
+                }),
+                writer:        bedrockFreeResumeWriter,
+                aliasMap:      (p) => new SkillOntologyRepository(p).loadAliasToCanonicalMap(),
+                persistResume: persistTailoredResume,
+                persistMeta:   updatePipelineRunMetadata,
+                setStatus:     updateJobApplicationStatus,
+                complete:      updatePipelineRun,
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            const clientMessage = outputSanitiser.sanitise(message).slice(0, 500);
+            await updatePipelineRun(pool, env.pipelineRunId, 'failed', clientMessage)
+                .catch(() => { /* swallow — already failing */ });
+            await updateJobApplicationStatus(pool, env.applicationId, 'failed')
+                .catch(() => { /* swallow — already failing */ });
+            throw err;
+        } finally {
+            await closePool();
+        }
         return; // free path is terminal — never falls through to the paid pipeline
     }
 
