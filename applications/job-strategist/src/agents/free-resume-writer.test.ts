@@ -47,8 +47,12 @@ const good: FreeResumeOutput = {
         skills: [],
         education: [],
         certifications: [],
-        projects: [],
-        keyAchievements: [],
+        projects: [
+                { name: 'Tucaken', description: 'SaaS for code-grounded resumes; 16-CDK-stack AWS, EKS, Bedrock.' },
+            ],
+        keyAchievements: [
+                { achievement: 'Provisioned an EKS cluster with Karpenter autoscaling.' },
+            ],
     },
     coverLetter: {
         greeting: 'Dear Hiring Manager',
@@ -93,7 +97,7 @@ describe('parseFreeResumeResponse', () => {
 
 describe('gradeFreeResume', () => {
     it('passes when bullets are evidence-grounded and action-verb led', () => {
-        const result = gradeFreeResume(good, evidence, ['AWS', 'Kubernetes']);
+        const result = gradeFreeResume(good, evidence);
         expect(result.pass).toBe(true);
         expect(result.failures).toHaveLength(0);
     });
@@ -113,7 +117,7 @@ describe('gradeFreeResume', () => {
                 ],
             },
         };
-        const result = gradeFreeResume(bad, evidence, []);
+        const result = gradeFreeResume(bad, evidence);
         expect(result.pass).toBe(false);
         expect(result.failures.some((f) => f.toLowerCase().includes('employer'))).toBe(true);
     });
@@ -133,7 +137,7 @@ describe('gradeFreeResume', () => {
                 ],
             },
         };
-        const result = gradeFreeResume(bad, evidence, []);
+        const result = gradeFreeResume(bad, evidence);
         expect(result.pass).toBe(false);
         expect(result.failures.some((f) => f.toLowerCase().includes('metric'))).toBe(true);
     });
@@ -153,7 +157,7 @@ describe('gradeFreeResume', () => {
                 ],
             },
         };
-        const result = gradeFreeResume(bad, evidence, []);
+        const result = gradeFreeResume(bad, evidence);
         expect(result.pass).toBe(false);
         expect(result.failures.some((f) => f.toLowerCase().includes('action verb'))).toBe(true);
     });
@@ -176,7 +180,42 @@ describe('gradeFreeResume', () => {
                 ],
             },
         };
-        expect(gradeFreeResume(multi, evidence, ['AWS', 'Kubernetes']).pass).toBe(true);
+        expect(gradeFreeResume(multi, evidence).pass).toBe(true);
+    });
+
+    it('fails on a fabricated metric in keyAchievements', () => {
+        const bad: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                keyAchievements: [
+                    { achievement: 'Managed a team of 50 engineers globally.' },
+                ],
+            },
+        };
+        const result = gradeFreeResume(bad, evidence);
+        expect(result.pass).toBe(false);
+        expect(result.failures.some((f) => f.toLowerCase().includes('metric'))).toBe(true);
+    });
+
+    it('fails on a suffixed magnitude metric (1.3M) absent from evidence', () => {
+        const bad: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Acme Corp',
+                        title: 'Platform Engineer',
+                        period: '2022–2025',
+                        highlights: ['Served 1.3M requests per day via EKS.'],
+                    },
+                ],
+            },
+        };
+        const result = gradeFreeResume(bad, evidence);
+        expect(result.pass).toBe(false);
+        expect(result.failures.some((f) => f.includes('1.3'))).toBe(true);
     });
 
     it('returns all failures when multiple violations exist', () => {
@@ -194,7 +233,7 @@ describe('gradeFreeResume', () => {
                 ],
             },
         };
-        const result = gradeFreeResume(bad, evidence, []);
+        const result = gradeFreeResume(bad, evidence);
         expect(result.pass).toBe(false);
         expect(result.failures.length).toBeGreaterThan(1);
     });

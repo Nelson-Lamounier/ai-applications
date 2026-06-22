@@ -17,6 +17,7 @@ import type { JdSignal } from '@bedrock/shared';
 import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
 import type { StructuredResumeData, CoverLetter } from '@bedrock/shared';
 import { FREE_RESUME_SYSTEM_PROMPT } from '../prompts/free-resume-persona.js';
+import { CoverLetterSchema } from './strategist-agent.js';
 import type { FreeEvidence } from '../free/gather-evidence.js';
 
 // =============================================================================
@@ -54,19 +55,6 @@ export interface GradeResult {
 // =============================================================================
 // ZOD VALIDATION SCHEMAS
 // =============================================================================
-
-const CoverLetterSignoffSchema = z.object({
-    name:     z.string(),
-    email:    z.string(),
-    linkedin: z.string(),
-    github:   z.string(),
-});
-
-const CoverLetterSchema = z.object({
-    greeting:   z.string(),
-    paragraphs: z.array(z.string()),
-    signoff:    CoverLetterSignoffSchema,
-});
 
 const FreeResumeOutputSchema = z.object({
     resume:      StructuredResumeDataSchema,
@@ -276,12 +264,26 @@ function startsWithActionVerb(bullet: string): boolean {
 
 /** Extract numeric tokens from a string (e.g. "93%", "4000", "1.3M"). */
 function extractNumberTokens(text: string): string[] {
-    return (text.match(/\b\d[\d,.]*%?\b/g) ?? []);
+    return (text.match(/\b\d[\d,.]*(?:[kmb]|[KMB])?\b|\b\d[\d,.]*%/gi) ?? []);
 }
 
 // =============================================================================
 // GRADER
 // =============================================================================
+
+/**
+ * Collect all text strings that are subject to metric-grounding checks:
+ * summary, experience highlights, keyAchievements, and project descriptions.
+ */
+function collectGradedText(out: FreeResumeOutput): string[] {
+    const achievements = out.resume.keyAchievements.map(
+        (a: { achievement: string }) => a.achievement,
+    );
+    const projectDescs = out.resume.projects.map(
+        (p: { description: string }) => p.description,
+    );
+    return [out.resume.summary, ...collectAllHighlights(out), ...achievements, ...projectDescs];
+}
 
 /**
  * Deterministic anti-fabrication grader.
@@ -293,14 +295,12 @@ function extractNumberTokens(text: string): string[] {
  *
  * Returns { pass: true, failures: [] } when all checks pass.
  *
- * @param out        - The FreeResumeOutput to grade
- * @param evidence   - The FreeEvidence used to produce the output
- * @param jdKeywords - JD skill keywords (reserved for future keyword-coverage checks)
+ * @param out      - The FreeResumeOutput to grade
+ * @param evidence - The FreeEvidence used to produce the output
  */
 export function gradeFreeResume(
     out: FreeResumeOutput,
     evidence: FreeEvidence,
-    _jdKeywords: string[],
 ): GradeResult {
     const corpus    = buildEvidenceCorpus(evidence);
     const failures: string[] = [];
@@ -312,8 +312,8 @@ export function gradeFreeResume(
         }
     }
 
-    // 2. Metric grounding — bullets and summary
-    const allText = [out.resume.summary, ...collectAllHighlights(out)];
+    // 2. Metric grounding — summary, bullets, achievements, projects
+    const allText = collectGradedText(out);
     for (const text of allText) {
         for (const token of extractNumberTokens(text)) {
             if (!isMetricGrounded(token, corpus)) {

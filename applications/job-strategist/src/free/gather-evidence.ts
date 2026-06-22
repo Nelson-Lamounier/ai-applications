@@ -46,7 +46,7 @@ export async function gatherFreeEvidence(
                 deps.retrieve(q.experience),
                 deps.retrieve(q.project),
             ]),
-            loadProjectEvidenceBlock(pool, env.userId),
+            loadProjectEvidenceBlock(pool, env.userId).catch(() => ''),
             loadCareerHistory(pool, env.userId).catch(() => []),
             loadEducation(pool, env.userId).catch(() => []),
             new TechnologyOntologyRepository(pool)

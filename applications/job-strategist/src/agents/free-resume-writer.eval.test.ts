@@ -41,8 +41,12 @@ const GOOD: FreeResumeOutput = {
 		skills: [],
 		education: [],
 		certifications: [],
-		projects: [],
-		keyAchievements: [],
+		projects: [
+			{ name: 'Tucaken', description: 'Tucaken — 16-CDK-stack AWS, EKS, Bedrock.' },
+		],
+		keyAchievements: [
+			{ achievement: 'Provisioned EKS with Karpenter.' },
+		],
 	},
 	coverLetter: {
 		greeting: 'Dear Hiring Manager',
@@ -58,7 +62,7 @@ const GOOD: FreeResumeOutput = {
 
 describe('free writer eval — grounded narrative', () => {
 	it('good fixture passes the no-fabrication + format grader', () => {
-		const result = gradeFreeResume(GOOD, EV, ['AWS', 'Kubernetes']);
+		const result = gradeFreeResume(GOOD, EV);
 		expect(result.pass).toBe(true);
 		expect(result.failures).toEqual([]);
 	});
@@ -89,7 +93,7 @@ describe('free writer eval — grounded narrative', () => {
 				],
 			},
 		};
-		const result = gradeFreeResume(bad, EV, []);
+		const result = gradeFreeResume(bad, EV);
 		expect(result.pass).toBe(false);
 		expect(result.failures.length).toBeGreaterThan(0);
 		expect(result.failures[0]).toContain('Fabricated employer');
@@ -112,7 +116,7 @@ describe('free writer eval — grounded narrative', () => {
 				],
 			},
 		};
-		const result = gradeFreeResume(bad, EV, []);
+		const result = gradeFreeResume(bad, EV);
 		expect(result.pass).toBe(false);
 		expect(result.failures.length).toBeGreaterThan(0);
 		expect(result.failures[0]).toContain('Fabricated metric');
@@ -135,13 +139,14 @@ describe('free writer eval — grounded narrative', () => {
 				],
 			},
 		};
-		const result = gradeFreeResume(bad, EV, []);
+		const result = gradeFreeResume(bad, EV);
 		expect(result.pass).toBe(false);
 		expect(result.failures.length).toBeGreaterThan(0);
 		expect(result.failures[0]).toContain('Missing action verb');
 	});
 
 	it('combined-overview judge (mocked) gates on threshold', async () => {
+		const THRESHOLD = 0.7;
 		const judge = {
 			invoke: async (score: number) => ({
 				score,
@@ -149,12 +154,16 @@ describe('free writer eval — grounded narrative', () => {
 			}),
 		};
 
-		// Passing case: score >= 0.7 threshold
+		// Passing case: score >= threshold → gate passed
 		const passingResult = await judge.invoke(0.9);
-		expect(passingResult.score).toBeGreaterThanOrEqual(0.7);
+		const passingGate = passingResult.score >= THRESHOLD;
+		expect(passingResult.score).toBeGreaterThanOrEqual(THRESHOLD);
+		expect(passingGate).toBe(true);
 
-		// Failing case: score < 0.7 threshold
+		// Failing case: score < threshold → gate blocked
 		const failingResult = await judge.invoke(0.4);
-		expect(failingResult.score).toBeLessThan(0.7);
+		const failingGate = failingResult.score >= THRESHOLD;
+		expect(failingResult.score).toBeLessThan(THRESHOLD);
+		expect(failingGate).toBe(false);
 	});
 });
