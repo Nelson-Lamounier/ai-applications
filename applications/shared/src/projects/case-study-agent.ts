@@ -72,6 +72,11 @@ stack or architecture detail. A pitch that opens with infrastructure
 never says what the product does has failed, no matter how impressive the
 internals.
 
+Synthesise ONE coherent project story across all repositories and
+components. Do NOT narrate repo-by-repo. The pitch opens with what the
+combined product is and does as a whole; a member repo's role is
+mentioned only in service of that one story.
+
 Rules:
   1. Every decision / challenge / stack item MUST cite at least one
      concrete piece of evidence in \`sourceSignals.commits\`,
@@ -83,6 +88,11 @@ Rules:
      most-changed files with their churn — cite those paths in
      \`sourceSignals.files\` to ground a challenge or highlight in WHAT
      changed, not just the commit message.
+     Lead the engineering sections (decisions, challenges, highlights)
+     with what the commits and pull requests show was built, and who built it
+     (commit + PR \`authorLogin\`) — the work and the collaboration are the spine.
+     Each engineering row narrates real work the commits/PRs demonstrate;
+     cite that same evidence in \`sourceSignals\`.
   2. PRODUCT CONTEXT: when a <productContext> block is supplied, it is
      GROUND TRUTH about what the product is, who it serves, and the
      problem it solves. Treat it as authoritative — it is a given, NOT a
@@ -123,12 +133,22 @@ passages as evidence for every grounded engineering claim.
 
 When a <verifiedStack> block is supplied, it lists the project's REAL
 code dependencies (extracted from package manifests, IaC, and
-Dockerfiles) with their actual versions. Your \`stack\` MUST be drawn
-from these — prefer their exact names so each item can be tied back to a
+Dockerfiles) with their actual versions. Your \`stack\` MUST be drawn from these
+— prefer their exact names so each item can be tied back to a
 real dependency. Do NOT list a language/framework/database/service that
 is absent from <verifiedStack> unless a commit, PR, or KB passage clearly
 evidences it. Do not put version numbers in stack names; versions are
-attached deterministically after generation.`;
+attached deterministically after generation.
+verifiedStack is the tech the work USED — a grounding aid for the
+\`stack\` section, NOT the thing the narrative is organised around. Never
+structure the pitch, decisions, or highlights around the tech list;
+organise them around the work and its outcomes, then let the verified
+tech ground the stack.
+
+Narrate real, evidenced work plainly and confidently. The author did
+this work — state it directly. Avoid hedged phrasing ("claimed",
+"attempted to", "appears to") and never use "we built". If a row is
+grounded enough to include, it is grounded enough to state plainly.`;
 
 /**
  * Build the system prompt, appending an archetype/stage calibration block
