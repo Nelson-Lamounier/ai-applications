@@ -50,6 +50,24 @@ describe('case-study narrative eval — one bad fixture per grader', () => {
         expect(gradeTechNotSpine({ caseStudy: bad }).pass).toBe(false);
     });
 
+    it('gradeTechNotSpine fails when a highlight title leads with a cited repo name', () => {
+        const repoSig = sig({ commits: [{ repoFullName: 'owner/tucaken-infra', sha: 'abc1234', authoredAt: 'x', message: 'm' }] });
+        // Low tech-ratio title, so it only fails via the repo-name lead, not tech-domination.
+        const bad = { ...GOOD, highlights: [{ title: 'tucaken-infra: self-healing runbooks and incident response', description: 'x', sourceSignals: repoSig }] };
+        expect(gradeTechNotSpine({ caseStudy: bad }).pass).toBe(false);
+    });
+
+    it('gradeTechNotSpine fails on a stack roll-call title even below the tech-domination ratio', () => {
+        // 5 tech terms but plenty of filler too — under 50% ratio, caught by the roll-call rule.
+        const bad = { ...GOOD, highlights: [{ ...GOOD.highlights[0], title: 'Shipped observability across the platform with Prometheus, Grafana, Loki and Tempo dashboards' }] };
+        expect(gradeTechNotSpine({ caseStudy: bad }).pass).toBe(false);
+    });
+
+    it('gradeTechNotSpine fails when a LATER pitch paragraph opens tech-dominated', () => {
+        const bad = { ...GOOD, pitch: 'I built a coaching tool that helps engineers rehearse interviews.\n\nKubernetes EKS Terraform Helm ArgoCD Prometheus run the platform.' };
+        expect(gradeTechNotSpine({ caseStudy: bad }).pass).toBe(false);
+    });
+
     it('gradeConfidentVoice fails on hedged phrasing', () => {
         const bad = { ...GOOD, pitch: 'We built a tool that appears to help engineers.' };
         expect(gradeConfidentVoice({ caseStudy: bad }).pass).toBe(false);

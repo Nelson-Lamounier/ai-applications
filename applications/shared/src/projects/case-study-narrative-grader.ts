@@ -17,7 +17,7 @@
 import { runAgent, parseJsonResponse } from '../agent-runner.js';
 import type { BasePipelineContext } from '../base-agent.js';
 import type { AgentConfig } from '../types.js';
-import { TECH_TOKENS, words, firstParagraph } from './case-study-product-grader.js';
+import { TECH_TOKENS, words } from './case-study-product-grader.js';
 import type { CaseStudy, SourceSignal } from './case-study-types.js';
 
 export interface NarrativeGradeInput {
@@ -60,11 +60,48 @@ function techDominated(text: string): boolean {
     const tech = ws.filter((w) => TECH_TOKENS.has(w)).length;
     return tech / ws.length > 0.5;
 }
+
+const ROLL_CALL_MIN = 3; // a 5-second highlight title naming ≥3 technologies reads as a stack list
+
+const firstSentence = (s: string): string => (s.split(/[.!?\n]/)[0] ?? s).trim();
+const countTechTokens = (text: string): number => words(text).filter((w) => TECH_TOKENS.has(w)).length;
+/** First alphanumeric/hyphen token of a title, lowercased (e.g. "tucaken-infra"). */
+const leadToken = (title: string): string => /[a-z0-9-]+/.exec(title.toLowerCase())?.[0] ?? '';
+
+/** Short names (owner/NAME → name) of every repo the case study cites in its evidence. */
+function citedRepoShortNames(cs: CaseStudy): Set<string> {
+    const names = new Set<string>();
+    const rows: ReadonlyArray<{ sourceSignals: SourceSignal }> = [
+        ...cs.highlights, ...cs.challenges, ...cs.decisions, ...cs.stack,
+    ];
+    for (const r of rows) {
+        const s = r.sourceSignals;
+        for (const full of [...s.commits.map((c) => c.repoFullName), ...s.pulls.map((p) => p.repoFullName), ...s.files.map((f) => f.repoFullName)]) {
+            const short = full.split('/').pop()?.toLowerCase();
+            if (short) names.add(short);
+        }
+    }
+    return names;
+}
+
+/** Why a highlight title reads as tech-led (tech-dominated / repo-led / stack roll-call), or null. */
+function titleSpineFailure(title: string, index: number, repos: ReadonlySet<string>): string | null {
+    if (techDominated(title)) return `highlight[${index}] title is tech-dominated — lead with the work, not the tech`;
+    if (repos.has(leadToken(title))) return `highlight[${index}] title leads with the repo name "${leadToken(title)}" — lead with the work; name the repo as supporting detail`;
+    const n = countTechTokens(title);
+    if (n >= ROLL_CALL_MIN) return `highlight[${index}] title is a stack roll-call (${n} technologies) — lead with the work/outcome, not a tech list`;
+    return null;
+}
+
 export function gradeTechNotSpine(input: NarrativeGradeInput): NarrativeGradeResult {
     const cs = input.caseStudy;
     const failures: string[] = [];
-    if (techDominated(firstParagraph(cs.pitch))) failures.push('pitch first paragraph is tech-dominated — organise it around the work, not the stack');
-    cs.highlights.forEach((h, i) => { if (techDominated(h.title)) failures.push(`highlight[${i}] title is tech-dominated — lead with the work, not the tech`); });
+    // Whole pitch: NO paragraph may open tech-dominated (extends the para-1-only check).
+    cs.pitch.split(/\n\s*\n/).forEach((para, i) => {
+        if (techDominated(firstSentence(para))) failures.push(`pitch paragraph ${i + 1} opens tech-dominated — lead it with the work, not the stack`);
+    });
+    const repos = citedRepoShortNames(cs);
+    cs.highlights.forEach((h, i) => { const f = titleSpineFailure(h.title, i, repos); if (f) failures.push(f); });
     return mk('techNotSpine', failures);
 }
 
@@ -136,10 +173,13 @@ const JUDGE_TOOL = {
     },
 };
 const JUDGE_PROMPT =
-    'You grade portfolio case-study pitches. Score 0..1 how well the pitch reads as ONE coherent ' +
-    'product story across all repositories, versus a list of per-repo fragments. 1 = one combined ' +
-    'overview leading with what the product is and does; 0 = disjoint per-repo description. Emit ' +
-    'the emit_overview_score tool.';
+    'You grade portfolio case-study pitches. Score 0..1 on TWO things together: (1) the pitch reads ' +
+    'as ONE coherent product story across all repositories, not a list of per-repo fragments; and ' +
+    '(2) technology is supporting detail, not the spine — no paragraph is organised around one ' +
+    "repo's infrastructure or a roll-call of technologies. 1 = one combined overview that leads with " +
+    'what the product is and does, with tech mentioned only in service of the work; 0 = disjoint ' +
+    'per-repo, tech-led description. Penalise a paragraph that opens with infrastructure or a stack ' +
+    'list. Emit the emit_overview_score tool.';
 
 export const bedrockCombinedOverviewJudge: CombinedOverviewJudge = {
     async invoke({ pitch }) {

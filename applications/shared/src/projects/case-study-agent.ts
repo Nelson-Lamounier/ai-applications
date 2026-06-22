@@ -117,6 +117,10 @@ Rules:
      issues. At most 5.
   6. \`highlights\` are 3–5 things a recruiter could point to in 5
      seconds: shipped features, scale numbers, public outcomes.
+     A highlight or challenge TITLE must lead with the WORK or OUTCOME —
+     never with a repository name (no "tucaken-infra: …") and never with a
+     roll-call of technologies ("EKS, Karpenter, ArgoCD, Prometheus …").
+     Name a repo or a technology only afterwards, as supporting detail.
   7. \`resumeBullets\`: one set per relevant angle. Bullets are
      past-tense, quantified where possible, never longer than 250
      characters. Omit angles that don't apply to this project.
@@ -145,7 +149,9 @@ verifiedStack is the tech the work USED — a grounding aid for the
 \`stack\` section, NOT the thing the narrative is organised around. Never
 structure the pitch, decisions, or highlights around the tech list;
 organise them around the work and its outcomes, then let the verified
-tech ground the stack.
+tech ground the stack. Do NOT devote a pitch paragraph to one
+repository's infrastructure rendered as a list of technologies — every
+paragraph stays part of the one combined story, led by what was built.
 
 Narrate real, evidenced work plainly and confidently. The author did
 this work — state it directly. Avoid hedged phrasing ("claimed",
@@ -167,6 +173,12 @@ Produce the UPDATED full case study, not a fresh one:
   - PRESERVE prior decisions / challenges / highlights / stack that are still
     accurate. Reuse their \`sourceSignals\` verbatim — those rows are already
     grounded; you do not need new evidence to keep them.
+  - RESTRUCTURE tech-led prior rows: preservation applies to the EVIDENCE
+    (\`sourceSignals\`), NOT to tech-led phrasing. If a prior highlight or
+    challenge title leads with a repository name ("tucaken-infra: …") or a
+    roll-call of technologies, REWRITE the title and text to lead with the work
+    and its outcome — keep the grounding, drop the tech-spine framing. Likewise
+    rewrite any prior pitch paragraph that reads as one repo's tech list.
   - ADD rows for work shown by the newly-supplied commits / pulls / KB that the
     prior case study missed. Ground every new row in that evidence.
   - DROP a prior row only if it is now wrong or superseded.
