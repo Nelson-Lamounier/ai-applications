@@ -56,7 +56,7 @@ describe('runFreeTier', () => {
                 calls.push('resume');
                 return { resumeId: 'r1' };
             }) as never,
-            persistMeta: jest.fn(async () => {
+            persistMeta: jest.fn(async (_pool: unknown, _id: unknown, _meta: unknown) => {
                 calls.push('meta');
             }) as never,
             setStatus: jest.fn(async () => {
@@ -80,6 +80,22 @@ describe('runFreeTier', () => {
         await runFreeTier({} as never, env, deps as never);
 
         expect(calls).toEqual(['resume', 'meta', 'status', 'complete']);
+
+        // Verify ATS coverage is persisted as AtsCheckResult under analysis.atsCheck
+        // (not the raw AtsCoverage under analysis.atsCoverage) so admin-api and
+        // the UI AtsPanel can read it.
+        const metaArg = (deps.persistMeta as ReturnType<typeof jest.fn>).mock.calls[0][2] as Record<string, unknown>;
+        const analysis = metaArg['analysis'] as Record<string, unknown>;
+        expect(analysis['atsCheck']).toBeDefined();
+        expect(analysis['atsCoverage']).toBeUndefined();
+        const atsCheck = analysis['atsCheck'] as { jdKeywordCoverage: { term: string; present: boolean }[] };
+        // JD has requiredSkills=['AWS'], tools=['Kubernetes'], retrievalKeywords=['aws']
+        // The resume text contains 'aws' — expect AWS/aws covered, Kubernetes missing
+        const coverage = atsCheck.jdKeywordCoverage;
+        const coveredTerms = coverage.filter((e) => e.present).map((e) => e.term);
+        const missingTerms = coverage.filter((e) => !e.present).map((e) => e.term);
+        expect(coveredTerms.length).toBeGreaterThan(0);
+        expect(missingTerms).toContain('Kubernetes');
     });
 
     it('still persists meta/status/complete even when persistResume returns null (schema failure)', async () => {

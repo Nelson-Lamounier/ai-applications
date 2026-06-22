@@ -22,6 +22,7 @@ import type { StrategistEnv } from '../env.js';
 import type { FreeEvidence } from './gather-evidence.js';
 import type { FreeWriter, FreeResumeOutput } from '../agents/free-resume-writer.js';
 import type { AtsCoverage } from '../ats/grounded-coverage.js';
+import type { AtsCheckResult } from '../ats/ats-check.schema.js';
 import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
 import { guardCoverLetter } from '../agents/cover-letter-guard.js';
 
@@ -66,6 +67,31 @@ export interface RunFreeDeps {
 }
 
 // =============================================================================
+// ATS ADAPTER
+// =============================================================================
+
+/**
+ * Convert the lean deterministic AtsCoverage into the canonical AtsCheckResult
+ * shape that admin-api reads from `resumes.ats_check_json ?? metadata.analysis.atsCheck`
+ * and the UI AtsPanel expects (`jdKeywordCoverage: { term, present, grounded, tier }[]`).
+ */
+function toAtsCheck(coverage: AtsCoverage): AtsCheckResult {
+    return {
+        machineReadable:          false,
+        standardSectionsDetected: [],
+        contactDetected:          { name: '', email: '' },
+        parseBreakers:            [],
+        jdKeywordCoverage: [
+            ...coverage.covered.map((term) => ({ term, present: true,  grounded: true,  tier: 'literal' as const })),
+            ...coverage.missing.map((term) => ({ term, present: false, grounded: false, tier: 'none'    as const })),
+        ],
+        status: 'unverified',
+        passed: false,
+        issues: [],
+    };
+}
+
+// =============================================================================
 // METADATA HELPER
 // =============================================================================
 
@@ -79,7 +105,7 @@ function buildFreeMetadata(
         analysis: {
             tailoredResumeData: resume,
             coverLetter,
-            atsCoverage:        ats,
+            atsCheck:           toAtsCheck(ats),
             mode:               'free',
         },
         jdExtraction: jdSignal,
