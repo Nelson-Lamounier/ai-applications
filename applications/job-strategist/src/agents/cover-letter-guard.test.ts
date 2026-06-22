@@ -48,6 +48,21 @@ describe('validateCoverLetter', () => {
         const v = validateCoverLetter(letter, 'Solutions Support Engineer', '');
         expect(v.some((x) => x.code === 'forward_looking_skill_claim')).toBe(false);
     });
+    it('flags base-form acquire verb: "actively learn Azure"', () => {
+        const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['I will actively learn Azure.'], signoff: SIGNOFF } as never;
+        const v = validateCoverLetter(letter, 'Solutions Support Engineer', '');
+        expect(v.some((x) => x.code === 'forward_looking_skill_claim')).toBe(true);
+    });
+    it('does NOT flag acquire verb that precedes intent word (order matters)', () => {
+        const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['I onboarding actively into other things.'], signoff: SIGNOFF } as never;
+        const v = validateCoverLetter(letter, 'Solutions Support Engineer', '');
+        expect(v.some((x) => x.code === 'forward_looking_skill_claim')).toBe(false);
+    });
+    it('does NOT flag across sentence boundary (period between intent and acquire)', () => {
+        const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['I am beginning the role. Now, actively, I help customers.'], signoff: SIGNOFF } as never;
+        const v = validateCoverLetter(letter, 'Solutions Support Engineer', '');
+        expect(v.some((x) => x.code === 'forward_looking_skill_claim')).toBe(false);
+    });
 });
 
 const mockRun = runAgent as jest.Mock;

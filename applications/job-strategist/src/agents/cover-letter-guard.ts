@@ -23,15 +23,28 @@ const UNREALISED = /pending (?:security )?review|not yet (?:shipped|deployed|in 
 // onboarding"). Two-part check: an intent adverb must appear within 40 chars
 // of an acquisition verb, so legitimate "new engineer onboarding" (people,
 // not a skill) does NOT fire (no intent adverb present).
-const FORWARD_LOOKING_INTENT = /\b(actively|currently|presently|now)\b/i;
-const FORWARD_LOOKING_ACQUIRE = /\b(beginning|starting|pursuing|onboarding|learning|studying|ramping up|upskilling|self-teaching)\b/i;
+const FORWARD_LOOKING_INTENT = /\b(actively|currently|presently|now)\b/gi;
+const FORWARD_LOOKING_ACQUIRE = /\b(beginning|starting|begin|start|pursuing|pursue|onboarding|onboard|learning|learn|studying|study|self-teaching|ramping up|upskilling)\b/i;
 
-/** Returns true when an intent adverb and an acquisition verb appear within 40 chars of each other. */
+/** Returns true when the 40-char window after an intent word contains an acquisition verb with no intervening period. */
+function windowContainsAcquire(text: string, afterIndex: number): boolean {
+    const window = text.slice(afterIndex, afterIndex + 40);
+    const acquireMatch = FORWARD_LOOKING_ACQUIRE.exec(window);
+    if (!acquireMatch) return false;
+    // Reject if a sentence boundary (period) appears before the acquire verb in the window.
+    const beforeAcquire = window.slice(0, acquireMatch.index);
+    return !beforeAcquire.includes('.');
+}
+
+/** Returns true when an intent adverb is immediately followed (within 40 chars, same sentence) by an acquisition verb. */
 function hasForwardLookingSkillClaim(text: string): boolean {
-    const intentMatch = FORWARD_LOOKING_INTENT.exec(text);
-    const acquireMatch = FORWARD_LOOKING_ACQUIRE.exec(text);
-    if (!intentMatch || !acquireMatch) return false;
-    return Math.abs(intentMatch.index - acquireMatch.index) <= 40;
+    FORWARD_LOOKING_INTENT.lastIndex = 0;
+    let intentMatch: RegExpExecArray | null;
+    while ((intentMatch = FORWARD_LOOKING_INTENT.exec(text)) !== null) {
+        const afterIntent = intentMatch.index + intentMatch[0].length;
+        if (windowContainsAcquire(text, afterIntent)) return true;
+    }
+    return false;
 }
 /** Any markdown the agent should NOT emit (formatting belongs to the UI/PDF). */
 const MARKDOWN = /\*\*|__|##|^\s*[-*+]\s+/m;
