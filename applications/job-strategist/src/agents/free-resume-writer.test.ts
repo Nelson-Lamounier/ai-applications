@@ -326,4 +326,10 @@ describe('gradeFreeResume', () => {
         const bad = { ...good, resume: { ...good.resume, experience: [{ company: 'Freelance', title: 'Eng', period: 'p', highlights: six }] } } as never;
         expect(gradeFreeResume(bad, evidence).failures.some((f) => /more than 5|exceeds 5|bullet/i.test(f))).toBe(true);
     });
+
+    it('gradeFreeResume flags a fabricated metric in the cover letter', () => {
+        // 73 is NOT in the evidence corpus (only 16, 2022, 2025 appear as number tokens)
+        const bad = { ...good, coverLetter: { ...good.coverLetter, paragraphs: ['I cut latency by 73% across the platform.'] } } as never;
+        expect(gradeFreeResume(bad, evidence).failures.some((f) => /cover letter/i.test(f) && /73/.test(f))).toBe(true);
+    });
 });

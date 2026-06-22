@@ -318,12 +318,52 @@ function collectGradedText(out: FreeResumeOutput): string[] {
 }
 
 /**
+ * Grade metric grounding for a list of text strings.
+ *
+ * Resume sections use a plain label; cover-letter paragraphs prefix the
+ * failure message with "cover letter" so callers can distinguish the source.
+ */
+function gradeMetricGrounding(
+    texts: ReadonlyArray<string>,
+    corpusTokens: Set<string>,
+    label: (token: string, text: string) => string,
+): string[] {
+    return texts.flatMap((text) =>
+        extractNumberTokens(text)
+            .filter((token) => !isMetricGrounded(token, corpusTokens))
+            .map((token) => label(token, text)),
+    );
+}
+
+/** Return failures for employers not found in career facts. */
+function gradeEmployers(out: FreeResumeOutput, careerFacts: string): string[] {
+    return collectEmployers(out)
+        .filter((company) => !isKnownEmployer(company, careerFacts))
+        .map((company) => `Fabricated employer: "${company}" not found in career facts.`);
+}
+
+/** Return failures for bullets missing an action-verb opener. */
+function gradeActionVerbs(out: FreeResumeOutput): string[] {
+    return collectAllHighlights(out)
+        .filter((bullet) => !startsWithActionVerb(bullet))
+        .map((bullet) => `Missing action verb on bullet: "${bullet}".`);
+}
+
+/** Return failures for experience roles that exceed the 5-bullet cap. */
+function gradeBulletCap(out: FreeResumeOutput): string[] {
+    return out.resume.experience
+        .filter((e) => e.highlights.length > 5)
+        .map((e) => `experience role "${e.company}" has more than 5 highlights (${e.highlights.length}) — cap to the 5 most JD-relevant`);
+}
+
+/**
  * Deterministic anti-fabrication grader.
  *
  * Checks:
  *   1. Each experience company must appear in evidence.careerFacts.
  *   2. Every numeric token in highlights/summary must appear in the evidence corpus.
- *   3. Every highlight must open with an alphabetic action verb.
+ *   3. Cover-letter paragraphs must not contain fabricated numeric tokens.
+ *   4. Every highlight must open with an alphabetic action verb.
  *
  * Returns { pass: true, failures: [] } when all checks pass.
  *
@@ -334,45 +374,33 @@ export function gradeFreeResume(
     out: FreeResumeOutput,
     evidence: FreeEvidence,
 ): GradeResult {
-    const corpus         = buildEvidenceCorpus(evidence);
-    const corpusTokens   = buildCorpusNumberTokenSet(corpus);
-    const failures: string[] = [];
+    const corpus       = buildEvidenceCorpus(evidence);
+    const corpusTokens = buildCorpusNumberTokenSet(corpus);
 
-    // 1. Employer grounding
-    for (const company of collectEmployers(out)) {
-        if (!isKnownEmployer(company, evidence.careerFacts)) {
-            failures.push(`Fabricated employer: "${company}" not found in career facts.`);
-        }
-    }
-
-    // 2. Metric grounding — summary, bullets, achievements, projects
-    //    Uses token-exact Set membership so "4" is only grounded when "4"
-    //    appears as a standalone token, not as a substring of "42".
-    const allText = collectGradedText(out);
-    for (const text of allText) {
-        for (const token of extractNumberTokens(text)) {
-            if (!isMetricGrounded(token, corpusTokens)) {
-                failures.push(`Fabricated metric "${token}" in: "${text}".`);
-            }
-        }
-    }
-
-    // 3. Action-verb format
-    for (const bullet of collectAllHighlights(out)) {
-        if (!startsWithActionVerb(bullet)) {
-            failures.push(`Missing action verb on bullet: "${bullet}".`);
-        }
-    }
-
-    // 4. Per-role bullet cap check
-    for (const e of out.resume.experience) {
-        if (e.highlights.length > 5) {
-            failures.push(`experience role "${e.company}" has more than 5 highlights (${e.highlights.length}) — cap to the 5 most JD-relevant`);
-        }
-    }
-
-    // 5. Positioning lead — only when positioning evidence exists
-    failures.push(...gradePositioning(out, evidence));
+    const failures: string[] = [
+        // 1. Employer grounding
+        ...gradeEmployers(out, evidence.careerFacts),
+        // 2. Metric grounding — summary, bullets, achievements, projects
+        //    Token-exact set so "4" is only grounded when it is a standalone
+        //    token, not a digit-substring of "42".
+        ...gradeMetricGrounding(
+            collectGradedText(out),
+            corpusTokens,
+            (token, text) => `Fabricated metric "${token}" in: "${text}".`,
+        ),
+        // 3. Cover-letter metric grounding (the letter is otherwise ungraded)
+        ...gradeMetricGrounding(
+            out.coverLetter.paragraphs,
+            corpusTokens,
+            (token, para) => `Fabricated metric "${token}" in cover letter: "${para}".`,
+        ),
+        // 4. Action-verb format
+        ...gradeActionVerbs(out),
+        // 5. Per-role bullet cap check
+        ...gradeBulletCap(out),
+        // 6. Positioning lead — only when positioning evidence exists
+        ...gradePositioning(out, evidence),
+    ];
 
     return { pass: failures.length === 0, failures };
 }
