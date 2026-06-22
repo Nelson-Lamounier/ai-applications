@@ -18,6 +18,7 @@ import * as path from 'path';
 import { NagSuppressions } from 'cdk-nag';
 
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNode from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -66,6 +67,16 @@ export interface BedrockApiStackProps extends cdk.StackProps {
     readonly rdsCredentialsSecretName: string;
     /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
     readonly chatbotRetrievalSource: string;
+    /** Platform VPC id — when set, RAG lambdas join this VPC to reach the private RDS. */
+    readonly vpcId?: string;
+    /** Subnet ids for the RAG lambdas + Bedrock interface endpoint. */
+    readonly lambdaSubnetIds?: string[];
+    /** AZs of `lambdaSubnetIds`, same order — required by Vpc.fromVpcAttributes. */
+    readonly lambdaSubnetAzs?: string[];
+    /** CIDR of the platform VPC — required by Vpc.fromVpcAttributes for endpoints. */
+    readonly vpcCidrBlock?: string;
+    /** Security group id of the platform RDS (5432 ingress added from the lambda SG). */
+    readonly dbSecurityGroupId?: string;
 }
 
 /**
@@ -184,10 +195,11 @@ export class BedrockApiStack extends cdk.Stack {
         // =================================================================
         // RDS connection params — read from SSM, injected into RAG Lambdas
         //
-        // Lambdas run OUTSIDE the VPC (no NAT Gateway in V1 dev), so
-        // chatbotRetrievalSource must stay 'bedrock-agent' for chatbot-public
-        // until a Bedrock VPC endpoint and private subnets are added.
-        // chatbot-authenticated always needs VPC; wire in follow-up PR.
+        // The platform RDS is PRIVATE, so the RAG lambdas must join the platform
+        // VPC to connect. That VPC has no NAT (natGateways: 0), so Bedrock
+        // (Titan embed + Claude Converse) is reached via an interface endpoint
+        // created below. VPC wiring is gated on props.vpcId being set
+        // (dev wired; staging/prod keep the no-VPC path until their ids are added).
         // =================================================================
         const rdsHost     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/host`);
         const rdsPort     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/port`);
@@ -207,6 +219,77 @@ export class BedrockApiStack extends cdk.Stack {
         const chatbotExternalModules = OBSERVABILITY_EXTERNAL_MODULES.filter(m => m !== 'pg');
 
         // =================================================================
+        // VPC wiring for the RAG lambdas (chatbot-public + chatbot-authenticated)
+        //
+        // Only built when props.vpcId is set. Produces `vpcLambdaProps` which is
+        // spread into both NodejsFunction definitions. When unset, `vpcLambdaProps`
+        // is empty and the lambdas stay outside any VPC (prior behaviour).
+        // =================================================================
+        let vpcLambdaProps: {
+            vpc?: ec2.IVpc;
+            vpcSubnets?: ec2.SubnetSelection;
+            securityGroups?: ec2.ISecurityGroup[];
+            allowPublicSubnet?: boolean;
+        } = {};
+
+        if (props.vpcId && props.lambdaSubnetIds?.length && props.lambdaSubnetAzs?.length && props.dbSecurityGroupId) {
+            const vpc = ec2.Vpc.fromVpcAttributes(this, 'PlatformVpc', {
+                vpcId:             props.vpcId,
+                availabilityZones: props.lambdaSubnetAzs,
+                vpcCidrBlock:      props.vpcCidrBlock,
+                // RDS sits in these subnets; a lambda ENI here reaches it on 10.0.x.x.
+                publicSubnetIds:   props.lambdaSubnetIds,
+            });
+
+            const lambdaSubnets: ec2.SubnetSelection = {
+                subnets: props.lambdaSubnetIds.map((id, i) =>
+                    ec2.Subnet.fromSubnetAttributes(this, `ChatbotSubnet${i}`, {
+                        subnetId:         id,
+                        availabilityZone: props.lambdaSubnetAzs![i],
+                    }),
+                ),
+            };
+
+            // SG for the RAG lambdas. allowAllOutbound so they reach both the RDS
+            // (5432) and the Bedrock interface endpoint (443) without extra rules.
+            const lambdaSg = new ec2.SecurityGroup(this, 'ChatbotLambdaSg', {
+                vpc,
+                description: `${namePrefix} RAG chatbot lambdas`,
+                allowAllOutbound: true,
+            });
+
+            // Allow the lambdas to reach the platform RDS.
+            const dbSg = ec2.SecurityGroup.fromSecurityGroupId(
+                this, 'PlatformRdsSg', props.dbSecurityGroupId, { mutable: true },
+            );
+            dbSg.addIngressRule(lambdaSg, ec2.Port.tcp(5432), `${namePrefix} chatbot lambdas → platform RDS`);
+
+            // No NAT in this VPC → Bedrock runtime is only reachable via an
+            // interface endpoint. Titan embeddings AND Claude Converse both use it.
+            const endpointSg = new ec2.SecurityGroup(this, 'BedrockEndpointSg', {
+                vpc,
+                description: `${namePrefix} bedrock-runtime interface endpoint`,
+                allowAllOutbound: true,
+            });
+            endpointSg.addIngressRule(lambdaSg, ec2.Port.tcp(443), 'RAG lambdas → bedrock-runtime endpoint');
+
+            new ec2.InterfaceVpcEndpoint(this, 'BedrockRuntimeEndpoint', {
+                vpc,
+                service:        ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
+                subnets:        lambdaSubnets,
+                securityGroups: [endpointSg],
+                privateDnsEnabled: true,
+                // We supply endpointSg; don't let CDK add a VPC-CIDR ingress rule
+                // (that path needs a CIDR and is broader than we want).
+                open: false,
+            });
+
+            // Public subnets, but the lambdas reach RDS in-VPC and Bedrock via the
+            // interface endpoint — no internet needed. allowPublicSubnet acks the guard.
+            vpcLambdaProps = { vpc, vpcSubnets: lambdaSubnets, securityGroups: [lambdaSg], allowPublicSubnet: true };
+        }
+
+        // =================================================================
         // chatbot-public Lambda — stateless RAG + Bedrock Agent fallback
         // =================================================================
         this.chatbotPublicFunction = new lambdaNode.NodejsFunction(this, 'ChatbotPublicFunction', {
@@ -217,6 +300,7 @@ export class BedrockApiStack extends cdk.Stack {
             handler: 'handler',
             memorySize: props.lambdaMemoryMb,
             timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
+            ...vpcLambdaProps,
             environment: {
                 AGENT_ID: agentId,
                 AGENT_ALIAS_ID: agentAliasId,
@@ -272,6 +356,7 @@ export class BedrockApiStack extends cdk.Stack {
             handler: 'handler',
             memorySize: props.lambdaMemoryMb,
             timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
+            ...vpcLambdaProps,
             environment: {
                 CHATBOT_MODEL: props.chatbotModel,
                 PORTFOLIO_OWNER_USER_ID: props.portfolioOwnerUserId,

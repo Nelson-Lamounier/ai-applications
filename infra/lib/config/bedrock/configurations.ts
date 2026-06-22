@@ -52,6 +52,18 @@ export interface ApiConfig {
     readonly chatbotRetrievalSource: string;
     /** Portfolio owner user ID — scopes sessions + RLS in chat_sessions/chat_messages */
     readonly portfolioOwnerUserId: string;
+    /** Platform VPC id — when set, RAG lambdas are attached to reach the private RDS.
+     *  Omit (staging/prod until wired) to keep lambdas outside any VPC. */
+    readonly vpcId?: string;
+    /** Subnet ids the RAG lambdas (and the Bedrock interface endpoint) run in. */
+    readonly lambdaSubnetIds?: string[];
+    /** AZs of `lambdaSubnetIds`, same order — required by Vpc.fromVpcAttributes. */
+    readonly lambdaSubnetAzs?: string[];
+    /** CIDR of the platform VPC — required by Vpc.fromVpcAttributes for endpoints. */
+    readonly vpcCidrBlock?: string;
+    /** Security group id of the platform RDS — a 5432 ingress rule from the
+     *  lambda SG is added so the lambdas can connect. */
+    readonly dbSecurityGroupId?: string;
 }
 
 /**
@@ -127,7 +139,19 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
             // Pinecone-backed Bedrock Agent KB decommissioned — dev now reads the
             // same RDS pgvector store as staging/production (returns chunk text, not refs).
             chatbotRetrievalSource: 'rds-pgvector',
-            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
+            // Owner whose KB (document_embeddings, RLS-scoped) the chatbot retrieves.
+            // Dev default is the seeded portfolio-owner test-user
+            // (lamounier_88@hotmail.com → 1d4c645a-…); the all-zeros placeholder has
+            // zero embeddings, so retrieval returned nothing before this was set.
+            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '1d4c645a-447e-4b5b-924d-19a3c75a84db',
+            // Platform VPC (k8s-owned) wiring so the RAG lambdas can reach the
+            // PRIVATE platform-rds. Reach Bedrock via an interface endpoint
+            // (this VPC has natGateways: 0).
+            vpcId: 'vpc-06c460143d78778fe',
+            lambdaSubnetIds: ['subnet-078e411c08f54d539', 'subnet-027ebf40f0edca13f'],
+            lambdaSubnetAzs: ['eu-west-1a', 'eu-west-1b'],
+            vpcCidrBlock: '10.0.0.0/16',
+            dbSecurityGroupId: 'sg-0a3858a82377815de',
         },
         logRetention: logs.RetentionDays.ONE_WEEK,
         isProduction: false,

@@ -181,6 +181,11 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 rdsSsmPrefix: configs.api.rdsSsmPrefix,
                 rdsCredentialsSecretName: configs.api.rdsCredentialsSecretName,
                 chatbotRetrievalSource: configs.api.chatbotRetrievalSource,
+                vpcId: configs.api.vpcId,
+                lambdaSubnetIds: configs.api.lambdaSubnetIds,
+                lambdaSubnetAzs: configs.api.lambdaSubnetAzs,
+                vpcCidrBlock: configs.api.vpcCidrBlock,
+                dbSecurityGroupId: configs.api.dbSecurityGroupId,
                 env,
             }
         );
