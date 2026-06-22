@@ -44,7 +44,7 @@ Root cause (verified in code):
 - Give the free writer the **full JD view** it is graded on, not just
   `requiredSkills`: pass `tools`, `concepts`, and `hardRequirements` (the
   must-haves), and the **same keyword universe the ATS check scores**
-  (`requiredSkills + tools + concepts`).
+  (`requiredSkills + tools + retrievalKeywords`).
 - Make the persona **actively optimise** experience skills/technology/ATS
   wording to the JD — surface evidence-backed JD must-haves and named
   technologies using the JD's exact phrasing (ATS exact-match), never fabricating
@@ -100,7 +100,7 @@ Prompt-only, both personas:
   generic trim order."
 
 ### 4. Pillar B — widen the free writer's JD view + active ATS optimisation
-The free writer is graded on ATS keywords (`requiredSkills + tools + concepts`)
+The free writer is graded on ATS keywords (`requiredSkills + tools + retrievalKeywords`)
 it is never shown — it only receives `requiredSkills` + `companyProblem`. Close
 this in the single generation pass (no new LLM call, no repair loop):
 
@@ -111,7 +111,7 @@ this in the single generation pass (no new LLM call, no repair loop):
   - `<required_skills>` (existing), plus `<jd_tools>` = `jdSignal.tools` and
     `<jd_concepts>` = `jdSignal.concepts`.
   - `<ats_keywords>` = the **same union the ATS check scores**
-    (`requiredSkills ∪ tools ∪ concepts`), so the writer optimises for exactly
+    (`requiredSkills ∪ tools ∪ retrievalKeywords`), so the writer optimises for exactly
     what is measured. Build this union once and share it with the ATS step to
     avoid drift (single source of truth).
 - **Persona (`free-resume-persona.ts`) — active optimisation rule:** "Optimise
