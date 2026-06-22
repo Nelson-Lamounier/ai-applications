@@ -186,3 +186,23 @@ describe('loadCaseStudyContext', () => {
         expect(out.context.stage ?? null).toBeNull();
     });
 });
+
+describe('loadCaseStudyContext — authorship', () => {
+    it('maps author_login onto commits and pulls (null-safe)', async () => {
+        const pool = makePool({
+            projects:     [projectRow],
+            repositories: [{ ...repoRow, full_name: 'me/app' }],
+            commits: [
+                { repo_full_name: 'me/app', sha: 'abc1234', author_name: 'Nelson', author_login: 'nelson', authored_at: '2026-01-01T00:00:00Z', message: 'init' },
+                { repo_full_name: 'me/app', sha: 'def5678', author_name: 'Bot',    author_login: null,     authored_at: '2026-01-02T00:00:00Z', message: 'ci' },
+            ],
+            pulls: [
+                { repo_full_name: 'me/app', number: 1, title: 'PR', body: null, state: 'merged', author_login: 'nelson', merged_at: '2026-01-03T00:00:00Z', html_url: 'https://x/1' },
+            ],
+        });
+        const ctx = await loadCaseStudyContext(pool as never, 'proj-uuid');
+        expect(ctx.context.commits[0].authorLogin).toBe('nelson');
+        expect(ctx.context.commits[1].authorLogin).toBeNull();
+        expect(ctx.context.pulls[0].authorLogin).toBe('nelson');
+    });
+});
