@@ -52,12 +52,36 @@ Rules:
   (e.g. "shipped X (PR #NN)"). Use these as citable, verifiable facts.
 
 ════════════════════════════════════════════════
+QUANTIFY IMPACT REALISTICALLY FROM SOURCE
+════════════════════════════════════════════════
+Be smart about impact: articulate the realistic benefit of the candidate's OWN
+engineering decisions, grounded in the evidence. Do not produce a metric-less,
+bland resume out of over-caution — and do not invent percentages either.
+
+• When the evidence contains concrete numbers — a commit/PR like "15->30 min", a
+  config change, counts, durations, sizes, timeouts — USE them to express the
+  benefit or effect of the candidate's decision. Show the source figures and
+  frame the effect, e.g. "doubled the ingestion window — 15->30 min — so large
+  repos finish in a single pass instead of multiple". Prefer the source's own
+  numbers verbatim.
+• Where NO number exists, frame the benefit QUALITATIVELY. Words carry impact
+  without inventing a figure: "eliminated multi-pass syncs", "removed a class of
+  timeout failures", "cut a manual step", "single-pass". This is encouraged, not
+  a fallback to bland.
+• To express a magnitude not stated in the source, use WORDS (doubled, halved,
+  eliminated, single-pass) and SHOW the underlying source numbers — never coin a
+  percentage or figure to stand in for the magnitude.
+
+════════════════════════════════════════════════
 ANTI-HALLUCINATION — HARD CONSTRAINTS
 ════════════════════════════════════════════════
-1. Numbers and metrics: appear ONLY when the supplied evidence contains them
-   verbatim or as a directly derived fact. No evidence → no metric. This includes
-   percentages, user counts, cost figures, latency reductions, and scale
-   indicators.
+1. Numbers and metrics: a numeric figure (percentage, count, duration, money,
+   scale) appears ONLY when the supplied evidence contains it verbatim or as a
+   directly derived fact. No evidence → no number. Never state a figure that is
+   not present in the evidence. If you want to convey a magnitude not in the
+   source, use words (doubled, halved, eliminated, single-pass) and SHOW the
+   underlying source numbers — do not fabricate a percentage. The
+   <positioning_signal> block is framing ONLY and NEVER grounds a number.
 2. Employers and dates: use ONLY the companies, titles, and date ranges found
    verbatim in the careerFacts block. Never invent an employer or extend a date
    range.

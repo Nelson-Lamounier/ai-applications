@@ -181,6 +181,60 @@ describe('free writer eval — grounded narrative', () => {
 		expect(result.failures).toEqual([]);
 	});
 
+	// -----------------------------------------------------------------------
+	// Realistic source-grounded impact: a benefit framed with a number drawn
+	// from <commit_pr_evidence> passes; "doubled"/"removing" carry magnitude
+	// with no digit, the source figures (15, 30) are grounded.
+	// -----------------------------------------------------------------------
+	const EV_METRIC: FreeEvidence = {
+		...EV,
+		commitPrEvidence:
+			'Shipped work:\n- raise pod deadline 15->30 min so big repos finish in one pass.',
+	};
+
+	const GOOD_SOURCE_METRIC: FreeResumeOutput = {
+		...GOOD,
+		resume: {
+			...GOOD.resume,
+			experience: [
+				{
+					company: 'Acme Corp',
+					title: 'Platform Engineer',
+					period: '2022–2025',
+					highlights: [
+						'Doubled the ingestion window (15->30 min), removing multi-pass syncs.',
+					],
+				},
+			],
+		},
+	};
+
+	it('a benefit framed with a source number (15->30) passes the grader', () => {
+		const result = gradeFreeResume(GOOD_SOURCE_METRIC, EV_METRIC);
+		expect(result.pass).toBe(true);
+		expect(result.failures).toEqual([]);
+	});
+
+	it('a bare invented percentage not in source still fails', () => {
+		const bad: FreeResumeOutput = {
+			...GOOD_SOURCE_METRIC,
+			resume: {
+				...GOOD_SOURCE_METRIC.resume,
+				experience: [
+					{
+						company: 'Acme Corp',
+						title: 'Platform Engineer',
+						period: '2022–2025',
+						highlights: ['Improved ingestion throughput by 40%.'],
+					},
+				],
+			},
+		};
+		const result = gradeFreeResume(bad, EV_METRIC);
+		expect(result.pass).toBe(false);
+		expect(result.failures.some((f) => f.includes('Fabricated metric'))).toBe(true);
+	});
+
 	it('a non-positioned summary fails the positioning check', () => {
 		const bad: FreeResumeOutput = {
 			...GOOD_POSITIONED,
