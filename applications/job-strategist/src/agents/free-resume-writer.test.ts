@@ -220,6 +220,23 @@ describe('gradeFreeResume', () => {
         expect(result.failures.some((f) => f.includes('1.3'))).toBe(true);
     });
 
+    it('flags a summary with no positioning lead when positioning evidence exists', () => {
+        const ev = { ...evidence, profileIntelligence: 'Positioning signal: Platform & Kubernetes Engineering: senior' };
+        const bad = { ...good, resume: { ...good.resume, summary: 'I did some things at a company.' } };
+        expect(gradeFreeResume(bad, ev).failures.some((f) => /positioning/i.test(f))).toBe(true);
+    });
+
+    it('passes when the summary opens with a positioning line', () => {
+        const ev = { ...evidence, profileIntelligence: 'Positioning signal: Platform & Kubernetes Engineering: senior' };
+        const goodPositioned = { ...good, resume: { ...good.resume, summary: 'Senior Platform & Kubernetes engineer who ships grounded tooling.' } };
+        expect(gradeFreeResume(goodPositioned, ev).pass).toBe(true);
+    });
+
+    it('does not run the positioning check when no positioning evidence is present', () => {
+        const bad = { ...good, resume: { ...good.resume, summary: 'I did some things at a company.' } };
+        expect(gradeFreeResume(bad, evidence).failures.some((f) => /positioning/i.test(f))).toBe(false);
+    });
+
     it('returns all failures when multiple violations exist', () => {
         const bad: FreeResumeOutput = {
             ...good,

@@ -232,6 +232,7 @@ function buildEvidenceCorpus(evidence: FreeEvidence): string {
         evidence.extractedTech,
         evidence.careerFacts,
         evidence.educationFacts,
+        evidence.commitPrEvidence,
     ].join(' ').toLowerCase();
 }
 
@@ -265,6 +266,20 @@ function startsWithActionVerb(bullet: string): boolean {
 /** Extract numeric tokens from a string (e.g. "93%", "4000", "1.3M"). */
 function extractNumberTokens(text: string): string[] {
     return (text.match(/\b\d[\d,.]*(?:[kmb]|[KMB])?\b|\b\d[\d,.]*%/gi) ?? []);
+}
+
+/** Role/seniority cue that must lead the summary when positioning evidence exists. */
+const SENIORITY_CUE = /\b(senior|staff|lead|principal|engineer|architect|specialist)\b/i;
+
+/**
+ * Return a positioning failure when positioning evidence exists but the
+ * summary's first sentence carries no role/seniority cue. Empty array otherwise.
+ */
+function gradePositioning(out: FreeResumeOutput, evidence: FreeEvidence): string[] {
+    if (evidence.profileIntelligence.trim().length === 0) return [];
+    const firstSentence = (out.resume.summary.split(/[.!?]/)[0] ?? '').trim();
+    if (SENIORITY_CUE.test(firstSentence)) return [];
+    return ['summary does not open with a positioning line (role/seniority) despite positioning evidence'];
 }
 
 // =============================================================================
@@ -329,6 +344,9 @@ export function gradeFreeResume(
         }
     }
 
+    // 4. Positioning lead — only when positioning evidence exists
+    failures.push(...gradePositioning(out, evidence));
+
     return { pass: failures.length === 0, failures };
 }
 
@@ -349,8 +367,10 @@ function buildUserMessage(input: FreeWriterInput): string {
         `<extracted_tech>${evidence.extractedTech}</extracted_tech>`,
         `<career_facts>${evidence.careerFacts}</career_facts>`,
         `<education_facts>${evidence.educationFacts}</education_facts>`,
+        evidence.commitPrEvidence ? `<commit_pr_evidence>\n${evidence.commitPrEvidence}\n</commit_pr_evidence>` : '',
+        evidence.profileIntelligence ? `<positioning_signal>\n${evidence.profileIntelligence}\n</positioning_signal>` : '',
         '</evidence>',
-    ].join('\n');
+    ].filter((line) => line !== '').join('\n');
 }
 
 // =============================================================================

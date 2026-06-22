@@ -147,6 +147,70 @@ describe('free writer eval — grounded narrative', () => {
 		expect(result.failures[0]).toContain('Missing action verb');
 	});
 
+	// -----------------------------------------------------------------------
+	// Positioning + shipped-work fixture (commit/PR + positioning evidence)
+	// -----------------------------------------------------------------------
+	const EV_POSITIONED: FreeEvidence = {
+		...EV,
+		commitPrEvidence: 'Shipped work:\n- Hardened the GitHub adapter with size caps (PR #42).',
+		profileIntelligence: 'Positioning signal: Platform & Kubernetes Engineering: senior',
+	};
+
+	const GOOD_POSITIONED: FreeResumeOutput = {
+		...GOOD,
+		resume: {
+			...GOOD.resume,
+			summary: 'Senior Platform engineer who ships grounded Kubernetes tooling on AWS.',
+			experience: [
+				{
+					company: 'Acme Corp',
+					title: 'Platform Engineer',
+					period: '2022–2025',
+					highlights: [
+						'Provisioned EKS with Karpenter on AWS, improving autoscaling.',
+						'Hardened the GitHub adapter with size caps (PR #42).',
+					],
+				},
+			],
+		},
+	};
+
+	it('positioned, shipped-work fixture passes all graders', () => {
+		const result = gradeFreeResume(GOOD_POSITIONED, EV_POSITIONED);
+		expect(result.pass).toBe(true);
+		expect(result.failures).toEqual([]);
+	});
+
+	it('a non-positioned summary fails the positioning check', () => {
+		const bad: FreeResumeOutput = {
+			...GOOD_POSITIONED,
+			resume: { ...GOOD_POSITIONED.resume, summary: 'I built some tooling at a company.' },
+		};
+		const result = gradeFreeResume(bad, EV_POSITIONED);
+		expect(result.pass).toBe(false);
+		expect(result.failures.some((f) => /positioning/i.test(f))).toBe(true);
+	});
+
+	it('a fabricated metric still fails even with positioning evidence', () => {
+		const bad: FreeResumeOutput = {
+			...GOOD_POSITIONED,
+			resume: {
+				...GOOD_POSITIONED.resume,
+				experience: [
+					{
+						company: 'Acme Corp',
+						title: 'Platform Engineer',
+						period: '2022–2025',
+						highlights: ['Scaled to 200M users on AWS.'],
+					},
+				],
+			},
+		};
+		const result = gradeFreeResume(bad, EV_POSITIONED);
+		expect(result.pass).toBe(false);
+		expect(result.failures.some((f) => f.includes('Fabricated metric'))).toBe(true);
+	});
+
 	it('combined-overview judge (mocked) gates on threshold', async () => {
 		const THRESHOLD = 0.7;
 		const judge = {

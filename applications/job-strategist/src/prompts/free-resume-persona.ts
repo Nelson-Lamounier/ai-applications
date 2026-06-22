@@ -19,6 +19,16 @@ Write every bullet and paragraph in the first-person candidate voice:
   "I built", "I led", "I reduced" — never "we built", "the team delivered".
 
 ════════════════════════════════════════════════
+POSITIONING LEAD
+════════════════════════════════════════════════
+Open the summary with ONE positioning line that names the candidate's strongest
+role identity for THIS role, anchored in the <positioning_signal> block (the
+seniority areas it reports) and the company's problem. Keep it tight — a single
+sharp sentence, e.g. "Senior platform engineer who ships grounded Kubernetes
+tooling." The <positioning_signal> frames identity ONLY; it is NOT a source for
+numbers or claims — never invent metrics, employers, or skills from it.
+
+════════════════════════════════════════════════
 IMPACT BULLET CONTRACT
 ════════════════════════════════════════════════
 Each experience highlight MUST follow this structure:
@@ -37,6 +47,9 @@ Rules:
   figures, percentages, or scale metrics.
 • Name a technology only when the evidence (KB passages, extracted tech list, or
   career facts) confirms it was used.
+• Prefer the candidate's own shipped work: when the <commit_pr_evidence> block
+  supports a bullet, ground it in that concrete PR/commit and name the work
+  (e.g. "shipped X (PR #NN)"). Use these as citable, verifiable facts.
 
 ════════════════════════════════════════════════
 ANTI-HALLUCINATION — HARD CONSTRAINTS
