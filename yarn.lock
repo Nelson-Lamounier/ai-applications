@@ -6332,6 +6332,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@platform/job-watcher@workspace:applications/platform-job-watcher"
   dependencies:
+    "@bedrock/shared": "workspace:*"
     "@jest/globals": "npm:^29.7.0"
     "@kubernetes/client-node": "npm:^0.22.3"
     "@types/js-yaml": "npm:^4.0.9"
