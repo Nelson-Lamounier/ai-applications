@@ -11,6 +11,7 @@ import {
     gradeTechNotSpine,
     gradeConfidentVoice,
     runNarrativeGraders,
+    judgeCombinedOverview,
 } from './case-study-narrative-grader.js';
 import type { CaseStudy } from './case-study-types.js';
 
@@ -52,5 +53,21 @@ describe('case-study narrative eval — one bad fixture per grader', () => {
     it('gradeConfidentVoice fails on hedged phrasing', () => {
         const bad = { ...GOOD, pitch: 'We built a tool that appears to help engineers.' };
         expect(gradeConfidentVoice({ caseStudy: bad }).pass).toBe(false);
+    });
+});
+
+describe('case-study narrative eval — combined-overview judge (mocked)', () => {
+    it('passes when the judge scores at/above threshold', async () => {
+        const judge = { invoke: async () => ({ score: 0.9, reasoning: 'one combined story' }) };
+        const res = await judgeCombinedOverview(GOOD, judge, 0.7);
+        expect(res.pass).toBe(true);
+        expect(res.score).toBe(0.9);
+    });
+
+    it('fails when the judge scores below threshold (reads as fragments)', async () => {
+        const judge = { invoke: async () => ({ score: 0.4, reasoning: 'per-repo fragments' }) };
+        const res = await judgeCombinedOverview(GOOD, judge, 0.7);
+        expect(res.pass).toBe(false);
+        expect(res.failures[0]).toMatch(/fragment/i);
     });
 });

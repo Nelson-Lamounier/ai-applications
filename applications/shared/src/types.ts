@@ -158,7 +158,9 @@ export type AgentName =
     // doc-vs-code drift — reframe a superseded-tech bullet as a migration narrative.
     | 'migration-reframe'
     // grounded change-impact narration over a commit's diff facts.
-    | 'change-impact';
+    | 'change-impact'
+    // narrative eval: LLM judge for combined-overview quality.
+    | 'case-study-overview-judge';
 
 /**
  * Model-agnostic configuration for a single agent.

@@ -1,6 +1,8 @@
 /**
  * @format
  * Deterministic graders for the case-study NARRATIVE contract (CLAUDE.md §5).
+ * Also exports an injectable combined-overview LLM judge (`judgeCombinedOverview`)
+ * and its real Bedrock implementation (`bedrockCombinedOverviewJudge`).
  *
  * String/array checks only — no LLM call — so they run in CI on every prompt
  * change AND can grade a live agent run. They encode the refined prompt's
@@ -12,6 +14,9 @@
  * by `judgeCombinedOverview` (an injectable LLM judge), kept out of the
  * deterministic CI path.
  */
+import { runAgent, parseJsonResponse } from '../agent-runner.js';
+import type { BasePipelineContext } from '../base-agent.js';
+import type { AgentConfig } from '../types.js';
 import { TECH_TOKENS, words, firstParagraph } from './case-study-product-grader.js';
 import type { CaseStudy, SourceSignal } from './case-study-types.js';
 
@@ -88,3 +93,79 @@ export function runNarrativeGraders(input: NarrativeGradeInput): NarrativeGradeR
     const results = NARRATIVE_GRADERS.map((g) => g(input));
     return { pass: results.every((r) => r.pass), results };
 }
+
+// =============================================================================
+// COMBINED-OVERVIEW LLM JUDGE
+// =============================================================================
+
+/** Injectable judge interface — swap for a mock in tests or the real Bedrock impl in prod. */
+export interface CombinedOverviewJudge {
+    invoke(args: { pitch: string }): Promise<{ score: number; reasoning: string }>;
+}
+
+/** Grade the subjective "one combined story, not per-repo fragments" dimension. */
+export async function judgeCombinedOverview(
+    caseStudy: CaseStudy,
+    judge: CombinedOverviewJudge,
+    threshold = 0.7,
+): Promise<NarrativeGradeResult> {
+    const { score, reasoning } = await judge.invoke({ pitch: caseStudy.pitch });
+    const failures =
+        score >= threshold
+            ? []
+            : [`pitch reads as per-repo fragments (judge ${score.toFixed(2)} < ${threshold}): ${reasoning}`];
+    return { grader: 'combinedOverview', pass: failures.length === 0, score, failures };
+}
+
+// ---------------------------------------------------------------------------
+// Real Bedrock judge (behind CASE_STUDY_EVAL_JUDGE=1 in the E2E script)
+// ---------------------------------------------------------------------------
+
+const JUDGE_MODEL = process.env.CASE_STUDY_MODEL ?? 'eu.anthropic.claude-sonnet-4-6';
+const JUDGE_TOOL = {
+    name: 'emit_overview_score',
+    description: 'Score whether the pitch reads as one combined product story.',
+    inputSchema: {
+        type: 'object' as const,
+        properties: {
+            score:     { type: 'number', minimum: 0, maximum: 1 },
+            reasoning: { type: 'string', minLength: 1, maxLength: 500 },
+        },
+        required: ['score', 'reasoning'],
+        additionalProperties: false,
+    },
+};
+const JUDGE_PROMPT =
+    'You grade portfolio case-study pitches. Score 0..1 how well the pitch reads as ONE coherent ' +
+    'product story across all repositories, versus a list of per-repo fragments. 1 = one combined ' +
+    'overview leading with what the product is and does; 0 = disjoint per-repo description. Emit ' +
+    'the emit_overview_score tool.';
+
+export const bedrockCombinedOverviewJudge: CombinedOverviewJudge = {
+    async invoke({ pitch }) {
+        const config: AgentConfig = {
+            agentName:      'case-study-overview-judge',
+            modelId:        process.env.INFERENCE_PROFILE_ARN ?? JUDGE_MODEL,
+            maxTokens:      512,
+            thinkingBudget: 0,
+            systemPrompt:   [{ text: JUDGE_PROMPT }],
+            pipeline:       'case-study-overview-judge',
+            promptId:       'case-study-overview-judge-v1',
+            tool:           JUDGE_TOOL,
+        };
+        const pipelineContext: BasePipelineContext = {
+            pipelineId:        'eval-overview-judge',
+            environment:       process.env.NODE_ENV ?? 'development',
+            cumulativeTokens:  { input: 0, output: 0, thinking: 0 },
+            cumulativeCostUsd: 0,
+        };
+        const res = await runAgent<{ score: number; reasoning: string }>({
+            config,
+            userMessage: `<pitch>\n${pitch}\n</pitch>\n\nEmit the emit_overview_score tool now.`,
+            pipelineContext,
+            parseResponse: (text) =>
+                parseJsonResponse<{ score: number; reasoning: string }>(text, 'case-study-overview-judge'),
+        });
+        return res.data;
+    },
+};
