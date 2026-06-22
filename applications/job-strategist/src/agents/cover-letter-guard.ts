@@ -24,7 +24,7 @@ const UNREALISED = /pending (?:security )?review|not yet (?:shipped|deployed|in 
 // of an acquisition verb, so legitimate "new engineer onboarding" (people,
 // not a skill) does NOT fire (no intent adverb present).
 const FORWARD_LOOKING_INTENT = /\b(actively|currently|presently|now)\b/gi;
-const FORWARD_LOOKING_ACQUIRE = /\b(beginning|starting|begin|start|pursuing|pursue|onboarding|onboard|learning|learn|studying|study|self-teaching|ramping up|upskilling)\b/i;
+const FORWARD_LOOKING_ACQUIRE = /\b(beginning|starting|begin|start|pursuing|pursue|onboarding|onboard|learning|learn|studying|study|self-?teach(?:ing)?|ramping up|upskilling)\b/i;
 
 /** Returns true when the 40-char window after an intent word contains an acquisition verb with no intervening period. */
 function windowContainsAcquire(text: string, afterIndex: number): boolean {
