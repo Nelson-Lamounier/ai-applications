@@ -43,6 +43,94 @@ function makePerFilePool(
     return { pool: { query } as unknown as Pool, query, updates };
 }
 
+describe('reenrichSkippedChunks ENRICH_PER_FILE — Phase-B deadline remaining accounting', () => {
+    afterEach(() => {
+        delete process.env.ENRICH_PER_FILE;
+        delete process.env.ENRICH_PER_FILE_MAX_CHARS;
+        jest.restoreAllMocks();
+    });
+
+    /**
+     * Regression: with the old code Phase A incremented `done` for every row
+     * (including residue rows), so when a deadline cut Phase B mid-way the
+     * un-run residue rows were already counted — `remaining` reported 0.
+     * The fix: Phase A only counts rows it RESOLVES; Phase B counts rows when
+     * their unit completes (success or failure).
+     *
+     * Technique: spy on Date.now() to simulate time advancing ONLY after Phase A
+     * has fully processed all rows (returning them as residue) and then having
+     * the clock tip past deadlineMs so Phase B unitWorker's first deadline check
+     * fires and stops immediately. This isolates the Phase-B deadline cut.
+     */
+    it('ENRICH_PER_FILE=1 deadline trips in Phase-B: remaining > 0 and stoppedEarly === true', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+
+        // Fix a stable "now" that is BEFORE the deadline, so Phase A's deadline
+        // checks all pass. Then, when Phase B's unitWorker first calls deadlineReached(),
+        // the clock has advanced past the deadline.
+        const baseNow = 1_000_000;
+        const deadlineMs = baseNow + 500;  // deadline 500 ms in the future from Phase A's perspective
+
+        let callCount = 0;
+        const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => {
+            callCount += 1;
+            // Phase A calls deadlineReached() once per row (4 rows) = first 4 calls.
+            // Return a time BEFORE the deadline for those. After that (Phase B), return
+            // a time PAST the deadline so the first unitWorker check fires.
+            if (callCount <= 4) return baseNow;   // Phase A: deadline not yet reached
+            return deadlineMs + 100;               // Phase B: deadline exceeded
+        });
+
+        const enricher = {
+            modelId: 'haiku',
+            enrichText: jest.fn(async () => ({ skills: ['kubernetes networking'], technologies: [] })),
+        } as unknown as IChunkEnricher;
+
+        // 4 rows across 2 files, no Tier-1/cache → ALL 4 are residue → 2 Phase-B units.
+        const { pool } = makePerFilePool([
+            { id: 'a1', file_path: 'a.ts', heading: null, content: 'uses kubernetes networking here', chunk_index: 0 },
+            { id: 'a2', file_path: 'a.ts', heading: null, content: 'more kubernetes networking detail', chunk_index: 1 },
+            { id: 'b1', file_path: 'b.ts', heading: null, content: 'kubernetes networking in b', chunk_index: 0 },
+            { id: 'b2', file_path: 'b.ts', heading: null, content: 'more kubernetes in b', chunk_index: 1 },
+        ]);
+
+        const res = await reenrichSkippedChunks(pool, enricher, {
+            userId: 'u1',
+            concurrency: 1,
+            deadlineMs,
+        });
+
+        dateNowSpy.mockRestore();
+
+        expect(res.stoppedEarly).toBe(true);
+        // Before the fix: Phase A incremented done for all 4 rows (including residue),
+        // so remaining = 4 - 4 = 0 even though none were enriched.
+        // After the fix: Phase A counts 0 (no cheap resolutions); Phase B counts 0
+        // (no units dispatched); remaining = 4 - 0 = 4.
+        expect(res.remaining).toBeGreaterThan(0);
+        expect(res.enriched).toBe(0);
+        expect((enricher.enrichText as jest.Mock)).not.toHaveBeenCalled();
+    });
+
+    it('ENRICH_PER_FILE=1 full run (no deadline): remaining === 0', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        const enricher = {
+            modelId: 'haiku',
+            enrichText: jest.fn(async () => ({ skills: ['kubernetes networking'], technologies: [] })),
+        } as unknown as IChunkEnricher;
+        const { pool } = makePerFilePool([
+            { id: 'a1', file_path: 'a.ts', heading: null, content: 'uses kubernetes networking here', chunk_index: 0 },
+            { id: 'a2', file_path: 'a.ts', heading: null, content: 'more kubernetes networking detail', chunk_index: 1 },
+            { id: 'b1', file_path: 'b.ts', heading: null, content: 'kubernetes networking in b', chunk_index: 0 },
+        ]);
+        const res = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1 });
+
+        expect(res.stoppedEarly).toBe(false);
+        expect(res.remaining).toBe(0);
+        expect(res.enriched).toBe(3);
+    });
+});
+
 describe('reenrichSkippedChunks ENRICH_PER_FILE residue batching', () => {
     afterEach(() => { delete process.env.ENRICH_PER_FILE; delete process.env.ENRICH_PER_FILE_MAX_CHARS; });
 

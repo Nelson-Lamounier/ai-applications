@@ -310,15 +310,22 @@ export async function reenrichSkippedChunks(
     }
 
     // Phase A — zero-LLM pre-pass (cache + Tier 1); returns the unresolved residue.
+    // Only increment `done` for rows RESOLVED here (cache hit / Tier 1). Residue
+    // rows are counted in Phase B when their unit actually completes, so that a
+    // deadline cut in Phase B leaves `remaining` accurately > 0.
     async function runResiduePrepass(): Promise<SkippedRow[]> {
         const residue: SkippedRow[] = [];
         for (const row of rows) {
             if (deadlineReached()) { stoppedEarly = true; break; }
             try {
-                if (!(await resolveCheap(row))) residue.push(row);
+                if (await resolveCheap(row)) {
+                    done += 1;
+                    opts.onProgress?.(done, rows.length);
+                } else {
+                    residue.push(row);
+                }
             } catch (err) {
                 recordFailure(err);
-            } finally {
                 done += 1;
                 opts.onProgress?.(done, rows.length);
             }
@@ -357,7 +364,14 @@ export async function reenrichSkippedChunks(
                     await enrichUnit(unit, idOf, hashOf);
                 } catch (err) {
                     // Leave the unit's rows pending — never throw out of the pool.
-                    for (let i = 0; i < unit.chunks.length; i += 1) recordFailure(err);
+                    for (const _ of unit.chunks) recordFailure(err);
+                } finally {
+                    // Count residue rows now that this unit is complete (success or
+                    // failure). Mirrors the per-chunk loop's per-row progress so that
+                    // a deadline cut before pulling the next unit leaves the un-run
+                    // residue rows uncounted and `remaining` accurate.
+                    done += unit.chunks.length;
+                    opts.onProgress?.(done, rows.length);
                 }
             }
         }
