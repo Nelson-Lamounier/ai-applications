@@ -47,7 +47,7 @@ export interface EmbeddingEvidenceOpts {
 /**
  * Fan a file unit's skills back to its chunks with a semantic lane: a chunk keeps
  * a skill when it surface-matches OR the skill's vector is within `threshold`
- * cosine of the chunk's vector. Pure + synchronous — all vectors pre-computed by
+ * cosine of the chunk's vector. Pure + synchronous -- all vectors pre-computed by
  * the caller. A skill/chunk with no vector simply has no embedding evidence
  * (surface-match still applies). Recovers the recall surface-match-only drops.
  */

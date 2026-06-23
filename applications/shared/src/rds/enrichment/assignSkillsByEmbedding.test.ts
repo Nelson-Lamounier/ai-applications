@@ -5,7 +5,7 @@ import type { FileEnrichUnit } from './groupChunksByFile.js';
 
 const unit: FileEnrichUnit = {
     filePath: 'svc/pods.yaml',
-    text: 'irrelevant — text not used by the fan-back',
+    text: 'irrelevant -- text not used by the fan-back',
     chunks: [
         { filePath: 'svc/pods.yaml', content: 'horizontalpodautoscaler maxReplicas 10', chunkIndex: 0, totalChunks: 2 },
         { filePath: 'svc/pods.yaml', content: 'plain prose with no skill terms', chunkIndex: 1, totalChunks: 2 },
@@ -42,7 +42,7 @@ describe('assignSkillsByEmbedding', () => {
 
     it('keeps a skill on a chunk by surface-match even with no/poor vector', () => {
         const chunkVectors = new Map<number, readonly number[]>([[0, [0, 1]], [1, [0, 1]]]);
-        // 'horizontalpodautoscaler' does not contain 'kubernetes autoscaling' — no surface match;
+        // 'horizontalpodautoscaler' does not contain 'kubernetes autoscaling' -- no surface match;
         // use a surface-matching skill to prove the OR branch.
         const out = assignSkillsByEmbedding(unit, ['maxReplicas'], { skillVectors: new Map(), chunkVectors, threshold: 0.9 });
         expect(out[0].skills).toEqual(['maxReplicas']); // surface-matches chunk 0 content
