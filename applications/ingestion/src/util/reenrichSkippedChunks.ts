@@ -65,7 +65,7 @@ export interface ReenrichOptions {
      * Semantic fan-back lane (premium per-file). Given canonical skill names,
      * returns their skill_ontology vectors. When supplied (+ ENRICH_PER_FILE),
      * a unit skill is kept on a chunk by surface-match OR cosine(skillVec,
-     * chunkVec) >= fanbackThreshold — recovering skills surface-match drops.
+     * chunkVec) >= fanbackThreshold -- recovering skills surface-match drops.
      * Absent -> surface-match only (today's behaviour). Fail-open.
      */
     readonly skillVectorLookup?: (names: readonly string[]) => Promise<Map<string, number[]>>;

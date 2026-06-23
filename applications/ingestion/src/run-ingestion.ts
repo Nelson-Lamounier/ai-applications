@@ -227,7 +227,7 @@ async function runDeferredEnrichment(
         ? await ontologyRepo.loadCanonicalNames().catch(() => undefined)
         : undefined;
     // Semantic fan-back vectors come from skill_ontology (canonical skills already
-    // have embeddings, migration 094) — a DB lookup, no Titan call. Only wired
+    // have embeddings, migration 094) -- a DB lookup, no Titan call. Only wired
     // when canonical (the skills the lane scores ARE canonical_name).
     const skillVectorLookup = canonicalVocab
         ? (names: readonly string[]) => ontologyRepo.loadSkillVectors(names)
