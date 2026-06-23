@@ -45,7 +45,7 @@ jest.mock('../env.js', () => ({
 
 // ── Imports (after mocks are declared so jest.mock hoisting takes effect) ─────
 
-import { handler } from '../index.js';
+import { handler, resolvePostgresSsl } from '../index.js';
 import { InputSanitiser, recordZeroResultRetrieval } from '@bedrock/shared';
 import { multiQueryRetrieve } from '../retrieval.js';
 
@@ -96,6 +96,16 @@ describe('chatbot-public handler', () => {
         const body = JSON.parse(result.body);
         expect(body).toHaveProperty('response');
         expect(body).toHaveProperty('sessionId');
+    });
+
+    it('requires encrypted Postgres connections by default', () => {
+        delete process.env['RDS_SSL'];
+        expect(resolvePostgresSsl()).toEqual({ rejectUnauthorized: false });
+    });
+
+    it('can disable Postgres TLS for local test containers', () => {
+        process.env['RDS_SSL'] = 'disable';
+        expect(resolvePostgresSsl()).toBe(false);
     });
 
     it('returns 400 when prompt is missing', async () => {

@@ -50,8 +50,8 @@ export interface ApiConfig {
     readonly rdsCredentialsSecretName: string;
     /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
     readonly chatbotRetrievalSource: string;
-    /** Portfolio owner user ID — scopes sessions + RLS in chat_sessions/chat_messages */
-    readonly portfolioOwnerUserId: string;
+    /** SSM parameter holding the portfolio owner user ID for sessions + RLS */
+    readonly portfolioOwnerUserIdParameterName: string;
 }
 
 /**
@@ -127,7 +127,7 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
             // Pinecone-backed Bedrock Agent KB decommissioned — dev now reads the
             // same RDS pgvector store as staging/production (returns chunk text, not refs).
             chatbotRetrievalSource: 'rds-pgvector',
-            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
+            portfolioOwnerUserIdParameterName: '/bedrock-dev/portfolio-owner-user-id',
         },
         logRetention: logs.RetentionDays.ONE_WEEK,
         isProduction: false,
@@ -157,7 +157,7 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
             rdsSsmPrefix: '/k8s/staging/platform-rds',
             rdsCredentialsSecretName: 'k8s-staging/platform-rds/credentials',
             chatbotRetrievalSource: 'rds-pgvector',
-            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
+            portfolioOwnerUserIdParameterName: '/bedrock-stg/portfolio-owner-user-id',
         },
         logRetention: logs.RetentionDays.ONE_MONTH,
         isProduction: false,
@@ -187,7 +187,7 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
             rdsSsmPrefix: '/k8s/production/platform-rds',
             rdsCredentialsSecretName: 'k8s-production/platform-rds/credentials',
             chatbotRetrievalSource: 'rds-pgvector',
-            portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'] ?? '00000000-0000-0000-0000-000000000001',
+            portfolioOwnerUserIdParameterName: '/bedrock-prd/portfolio-owner-user-id',
         },
         logRetention: logs.RetentionDays.THREE_MONTHS,
         isProduction: true,
