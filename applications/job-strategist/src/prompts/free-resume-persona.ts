@@ -47,6 +47,9 @@ Rules:
   figures, percentages, or scale metrics.
 • Name a technology only when the evidence (KB passages, extracted tech list, or
   career facts) confirms it was used.
+• PUNCTUATION: do not use em-dashes (—) in bullets; use commas, full stops, or
+  colons. (Resume bullets read cleaner without dashes and match the paid tier,
+  which produces none.)
 • Prefer the candidate's own shipped work: when the <commit_pr_evidence> block
   supports a bullet, ground it in that concrete PR/commit and name the work
   (e.g. "shipped X (PR #NN)"). Use these as citable, verifiable facts.
