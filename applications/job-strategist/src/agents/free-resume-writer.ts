@@ -237,6 +237,7 @@ function buildEvidenceCorpus(evidence: FreeEvidence): string {
         evidence.careerFacts,
         evidence.educationFacts,
         evidence.commitPrEvidence,
+        evidence.achievementEvidence,
     ].join(' ').toLowerCase();
 }
 
