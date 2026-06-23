@@ -18,6 +18,7 @@ import * as path from 'path';
 import { NagSuppressions } from 'cdk-nag';
 
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNode from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -28,6 +29,7 @@ import * as cdk from 'aws-cdk-lib/core';
 
 import type { Construct } from 'constructs';
 
+import type { ChatbotVpcConfig } from '../../config/bedrock/configurations';
 import { addLambdaObservability, OBSERVABILITY_EXTERNAL_MODULES } from '../../utilities/lambda-observability';
 
 
@@ -59,13 +61,17 @@ export interface BedrockApiStackProps extends cdk.StackProps {
     /** Bedrock model ID for RAG-based chatbot Lambdas */
     readonly chatbotModel: string;
     /** Portfolio owner user ID — scopes sessions + RLS in chat tables */
-    readonly portfolioOwnerUserId: string;
+    readonly portfolioOwnerUserId?: string;
+    /** SSM parameter holding the portfolio owner user ID when it is not passed directly */
+    readonly portfolioOwnerUserIdParameterName?: string;
     /** SSM prefix for RDS connection params e.g. /k8s/development/platform-rds */
     readonly rdsSsmPrefix: string;
     /** SecretsManager secret name containing RDS username/password */
     readonly rdsCredentialsSecretName: string;
     /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
     readonly chatbotRetrievalSource: string;
+    /** Shared VPC wiring for RAG Lambdas that need private RDS access. */
+    readonly chatbotVpc?: ChatbotVpcConfig;
 }
 
 /**
@@ -202,9 +208,36 @@ export class BedrockApiStack extends cdk.Stack {
             RDS_USER:     rdsUser,
             RDS_PASSWORD: rdsSecret.secretValueFromJson('password').unsafeUnwrap(),
         };
+        const portfolioOwnerUserId = props.portfolioOwnerUserId ??
+            ssm.StringParameter.valueForStringParameter(
+                this,
+                props.portfolioOwnerUserIdParameterName ?? `/${namePrefix}/portfolio-owner-user-id`,
+            );
 
         // Chatbot lambdas bundle pg — do NOT exclude it (unlike K8s workloads).
         const chatbotExternalModules = OBSERVABILITY_EXTERNAL_MODULES.filter(m => m !== 'pg');
+
+        const chatbotVpcProps = props.chatbotVpc
+            ? this.buildChatbotVpcProps(props.chatbotVpc)
+            : {};
+        const chatbotFoundationModelId = props.chatbotModel.replace(/^eu\./, '');
+        const euInferenceProfileRegions = [
+            'eu-north-1',
+            'eu-west-3',
+            'eu-south-1',
+            'eu-south-2',
+            'eu-west-1',
+            'eu-central-1',
+        ];
+        const chatbotModelResources = [
+            `arn:aws:bedrock:${this.region}::foundation-model/${props.chatbotModel}`,
+            `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/${props.chatbotModel}`,
+            `arn:aws:bedrock:${this.region}:${this.account}:application-inference-profile/${props.chatbotModel}`,
+            `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+            ...euInferenceProfileRegions.map(region =>
+                `arn:aws:bedrock:${region}::foundation-model/${chatbotFoundationModelId}`,
+            ),
+        ];
 
         // =================================================================
         // chatbot-public Lambda — stateless RAG + Bedrock Agent fallback
@@ -217,11 +250,12 @@ export class BedrockApiStack extends cdk.Stack {
             handler: 'handler',
             memorySize: props.lambdaMemoryMb,
             timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
+            ...chatbotVpcProps,
             environment: {
                 AGENT_ID: agentId,
                 AGENT_ALIAS_ID: agentAliasId,
                 CHATBOT_MODEL: props.chatbotModel,
-                PORTFOLIO_OWNER_USER_ID: props.portfolioOwnerUserId,
+                PORTFOLIO_OWNER_USER_ID: portfolioOwnerUserId,
                 ALLOWED_ORIGINS: props.allowedOrigins.join(','),
                 CHATBOT_RETRIEVAL_SOURCE: props.chatbotRetrievalSource,
                 ...rdsEnvVars,
@@ -256,8 +290,7 @@ export class BedrockApiStack extends cdk.Stack {
             actions: ['bedrock:InvokeAgent', 'bedrock:Converse', 'bedrock:InvokeModel'],
             resources: [
                 `arn:aws:bedrock:${this.region}:${this.account}:agent-alias/${agentId}/${agentAliasId}`,
-                `arn:aws:bedrock:${this.region}::foundation-model/${props.chatbotModel}`,
-                `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+                ...chatbotModelResources,
             ],
         }));
 
@@ -272,9 +305,10 @@ export class BedrockApiStack extends cdk.Stack {
             handler: 'handler',
             memorySize: props.lambdaMemoryMb,
             timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
+            ...chatbotVpcProps,
             environment: {
                 CHATBOT_MODEL: props.chatbotModel,
-                PORTFOLIO_OWNER_USER_ID: props.portfolioOwnerUserId,
+                PORTFOLIO_OWNER_USER_ID: portfolioOwnerUserId,
                 ALLOWED_ORIGINS: props.allowedOrigins.join(','),
                 ...rdsEnvVars,
             },
@@ -306,10 +340,7 @@ export class BedrockApiStack extends cdk.Stack {
             sid: 'ChatbotAuthBedrockAccess',
             effect: iam.Effect.ALLOW,
             actions: ['bedrock:Converse', 'bedrock:InvokeModel'],
-            resources: [
-                `arn:aws:bedrock:${this.region}::foundation-model/${props.chatbotModel}`,
-                `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
-            ],
+            resources: chatbotModelResources,
         }));
 
         // =================================================================
@@ -599,5 +630,65 @@ export class BedrockApiStack extends cdk.Stack {
             value: this.api.restApiId,
             description: 'API Gateway REST API ID',
         });
+    }
+
+    private buildChatbotVpcProps(cfg: ChatbotVpcConfig): Pick<
+        lambdaNode.NodejsFunctionProps,
+        'allowPublicSubnet' | 'securityGroups' | 'vpc' | 'vpcSubnets'
+    > {
+        // Resolve the shared VPC by attributes rather than Vpc.fromLookup: the vpc
+        // id and subnet ids come from tucaken-infra's SSM exports at deploy time.
+        // fromLookup forces a synth-time EC2 call, which the --no-lookups CI synth
+        // blocks (and cdk.context.json is gitignored, so it cannot be cached).
+        // fromVpcAttributes + valueForStringParameter perform no synth-time AWS
+        // calls. Subnet ids are a comma-separated SSM string split into the known
+        // AZ count (CDK needs the count concrete; the ids themselves stay dynamic).
+        const vpcId = ssm.StringParameter.valueForStringParameter(this, cfg.vpcIdSsmParameter);
+        const publicSubnetIdsCsv = ssm.StringParameter.valueForStringParameter(this, cfg.publicSubnetIdsSsmParameter);
+        const publicSubnetIds = cdk.Fn.split(',', publicSubnetIdsCsv, cfg.availabilityZones.length);
+        const vpc = ec2.Vpc.fromVpcAttributes(this, 'ChatbotSharedVpc', {
+            vpcId,
+            availabilityZones: cfg.availabilityZones,
+            publicSubnetIds,
+        });
+        const vpcSubnets = { subnetType: ec2.SubnetType.PUBLIC };
+
+        const lambdaSecurityGroup = new ec2.SecurityGroup(this, 'ChatbotLambdaSecurityGroup', {
+            vpc,
+            description: 'Outbound access for Bedrock RAG chatbot Lambdas',
+            allowAllOutbound: true,
+        });
+
+        const endpointSecurityGroup = new ec2.SecurityGroup(this, 'ChatbotBedrockEndpointSecurityGroup', {
+            vpc,
+            description: 'Allows chatbot Lambdas to reach Bedrock interface endpoints',
+            allowAllOutbound: true,
+        });
+        endpointSecurityGroup.addIngressRule(
+            lambdaSecurityGroup,
+            ec2.Port.tcp(443),
+            'HTTPS from chatbot Lambda ENIs',
+        );
+
+        for (const [id, service] of [
+            ['ChatbotBedrockRuntimeEndpoint', ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME],
+            ['ChatbotBedrockAgentRuntimeEndpoint', ec2.InterfaceVpcEndpointAwsService.BEDROCK_AGENT_RUNTIME],
+        ] as const) {
+            new ec2.InterfaceVpcEndpoint(this, id, {
+                vpc,
+                service,
+                subnets: vpcSubnets,
+                securityGroups: [endpointSecurityGroup],
+                privateDnsEnabled: true,
+                open: false,
+            });
+        }
+
+        return {
+            allowPublicSubnet: true,
+            securityGroups: [lambdaSecurityGroup],
+            vpc,
+            vpcSubnets,
+        };
     }
 }

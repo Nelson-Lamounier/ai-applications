@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import type { PoolConfig } from 'pg';
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import {
     BedrockAgentRuntimeClient,
@@ -25,6 +26,12 @@ const outputSanitiser = new OutputSanitiser();
 const agentClient     = captureAwsClient(new BedrockAgentRuntimeClient({}));
 
 let pool: Pool | undefined;
+export function resolvePostgresSsl(): PoolConfig['ssl'] {
+    const mode = process.env['RDS_SSL'] ?? 'require';
+    if (mode === 'disable' || mode === 'false') return false;
+    return { rejectUnauthorized: process.env['RDS_SSL_REJECT_UNAUTHORIZED'] === 'true' };
+}
+
 function getPool(): Pool {
     pool ??= new Pool({
         host:     process.env['RDS_HOST'],
@@ -32,7 +39,7 @@ function getPool(): Pool {
         database: process.env['RDS_DB_NAME'],
         user:     process.env['RDS_USER'],
         password: process.env['RDS_PASSWORD'],
-        ssl:      false,
+        ssl:      resolvePostgresSsl(),
         max:      5,
     });
     return pool;

@@ -23,7 +23,7 @@
  * rather than aggregates.
  */
 
-import { Pushgateway, type Registry } from 'prom-client';
+import type { Registry } from 'prom-client';
 import type { Logger as PinoLogger } from 'pino';
 
 const PUSHGATEWAY_URL = process.env['PUSHGATEWAY_URL']
@@ -42,6 +42,10 @@ export async function pushFinalMetrics(
     jobName:  string,
     instance: string,
 ): Promise<void> {
+    // Lazy require so Lambda handlers importing the shared barrel do not need
+    // prom-client in their runtime bundle. K8s jobs call this path explicitly.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Pushgateway } = require('prom-client') as typeof import('prom-client');
     const gateway = new Pushgateway(PUSHGATEWAY_URL, { timeout: 5000 }, registry);
     try {
         await gateway.pushAdd({ jobName, groupings: { instance } });

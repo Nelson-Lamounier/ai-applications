@@ -48,7 +48,7 @@ jest.mock('../env.js', () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
-import { handler } from '../index.js';
+import { handler, resolvePostgresSsl } from '../index.js';
 import { InputSanitiser, recordZeroResultRetrieval } from '@bedrock/shared';
 import { multiQueryRetrieve } from '../retrieval.js';
 import { validateSession, createSession, loadHistory, appendMessages } from '../session.js';
@@ -97,6 +97,16 @@ describe('chatbot-authenticated handler', () => {
         (multiQueryRetrieve as jest.Mock<() => Promise<unknown[]>>).mockResolvedValueOnce([]);
         await handler(makeEvent({ prompt: 'something not in the KB' }));
         expect(recordZeroResultRetrieval as jest.Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it('requires encrypted Postgres connections by default', () => {
+        delete process.env['RDS_SSL'];
+        expect(resolvePostgresSsl()).toEqual({ rejectUnauthorized: false });
+    });
+
+    it('can disable Postgres TLS for local test containers', () => {
+        process.env['RDS_SSL'] = 'disable';
+        expect(resolvePostgresSsl()).toBe(false);
     });
 
     it('does NOT record a zero-result retrieval when passages are returned', async () => {
