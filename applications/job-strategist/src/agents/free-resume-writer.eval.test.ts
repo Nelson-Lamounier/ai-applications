@@ -387,7 +387,7 @@ describe('free writer eval — grounded narrative', () => {
 	// -----------------------------------------------------------------------
 
 	it('eval: a bullet surfaces a grounded metric and the gate blocks a coined one', () => {
-		// 2.2 and 1,964 are grounded via EV.achievementEvidence above.
+		// 2.2 and 1,964 are grounded via the EV.kbPassages metrics entry above.
 		const grounded = { ...GOOD, resume: { ...GOOD.resume, summary: 'Lifted skills-overlap coverage from 2.2% to full operation and recovered 1,964 chunks.' } } as never;
 		expect(gradeFreeResume(grounded, EV).pass).toBe(true);
 		// 47 is genuinely absent from EV — the gate must block it.
