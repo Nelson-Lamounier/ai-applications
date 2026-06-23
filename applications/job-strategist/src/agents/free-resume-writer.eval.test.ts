@@ -17,7 +17,11 @@ import type { CoverLetter } from './cover-letter-guard.js';
 const toToolJson = (out: FreeResumeOutput): string => JSON.stringify(out);
 
 const EV: FreeEvidence = {
-	kbPassages: ['[Source: me/infra/eks.tf]\nProvisioned EKS with Karpenter.'],
+	// Second passage grounds 2.2 and 1,964 for the Pillar 2 eval assertion.
+	kbPassages: [
+		'[Source: me/infra/eks.tf]\nProvisioned EKS with Karpenter.',
+		'[Source: me/enrichment/metrics.md]\nLifted skills overlap from 2.2% to full operation; recovered 1,964 chunks.',
+	],
 	projectEvidence: 'Tucaken — 16-CDK-stack AWS, EKS, Bedrock.',
 	extractedTech: 'aws kubernetes terraform bedrock',
 	careerFacts: 'Acme Corp — Platform Engineer — 2022–2025',
@@ -346,6 +350,49 @@ describe('free writer eval — grounded narrative', () => {
 		expect(/bedrock:Rerank|simulate-principal-policy|enrichment/i.test(text)).toBe(true);     // challenge/achievement
 		expect(/retir(e|ed)|cut .* layer|reduced|consolidat/i.test(text)).toBe(true);             // a decision-impact phrase
 		expect(gradeFreeResume({ ...GOOD, coverLetter: GOOD_CL }, EV).pass).toBe(true);  // grounded
+	});
+
+	// -----------------------------------------------------------------------
+	// Pillar 1 — readability guard: run-on sentences + greeting punctuation
+	// -----------------------------------------------------------------------
+
+	it('eval: a >40-word cover-letter sentence is flagged by the guard', () => {
+		const longPara = 'When a silent IAM failure caused every Bedrock Rerank call to fall back to cosine retrieval with no user-visible error I diagnosed it via simulate-principal-policy and confirmed InvokeModel allowed while Rerank returned implicit deny and then corrected the Pod Identity policy in CDK and verified the fix with a live Rerank API call against the cluster.';
+		const letter = { greeting: 'Dear Hiring Manager,', paragraphs: [longPara], signoff: GOOD.coverLetter.signoff } as never;
+		expect(validateCoverLetter(letter, 'Solutions Support Engineer', '').some((v) => v.code === 'long_sentence')).toBe(true);
+	});
+
+	it('eval: a greeting without a comma is flagged', () => {
+		const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['I resolve IAM incidents at AWS.'], signoff: GOOD.coverLetter.signoff } as never;
+		expect(validateCoverLetter(letter, 'Solutions Support Engineer', '').some((v) => v.code === 'greeting_format')).toBe(true);
+	});
+
+	// -----------------------------------------------------------------------
+	// Pillar 1 — company bridge: a good letter names a JD product concept
+	// -----------------------------------------------------------------------
+
+	it('eval: a good cover letter names a JD product concept (the bridge)', () => {
+		const bridgeParagraphs = [
+			'I resolve cloud-security incidents at AWS daily — tracing compromised IAM keys through CloudTrail and restoring access fast.',
+			'That skill set transfers directly to the Solutions Support Engineer role: helping your customers operationalise CSPM findings across their multi-cloud estates.',
+		];
+		const GOOD_BRIDGE = { greeting: 'Dear Hiring Manager,', paragraphs: bridgeParagraphs, signoff: GOOD.coverLetter.signoff } as never;
+		const text = bridgeParagraphs.join(' ');
+		expect(/CSPM|multi-cloud|runtime security|threat detection/i.test(text)).toBe(true);   // bridges to the product surface
+		expect(validateCoverLetter(GOOD_BRIDGE, 'Solutions Support Engineer', '')).toEqual([]); // clean
+	});
+
+	// -----------------------------------------------------------------------
+	// Pillar 2 — grounded metric surfaces; coined number still fails the gate
+	// -----------------------------------------------------------------------
+
+	it('eval: a bullet surfaces a grounded metric and the gate blocks a coined one', () => {
+		// 2.2 and 1,964 are grounded via EV.achievementEvidence above.
+		const grounded = { ...GOOD, resume: { ...GOOD.resume, summary: 'Lifted skills-overlap coverage from 2.2% to full operation and recovered 1,964 chunks.' } } as never;
+		expect(gradeFreeResume(grounded, EV).pass).toBe(true);
+		// 47 is genuinely absent from EV — the gate must block it.
+		const coined = { ...GOOD, resume: { ...GOOD.resume, summary: 'Cut per-repo processing cost by 47%.' } } as never;
+		expect(gradeFreeResume(coined, EV).failures.some((f) => /47/.test(f))).toBe(true);
 	});
 
 	it('combined-overview judge (mocked) gates on threshold', async () => {
