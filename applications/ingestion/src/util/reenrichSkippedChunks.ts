@@ -91,7 +91,7 @@ interface SkippedRow {
  */
 export async function reenrichSkippedChunks(
     pool: Pool,
-    enricher: IChunkEnricher,
+    enricher: IChunkEnricher | undefined,
     opts: ReenrichOptions = {},
 ): Promise<ReenrichResult> {
     // Backfill targets: chunks the cap skipped ('skipped_quota') AND chunks that
@@ -128,13 +128,17 @@ export async function reenrichSkippedChunks(
     // (+ vocab size, so vocabulary growth re-enriches rather than serving stale
     // canonical skills). Without this, flipping ENRICH_CANONICAL would copy the
     // old free-text skills out of the cache.
-    const modelId = opts.canonicalVocab
-        ? `${enricher.modelId ?? 'unknown'}#canon:${opts.canonicalVocab.length}`
-        : (enricher.modelId ?? 'unknown');
-    const cache = await loadEnrichmentCache(pool, opts, rows, modelId);
+    let modelId = 'tier1-only';
+    if (enricher) {
+        const base = enricher.modelId ?? 'unknown';
+        modelId = opts.canonicalVocab ? `${base}#canon:${opts.canonicalVocab.length}` : base;
+    }
+    /** Build the composite cache key that folds model identity into the hash. */
+    const cacheKey = (hash: string): string => `${hash}#${modelId}`;
+    const cache = await loadEnrichmentCache(pool, opts, rows, modelId, cacheKey);
     const freshCache = new Map<string, string[]>();
     const remember = (hash: string | null, skills: string[]): void => {
-        if (hash) { cache.set(hash, skills); freshCache.set(hash, skills); }
+        if (hash) { const k = cacheKey(hash); cache.set(k, skills); freshCache.set(k, skills); }
     };
 
     let enriched = 0;
@@ -172,13 +176,38 @@ export async function reenrichSkippedChunks(
         );
     }
 
+    /**
+     * Residue LLM path — controlled-vocab or free-text. Called only when
+     * an enricher is present; extracted to keep `processRow` under complexity 10.
+     */
+    async function enrichWithLlm(row: SkippedRow, e: IChunkEnricher): Promise<void> {
+        if (opts.canonicalVocab && e.enrichTextCanonical) {
+            const { canonical, newSkills } = await e.enrichTextCanonical(opts.canonicalVocab, row.file_path, row.content, row.heading ?? undefined);
+            await writeSkills(row.id, canonical);
+            remember(row.content_hash, canonical);
+            newSkillsQueued += newSkills.length;
+            enriched += 1;
+            return;
+        }
+        const { skills } = await e.enrich({
+            filePath:    row.file_path,
+            heading:     row.heading ?? undefined,
+            content:     row.content,
+            chunkIndex:  0,
+            totalChunks: 1,
+        });
+        await writeSkills(row.id, skills);
+        remember(row.content_hash, skills);
+        enriched += 1;
+    }
+
     async function processRow(row: SkippedRow): Promise<void> {
         try {
             // WS5 content-hash dedup: if this exact content was already enriched
             // (same user + model), copy those skills — NO LLM call. This is what
             // makes a force-reindex of unchanged content near-free.
-            if (row.content_hash && cache.has(row.content_hash)) {
-                await writeSkills(row.id, cache.get(row.content_hash) as string[]);
+            if (row.content_hash && cache.has(cacheKey(row.content_hash))) {
+                await writeSkills(row.id, cache.get(cacheKey(row.content_hash)) as string[]);
                 cacheHits += 1;
                 enriched += 1;
                 return;
@@ -193,27 +222,11 @@ export async function reenrichSkippedChunks(
                 enriched += 1;
                 return;
             }
-            // Controlled-vocabulary LLM (the vocabulary fix): emit ONLY canonical
-            // skill_ontology terms -> the chunk is canonical, so the && lane fires.
-            if (opts.canonicalVocab && enricher.enrichTextCanonical) {
-                const { canonical, newSkills } = await enricher.enrichTextCanonical(opts.canonicalVocab, row.file_path, row.content, row.heading ?? undefined);
-                await writeSkills(row.id, canonical);
-                remember(row.content_hash, canonical);
-                newSkillsQueued += newSkills.length;
-                enriched += 1;
-                return;
+            // Residue LLM path — skipped entirely when no enricher is supplied
+            // (free-tier / Tier-1-only pass: zero Bedrock calls).
+            if (enricher) {
+                await enrichWithLlm(row, enricher);
             }
-            // Residue -> the free-text LLM enricher (today's path).
-            const { skills } = await enricher.enrich({
-                filePath:    row.file_path,
-                heading:     row.heading ?? undefined,
-                content:     row.content,
-                chunkIndex:  0,
-                totalChunks: 1,
-            });
-            await writeSkills(row.id, skills);
-            remember(row.content_hash, skills);
-            enriched += 1;
         } catch (err) {
             // Leave the row as skipped_quota so the next run retries it.
             recordFailure(err);
@@ -264,26 +277,35 @@ async function persistFreshCache(
 
 /**
  * Load cached skills for this run's content hashes (same user + model). One query
- * on a dedicated connection that sets the RLS user context. Returns a hash->skills
- * map; empty when dedup is disabled or on any failure (degrades to full
- * enrichment, never breaks it).
+ * on a dedicated connection that sets the RLS user context. Returns a composite-key
+ * (`${rawHash}#${modelId}`) → skills map; empty when dedup is disabled or on any
+ * failure (degrades to full enrichment, never breaks it).
+ *
+ * The composite key is the stored `content_hash` column value — model identity is
+ * folded into the key so a PK of (user_id, content_hash) naturally scopes each entry
+ * to one model without a separate `model_id` filter column. This is what makes a
+ * re-run with the same model a cache hit: the stored key matches the lookup key.
  */
 async function loadEnrichmentCache(
     pool: Pool, opts: ReenrichOptions, rows: readonly SkippedRow[], modelId: string,
+    cacheKey: (hash: string) => string,
 ): Promise<Map<string, string[]>> {
     const out = new Map<string, string[]>();
     if (!opts.dedupCache || !opts.userId) return out;
     const userId = opts.userId;
-    const hashes = [...new Set(rows.map((r) => r.content_hash).filter((h): h is string => !!h))];
-    if (hashes.length === 0) return out;
+    const rawHashes = [...new Set(rows.map((r) => r.content_hash).filter((h): h is string => !!h))];
+    if (rawHashes.length === 0) return out;
+    // Composite keys are the values actually stored in the content_hash column.
+    const compositeKeys = rawHashes.map(cacheKey);
     const client = await pool.connect();
     try {
         await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
         const { rows: cached } = await client.query<{ content_hash: string; skills: string[] }>(
             `SELECT content_hash, skills FROM chunk_enrichment_cache
-              WHERE user_id = $1::uuid AND model_id = $2 AND content_hash = ANY($3::text[])`,
-            [userId, modelId, hashes],
+              WHERE user_id = $1::uuid AND content_hash = ANY($2::text[])`,
+            [userId, compositeKeys],
         );
+        // Key the map by composite hash — matches what processRow looks up via cacheKey().
         for (const c of cached) out.set(c.content_hash, c.skills);
     } catch (err) {
         console.warn('[reenrichSkippedChunks] enrichment-cache read failed (non-fatal)', err);
@@ -293,7 +315,12 @@ async function loadEnrichmentCache(
     return out;
 }
 
-/** Batch-upsert freshly-enriched (content_hash -> skills) for this user + model. */
+/**
+ * Batch-upsert freshly-enriched (compositeKey -> skills) for this user + model.
+ * `entries` is keyed by composite key (`${rawHash}#${modelId}`) — the same key
+ * stored in the `content_hash` column — so the PK (user_id, content_hash) is
+ * unique per user × method, not just per user × raw hash.
+ */
 async function saveEnrichmentCache(
     pool: Pool, userId: string, modelId: string, entries: ReadonlyMap<string, string[]>,
 ): Promise<void> {
@@ -307,7 +334,9 @@ async function saveEnrichmentCache(
             const b = i * 4;
             return `($${b + 1}::uuid, $${b + 2}, $${b + 3}::text[], $${b + 4})`;
         }).join(', ');
-        for (const [hash, skills] of items) values.push(userId, hash, skills, modelId);
+        // compositeKey (already `${rawHash}#${modelId}`) is stored as content_hash;
+        // model_id is preserved as a human-readable label (NOT NULL column).
+        for (const [compositeKey, skills] of items) values.push(userId, compositeKey, skills, modelId);
         await client.query(
             `INSERT INTO chunk_enrichment_cache (user_id, content_hash, skills, model_id)
              VALUES ${placeholders}

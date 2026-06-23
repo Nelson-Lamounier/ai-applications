@@ -24,12 +24,13 @@ const rows = [
 describe('reenrichSkippedChunks WS5 content-hash dedup', () => {
     it('copies cached skills for a known content_hash — no LLM call', async () => {
         const updates: Array<{ skills: string[]; id: string }> = [];
-        // Connect-capable fake: main query returns the chunk; the dedicated client
-        // returns a cache hit for content_hash 'h1'.
+        // The composite key for raw hash 'h1' with model 'haiku' is 'h1#haiku'.
+        // The cache DB returns the row keyed by that composite key, and the lookup
+        // in processRow also builds the composite key — so they match and we get a hit.
         const client = {
             query: jest.fn(async (sql: string) => {
                 if (sql.includes('chunk_enrichment_cache') && sql.includes('SELECT')) {
-                    return { rows: [{ content_hash: 'h1', skills: ['cached:kubernetes'] }] };
+                    return { rows: [{ content_hash: 'h1#haiku', skills: ['cached:kubernetes'] }] };
                 }
                 return { rows: [] };   // set_config, INSERT, BEGIN/COMMIT
             }),
@@ -56,11 +57,12 @@ describe('reenrichSkippedChunks WS5 content-hash dedup', () => {
         expect(updates[0]).toEqual({ skills: ['cached:kubernetes'], id: 'a' });  // cached skills copied
     });
 
-    it('scopes the cache by method: canonical uses a #canon: model key (no free-text cross-contamination)', async () => {
-        let cacheLookupModel = '';
+    it('scopes the cache by method: canonical uses a #canon: composite key (no free-text cross-contamination)', async () => {
+        let cacheLookupKeys: string[] = [];
         const client = {
             query: jest.fn(async (sql: string, p?: unknown[]) => {
-                if (sql.includes('chunk_enrichment_cache') && sql.includes('SELECT')) { cacheLookupModel = p?.[1] as string; return { rows: [] }; }
+                // $2 is now the composite-key array, not a model_id string.
+                if (sql.includes('chunk_enrichment_cache') && sql.includes('SELECT')) { cacheLookupKeys = p?.[1] as string[]; return { rows: [] }; }
                 return { rows: [] };
             }),
             release: jest.fn(),
@@ -79,7 +81,10 @@ describe('reenrichSkippedChunks WS5 content-hash dedup', () => {
 
         await reenrichSkippedChunks(pool, enricher, { userId: 'u1', concurrency: 1, dedupCache: true, canonicalVocab: ['kubernetes', 'terraform'] });
 
-        expect(cacheLookupModel).toBe('haiku#canon:2');   // method + vocab-size scoped, NOT plain 'haiku'
+        // The composite key folds model + vocab-size into the content_hash column value.
+        // A plain-model run would look up 'h1#haiku'; a canonical run looks up 'h1#haiku#canon:2'.
+        // These are different rows in the DB, so canonical and free-text can never cross-contaminate.
+        expect(cacheLookupKeys).toEqual(['h1#haiku#canon:2']);
     });
 });
 
@@ -186,5 +191,29 @@ describe('reenrichSkippedChunks', () => {
         const selectSql = query.mock.calls[0][0] as string;
         expect(selectSql).not.toMatch(/enrichment_status/);  // no status gate
         expect(selectSql).toMatch(/repo_full_name = \$1/);     // still repo-scoped
+    });
+});
+
+describe('reenrichSkippedChunks — Tier-1-only (no enricher)', () => {
+    it('applies deterministic Tier-1 skills and makes NO LLM call when enricher is absent', async () => {
+        const captured = { updates: [] as unknown[] };
+        const fakePool = {
+            query: async (sql: string, params?: unknown[]) => {
+                if (/SELECT .*file_tech_stack|FROM document_embeddings/i.test(sql)) {
+                    return { rows: [{ id: 'c1', file_path: 'a.ts', content: 'x', heading: null, file_tech_stack: ['kubernetes'], content_hash: 'h1' }] };
+                }
+                if (/UPDATE document_embeddings/i.test(sql)) { captured.updates.push(params); return { rowCount: 1, rows: [] }; }
+                return { rows: [] };
+            },
+        } as never;
+
+        const tier1Map = new Map<string, readonly string[]>([['kubernetes', ['kubernetes networking']]]);
+        // enricher omitted entirely — must not throw, must not call any LLM.
+        const result = await reenrichSkippedChunks(fakePool, undefined, {
+            userId: 'u1', repoFullName: 'me/r', tier1Map, dedupCache: false, deadlineMs: Date.now() + 60_000,
+        });
+
+        expect(result.tier1Resolved ?? result.enriched ?? 0).toBeGreaterThanOrEqual(1); // Tier-1 skills resolved
+        expect(captured.updates.length).toBeGreaterThan(0);                              // Tier-1 skills written
     });
 });

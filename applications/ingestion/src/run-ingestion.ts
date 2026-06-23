@@ -187,6 +187,7 @@ async function costBreakdownByAgent(
  * chunks in place after the repo is already searchable. No re-embedding;
  * best-effort, never throws (a failure must not flip the ingestion outcome).
  */
+
 /**
  * Wall (epoch-ms) by which deferred enrichment must stop dispatching, derived
  * from the pod's `activeDeadlineSeconds` minus a margin that reserves time for
@@ -259,6 +260,69 @@ async function runDeferredEnrichment(
         }
     } catch (err) {
         log.warn({ err: String(err), repoFullName }, 'deferred_enrichment.failed (non-fatal)');
+    }
+}
+
+/** Resolved enrichment mode for a run. */
+type EnrichmentMode = 'premium' | 'free-tier1-only' | 'disabled';
+
+/**
+ * Resolve the enrichment mode for this run from the environment and whether an
+ * LLM enricher was constructed. Called once per run, logged as telemetry.
+ * - `premium`: an LLM enricher is present → full Bedrock enrichment.
+ * - `free-tier1-only`: no LLM enricher + ENRICHMENT_DISABLED=1 + ENRICH_TIER1=1
+ *   → deterministic Tier-1 pass only, zero Bedrock calls.
+ * - `disabled`: ENRICHMENT_DISABLED=1 without ENRICH_TIER1=1 → no enrichment.
+ */
+function resolveEnrichmentMode(enricherPresent: boolean): EnrichmentMode {
+    if (enricherPresent) return 'premium';
+    if (process.env['ENRICHMENT_DISABLED'] === '1' && process.env['ENRICH_TIER1'] === '1') {
+        return 'free-tier1-only';
+    }
+    return 'disabled';
+}
+
+/**
+ * Free-tier Tier-1-only enrichment pass — runs when `ENRICHMENT_DISABLED=1`
+ * (no LLM enricher) AND `ENRICH_TIER1=1`. Resolves skills deterministically
+ * from `file_tech_stack` with zero Bedrock calls. Best-effort, never throws.
+ */
+async function runTier1OnlyPass(
+    pgPool: Pool,
+    userId: string,
+    repoFullName: string,
+): Promise<void> {
+    const startedAt = new Date().toISOString();
+    const tier1Map = await new TechSkillMapRepository(pgPool).loadTechSkillMap().catch(() => undefined);
+    try {
+        const reenriched = await reenrichSkippedChunks(pgPool, undefined, {
+            userId,
+            repoFullName,
+            tier1Map,
+            // Tier-1 is a pure deterministic lookup; caching under the fixed
+            // 'tier1-only' key risks stale-serving if the map changes, and there
+            // is no cost benefit (zero Bedrock calls either way).
+            dedupCache: false,
+            deadlineMs: enrichmentDeadlineMs(),
+            onProgress: (done, total) => {
+                if (done % 100 === 0 || done === total) {
+                    log.info({ done, total, repoFullName }, 'tier1_only_pass.progress');
+                }
+            },
+        });
+        const cost = await sumBookedCostUsd(pgPool, userId, repoFullName, startedAt, 'chunk-enrich');
+        log.info(
+            { event: 'tier1_only_pass.complete', repoFullName, ...reenriched, cost_usd: cost.costUsd },
+            'free-tier Tier-1-only pass complete',
+        );
+        if (reenriched.stoppedEarly) {
+            log.warn(
+                { event: 'tier1_only_pass.stopped_early', repoFullName, remaining: reenriched.remaining },
+                'Tier-1-only pass hit its time budget — remaining chunks left pending for the next sync',
+            );
+        }
+    } catch (err) {
+        log.warn({ err: String(err), repoFullName }, 'tier1_only_pass.failed (non-fatal)');
     }
 }
 
@@ -816,8 +880,20 @@ async function main(): Promise<void> {
 
         // The repo is already searchable above. In defer mode, fill `skills` off
         // the critical path now (in-process, no re-embedding). Best-effort.
+        // Free-tier branch: no LLM enricher, but Tier-1 deterministic skills
+        // (file_tech_stack → canonical) are still available at zero cost.
+        const enrichmentMode = resolveEnrichmentMode(!!enricher);
+
+        const enrichCost = await sumBookedCostUsd(pgPool, env.userId, env.repoFullName, runStartIso, 'chunk-enrich');
+        log.info(
+            { event: 'enrichment.mode', mode: enrichmentMode, cost_usd: enrichCost.costUsd },
+            'resolved enrichment mode for this run',
+        );
+
         if (deferEnrichment && enricher) {
             await runDeferredEnrichment(pgPool, enricher, env.userId, env.repoFullName);
+        } else if (enrichmentMode === 'free-tier1-only') {
+            await runTier1OnlyPass(pgPool, env.userId, env.repoFullName);
         }
 
         // ── Profile rollup + synthesis (runs AFTER completion) ───────────────────
