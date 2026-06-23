@@ -140,3 +140,47 @@ describe('buildPerFileCandidate', () => {
         expect(result.droppedSkills).toBeGreaterThan(0);
     });
 });
+
+// ---------------------------------------------------------------------------
+// Threshold sweep helpers (Task 4)
+// ---------------------------------------------------------------------------
+
+import { enrichUnitsOnce, fanbackCandidate } from './perFileEval.js';
+
+describe('threshold sweep helpers', () => {
+    const chunks = [
+        { filePath: 'a.tf', content: 'scaling group desired 3', chunkIndex: 0, totalChunks: 2 },
+        { filePath: 'a.tf', content: 'unrelated', chunkIndex: 1, totalChunks: 2 },
+    ];
+    // canonical enricher returns one skill not present verbatim in either chunk
+    const enricher = { modelId: 'stub', enrichTextCanonical: async () => ({ canonical: ['aws auto scaling'], newSkills: [] }) } as never;
+
+    it('enriches each unit once and reports callCount', async () => {
+        const { units, callCount } = await enrichUnitsOnce(chunks, enricher, { vocab: ['aws auto scaling'] });
+        expect(callCount).toBe(1);
+        expect(units[0].skills).toEqual(['aws auto scaling']);
+    });
+
+    it('fanbackCandidate recovers the skill above threshold and drops it below', async () => {
+        const { units } = await enrichUnitsOnce(chunks, enricher, { vocab: ['aws auto scaling'] });
+        const idMap = new Map([['a.tf::0', 'id0'], ['a.tf::1', 'id1']]);
+        const skillVectors = new Map<string, readonly number[]>([['aws auto scaling', [1, 0]]]);
+        const vecAbove = (_f: string, i: number) => (i === 0 ? [1, 0] : [0, 1]);
+        const above = fanbackCandidate(units, idMap, { skillVectors, chunkVectorOf: vecAbove, threshold: 0.8 });
+        expect(above.get('id0')).toEqual(['aws auto scaling']);
+        expect(above.get('id1')).toEqual([]);
+        const below = fanbackCandidate(units, idMap, { skillVectors, chunkVectorOf: vecAbove, threshold: 0.99 });
+        // cosine([1,0],[1,0])=1 >= 0.99 still passes; use an orthogonal-ish vector to prove the drop
+        const vecLow = (_f: string, _i: number) => [0.7, 0.7];
+        const dropped = fanbackCandidate(units, idMap, { skillVectors, chunkVectorOf: vecLow, threshold: 0.99 });
+        expect(dropped.get('id0')).toEqual([]);
+        expect(below.get('id0')).toEqual(['aws auto scaling']);
+    });
+
+    it('fanbackCandidate with null evidence is surface-match only', async () => {
+        const { units } = await enrichUnitsOnce(chunks, enricher, { vocab: ['aws auto scaling'] });
+        const idMap = new Map([['a.tf::0', 'id0'], ['a.tf::1', 'id1']]);
+        const out = fanbackCandidate(units, idMap, null);
+        expect(out.get('id0')).toEqual([]); // no surface match, no vectors
+    });
+});

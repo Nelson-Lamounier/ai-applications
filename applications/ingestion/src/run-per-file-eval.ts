@@ -9,17 +9,19 @@
  *   candidate = groupChunksByFile + enrichText/      (one call per file, fan-back
  *               enrichTextCanonical + assign          via assignSkillsToChunks)
  *
- * Reports macro recall + precision and the call-count reduction. REPORT-ONLY:
- * no DB writes, no pipeline changes, no default flip. Exit 0 always.
+ * Reports macro recall + precision and the call-count reduction for each swept
+ * threshold. REPORT-ONLY: no DB writes, no pipeline changes, no default flip.
+ * Exit 0 always.
  *
  * Env:
- *   USER_ID              (required)
- *   REPO_FULL_NAME       (optional — scope to a single repo)
- *   PER_FILE_EVAL_LIMIT  (optional, default 200 — chunk sample cap)
- *   PER_FILE_MAX_CHARS   (optional, default 12 000 — per-unit char budget)
+ *   USER_ID                    (required)
+ *   REPO_FULL_NAME             (optional — scope to a single repo)
+ *   PER_FILE_EVAL_LIMIT        (optional, default 200 — chunk sample cap)
+ *   PER_FILE_MAX_CHARS         (optional, default 12 000 — per-unit char budget)
+ *   PER_FILE_EVAL_THRESHOLDS   (optional, default "0.40,0.50,0.60,0.65" — cosine thresholds to sweep)
  *   PG_HOST, PG_DATABASE, PG_USER, PG_PASSWORD, PG_PORT (default 5432)
  *   AWS_REGION, ENRICHMENT_MODEL_ID
- *   USE_CANONICAL        (optional — use enrichTextCanonical when "true")
+ *   USE_CANONICAL              (optional — use enrichTextCanonical when "true")
  */
 
 import {
@@ -28,14 +30,14 @@ import {
     SkillEmbeddingResolver,
     PhraseSkillResolver,
     TitanEmbeddingProvider,
-    groupChunksByFile,
     bootstrapK8sObservability,
+    parseVector,
     type RawChunk,
 } from '@bedrock/shared';
 import { Pool } from 'pg';
 
 import { computeEnrichEvalMetrics } from './util/enrichEvalMetrics.js';
-import { buildPerFileCandidate } from './util/perFileEval.js';
+import { enrichUnitsOnce, fanbackCandidate } from './util/perFileEval.js';
 
 const obs = bootstrapK8sObservability({ serviceName: 'per-file-eval' });
 const log = obs.logger;
@@ -67,6 +69,7 @@ interface SampleRow {
     chunk_index: number;
     heading: string | null;
     content: string;
+    embedding: string | null;
 }
 
 function toRawChunk(r: SampleRow): RawChunk {
@@ -85,7 +88,7 @@ async function loadSample(
     userId: string,
     repoFullName: string | undefined,
     limit: number,
-): Promise<Array<SampleRow & { id: string }>> {
+): Promise<SampleRow[]> {
     const params: unknown[] = [userId];
     let where = "user_id = $1 AND content <> '' AND (skills IS NULL OR skills = '{}')";
     if (repoFullName) {
@@ -94,7 +97,7 @@ async function loadSample(
     }
     params.push(limit);
     const { rows } = await pool.query<SampleRow>(
-        `SELECT id, file_path, chunk_index, heading, content
+        `SELECT id, file_path, chunk_index, heading, content, embedding::text AS embedding
            FROM document_embeddings
           WHERE ${where}
           ORDER BY file_path, chunk_index
@@ -138,29 +141,6 @@ async function runBaseline(
 }
 
 // ---------------------------------------------------------------------------
-// Candidate — per-file grouping, one call per unit, fan-back via assign
-// ---------------------------------------------------------------------------
-
-async function runCandidate(
-    enricher: BedrockChunkEnricher,
-    rows: SampleRow[],
-    maxChars: number,
-    vocab: readonly string[] | undefined,
-    idMap: Map<string, string>,
-): Promise<{ candidate: Map<string, string[]>; callCount: number }> {
-    const chunks = rows.map(toRawChunk);
-    const { candidate: byKey, callCount } = await buildPerFileCandidate(chunks, enricher, { maxChars, vocab });
-
-    // Re-key from `filePath::chunkIndex` to the DB row id used by the baseline.
-    const candidate = new Map<string, string[]>();
-    for (const [fpKey, skills] of byKey) {
-        const id = idMap.get(fpKey);
-        if (id !== undefined) candidate.set(id, [...skills]);
-    }
-    return { candidate, callCount };
-}
-
-// ---------------------------------------------------------------------------
 // Vocab loader
 // ---------------------------------------------------------------------------
 
@@ -170,7 +150,7 @@ async function loadVocab(pool: Pool): Promise<string[] | undefined> {
 }
 
 // ---------------------------------------------------------------------------
-// Result logger
+// Result logger — variant identifies surface-only vs embedding@<threshold>
 // ---------------------------------------------------------------------------
 
 function logResult(
@@ -179,11 +159,13 @@ function logResult(
     rows: SampleRow[],
     unitCount: number,
     candidateCalls: number,
+    variant: string,
 ): void {
     const r = computeEnrichEvalMetrics(baseline, candidate);
     log.info(
         {
             event: 'per_file_eval.result',
+            variant,
             recall:        r.recall,
             precision:     r.precision,
             chunks:        r.chunks,
@@ -194,7 +176,7 @@ function logResult(
             unitCount,
             callReduction: rows.length === 0 ? 0 : 1 - unitCount / rows.length,
         },
-        `per-file eval: recall=${r.recall.toFixed(3)} precision=${r.precision.toFixed(3)} ` +
+        `per-file eval [${variant}]: recall=${r.recall.toFixed(3)} precision=${r.precision.toFixed(3)} ` +
         `over ${r.chunks} chunks — baseline ${rows.length} calls, candidate ${unitCount} units ` +
         `(${(100 * (1 - unitCount / Math.max(rows.length, 1))).toFixed(1)}% reduction) — ` +
         `droppedSkills=${r.droppedSkills} addedSkills=${r.addedSkills} — REPORT ONLY`,
@@ -202,7 +184,7 @@ function logResult(
 }
 
 // ---------------------------------------------------------------------------
-// Run body (separated from main to keep main's cyclomatic complexity ≤ 10)
+// Run body (separated from main to keep main's cyclomatic complexity <= 10)
 // ---------------------------------------------------------------------------
 
 async function run(
@@ -228,13 +210,33 @@ async function run(
 
     log.info({ useCanonical, vocabSize: vocab?.length ?? 0, maxChars }, 'per_file_eval.config');
 
-    const baseline = await runBaseline(enricher, rows);
-    const { candidate, callCount: candidateCalls } = await runCandidate(
-        enricher, rows, maxChars, vocab, idMap,
-    );
+    const thresholds = (process.env['PER_FILE_EVAL_THRESHOLDS'] ?? '0.40,0.50,0.60,0.65')
+        .split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
 
-    const unitCount = groupChunksByFile(rows.map(toRawChunk), maxChars).length;
-    logResult(baseline, candidate, rows, unitCount, candidateCalls);
+    // Build the chunk-vector lookup from the embedding column fetched by loadSample.
+    const vecByKey = new Map<string, number[]>();
+    for (const r of rows) {
+        const v = parseVector(r.embedding);
+        if (v) vecByKey.set(`${r.file_path}::${r.chunk_index}`, v);
+    }
+    const chunkVectorOf = (f: string, i: number): number[] | undefined => vecByKey.get(`${f}::${i}`);
+
+    const baseline = await runBaseline(enricher, rows);
+
+    // One enrich pass; the sweep re-fans the cached skills (no extra model calls).
+    const { units, callCount: candidateCalls } = await enrichUnitsOnce(rows.map(toRawChunk), enricher, { maxChars, vocab });
+    const allSkills = [...new Set(units.flatMap((u) => u.skills))];
+    const ontology = new SkillOntologyRepository(pool);
+    const skillVectors = await ontology.loadSkillVectors(allSkills);
+
+    const unitCount = units.length;
+
+    // Surface-only baseline row (threshold n/a) + one row per swept threshold.
+    logResult(baseline, fanbackCandidate(units, idMap, null), rows, unitCount, candidateCalls, 'surface-only');
+    for (const threshold of thresholds) {
+        const candidate = fanbackCandidate(units, idMap, { skillVectors, chunkVectorOf, threshold });
+        logResult(baseline, candidate, rows, unitCount, candidateCalls, `embedding@${threshold}`);
+    }
 
     await enricher.flushCosts?.().catch(() => { /* non-fatal */ });
 }
