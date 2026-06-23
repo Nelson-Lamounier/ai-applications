@@ -174,16 +174,16 @@ points), challenge-led and impact-led:
   skills; omit what the evidence does not support.
 
 COMPANY BRIDGE (required, grounded in the JD signal only):
-• Name what the company's product actually does, using <jd_concepts> and
-  <company_problem> (e.g. CSPM, runtime/threat detection, multi-cloud findings).
-  Never invent a company fact beyond the JD signal.
+• Name what the company's product actually does, using ONLY the product/domain
+  terms present in <jd_concepts> and <company_problem> — whatever those say for
+  THIS role (a security platform, a payments API, a data warehouse, a logistics
+  tool, etc.). Never invent a company fact beyond the JD signal.
 • Translate ONE of the candidate's evidenced strengths into operating that product
-  or supporting its customers (e.g. "the cloud-security-graph reasoning I do
-  natively in AWS is what your customers operationalise across multi-cloud
-  estates").
-• When the JD requires a domain the evidence does not cover (e.g. multi-cloud while
-  the evidence is AWS-only), ACTIVELY translate the transferable strength to the
-  role's need. Do not merely omit, and never name the gap or claim the missing
+  or supporting its customers — connect a real, evidenced strength to the specific
+  product surface the JD describes.
+• When the JD requires a domain the evidence does not cover, ACTIVELY translate the
+  transferable strength to the role's need. Do not merely omit, and never name the
+  gap or claim the missing
   skill.
 
 READABILITY:
