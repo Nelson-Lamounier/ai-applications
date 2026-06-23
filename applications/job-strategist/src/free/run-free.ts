@@ -24,6 +24,7 @@ import type { FreeWriter, FreeResumeOutput } from '../agents/free-resume-writer.
 import type { AtsCoverage } from '../ats/grounded-coverage.js';
 import type { AtsCheckResult } from '../ats/ats-check.schema.js';
 import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
+import { jdAtsKeywords } from '../ats/jd-keywords-union.js';
 import { guardCoverLetter } from '../agents/cover-letter-guard.js';
 
 // =============================================================================
@@ -161,11 +162,7 @@ export async function runFreeTier(
     );
 
     // 5. Grounded ATS keyword coverage (deterministic, no LLM)
-    const jdKeywords = [
-        ...jdSignal.requiredSkills,
-        ...jdSignal.tools,
-        ...jdSignal.retrievalKeywords,
-    ];
+    const jdKeywords = jdAtsKeywords(jdSignal);
     const aliasToCanonical = await deps.aliasMap(pool);
     const ats = groundedAtsCoverage(JSON.stringify(resume), jdKeywords, aliasToCanonical);
 

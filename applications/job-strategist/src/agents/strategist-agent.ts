@@ -17,6 +17,7 @@ import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/sha
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
 import type { YearsGap } from './years-gap.js';
+import { capHighlights } from './experience-cap.js';
 
 /** Module-scoped output sanitiser (default patterns — superset of all redaction rules) */
 const outputSanitiser = new OutputSanitiser();
@@ -626,7 +627,10 @@ export function extractTailoredResumeJson(xml: string): StructuredResumeData | n
             `strategist-tailored-resume: tailored_resume_json failed schema validation: ${validated.error.message}`,
         );
     }
-    return validated.data as StructuredResumeData;
+    return {
+        ...validated.data,
+        experience: capHighlights(validated.data.experience),
+    };
 }
 
 // =============================================================================

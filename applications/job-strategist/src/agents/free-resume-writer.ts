@@ -17,6 +17,8 @@ import type { JdSignal } from '@bedrock/shared';
 import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
 import type { StructuredResumeData, CoverLetter } from '@bedrock/shared';
 import { FREE_RESUME_SYSTEM_PROMPT } from '../prompts/free-resume-persona.js';
+import { capHighlights } from './experience-cap.js';
+import { jdAtsKeywords } from '../ats/jd-keywords-union.js';
 import { CoverLetterSchema } from './strategist-agent.js';
 import type { FreeEvidence } from '../free/gather-evidence.js';
 
@@ -104,7 +106,7 @@ const FREE_RESUME_TOOL: AgentConfig['tool'] = {
                                 company:    { type: 'string' },
                                 title:      { type: 'string' },
                                 period:     { type: 'string' },
-                                highlights: { type: 'array', items: { type: 'string' } },
+                                highlights: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 5 },
                             },
                         },
                     },
@@ -209,7 +211,9 @@ export function parseFreeResumeResponse(text: string): FreeResumeOutput {
             `free-resume-writer: schema validation failed: ${validated.error.message}`,
         );
     }
-    return validated.data as FreeResumeOutput;
+    const data = validated.data as FreeResumeOutput;
+    // Deterministic per-role bullet cap — independent of whether the model honoured maxItems.
+    return { ...data, resume: { ...data.resume, experience: capHighlights(data.resume.experience) } };
 }
 
 // =============================================================================
@@ -360,7 +364,14 @@ export function gradeFreeResume(
         }
     }
 
-    // 4. Positioning lead — only when positioning evidence exists
+    // 4. Per-role bullet cap check
+    for (const e of out.resume.experience) {
+        if (e.highlights.length > 5) {
+            failures.push(`experience role "${e.company}" has more than 5 highlights (${e.highlights.length}) — cap to the 5 most JD-relevant`);
+        }
+    }
+
+    // 5. Positioning lead — only when positioning evidence exists
     failures.push(...gradePositioning(out, evidence));
 
     return { pass: failures.length === 0, failures };
@@ -372,11 +383,17 @@ export function gradeFreeResume(
 
 function buildUserMessage(input: FreeWriterInput): string {
     const { jdSignal, evidence, targetRole, targetCompany } = input;
+    const mustHave = jdSignal.hardRequirements.map((r) => r.skill).filter((s) => s.length > 0);
+    const atsKeywords = jdAtsKeywords(jdSignal);
     return [
         `<target_role>${targetRole}</target_role>`,
         `<target_company>${targetCompany}</target_company>`,
         `<company_problem>${jdSignal.companyProblem}</company_problem>`,
         `<required_skills>${jdSignal.requiredSkills.join(', ')}</required_skills>`,
+        mustHave.length ? `<must_have_skills>${mustHave.join(', ')}</must_have_skills>` : '',
+        jdSignal.tools.length ? `<jd_tools>${jdSignal.tools.join(', ')}</jd_tools>` : '',
+        jdSignal.concepts.length ? `<jd_concepts>${jdSignal.concepts.join(', ')}</jd_concepts>` : '',
+        atsKeywords.length ? `<ats_keywords>${atsKeywords.join(', ')}</ats_keywords>` : '',
         '<evidence>',
         `<kb_passages>\n${evidence.kbPassages.join('\n\n')}\n</kb_passages>`,
         `<project_evidence>${evidence.projectEvidence}</project_evidence>`,
