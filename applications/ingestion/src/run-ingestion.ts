@@ -222,8 +222,15 @@ async function runDeferredEnrichment(
         : undefined;
     // Controlled-vocab enrichment (the vocabulary fix): emit ONLY canonical
     // skill_ontology terms so the chunk is canonical and the && lane fires.
+    const ontologyRepo = new SkillOntologyRepository(pgPool);
     const canonicalVocab = process.env['ENRICH_CANONICAL'] === '1'
-        ? await new SkillOntologyRepository(pgPool).loadCanonicalNames().catch(() => undefined)
+        ? await ontologyRepo.loadCanonicalNames().catch(() => undefined)
+        : undefined;
+    // Semantic fan-back vectors come from skill_ontology (canonical skills already
+    // have embeddings, migration 094) — a DB lookup, no Titan call. Only wired
+    // when canonical (the skills the lane scores ARE canonical_name).
+    const skillVectorLookup = canonicalVocab
+        ? (names: readonly string[]) => ontologyRepo.loadSkillVectors(names)
         : undefined;
     try {
         const reenriched = await reenrichSkippedChunks(pgPool, enricher, {
@@ -234,6 +241,7 @@ async function runDeferredEnrichment(
             // WS5 content-hash dedup: copy skills for byte-identical chunks instead
             // of re-invoking the LLM. On by default; ENRICH_DEDUP=0 disables.
             dedupCache: process.env['ENRICH_DEDUP'] !== '0',
+            skillVectorLookup,
             deadlineMs: enrichmentDeadlineMs(),
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {

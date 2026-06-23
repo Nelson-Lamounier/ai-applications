@@ -27,12 +27,12 @@ const rows = [
  * back to which chunk. Mirrors the real SELECT/UPDATE shape.
  */
 function makePerFilePool(
-    skippedRows: Array<{ id: string; file_path: string; heading: string | null; content: string; chunk_index: number; content_hash?: string | null; file_tech_stack?: string[] | null }>,
+    skippedRows: Array<{ id: string; file_path: string; heading: string | null; content: string; chunk_index: number; content_hash?: string | null; file_tech_stack?: string[] | null; embedding?: string | null }>,
 ) {
     const updates: Array<{ skills: string[]; id: string }> = [];
     const query = jest.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('SELECT') && sql.includes('document_embeddings')) {
-            return { rows: skippedRows.map((r) => ({ content_hash: null, file_tech_stack: null, ...r })) };
+            return { rows: skippedRows.map((r) => ({ content_hash: null, file_tech_stack: null, embedding: null, ...r })) };
         }
         if (sql.includes('UPDATE')) {
             updates.push({ skills: params?.[0] as string[], id: params?.[1] as string });
@@ -41,6 +41,21 @@ function makePerFilePool(
         return { rows: [] };
     });
     return { pool: { query } as unknown as Pool, query, updates };
+}
+
+/**
+ * Canonical enricher stub: enrichTextCanonical returns the given canonical skills
+ * with no new-skills growth queue. Also provides enrichText so that perFileEnabled
+ * returns true and the per-file batching path activates (which is the path the
+ * embedding fan-back lane sits on). The canonical path takes precedence in enrichUnit
+ * when canonicalVocab is set, so enrichText is never called in those tests.
+ */
+function makeCanonicalEnricher(canonical: string[]): IChunkEnricher {
+    return {
+        modelId: 'stub',
+        enrichText: jest.fn(async () => ({ skills: canonical, technologies: [] })),
+        enrichTextCanonical: jest.fn(async () => ({ canonical, newSkills: [] })),
+    } as unknown as IChunkEnricher;
 }
 
 describe('reenrichSkippedChunks ENRICH_PER_FILE — Phase-B deadline remaining accounting', () => {
@@ -353,5 +368,45 @@ describe('reenrichSkippedChunks', () => {
         const selectSql = query.mock.calls[0][0] as string;
         expect(selectSql).not.toMatch(/enrichment_status/);  // no status gate
         expect(selectSql).toMatch(/repo_full_name = \$1/);     // still repo-scoped
+    });
+});
+
+describe('ENRICH_PER_FILE embedding fan-back', () => {
+    const prev = process.env.ENRICH_PER_FILE;
+    afterEach(() => { process.env.ENRICH_PER_FILE = prev; });
+
+    it('recovers a non-surface-matching skill via skillVectorLookup', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        // Two residue chunks of one file. The canonical enricher returns the
+        // unit skill 'aws auto scaling' which does NOT appear verbatim in chunk 0's
+        // text, but chunk 0's embedding is vector-close to the skill's.
+        const { pool, updates } = makePerFilePool([
+            { id: 'c0', file_path: 'infra/asg.tf', heading: null, content: 'resource scaling group desired 3', chunk_index: 0, content_hash: null, file_tech_stack: null, embedding: '[1,0]' },
+            { id: 'c1', file_path: 'infra/asg.tf', heading: null, content: 'unrelated prose', chunk_index: 1, content_hash: null, file_tech_stack: null, embedding: '[0,1]' },
+        ]);
+        const enricher = makeCanonicalEnricher(['aws auto scaling']);
+        const skillVectorLookup = async (names: readonly string[]) =>
+            new Map(names.includes('aws auto scaling') ? [['aws auto scaling', [1, 0]]] : []);
+
+        await reenrichSkippedChunks(pool, enricher, {
+            canonicalVocab: ['aws auto scaling'],
+            skillVectorLookup,
+            fanbackThreshold: 0.8,
+        });
+
+        const c0 = updates.find((w) => w.id === 'c0');
+        const c1 = updates.find((w) => w.id === 'c1');
+        expect(c0?.skills).toEqual(['aws auto scaling']); // recovered by cosine([1,0],[1,0])=1
+        expect(c1?.skills).toEqual([]);                    // cosine([1,0],[0,1])=0 < 0.8, no surface match
+    });
+
+    it('without skillVectorLookup, behaves exactly as surface-match-only (today)', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        const { pool, updates } = makePerFilePool([
+            { id: 'c0', file_path: 'infra/asg.tf', heading: null, content: 'resource scaling group desired 3', chunk_index: 0, content_hash: null, file_tech_stack: null, embedding: '[1,0]' },
+        ]);
+        const enricher = makeCanonicalEnricher(['aws auto scaling']);
+        await reenrichSkippedChunks(pool, enricher, { canonicalVocab: ['aws auto scaling'] });
+        expect(updates.find((w) => w.id === 'c0')?.skills).toEqual([]); // no surface match, no vectors -> dropped
     });
 });

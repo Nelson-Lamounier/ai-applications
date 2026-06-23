@@ -7,6 +7,8 @@ import {
     tier1SkillsFromTech,
     groupChunksByFile,
     assignSkillsToChunks,
+    assignSkillsByEmbedding,
+    parseVector,
 } from '@bedrock/shared';
 
 /** Filter + bounds for a re-enrich run. */
@@ -59,6 +61,16 @@ export interface ReenrichOptions {
      * content yields identical skills.
      */
     readonly dedupCache?: boolean;
+    /**
+     * Semantic fan-back lane (premium per-file). Given canonical skill names,
+     * returns their skill_ontology vectors. When supplied (+ ENRICH_PER_FILE),
+     * a unit skill is kept on a chunk by surface-match OR cosine(skillVec,
+     * chunkVec) >= fanbackThreshold — recovering skills surface-match drops.
+     * Absent -> surface-match only (today's behaviour). Fail-open.
+     */
+    readonly skillVectorLookup?: (names: readonly string[]) => Promise<Map<string, number[]>>;
+    /** Cosine cutoff for the embedding lane. Default ENRICH_FANBACK_SIM_THRESHOLD or 0.5. */
+    readonly fanbackThreshold?: number;
 }
 
 export interface ReenrichResult {
@@ -85,6 +97,7 @@ interface SkippedRow {
     chunk_index: number;
     content_hash: string | null;
     file_tech_stack: string[] | null;
+    embedding: string | null;
 }
 
 /**
@@ -121,7 +134,8 @@ export async function reenrichSkippedChunks(
 
     const { rows } = await pool.query<SkippedRow>(
         `SELECT id, file_path, heading, content, chunk_index, content_hash,
-                metadata->'file_tech_stack' AS file_tech_stack
+                metadata->'file_tech_stack' AS file_tech_stack,
+                embedding::text AS embedding
            FROM document_embeddings
           WHERE ${conditions.join(' AND ')}
           ORDER BY repo_full_name, file_path, chunk_index
@@ -144,6 +158,11 @@ export async function reenrichSkippedChunks(
     const remember = (hash: string | null, skills: string[]): void => {
         if (hash) { cache.set(hash, skills); freshCache.set(hash, skills); }
     };
+
+    // Semantic fan-back (premium per-file): resolve canonical skill -> ontology
+    // vector once per run (skills repeat across files). null = looked up, absent.
+    const fanbackThreshold = resolveFanbackThreshold(opts.fanbackThreshold);
+    const skillVectorCache = new Map<string, number[] | null>();
 
     let enriched = 0;
     let failed = 0;
@@ -281,11 +300,12 @@ export async function reenrichSkippedChunks(
         totalChunks: 1,
     });
 
-    /** One model call for a file-unit, fanned back to its chunks by surface-match. */
+    /** One model call for a file-unit, fanned back to its chunks (surface OR embedding). */
     async function enrichUnit(
         unit: FileEnrichUnit,
         idOf: (filePath: string, chunkIndex: number) => string | undefined,
         hashOf: (filePath: string, chunkIndex: number) => string | null,
+        vecOf: (filePath: string, chunkIndex: number) => number[] | undefined,
     ): Promise<void> {
         let skills: string[];
         if (opts.canonicalVocab && enricher.enrichTextCanonical) {
@@ -297,9 +317,13 @@ export async function reenrichSkippedChunks(
             const r = await enricher.enrichText!(unit.filePath, unit.text, unit.chunks[0]?.heading);
             skills = r.skills;
         }
-        // Fan back: a chunk keeps a unit skill only if its content surface-matches
-        // (no evidence-resolver here — surface-match only).
-        const assigned = assignSkillsToChunks(unit, skills, () => false);
+        // Fan back. Semantic lane when vectors are available (premium); else the
+        // surface-match-only path (byte-identical to before).
+        const skillVectors = await resolveSkillVectors(skills, skillVectorCache, opts.skillVectorLookup);
+        const chunkVectors = buildChunkVectors(unit, vecOf);
+        const assigned = (skillVectors.size > 0 && chunkVectors.size > 0)
+            ? assignSkillsByEmbedding(unit, skills, { skillVectors, chunkVectors, threshold: fanbackThreshold })
+            : assignSkillsToChunks(unit, skills, () => false);
         for (const { chunkIndex, skills: chunkSkills } of assigned) {
             const id = idOf(unit.filePath, chunkIndex);
             if (!id) continue;
@@ -336,16 +360,20 @@ export async function reenrichSkippedChunks(
     async function processResiduePerFile(): Promise<void> {
         const residue = await runResiduePrepass();
 
-        // Back-maps: `${filePath}::${chunkIndex}` -> row id / content_hash.
+        // Back-maps: `${filePath}::${chunkIndex}` -> row id / content_hash / embedding.
         const key = (filePath: string, chunkIndex: number): string => `${filePath}::${chunkIndex}`;
         const idByKey = new Map<string, string>();
         const hashByKey = new Map<string, string | null>();
+        const vecByKey = new Map<string, number[]>();
         for (const row of residue) {
             idByKey.set(key(row.file_path, row.chunk_index), row.id);
             hashByKey.set(key(row.file_path, row.chunk_index), row.content_hash);
+            const v = parseVector(row.embedding);
+            if (v) vecByKey.set(key(row.file_path, row.chunk_index), v);
         }
         const idOf = (filePath: string, chunkIndex: number): string | undefined => idByKey.get(key(filePath, chunkIndex));
         const hashOf = (filePath: string, chunkIndex: number): string | null => hashByKey.get(key(filePath, chunkIndex)) ?? null;
+        const vecOf = (filePath: string, chunkIndex: number): number[] | undefined => vecByKey.get(key(filePath, chunkIndex));
 
         // Phase B — per-file batching over the residue.
         const maxChars = Number(process.env.ENRICH_PER_FILE_MAX_CHARS ?? '12000') || 12000;
@@ -361,7 +389,7 @@ export async function reenrichSkippedChunks(
                 const unit = units[cursor];
                 cursor += 1;
                 try {
-                    await enrichUnit(unit, idOf, hashOf);
+                    await enrichUnit(unit, idOf, hashOf, vecOf);
                 } catch (err) {
                     // Leave the unit's rows pending — never throw out of the pool.
                     for (const _ of unit.chunks) recordFailure(err);
@@ -391,6 +419,60 @@ export async function reenrichSkippedChunks(
     logFailures(rows.length);
 
     return { candidates: rows.length, enriched, failed, tier1Resolved, newSkillsQueued, cacheHits, stoppedEarly, remaining: rows.length - done };
+}
+
+/**
+ * Resolve the cosine threshold for the embedding fan-back lane. The option
+ * value takes precedence; else the env var (numeric); else 0.5.
+ */
+function resolveFanbackThreshold(optValue: number | undefined): number {
+    if (optValue !== undefined) return optValue;
+    const env = Number(process.env['ENRICH_FANBACK_SIM_THRESHOLD']);
+    return Number.isFinite(env) && env > 0 ? env : 0.5;
+}
+
+/**
+ * Build a chunkIndex -> vector map for a file unit from the per-unit vecOf
+ * back-map. Only chunks whose row had a parseable embedding are included;
+ * chunks without a vector simply have no embedding evidence (surface-match
+ * still applies via the fallback path).
+ */
+function buildChunkVectors(
+    unit: FileEnrichUnit,
+    vecOf: (filePath: string, chunkIndex: number) => number[] | undefined,
+): Map<number, number[]> {
+    const out = new Map<number, number[]>();
+    for (const c of unit.chunks) {
+        const v = vecOf(unit.filePath, c.chunkIndex);
+        if (v) out.set(c.chunkIndex, v);
+    }
+    return out;
+}
+
+/**
+ * Resolve canonical skill names to their ontology vectors, using a per-run
+ * cache to avoid repeated lookups (skills repeat across files). Entries that
+ * the lookup does not return are cached as null so we never retry them. Fails
+ * open: a lookup error returns an empty map and leaves the cache unpopulated
+ * for the missing skills so the next unit can retry.
+ */
+async function resolveSkillVectors(
+    skills: readonly string[],
+    cache: Map<string, number[] | null>,
+    lookup: ((names: readonly string[]) => Promise<Map<string, number[]>>) | undefined,
+): Promise<Map<string, number[]>> {
+    const out = new Map<string, number[]>();
+    if (!lookup) return out;
+    const missing = skills.filter((s) => !cache.has(s));
+    if (missing.length > 0) {
+        const looked = await lookup(missing).catch(() => new Map<string, number[]>());
+        for (const s of missing) cache.set(s, looked.get(s) ?? null);
+    }
+    for (const s of skills) {
+        const v = cache.get(s);
+        if (v) out.set(s, v);
+    }
+    return out;
 }
 
 /**
