@@ -1,11 +1,11 @@
 /**
  * @format
- * Per-file enrichment eval (feature 002, US2 — the gate before defaulting
+ * Per-file enrichment eval (feature 002, US2 -- the gate before defaulting
  * ENRICH_PER_FILE on). For a sample of residue chunks (those with NULL/empty
  * skills, capped via PER_FILE_EVAL_LIMIT), scores the per-file candidate path
  * against the per-chunk LLM baseline:
  *
- *   baseline  = enricher.enrich(chunk)              (one call per chunk — today)
+ *   baseline  = enricher.enrich(chunk)              (one call per chunk -- today)
  *   candidate = groupChunksByFile + enrichText/      (one call per file, fan-back
  *               enrichTextCanonical + assign          via assignSkillsToChunks)
  *
@@ -15,13 +15,13 @@
  *
  * Env:
  *   USER_ID                    (required)
- *   REPO_FULL_NAME             (optional — scope to a single repo)
- *   PER_FILE_EVAL_LIMIT        (optional, default 200 — chunk sample cap)
- *   PER_FILE_MAX_CHARS         (optional, default 12 000 — per-unit char budget)
- *   PER_FILE_EVAL_THRESHOLDS   (optional, default "0.40,0.50,0.60,0.65" — cosine thresholds to sweep)
+ *   REPO_FULL_NAME             (optional -- scope to a single repo)
+ *   PER_FILE_EVAL_LIMIT        (optional, default 200 -- chunk sample cap)
+ *   PER_FILE_MAX_CHARS         (optional, default 12 000 -- per-unit char budget)
+ *   PER_FILE_EVAL_THRESHOLDS   (optional, default "0.40,0.50,0.60,0.65" -- cosine thresholds to sweep)
  *   PG_HOST, PG_DATABASE, PG_USER, PG_PASSWORD, PG_PORT (default 5432)
  *   AWS_REGION, ENRICHMENT_MODEL_ID
- *   USE_CANONICAL              (optional — use enrichTextCanonical when "true")
+ *   USE_CANONICAL              (optional -- use enrichTextCanonical when "true")
  */
 
 import {
@@ -82,7 +82,7 @@ function toRawChunk(r: SampleRow): RawChunk {
     };
 }
 
-/** Sample residue chunks — those with NULL or empty skills arrays. */
+/** Sample residue chunks -- those with NULL or empty skills arrays. */
 async function loadSample(
     pool: Pool,
     userId: string,
@@ -125,7 +125,7 @@ async function buildEnricher(
 }
 
 // ---------------------------------------------------------------------------
-// Baseline — one enricher.enrich call per chunk (keyed by DB row id)
+// Baseline -- one enricher.enrich call per chunk (keyed by DB row id)
 // ---------------------------------------------------------------------------
 
 async function runBaseline(
@@ -150,7 +150,7 @@ async function loadVocab(pool: Pool): Promise<string[] | undefined> {
 }
 
 // ---------------------------------------------------------------------------
-// Result logger — variant identifies surface-only vs embedding@<threshold>
+// Result logger -- variant identifies surface-only vs embedding@<threshold>
 // ---------------------------------------------------------------------------
 
 function logResult(
@@ -177,9 +177,9 @@ function logResult(
             callReduction: rows.length === 0 ? 0 : 1 - unitCount / rows.length,
         },
         `per-file eval [${variant}]: recall=${r.recall.toFixed(3)} precision=${r.precision.toFixed(3)} ` +
-        `over ${r.chunks} chunks — baseline ${rows.length} calls, candidate ${unitCount} units ` +
-        `(${(100 * (1 - unitCount / Math.max(rows.length, 1))).toFixed(1)}% reduction) — ` +
-        `droppedSkills=${r.droppedSkills} addedSkills=${r.addedSkills} — REPORT ONLY`,
+        `over ${r.chunks} chunks -- baseline ${rows.length} calls, candidate ${unitCount} units ` +
+        `(${(100 * (1 - unitCount / Math.max(rows.length, 1))).toFixed(1)}% reduction) -- ` +
+        `droppedSkills=${r.droppedSkills} addedSkills=${r.addedSkills} -- REPORT ONLY`,
     );
 }
 
