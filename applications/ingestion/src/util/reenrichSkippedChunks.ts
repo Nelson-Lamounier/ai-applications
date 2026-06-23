@@ -453,8 +453,8 @@ function buildChunkVectors(
  * Resolve canonical skill names to their ontology vectors, using a per-run
  * cache to avoid repeated lookups (skills repeat across files). Entries that
  * the lookup does not return are cached as null so we never retry them. Fails
- * open: a lookup error returns an empty map and leaves the cache unpopulated
- * for the missing skills so the next unit can retry.
+ * open: a lookup error is swallowed (empty map) and the requested skills are
+ * cached as absent for the rest of the run -- no retry; surface-match applies.
  */
 async function resolveSkillVectors(
     skills: readonly string[],
