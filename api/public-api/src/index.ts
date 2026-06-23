@@ -33,6 +33,7 @@ import { logger } from 'hono/logger';
 import { loadConfig } from './lib/config.js';
 import health from './routes/health.js';
 import articles from './routes/articles.js';
+import engagement from './routes/engagement.js';
 import chatbot from './routes/chatbot.js';
 import tags from './routes/tags.js';
 import resumes from './routes/resumes.js';
@@ -74,6 +75,7 @@ app.use(
 
 app.route('/', health);
 app.route('/', articles);
+app.route('/', engagement);
 app.route('/', chatbot);
 app.route('/', tags);
 app.route('/', resumes);
