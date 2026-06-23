@@ -37,6 +37,29 @@ export interface GuardrailConfig {
 }
 
 /**
+ * Shared-VPC attributes for the RAG chatbot Lambdas. Resolved WITHOUT a
+ * synth-time lookup: the vpc id comes from SSM at deploy time and the public
+ * subnets are static config, so `cdk synth --no-lookups` (CI) succeeds and no
+ * `cdk.context.json` is needed. Omit to skip VPC attachment for an environment.
+ */
+export interface ChatbotVpcConfig {
+    /** SSM parameter holding the shared VPC id (tucaken-infra: /shared/vpc/<env>/vpc-id). */
+    readonly vpcIdSsmParameter: string;
+    /**
+     * SSM parameter holding the comma-separated public subnet ids
+     * (tucaken-infra publishes this dynamically from vpc.publicSubnets, so new
+     * subnets are picked up automatically). Read + split at deploy time.
+     */
+    readonly publicSubnetIdsSsmParameter: string;
+    /**
+     * Availability zones for the public subnets, concrete (CDK requires
+     * non-token AZs for an imported VPC). Its length anchors the Fn.split count,
+     * so it MUST match the number of public subnets in the SSM list.
+     */
+    readonly availabilityZones: string[];
+}
+
+/**
  * API Gateway configuration
  */
 export interface ApiConfig {
@@ -52,6 +75,8 @@ export interface ApiConfig {
     readonly chatbotRetrievalSource: string;
     /** SSM parameter holding the portfolio owner user ID for sessions + RLS */
     readonly portfolioOwnerUserIdParameterName: string;
+    /** Shared VPC wiring for the RAG Lambdas (omit to skip VPC attachment). */
+    readonly chatbotVpc?: ChatbotVpcConfig;
 }
 
 /**
@@ -128,6 +153,16 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
             // same RDS pgvector store as staging/production (returns chunk text, not refs).
             chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserIdParameterName: '/bedrock-dev/portfolio-owner-user-id',
+            // Shared VPC wiring read entirely from tucaken-infra's SSM exports
+            // (/shared/vpc/development/*) at deploy time -- no hardcoded subnet
+            // ids, no synth-time lookup. tucaken-infra publishes public-subnet-ids
+            // dynamically, so added subnets flow through without a code change
+            // (bump availabilityZones only if the subnet COUNT changes).
+            chatbotVpc: {
+                vpcIdSsmParameter: '/shared/vpc/development/vpc-id',
+                publicSubnetIdsSsmParameter: '/shared/vpc/development/public-subnet-ids',
+                availabilityZones: ['eu-west-1a', 'eu-west-1b'],
+            },
         },
         logRetention: logs.RetentionDays.ONE_WEEK,
         isProduction: false,

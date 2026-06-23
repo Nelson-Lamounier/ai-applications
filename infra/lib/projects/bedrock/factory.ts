@@ -182,7 +182,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 rdsSsmPrefix: configs.api.rdsSsmPrefix,
                 rdsCredentialsSecretName: configs.api.rdsCredentialsSecretName,
                 chatbotRetrievalSource: configs.api.chatbotRetrievalSource,
-                chatbotVpcName: `shared-vpc-${this.environment}`,
+                chatbotVpc: configs.api.chatbotVpc,
                 env,
             }
         );

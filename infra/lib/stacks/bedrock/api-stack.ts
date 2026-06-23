@@ -29,6 +29,7 @@ import * as cdk from 'aws-cdk-lib/core';
 
 import type { Construct } from 'constructs';
 
+import type { ChatbotVpcConfig } from '../../config/bedrock/configurations';
 import { addLambdaObservability, OBSERVABILITY_EXTERNAL_MODULES } from '../../utilities/lambda-observability';
 
 
@@ -69,8 +70,8 @@ export interface BedrockApiStackProps extends cdk.StackProps {
     readonly rdsCredentialsSecretName: string;
     /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
     readonly chatbotRetrievalSource: string;
-    /** Shared VPC Name tag for RAG Lambdas that need private RDS access. */
-    readonly chatbotVpcName?: string;
+    /** Shared VPC wiring for RAG Lambdas that need private RDS access. */
+    readonly chatbotVpc?: ChatbotVpcConfig;
 }
 
 /**
@@ -216,8 +217,8 @@ export class BedrockApiStack extends cdk.Stack {
         // Chatbot lambdas bundle pg — do NOT exclude it (unlike K8s workloads).
         const chatbotExternalModules = OBSERVABILITY_EXTERNAL_MODULES.filter(m => m !== 'pg');
 
-        const chatbotVpcProps = props.chatbotVpcName
-            ? this.buildChatbotVpcProps(props.chatbotVpcName)
+        const chatbotVpcProps = props.chatbotVpc
+            ? this.buildChatbotVpcProps(props.chatbotVpc)
             : {};
         const chatbotFoundationModelId = props.chatbotModel.replace(/^eu\./, '');
         const euInferenceProfileRegions = [
@@ -631,11 +632,25 @@ export class BedrockApiStack extends cdk.Stack {
         });
     }
 
-    private buildChatbotVpcProps(vpcName: string): Pick<
+    private buildChatbotVpcProps(cfg: ChatbotVpcConfig): Pick<
         lambdaNode.NodejsFunctionProps,
         'allowPublicSubnet' | 'securityGroups' | 'vpc' | 'vpcSubnets'
     > {
-        const vpc = ec2.Vpc.fromLookup(this, 'ChatbotSharedVpc', { vpcName });
+        // Resolve the shared VPC by attributes rather than Vpc.fromLookup: the vpc
+        // id and subnet ids come from tucaken-infra's SSM exports at deploy time.
+        // fromLookup forces a synth-time EC2 call, which the --no-lookups CI synth
+        // blocks (and cdk.context.json is gitignored, so it cannot be cached).
+        // fromVpcAttributes + valueForStringParameter perform no synth-time AWS
+        // calls. Subnet ids are a comma-separated SSM string split into the known
+        // AZ count (CDK needs the count concrete; the ids themselves stay dynamic).
+        const vpcId = ssm.StringParameter.valueForStringParameter(this, cfg.vpcIdSsmParameter);
+        const publicSubnetIdsCsv = ssm.StringParameter.valueForStringParameter(this, cfg.publicSubnetIdsSsmParameter);
+        const publicSubnetIds = cdk.Fn.split(',', publicSubnetIdsCsv, cfg.availabilityZones.length);
+        const vpc = ec2.Vpc.fromVpcAttributes(this, 'ChatbotSharedVpc', {
+            vpcId,
+            availabilityZones: cfg.availabilityZones,
+            publicSubnetIds,
+        });
         const vpcSubnets = { subnetType: ec2.SubnetType.PUBLIC };
 
         const lambdaSecurityGroup = new ec2.SecurityGroup(this, 'ChatbotLambdaSecurityGroup', {
