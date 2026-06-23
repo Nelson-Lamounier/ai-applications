@@ -9,7 +9,7 @@ import { validateCoverLetter, guardCoverLetter, type CoverLetter } from './cover
 
 /** Wrap a body string in a structured CoverLetter for the content checks. */
 const cl = (body: string): CoverLetter => ({
-    greeting:   'Dear Hiring Manager',
+    greeting:   'Dear Hiring Manager,',
     paragraphs: [body],
     signoff:    { name: 'Nelson', email: 'n@x.com', linkedin: 'l', github: 'g' },
 });
@@ -68,12 +68,29 @@ describe('validateCoverLetter', () => {
         const v = validateCoverLetter(letter, 'Solutions Support Engineer', '');
         expect(v.some((x) => x.code === 'forward_looking_skill_claim')).toBe(false);
     });
+    it('flags a body sentence longer than 40 words (long_sentence)', () => {
+        const long = 'When a silent IAM failure caused every Bedrock Rerank call to fall back to cosine retrieval with no user-visible error I diagnosed it via simulate-principal-policy confirming InvokeModel was allowed while Rerank returned an implicit deny and then corrected the Pod Identity policy in CDK and verified the fix with a live Rerank API test against the running cluster.';
+        const letter = { greeting: 'Dear Hiring Manager,', paragraphs: [long], signoff: SIGNOFF } as never;
+        expect(validateCoverLetter(letter, 'Solutions Support Engineer', '').some((v) => v.code === 'long_sentence')).toBe(true);
+    });
+    it('does not flag a letter of short sentences', () => {
+        const letter = { greeting: 'Dear Hiring Manager,', paragraphs: ['I resolve IAM incidents at AWS. I traced a compromised key through CloudTrail. I fixed the trust policy fast.'], signoff: SIGNOFF } as never;
+        expect(validateCoverLetter(letter, 'Solutions Support Engineer', '').some((v) => v.code === 'long_sentence')).toBe(false);
+    });
+    it('flags a greeting without a trailing comma (greeting_format)', () => {
+        const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['I resolve IAM incidents.'], signoff: SIGNOFF } as never;
+        expect(validateCoverLetter(letter, 'Solutions Support Engineer', '').some((v) => v.code === 'greeting_format')).toBe(true);
+    });
+    it('accepts a greeting with a trailing comma', () => {
+        const letter = { greeting: 'Dear Hiring Manager,', paragraphs: ['I resolve IAM incidents.'], signoff: SIGNOFF } as never;
+        expect(validateCoverLetter(letter, 'Solutions Support Engineer', '').some((v) => v.code === 'greeting_format')).toBe(false);
+    });
 });
 
 const mockRun = runAgent as jest.Mock;
 
 const SIGNOFF = { name: 'Nelson', email: 'n@x.com', linkedin: 'l', github: 'g' };
-const clObj = (paras: string[]): CoverLetter => ({ greeting: 'Dear Hiring Manager', paragraphs: paras, signoff: SIGNOFF });
+const clObj = (paras: string[]): CoverLetter => ({ greeting: 'Dear Hiring Manager,', paragraphs: paras, signoff: SIGNOFF });
 
 describe('guardCoverLetter', () => {
     beforeEach(() => { mockRun.mockReset(); });

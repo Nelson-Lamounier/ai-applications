@@ -332,4 +332,11 @@ describe('gradeFreeResume', () => {
         const bad = { ...good, coverLetter: { ...good.coverLetter, paragraphs: ['I cut latency by 73% across the platform.'] } } as never;
         expect(gradeFreeResume(bad, evidence).failures.some((f) => /cover letter/i.test(f) && /73/.test(f))).toBe(true);
     });
+
+    it('treats numbers grounded only in achievementEvidence as grounded (not fabricated)', () => {
+        const ev = { ...evidence, achievementEvidence: 'Decision impact: lifted skills overlap from 2.2% to full operation; recovered 1,964 chunks.' };
+        const out = { ...good, resume: { ...good.resume, summary: 'Lifted skills-overlap coverage from 2.2% and recovered 1,964 chunks.' } } as never;
+        const failures = gradeFreeResume(out, ev).failures;
+        expect(failures.some((f) => /"2\.2"|"1964"|"1,964"/.test(f))).toBe(false);
+    });
 });

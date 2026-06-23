@@ -49,6 +49,16 @@ function hasForwardLookingSkillClaim(text: string): boolean {
 /** Any markdown the agent should NOT emit (formatting belongs to the UI/PDF). */
 const MARKDOWN = /\*\*|__|##|^\s*[-*+]\s+/m;
 
+const MAX_SENTENCE_WORDS = 40;
+
+/** True when any body sentence exceeds MAX_SENTENCE_WORDS words. */
+function hasLongSentence(paragraphs: readonly string[]): boolean {
+    const body = paragraphs.join(' ');
+    return body
+        .split(/(?<=[.!?])\s+/)
+        .some((s) => s.trim().split(/\s+/).filter(Boolean).length > MAX_SENTENCE_WORDS);
+}
+
 /** Push title violations (missing_title, wrong_title) onto out. */
 function checkTitleViolations(out: CoverLetterViolation[], lower: string, targetRole: string, leadIdentity: string): void {
     if (targetRole && !lower.includes(targetRole.toLowerCase())) {
@@ -78,6 +88,12 @@ export function validateCoverLetter(letter: CoverLetter, targetRole: string, lea
     if (hasForwardLookingSkillClaim(text)) out.push({ code: 'forward_looking_skill_claim', detail: 'Claims to be actively learning/onboarding a skill — omit unevidenced forward-looking acquisition; use grounded transferable framing instead.' });
     if (UNREALISED.test(text)) out.push({ code: 'unrealised_impact', detail: 'Claims not-yet-realised impact.' });
     if (MARKDOWN.test(text))   out.push({ code: 'has_markdown', detail: 'Agent emitted markdown formatting — the UI/PDF owns formatting; output must be plain text.' });
+    if (hasLongSentence(letter.paragraphs)) {
+        out.push({ code: 'long_sentence', detail: `A sentence exceeds ${MAX_SENTENCE_WORDS} words — split comma-joined clauses into shorter sentences.` });
+    }
+    if (letter.greeting.trim().length > 0 && !letter.greeting.trim().endsWith(',')) {
+        out.push({ code: 'greeting_format', detail: 'Greeting must end with a comma (e.g. "Dear Hiring Manager,").' });
+    }
 
     return out;
 }
@@ -131,6 +147,8 @@ export async function rewriteCoverLetter(
         '- Remove every sentence that names, apologises for, or argues against a gap or missing experience. Delete them, do not replace.',
         ctx.yearsGapFraming ? `- Where tenure is mentioned, use this true framing instead: "${ctx.yearsGapFraming}".` : '- Do not state a single-role tenure that undersells the candidate.',
         '- Remove claims of not-yet-realised impact (e.g. "pending review").',
+        '- Split any sentence longer than ~40 words into shorter sentences; prefer a full stop or comma over an em-dash.',
+        '- Ensure the greeting ends with a comma (e.g. "Dear Hiring Manager,").',
         '- Do NOT invent any new factual claim. Preserve the real evidence + voice; only cut/repair the flagged problems. Keep the signoff unchanged.',
     ].join('\n');
 
