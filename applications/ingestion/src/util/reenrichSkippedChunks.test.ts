@@ -21,6 +21,85 @@ const rows = [
     { id: 'b', file_path: 'src/y.ts', heading: null, content: 'cdk stack' },
 ];
 
+/**
+ * Per-file harness: a pool whose SELECT returns rows carrying chunk_index +
+ * content_hash, capturing every UPDATE so a test can assert which skills fanned
+ * back to which chunk. Mirrors the real SELECT/UPDATE shape.
+ */
+function makePerFilePool(
+    skippedRows: Array<{ id: string; file_path: string; heading: string | null; content: string; chunk_index: number; content_hash?: string | null; file_tech_stack?: string[] | null }>,
+) {
+    const updates: Array<{ skills: string[]; id: string }> = [];
+    const query = jest.fn(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('SELECT') && sql.includes('document_embeddings')) {
+            return { rows: skippedRows.map((r) => ({ content_hash: null, file_tech_stack: null, ...r })) };
+        }
+        if (sql.includes('UPDATE')) {
+            updates.push({ skills: params?.[0] as string[], id: params?.[1] as string });
+            return { rows: [] };
+        }
+        return { rows: [] };
+    });
+    return { pool: { query } as unknown as Pool, query, updates };
+}
+
+describe('reenrichSkippedChunks ENRICH_PER_FILE residue batching', () => {
+    afterEach(() => { delete process.env.ENRICH_PER_FILE; delete process.env.ENRICH_PER_FILE_MAX_CHARS; });
+
+    it('ENRICH_PER_FILE=1: makes one LLM call per file-unit, not per chunk', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        const calls: string[] = [];
+        const enricher = {
+            modelId: 'haiku',
+            enrichText: async (filePath: string) => { calls.push(filePath); return { skills: ['kubernetes networking'], technologies: [] }; },
+        } as unknown as IChunkEnricher;
+        const { pool, updates } = makePerFilePool([
+            { id: 'a1', file_path: 'a.ts', heading: null, content: 'uses kubernetes networking here', chunk_index: 0 },
+            { id: 'a2', file_path: 'a.ts', heading: null, content: 'more kubernetes networking detail', chunk_index: 1 },
+            { id: 'b1', file_path: 'b.ts', heading: null, content: 'kubernetes networking in b', chunk_index: 0 },
+        ]);
+        const res = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', repoFullName: 'me/r', dedupCache: false, deadlineMs: Date.now() + 60_000 });
+        expect(calls.length).toBe(2);          // one call per FILE (a.ts, b.ts), not 3
+        expect(res.enriched).toBe(3);          // all 3 chunks written
+        expect(updates).toHaveLength(3);
+    });
+
+    it('ENRICH_PER_FILE=1: fans a skill back only to chunks whose content surface-matches it', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        const enricher = {
+            modelId: 'haiku',
+            enrichText: async () => ({ skills: ['kubernetes networking'], technologies: [] }),
+        } as unknown as IChunkEnricher;
+        const { pool, updates } = makePerFilePool([
+            { id: 'a1', file_path: 'a.ts', heading: null, content: 'this chunk mentions kubernetes networking', chunk_index: 0 },
+            { id: 'a2', file_path: 'a.ts', heading: null, content: 'this chunk is about something else', chunk_index: 1 },
+        ]);
+        await reenrichSkippedChunks(pool, enricher, { userId: 'u1', deadlineMs: Date.now() + 60_000 });
+        expect(updates.find((u) => u.id === 'a1')?.skills).toEqual(['kubernetes networking']);
+        expect(updates.find((u) => u.id === 'a2')?.skills).toEqual([]);   // no surface match → []
+    });
+
+    it('ENRICH_PER_FILE=1: Tier-1 + cache chunks are resolved with NO LLM call (residue-only)', async () => {
+        process.env.ENRICH_PER_FILE = '1';
+        const calls: string[] = [];
+        const enricher = {
+            modelId: 'haiku',
+            enrichText: async (filePath: string) => { calls.push(filePath); return { skills: ['residue skill'], technologies: [] }; },
+        } as unknown as IChunkEnricher;
+        const { pool, updates } = makePerFilePool([
+            { id: 't1', file_path: 'infra/cdk.ts', heading: null, content: 'cdk app', chunk_index: 0, file_tech_stack: ['aws_cdk'] },
+            { id: 'r1', file_path: 'src/x.ts', heading: null, content: 'plain prose with residue skill', chunk_index: 0, file_tech_stack: null },
+        ]);
+        const tier1Map = new Map<string, readonly string[]>([['aws_cdk', ['aws cdk']]]);
+        const res = await reenrichSkippedChunks(pool, enricher, { userId: 'u1', tier1Map, deadlineMs: Date.now() + 60_000 });
+        expect(calls.length).toBe(1);                                 // only the residue chunk hit the LLM
+        expect(res.tier1Resolved).toBe(1);
+        expect(updates.find((u) => u.id === 't1')?.skills).toEqual(['aws cdk']);
+        expect(updates.find((u) => u.id === 'r1')?.skills).toEqual(['residue skill']);
+        expect(res.enriched).toBe(2);
+    });
+});
+
 describe('reenrichSkippedChunks WS5 content-hash dedup', () => {
     it('copies cached skills for a known content_hash — no LLM call', async () => {
         const updates: Array<{ skills: string[]; id: string }> = [];

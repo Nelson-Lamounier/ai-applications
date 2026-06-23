@@ -1,6 +1,13 @@
 /** @format */
 import type { Pool } from 'pg';
-import { type IChunkEnricher, tier1SkillsFromTech } from '@bedrock/shared';
+import {
+    type IChunkEnricher,
+    type RawChunk,
+    type FileEnrichUnit,
+    tier1SkillsFromTech,
+    groupChunksByFile,
+    assignSkillsToChunks,
+} from '@bedrock/shared';
 
 /** Filter + bounds for a re-enrich run. */
 export interface ReenrichOptions {
@@ -75,6 +82,7 @@ interface SkippedRow {
     file_path: string;
     heading:   string | null;
     content:   string;
+    chunk_index: number;
     content_hash: string | null;
     file_tech_stack: string[] | null;
 }
@@ -112,7 +120,7 @@ export async function reenrichSkippedChunks(
     const limitClause = opts.limit ? `LIMIT ${Math.trunc(opts.limit)}` : '';
 
     const { rows } = await pool.query<SkippedRow>(
-        `SELECT id, file_path, heading, content, content_hash,
+        `SELECT id, file_path, heading, content, chunk_index, content_hash,
                 metadata->'file_tech_stack' AS file_tech_stack
            FROM document_embeddings
           WHERE ${conditions.join(' AND ')}
@@ -172,27 +180,40 @@ export async function reenrichSkippedChunks(
         );
     }
 
+    /**
+     * Zero-LLM pre-pass shared by both paths: resolve a chunk from the
+     * content-hash cache (WS5) or Tier 1 (file_tech_stack -> canonical skills).
+     * Writes + remembers + bumps the relevant counter on a hit. Returns true when
+     * resolved (the caller skips the LLM); false leaves the row as residue.
+     * Keeping this single source of truth is what makes the per-file path's
+     * pre-pass byte-identical to the per-chunk path.
+     */
+    async function resolveCheap(row: SkippedRow): Promise<boolean> {
+        // WS5 content-hash dedup: if this exact content was already enriched
+        // (same user + model), copy those skills — NO LLM call. This is what
+        // makes a force-reindex of unchanged content near-free.
+        if (row.content_hash && cache.has(row.content_hash)) {
+            await writeSkills(row.id, cache.get(row.content_hash) as string[]);
+            cacheHits += 1;
+            enriched += 1;
+            return true;
+        }
+        // Tier 1: if the chunk's file tech resolves to skills, write them
+        // and SKIP the LLM (the ~33.5% of chunks with file_tech_stack).
+        const t1 = tier1Skills(row);
+        if (t1.length > 0) {
+            await writeSkills(row.id, t1);
+            remember(row.content_hash, t1);
+            tier1Resolved += 1;
+            enriched += 1;
+            return true;
+        }
+        return false;
+    }
+
     async function processRow(row: SkippedRow): Promise<void> {
         try {
-            // WS5 content-hash dedup: if this exact content was already enriched
-            // (same user + model), copy those skills — NO LLM call. This is what
-            // makes a force-reindex of unchanged content near-free.
-            if (row.content_hash && cache.has(row.content_hash)) {
-                await writeSkills(row.id, cache.get(row.content_hash) as string[]);
-                cacheHits += 1;
-                enriched += 1;
-                return;
-            }
-            // Tier 1: if the chunk's file tech resolves to skills, write them
-            // and SKIP the LLM (the ~33.5% of chunks with file_tech_stack).
-            const t1 = tier1Skills(row);
-            if (t1.length > 0) {
-                await writeSkills(row.id, t1);
-                remember(row.content_hash, t1);
-                tier1Resolved += 1;
-                enriched += 1;
-                return;
-            }
+            if (await resolveCheap(row)) return;
             // Controlled-vocabulary LLM (the vocabulary fix): emit ONLY canonical
             // skill_ontology terms -> the chunk is canonical, so the && lane fires.
             if (opts.canonicalVocab && enricher.enrichTextCanonical) {
@@ -223,24 +244,129 @@ export async function reenrichSkippedChunks(
         }
     }
 
+    let stoppedEarly = false;
+    const deadlineReached = (): boolean =>
+        opts.deadlineMs !== undefined && Date.now() >= opts.deadlineMs;
+
     // Concurrency-limited worker pool over a shared cursor. Workers stop pulling
     // new rows once the deadline passes (in-flight calls still finish), so the
     // pass returns cleanly instead of being SIGKILLed at the pod deadline.
-    let cursor = 0;
-    let stoppedEarly = false;
-    async function worker(): Promise<void> {
-        while (cursor < rows.length) {
-            if (opts.deadlineMs !== undefined && Date.now() >= opts.deadlineMs) {
-                stoppedEarly = true;
-                return;
+    async function runPerChunkPool(): Promise<void> {
+        let cursor = 0;
+        async function worker(): Promise<void> {
+            while (cursor < rows.length) {
+                if (deadlineReached()) { stoppedEarly = true; return; }
+                const index = cursor;
+                cursor += 1;
+                await processRow(rows[index]);
             }
-            const index = cursor;
-            cursor += 1;
-            await processRow(rows[index]);
+        }
+        const workers = Math.max(1, Math.min(opts.concurrency ?? 10, rows.length));
+        await Promise.all(Array.from({ length: workers }, () => worker()));
+    }
+
+    // ENRICH_PER_FILE: keep Tier-1 + cache as the zero-LLM per-chunk pre-pass, but
+    // batch the *residue* (chunks that miss both) per file — one model call per
+    // file-unit, fanned back to chunks by surface-match. Only the residue text is
+    // ever sent. Falls back to the per-chunk pool when the flag is off or the
+    // enricher has no enrichText (free Tier-1-only path stays byte-for-byte).
+    const perFile = perFileEnabled(enricher);
+
+    /** Adapt a residue row to the RawChunk shape groupChunksByFile expects. */
+    const rowToChunk = (row: SkippedRow): RawChunk => ({
+        filePath:    row.file_path,
+        content:     row.content,
+        heading:     row.heading ?? undefined,
+        chunkIndex:  row.chunk_index,
+        totalChunks: 1,
+    });
+
+    /** One model call for a file-unit, fanned back to its chunks by surface-match. */
+    async function enrichUnit(
+        unit: FileEnrichUnit,
+        idOf: (filePath: string, chunkIndex: number) => string | undefined,
+        hashOf: (filePath: string, chunkIndex: number) => string | null,
+    ): Promise<void> {
+        let skills: string[];
+        if (opts.canonicalVocab && enricher.enrichTextCanonical) {
+            const { canonical, newSkills } = await enricher.enrichTextCanonical(
+                opts.canonicalVocab, unit.filePath, unit.text, unit.chunks[0]?.heading);
+            skills = canonical;
+            newSkillsQueued += newSkills.length;
+        } else {
+            const r = await enricher.enrichText!(unit.filePath, unit.text, unit.chunks[0]?.heading);
+            skills = r.skills;
+        }
+        // Fan back: a chunk keeps a unit skill only if its content surface-matches
+        // (no evidence-resolver here — surface-match only).
+        const assigned = assignSkillsToChunks(unit, skills, () => false);
+        for (const { chunkIndex, skills: chunkSkills } of assigned) {
+            const id = idOf(unit.filePath, chunkIndex);
+            if (!id) continue;
+            await writeSkills(id, chunkSkills);
+            remember(hashOf(unit.filePath, chunkIndex), chunkSkills);
+            enriched += 1;
         }
     }
-    const workers = Math.max(1, Math.min(opts.concurrency ?? 10, rows.length));
-    await Promise.all(Array.from({ length: workers }, () => worker()));
+
+    // Phase A — zero-LLM pre-pass (cache + Tier 1); returns the unresolved residue.
+    async function runResiduePrepass(): Promise<SkippedRow[]> {
+        const residue: SkippedRow[] = [];
+        for (const row of rows) {
+            if (deadlineReached()) { stoppedEarly = true; break; }
+            try {
+                if (!(await resolveCheap(row))) residue.push(row);
+            } catch (err) {
+                recordFailure(err);
+            } finally {
+                done += 1;
+                opts.onProgress?.(done, rows.length);
+            }
+        }
+        return residue;
+    }
+
+    async function processResiduePerFile(): Promise<void> {
+        const residue = await runResiduePrepass();
+
+        // Back-maps: `${filePath}::${chunkIndex}` -> row id / content_hash.
+        const key = (filePath: string, chunkIndex: number): string => `${filePath}::${chunkIndex}`;
+        const idByKey = new Map<string, string>();
+        const hashByKey = new Map<string, string | null>();
+        for (const row of residue) {
+            idByKey.set(key(row.file_path, row.chunk_index), row.id);
+            hashByKey.set(key(row.file_path, row.chunk_index), row.content_hash);
+        }
+        const idOf = (filePath: string, chunkIndex: number): string | undefined => idByKey.get(key(filePath, chunkIndex));
+        const hashOf = (filePath: string, chunkIndex: number): string | null => hashByKey.get(key(filePath, chunkIndex)) ?? null;
+
+        // Phase B — per-file batching over the residue.
+        const maxChars = Number(process.env.ENRICH_PER_FILE_MAX_CHARS ?? '12000') || 12000;
+        const units = groupChunksByFile(residue.map(rowToChunk), maxChars);
+        if (units.length > 0) {
+            console.info(`[reenrichSkippedChunks] per-file residue: ${units.length} calls for ${residue.length} chunks (${(residue.length / Math.max(units.length, 1)).toFixed(1)}x fewer)`);
+        }
+
+        let cursor = 0;
+        async function unitWorker(): Promise<void> {
+            while (cursor < units.length) {
+                if (deadlineReached()) { stoppedEarly = true; return; }
+                const unit = units[cursor];
+                cursor += 1;
+                try {
+                    await enrichUnit(unit, idOf, hashOf);
+                } catch (err) {
+                    // Leave the unit's rows pending — never throw out of the pool.
+                    for (let i = 0; i < unit.chunks.length; i += 1) recordFailure(err);
+                }
+            }
+        }
+        const workers = Math.max(1, Math.min(opts.concurrency ?? 10, Math.max(units.length, 1)));
+        await Promise.all(Array.from({ length: workers }, () => unitWorker()));
+    }
+
+    if (perFile) await processResiduePerFile();
+    else await runPerChunkPool();
 
     // WS5: persist the freshly-enriched (content_hash -> skills) so the next run
     // (incl. a force-reindex) copies them instead of re-invoking the LLM.
@@ -251,6 +377,15 @@ export async function reenrichSkippedChunks(
     logFailures(rows.length);
 
     return { candidates: rows.length, enriched, failed, tier1Resolved, newSkillsQueued, cacheHits, stoppedEarly, remaining: rows.length - done };
+}
+
+/**
+ * The deferred path batches the residue per file only when ENRICH_PER_FILE=1 AND
+ * the enricher can extract from arbitrary text. Otherwise (flag off, or a
+ * free/no-op enricher) the per-chunk path runs unchanged.
+ */
+function perFileEnabled(enricher: IChunkEnricher): boolean {
+    return process.env.ENRICH_PER_FILE === '1' && !!enricher.enrichText;
 }
 
 /** Persist freshly-enriched cache entries when dedup is enabled. Best-effort. */
