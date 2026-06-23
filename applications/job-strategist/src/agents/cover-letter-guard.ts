@@ -147,6 +147,8 @@ export async function rewriteCoverLetter(
         '- Remove every sentence that names, apologises for, or argues against a gap or missing experience. Delete them, do not replace.',
         ctx.yearsGapFraming ? `- Where tenure is mentioned, use this true framing instead: "${ctx.yearsGapFraming}".` : '- Do not state a single-role tenure that undersells the candidate.',
         '- Remove claims of not-yet-realised impact (e.g. "pending review").',
+        '- Split any sentence longer than ~40 words into shorter sentences; prefer a full stop or comma over an em-dash.',
+        '- Ensure the greeting ends with a comma (e.g. "Dear Hiring Manager,").',
         '- Do NOT invent any new factual claim. Preserve the real evidence + voice; only cut/repair the flagged problems. Keep the signoff unchanged.',
     ].join('\n');
 
