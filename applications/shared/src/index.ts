@@ -348,6 +348,8 @@ export { PhraseSkillResolver } from './rds/index.js';
 export { canonicaliseSkills } from './rds/index.js';
 export { dedupeSkillCanonicals } from './rds/index.js';
 export { groupChunksByFile, assignSkillsToChunks } from './rds/index.js';
+export { assignSkillsByEmbedding, cosineSimilarity, parseVector } from './rds/index.js';
+export type { EmbeddingEvidenceOpts } from './rds/index.js';
 export { tier1SkillsFromTech, TechSkillMapRepository } from './rds/index.js';
 export { packChunks } from './rds/index.js';
 export type { PackItem, ChunkPack } from './rds/index.js';

@@ -16,7 +16,7 @@ export interface SkillAssignment {
 export type SkillEvidence = (chunkContent: string, skill: string) => boolean;
 
 /** Cheap deterministic surface check — the skill phrase appears in the chunk. */
-function surfaceMatch(content: string, skill: string): boolean {
+export function surfaceMatch(content: string, skill: string): boolean {
     return content.toLowerCase().includes(skill.toLowerCase());
 }
 
