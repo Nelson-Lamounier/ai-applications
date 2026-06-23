@@ -23,6 +23,8 @@ const evidence: FreeEvidence = {
     extractedTech: 'aws, kubernetes, terraform, bedrock',
     careerFacts: 'Acme Corp — Platform Engineer — 2022–2025',
     educationFacts: 'BSc Computer Science — Example University',
+    commitPrEvidence: '',
+    profileIntelligence: '',
 };
 
 const good: FreeResumeOutput = {
@@ -216,6 +218,78 @@ describe('gradeFreeResume', () => {
         const result = gradeFreeResume(bad, evidence);
         expect(result.pass).toBe(false);
         expect(result.failures.some((f) => f.includes('1.3'))).toBe(true);
+    });
+
+    it('flags a summary with no positioning lead when positioning evidence exists', () => {
+        const ev = { ...evidence, profileIntelligence: 'Positioning signal: Platform & Kubernetes Engineering: senior' };
+        const bad = { ...good, resume: { ...good.resume, summary: 'I did some things at a company.' } };
+        expect(gradeFreeResume(bad, ev).failures.some((f) => /positioning/i.test(f))).toBe(true);
+    });
+
+    it('passes when the summary opens with a positioning line', () => {
+        const ev = { ...evidence, profileIntelligence: 'Positioning signal: Platform & Kubernetes Engineering: senior' };
+        const goodPositioned = { ...good, resume: { ...good.resume, summary: 'Senior Platform & Kubernetes engineer who ships grounded tooling.' } };
+        expect(gradeFreeResume(goodPositioned, ev).pass).toBe(true);
+    });
+
+    it('does not run the positioning check when no positioning evidence is present', () => {
+        const bad = { ...good, resume: { ...good.resume, summary: 'I did some things at a company.' } };
+        expect(gradeFreeResume(bad, evidence).failures.some((f) => /positioning/i.test(f))).toBe(false);
+    });
+
+    // -------------------------------------------------------------------------
+    // Substring collision — PR numbers in commitPrEvidence (token-exact fix)
+    // -------------------------------------------------------------------------
+
+    it('rejects a metric whose digits are a substring of a PR number but not a standalone token', () => {
+        // Evidence only contains "#42" — "42" is grounded, but "4" is NOT a standalone token.
+        const ev: FreeEvidence = {
+            ...evidence,
+            commitPrEvidence: 'Hardened the GitHub adapter with size caps (PR #42).',
+        };
+        const bad: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Acme Corp',
+                        title: 'Platform Engineer',
+                        period: '2022–2025',
+                        // "4" is a substring of "42" in the corpus, but NOT a standalone number.
+                        highlights: ['Improved throughput by 4%.'],
+                    },
+                ],
+            },
+        };
+        const result = gradeFreeResume(bad, ev);
+        expect(result.pass).toBe(false);
+        expect(result.failures.some((f) => /metric/i.test(f) && f.includes('4'))).toBe(true);
+    });
+
+    it('passes a metric that exactly matches a standalone number token from commitPrEvidence', () => {
+        const ev: FreeEvidence = {
+            ...evidence,
+            commitPrEvidence: 'Hardened the GitHub adapter with size caps (PR #42).',
+        };
+        const withGrounded: FreeResumeOutput = {
+            ...good,
+            resume: {
+                ...good.resume,
+                experience: [
+                    {
+                        company: 'Acme Corp',
+                        title: 'Platform Engineer',
+                        period: '2022–2025',
+                        // "42" IS a standalone number token in the corpus — must pass.
+                        highlights: ['Merged 42 pull requests to the adapter.'],
+                    },
+                ],
+            },
+        };
+        const result = gradeFreeResume(withGrounded, ev);
+        expect(result.pass).toBe(true);
+        expect(result.failures).toHaveLength(0);
     });
 
     it('returns all failures when multiple violations exist', () => {

@@ -491,7 +491,7 @@ export async function main(): Promise<void> {
             loadEducation(pool, ctx.userId).catch(() => []),
             loadCertifications(pool, ctx.userId).catch(() => []),
             loadCareerHistory(pool, ctx.userId).catch(() => []),
-            extractJobDescription(ctx.jobDescription),
+            extractJobDescription(ctx.jobDescription, ctx),
         ]);
         // Candidate grounding fed to research + strategist: documented project case
         // studies PLUS the code-grounded Profile Intelligence (direction / undersold
@@ -875,6 +875,9 @@ export async function main(): Promise<void> {
             analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
             research:     researchData,
             jdExtraction,
+            // LLM-agent cost (extraction + research + analysis + grounding); excludes embeddings/rerank.
+            tokens:  ctx.cumulativeTokens,
+            costUsd: ctx.cumulativeCostUsd,
         });
 
         // Store in the semantic cache (fire-and-forget, fail-open). Skip only

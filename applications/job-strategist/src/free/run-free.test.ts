@@ -6,25 +6,31 @@ describe('runFreeTier', () => {
     it('extracts JD, gathers evidence, writes resume, persists resume → meta → status → complete in order', async () => {
         const calls: string[] = [];
 
+        let capturedMeta: Record<string, unknown> | undefined;
+
         const deps = {
-            extractJdSignal: jest.fn(async (_jd: string) => ({
-                requiredSkills:    ['AWS'],
-                preferredSkills:   [],
-                tools:             ['Kubernetes'],
-                concepts:          [],
-                responsibilities:  [],
-                domain:            'cloud',
-                seniority:         'senior',
-                retrievalKeywords: ['aws'],
-                companyProblem:    'secure cloud',
-                targetRole:        'SSE',
-                dimensionMix:      { customerFacing: 0, technical: 100, aiMl: 0, supportOps: 0, monitoring: 0 },
-                hardRequirements:  [],
-                softRequirements:  [],
-                implicitRequirements: [],
-                technologyInventory:  { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
-                experienceSignals:    { yearsExpected: '', domainExperience: '', leadershipExpectation: '', scaleIndicators: '' },
-            })) as never,
+            extractJdSignal: jest.fn(async (_jd: string, ctx: { cumulativeCostUsd: number; cumulativeTokens: { input: number } }) => {
+                ctx.cumulativeCostUsd += 0.01;
+                ctx.cumulativeTokens.input += 10;
+                return {
+                    requiredSkills:    ['AWS'],
+                    preferredSkills:   [],
+                    tools:             ['Kubernetes'],
+                    concepts:          [],
+                    responsibilities:  [],
+                    domain:            'cloud',
+                    seniority:         'senior',
+                    retrievalKeywords: ['aws'],
+                    companyProblem:    'secure cloud',
+                    targetRole:        'SSE',
+                    dimensionMix:      { customerFacing: 0, technical: 100, aiMl: 0, supportOps: 0, monitoring: 0 },
+                    hardRequirements:  [],
+                    softRequirements:  [],
+                    implicitRequirements: [],
+                    technologyInventory:  { languages: [], frameworks: [], infrastructure: [], tools: [], methodologies: [] },
+                    experienceSignals:    { yearsExpected: '', domainExperience: '', leadershipExpectation: '', scaleIndicators: '' },
+                };
+            }) as never,
             gather: jest.fn(async () => ({
                 kbPassages:     ['[Source: me/x]\nEKS'],
                 projectEvidence: 'Tucaken',
@@ -33,30 +39,34 @@ describe('runFreeTier', () => {
                 educationFacts: '',
             })) as never,
             writer: {
-                invoke: jest.fn(async () => ({
-                    resume: {
-                        profile:         { name: '', title: '', email: '', location: '' },
-                        summary:         'I built X on AWS.',
-                        experience:      [],
-                        skills:          [],
-                        education:       [],
-                        certifications:  [],
-                        projects:        [],
-                        keyAchievements: [],
-                    },
-                    coverLetter: {
-                        greeting:   'Dear Hiring Team,',
-                        paragraphs: ['I am excited to apply for the SSE role.'],
-                        signoff:    { name: '', email: '', linkedin: '', github: '' },
-                    },
-                })) as never,
+                invoke: jest.fn(async (_in: unknown, ctx: { cumulativeCostUsd: number }) => {
+                    ctx.cumulativeCostUsd += 0.20;
+                    return {
+                        resume: {
+                            profile:         { name: '', title: '', email: '', location: '' },
+                            summary:         'I built X on AWS.',
+                            experience:      [],
+                            skills:          [],
+                            education:       [],
+                            certifications:  [],
+                            projects:        [],
+                            keyAchievements: [],
+                        },
+                        coverLetter: {
+                            greeting:   'Dear Hiring Team,',
+                            paragraphs: ['I am excited to apply for the SSE role.'],
+                            signoff:    { name: '', email: '', linkedin: '', github: '' },
+                        },
+                    };
+                }) as never,
             },
             aliasMap: jest.fn(async () => new Map<string, string>()) as never,
             persistResume: jest.fn(async () => {
                 calls.push('resume');
                 return { resumeId: 'r1' };
             }) as never,
-            persistMeta: jest.fn(async (_pool: unknown, _id: unknown, _meta: unknown) => {
+            persistMeta: jest.fn(async (_pool: unknown, _id: unknown, meta: Record<string, unknown>) => {
+                capturedMeta = meta;
                 calls.push('meta');
             }) as never,
             setStatus: jest.fn(async () => {
@@ -80,6 +90,11 @@ describe('runFreeTier', () => {
         await runFreeTier({} as never, env, deps as never);
 
         expect(calls).toEqual(['resume', 'meta', 'status', 'complete']);
+
+        // Verify cost + tokens are persisted (LLM-agent cost: extraction + writer).
+        expect(capturedMeta).toBeDefined();
+        expect((capturedMeta as Record<string, unknown>)['costUsd']).toBeCloseTo(0.21);
+        expect(((capturedMeta as Record<string, unknown>)['tokens'] as { input: number })['input']).toBe(10);
 
         // Verify ATS coverage is persisted as AtsCheckResult under analysis.atsCheck
         // (not the raw AtsCoverage under analysis.atsCoverage) so admin-api and

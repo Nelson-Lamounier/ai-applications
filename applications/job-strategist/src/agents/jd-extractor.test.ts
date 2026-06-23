@@ -9,7 +9,7 @@ import {
     extractJdSignal,
     extractJobDescription,
 } from './jd-extractor.js';
-import type { JdSignal } from '@bedrock/shared';
+import type { BasePipelineContext, JdSignal } from '@bedrock/shared';
 
 const mockRun = runAgent as jest.Mock;
 
@@ -215,5 +215,19 @@ describe('extractJdSignal', () => {
         expect(result).not.toBeNull();
         expect(result!.requiredSkills).toContain('Kubernetes');
         expect(result!.targetRole).toBe('Senior Platform Engineer');
+    });
+
+    it('accumulates extraction cost into a supplied pipeline context', async () => {
+        // The existing runAgent mock returns a fixed result; make it also accumulate
+        // like the real runAgent so this asserts the ctx is threaded (not replaced).
+        (runAgent as jest.Mock).mockImplementationOnce(async ({ pipelineContext }: { pipelineContext: BasePipelineContext }) => {
+            pipelineContext.cumulativeCostUsd += 0.42;
+            pipelineContext.cumulativeTokens.input += 100;
+            return { data: { ...FULL_JD_SIGNAL }, tokenUsage: { inputTokens: 100, outputTokens: 0, thinkingTokens: 0 }, costUsd: 0.42 } as never;
+        });
+        const ctx: BasePipelineContext = { pipelineId: 'p', environment: 'test', cumulativeTokens: { input: 0, output: 0, thinking: 0 }, cumulativeCostUsd: 0 };
+        await extractJdSignal('Senior Platform Engineer — Kubernetes, AWS.', ctx);
+        expect(ctx.cumulativeCostUsd).toBeCloseTo(0.42);
+        expect(ctx.cumulativeTokens.input).toBe(100);
     });
 });

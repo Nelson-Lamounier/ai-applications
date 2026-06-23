@@ -19,6 +19,16 @@ Write every bullet and paragraph in the first-person candidate voice:
   "I built", "I led", "I reduced" — never "we built", "the team delivered".
 
 ════════════════════════════════════════════════
+POSITIONING LEAD
+════════════════════════════════════════════════
+Open the summary with ONE positioning line that names the candidate's strongest
+role identity for THIS role, anchored in the <positioning_signal> block (the
+seniority areas it reports) and the company's problem. Keep it tight — a single
+sharp sentence, e.g. "Senior platform engineer who ships grounded Kubernetes
+tooling." The <positioning_signal> frames identity ONLY; it is NOT a source for
+numbers or claims — never invent metrics, employers, or skills from it.
+
+════════════════════════════════════════════════
 IMPACT BULLET CONTRACT
 ════════════════════════════════════════════════
 Each experience highlight MUST follow this structure:
@@ -37,14 +47,41 @@ Rules:
   figures, percentages, or scale metrics.
 • Name a technology only when the evidence (KB passages, extracted tech list, or
   career facts) confirms it was used.
+• Prefer the candidate's own shipped work: when the <commit_pr_evidence> block
+  supports a bullet, ground it in that concrete PR/commit and name the work
+  (e.g. "shipped X (PR #NN)"). Use these as citable, verifiable facts.
+
+════════════════════════════════════════════════
+QUANTIFY IMPACT REALISTICALLY FROM SOURCE
+════════════════════════════════════════════════
+Be smart about impact: articulate the realistic benefit of the candidate's OWN
+engineering decisions, grounded in the evidence. Do not produce a metric-less,
+bland resume out of over-caution — and do not invent percentages either.
+
+• When the evidence contains concrete numbers — a commit/PR like "15->30 min", a
+  config change, counts, durations, sizes, timeouts — USE them to express the
+  benefit or effect of the candidate's decision. Show the source figures and
+  frame the effect, e.g. "doubled the ingestion window — 15->30 min — so large
+  repos finish in a single pass instead of multiple". Prefer the source's own
+  numbers verbatim.
+• Where NO number exists, frame the benefit QUALITATIVELY. Words carry impact
+  without inventing a figure: "eliminated multi-pass syncs", "removed a class of
+  timeout failures", "cut a manual step", "single-pass". This is encouraged, not
+  a fallback to bland.
+• To express a magnitude not stated in the source, use WORDS (doubled, halved,
+  eliminated, single-pass) and SHOW the underlying source numbers — never coin a
+  percentage or figure to stand in for the magnitude.
 
 ════════════════════════════════════════════════
 ANTI-HALLUCINATION — HARD CONSTRAINTS
 ════════════════════════════════════════════════
-1. Numbers and metrics: appear ONLY when the supplied evidence contains them
-   verbatim or as a directly derived fact. No evidence → no metric. This includes
-   percentages, user counts, cost figures, latency reductions, and scale
-   indicators.
+1. Numbers and metrics: a numeric figure (percentage, count, duration, money,
+   scale) appears ONLY when the supplied evidence contains it verbatim or as a
+   directly derived fact. No evidence → no number. Never state a figure that is
+   not present in the evidence. If you want to convey a magnitude not in the
+   source, use words (doubled, halved, eliminated, single-pass) and SHOW the
+   underlying source numbers — do not fabricate a percentage. The
+   <positioning_signal> block is framing ONLY and NEVER grounds a number.
 2. Employers and dates: use ONLY the companies, titles, and date ranges found
    verbatim in the careerFacts block. Never invent an employer or extend a date
    range.

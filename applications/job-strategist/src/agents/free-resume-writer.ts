@@ -232,6 +232,7 @@ function buildEvidenceCorpus(evidence: FreeEvidence): string {
         evidence.extractedTech,
         evidence.careerFacts,
         evidence.educationFacts,
+        evidence.commitPrEvidence,
     ].join(' ').toLowerCase();
 }
 
@@ -250,9 +251,22 @@ function isKnownEmployer(company: string, careerFacts: string): boolean {
     return careerFacts.toLowerCase().includes(company.toLowerCase());
 }
 
-/** Return true when the number token appears anywhere in the evidence corpus. */
-function isMetricGrounded(token: string, corpus: string): boolean {
-    return corpus.includes(token.toLowerCase());
+/**
+ * Return true when the number token is an exact member of the corpus number-token set.
+ *
+ * Builds a Set<string> from the corpus's numeric tokens so that "4" is only
+ * grounded when "4" appears as a standalone token — not as a digit-substring of
+ * a PR number like "42".  This closes the substring-collision false-negative
+ * that allowed fabricated small integers to pass whenever their digits were
+ * embedded in a larger number in the evidence.
+ */
+function buildCorpusNumberTokenSet(corpus: string): Set<string> {
+    return new Set(extractNumberTokens(corpus).map((t) => t.toLowerCase()));
+}
+
+/** Return true when the number token is an exact member of the corpus token set. */
+function isMetricGrounded(token: string, corpusTokens: Set<string>): boolean {
+    return corpusTokens.has(token.toLowerCase());
 }
 
 /** Return true when the first word of a bullet is an alphabetic action verb. */
@@ -265,6 +279,20 @@ function startsWithActionVerb(bullet: string): boolean {
 /** Extract numeric tokens from a string (e.g. "93%", "4000", "1.3M"). */
 function extractNumberTokens(text: string): string[] {
     return (text.match(/\b\d[\d,.]*(?:[kmb]|[KMB])?\b|\b\d[\d,.]*%/gi) ?? []);
+}
+
+/** Role/seniority cue that must lead the summary when positioning evidence exists. */
+const SENIORITY_CUE = /\b(senior|staff|lead|principal|engineer|architect|specialist)\b/i;
+
+/**
+ * Return a positioning failure when positioning evidence exists but the
+ * summary's first sentence carries no role/seniority cue. Empty array otherwise.
+ */
+function gradePositioning(out: FreeResumeOutput, evidence: FreeEvidence): string[] {
+    if (evidence.profileIntelligence.trim().length === 0) return [];
+    const firstSentence = (out.resume.summary.split(/[.!?]/)[0] ?? '').trim();
+    if (SENIORITY_CUE.test(firstSentence)) return [];
+    return ['summary does not open with a positioning line (role/seniority) despite positioning evidence'];
 }
 
 // =============================================================================
@@ -302,7 +330,8 @@ export function gradeFreeResume(
     out: FreeResumeOutput,
     evidence: FreeEvidence,
 ): GradeResult {
-    const corpus    = buildEvidenceCorpus(evidence);
+    const corpus         = buildEvidenceCorpus(evidence);
+    const corpusTokens   = buildCorpusNumberTokenSet(corpus);
     const failures: string[] = [];
 
     // 1. Employer grounding
@@ -313,10 +342,12 @@ export function gradeFreeResume(
     }
 
     // 2. Metric grounding — summary, bullets, achievements, projects
+    //    Uses token-exact Set membership so "4" is only grounded when "4"
+    //    appears as a standalone token, not as a substring of "42".
     const allText = collectGradedText(out);
     for (const text of allText) {
         for (const token of extractNumberTokens(text)) {
-            if (!isMetricGrounded(token, corpus)) {
+            if (!isMetricGrounded(token, corpusTokens)) {
                 failures.push(`Fabricated metric "${token}" in: "${text}".`);
             }
         }
@@ -328,6 +359,9 @@ export function gradeFreeResume(
             failures.push(`Missing action verb on bullet: "${bullet}".`);
         }
     }
+
+    // 4. Positioning lead — only when positioning evidence exists
+    failures.push(...gradePositioning(out, evidence));
 
     return { pass: failures.length === 0, failures };
 }
@@ -349,8 +383,10 @@ function buildUserMessage(input: FreeWriterInput): string {
         `<extracted_tech>${evidence.extractedTech}</extracted_tech>`,
         `<career_facts>${evidence.careerFacts}</career_facts>`,
         `<education_facts>${evidence.educationFacts}</education_facts>`,
+        evidence.commitPrEvidence ? `<commit_pr_evidence>\n${evidence.commitPrEvidence}\n</commit_pr_evidence>` : '',
+        evidence.profileIntelligence ? `<positioning_signal>\n${evidence.profileIntelligence}\n</positioning_signal>` : '',
         '</evidence>',
-    ].join('\n');
+    ].filter((line) => line !== '').join('\n');
 }
 
 // =============================================================================
