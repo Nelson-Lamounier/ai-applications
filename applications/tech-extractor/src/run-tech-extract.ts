@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
     OntologyResolver, TechnologyOntologyRepository, TechnologyEvidenceRepository,
-    TechnologyCandidateRepository, TechnologyParityRunRepository,
+    TechnologyCandidateRepository,
     bootstrapK8sObservability, pushFinalMetrics,
     DsaTopicResolver, RdsDsaEvidenceRepository, RdsDsaTopicRepository,
     AiTopicResolver, RdsAiEvidenceRepository, RdsAiTopicRepository,
@@ -12,7 +12,7 @@ import {
 } from '@bedrock/shared';
 import { DsaPatternExtractor } from './extractors/DsaPatternExtractor.js';
 import { AiPatternExtractor } from './extractors/AiPatternExtractor.js';
-import { Counter, Gauge } from 'prom-client';
+import { Counter } from 'prom-client';
 
 import { parseEnv } from './env.js';
 import { reconcileTechStack } from './util/reconcileTechStack.js';
@@ -33,17 +33,12 @@ import { extractProseRanges } from './extractors/CommentExtractor.js';
 import { scanProseRanges } from './extractors/iac/ReadmeParser.js';
 import type { Extractor, RawTechnologyEvidence } from './extractors/Extractor.js';
 import { TechExtractOrchestrator } from './orchestrator/TechExtractOrchestrator.js';
-import { computeParity } from './parity/ParityReporter.js';
 
 const MAX_TARBALL_BYTES = Number(process.env.MAX_TARBALL_BYTES ?? 200 * 1024 * 1024);
 
 const obs = bootstrapK8sObservability({ serviceName: 'tech-extractor' });
 const log = obs.logger;
 
-const recallGauge = new Gauge({
-    name: 'tech_extractor_layer1_recall', help: 'L1 vs LLM technology recall.',
-    labelNames: ['repo'] as const, registers: [obs.registry],
-});
 const extractorFailed = new Counter({
     name: 'tech_extractor_extractor_failed_total', help: 'Extractor failures by name.',
     labelNames: ['extractor'] as const, registers: [obs.registry],
@@ -138,7 +133,6 @@ async function main(): Promise<void> {
     const ontologyRepo  = new TechnologyOntologyRepository(pool);
     const evidenceRepo  = new TechnologyEvidenceRepository(pool);
     const candidateRepo = new TechnologyCandidateRepository(pool);
-    const parityRepo    = new TechnologyParityRunRepository(pool);
 
     const dsaEvidenceRepo = new RdsDsaEvidenceRepository(pool);
     const aiEvidenceRepo = new RdsAiEvidenceRepository(pool);
@@ -211,31 +205,17 @@ async function main(): Promise<void> {
             });
             for (const name of result.failedExtractors) extractorFailed.inc({ extractor: name });
 
-            // Parity vs the LLM enricher's per-chunk technologies (GIN-indexed TEXT[]).
-            let llmTechs: string[] = [];
-            try {
-                const { rows } = await pool.query<{ tech: string }>(
-                    `SELECT DISTINCT unnest(technologies) AS tech
-                     FROM document_embeddings WHERE user_id = $1::uuid AND repo_full_name = $2`,
-                    [env.userId, env.repoFullName],
-                );
-                llmTechs = rows.map((r) => r.tech);
-            } catch (e) {
-                log.warn({ err: String(e) }, 'parity: failed to read document_embeddings.technologies');
-            }
-
-            const parity = computeParity(resolver, result.canonicalIds, llmTechs);
-            recallGauge.set({ repo: env.repoFullName }, parity.recall);
-            await parityRepo.insert({
-                userId: env.userId, repoFullName: env.repoFullName, commitSha: sha, ontologyVersion,
-                l1CanonicalCount: parity.l1CanonicalCount, llmCanonicalCount: parity.llmCanonicalCount,
-                llmUnresolvableCount: parity.llmUnresolvableCount, intersectionCount: parity.intersectionCount,
-                recall: parity.recall, l1OnlyExamples: parity.l1OnlyExamples, llmOnlyExamples: parity.llmOnlyExamples,
-            });
+            // NOTE: the L1-vs-LLM parity comparison was removed. It read the LLM
+            // enricher's per-chunk `document_embeddings.technologies`, but that
+            // extraction was decommissioned 2026-05-27 (the enricher now emits
+            // `technologies: []` — tech is owned by this deterministic pipeline).
+            // The recall metric therefore measured against a permanently-empty
+            // set, producing a misleading `tech_extractor_layer1_recall` gauge and
+            // meaningless parity rows. Removed rather than left to emit noise.
 
             log.info({
                 repo: env.repoFullName, sha, matched: result.matched, unmatched: result.unmatched,
-                recall: parity.recall, failed: result.failedExtractors, llm_only: parity.llmOnlyExamples,
+                failed: result.failedExtractors,
             }, 'tech-extract.complete');
         } else {
             log.info({ repo: env.repoFullName, sha }, 'tech lane: evidence exists, skipped (dsa backfill run)');
