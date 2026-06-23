@@ -49,6 +49,16 @@ function hasForwardLookingSkillClaim(text: string): boolean {
 /** Any markdown the agent should NOT emit (formatting belongs to the UI/PDF). */
 const MARKDOWN = /\*\*|__|##|^\s*[-*+]\s+/m;
 
+const MAX_SENTENCE_WORDS = 40;
+
+/** True when any body sentence exceeds MAX_SENTENCE_WORDS words. */
+function hasLongSentence(paragraphs: readonly string[]): boolean {
+    const body = paragraphs.join(' ');
+    return body
+        .split(/(?<=[.!?])\s+/)
+        .some((s) => s.trim().split(/\s+/).filter(Boolean).length > MAX_SENTENCE_WORDS);
+}
+
 /** Push title violations (missing_title, wrong_title) onto out. */
 function checkTitleViolations(out: CoverLetterViolation[], lower: string, targetRole: string, leadIdentity: string): void {
     if (targetRole && !lower.includes(targetRole.toLowerCase())) {
@@ -78,6 +88,12 @@ export function validateCoverLetter(letter: CoverLetter, targetRole: string, lea
     if (hasForwardLookingSkillClaim(text)) out.push({ code: 'forward_looking_skill_claim', detail: 'Claims to be actively learning/onboarding a skill — omit unevidenced forward-looking acquisition; use grounded transferable framing instead.' });
     if (UNREALISED.test(text)) out.push({ code: 'unrealised_impact', detail: 'Claims not-yet-realised impact.' });
     if (MARKDOWN.test(text))   out.push({ code: 'has_markdown', detail: 'Agent emitted markdown formatting — the UI/PDF owns formatting; output must be plain text.' });
+    if (hasLongSentence(letter.paragraphs)) {
+        out.push({ code: 'long_sentence', detail: `A sentence exceeds ${MAX_SENTENCE_WORDS} words — split comma-joined clauses into shorter sentences.` });
+    }
+    if (letter.greeting.trim().length > 0 && !letter.greeting.trim().endsWith(',')) {
+        out.push({ code: 'greeting_format', detail: 'Greeting must end with a comma (e.g. "Dear Hiring Manager,").' });
+    }
 
     return out;
 }
