@@ -215,8 +215,7 @@ Before drafting the second project, list every concept, tool, and number already
    (a) The FIRST skill group MUST be the archetype's matched-domain group, for a support/customer archetype, a "Support & Troubleshooting" group (escalation management, root-cause analysis, SaaS & cloud troubleshooting, SLA / resolution-time ownership) leads. (b) Within EVERY group, list JD-matched / required terms first; infra jargon last.
 2. Each tool appears in one subsection only.
 3. Scripting/tooling subsection mandatory for TSE, SRE, Support, Solutions Engineer roles.
-4. GKE onboarding signal: when JD targets GCP and direct GCP experience is absent, add "GKE (actively onboarding)", do not claim full GKE experience.
-5. "portfolio-scale" is BANNED in the Skills section. Never write it.
+4. "portfolio-scale" is BANNED in the Skills section. Never write it.
 
 ## Step-by-Step: Cover Letter
 
@@ -348,15 +347,14 @@ Do NOT claim these:
 - **Fine-tuning / RLHF**, Bedrock API only; no model training
 - **Formal SLOs**, threshold-based alerting; no error budgets or burn-rate alerts
 - **Commander.js CLI**, justfile task runner + TypeScript. Do NOT claim Commander.js.
-- **GCP / GKE / Google Cloud**, AWS-native portfolio; GCP status is IN_PROGRESS with no confirmed activity
+- **GCP / GKE / Google Cloud**, ABSENT from the portfolio (AWS-native). Do NOT mention them and do NOT frame them as in-progress or onboarding.
 - **Large-scale multi-node clusters**, dual-pool cluster (general t3.small 1–4, monitoring t3.medium 1–2)
 
 **General evidence gate, applies to all IN_PROGRESS gap entries:**
 | Evidence available | What agent may say |
 |---|---|
 | Confirmed activity in KB | Name only the specific confirmed activities |
-| "Actively pursuing" with no confirmed activity | "I am actively beginning [technology] onboarding" |
-| No evidence | Do not mention the technology in forward-looking context |
+| No confirmed activity | Omit the skill entirely; do not mention it and do not state any forward-looking acquisition (no "beginning", "onboarding", or "pursuing" framing for a skill the candidate lacks) |
 
 ## What Was Built That's Unusual (Highlight These)
 

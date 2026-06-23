@@ -25,6 +25,7 @@ import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock, loadProjectLaneIndex } from './agents/project-evidence-block.js';
+import { loadAchievementEvidence } from './agents/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
 import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
 import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js';
@@ -484,7 +485,7 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction] = await Promise.all([
+        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
             loadProjectLaneIndex(pool, ctx.userId),
             loadProfileIntelligenceBlock(pool, ctx.userId),
@@ -492,6 +493,7 @@ export async function main(): Promise<void> {
             loadCertifications(pool, ctx.userId).catch(() => []),
             loadCareerHistory(pool, ctx.userId).catch(() => []),
             extractJobDescription(ctx.jobDescription, ctx),
+            loadAchievementEvidence(pool, ctx.userId),
         ]);
         // Candidate grounding fed to research + strategist: documented project case
         // studies PLUS the code-grounded Profile Intelligence (direction / undersold
@@ -672,7 +674,7 @@ export async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
-        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext);
+        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 

@@ -8,8 +8,10 @@
 import { describe, it, expect } from '@jest/globals';
 import { gradeFreeResume, parseFreeResumeResponse } from './free-resume-writer.js';
 import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
+import { validateCoverLetter } from './cover-letter-guard.js';
 import type { FreeEvidence } from '../free/gather-evidence.js';
 import type { FreeResumeOutput } from './free-resume-writer.js';
+import type { CoverLetter } from './cover-letter-guard.js';
 
 /** Serialise a FreeResumeOutput as the raw JSON the emit_free_resume tool returns. */
 const toToolJson = (out: FreeResumeOutput): string => JSON.stringify(out);
@@ -22,6 +24,7 @@ const EV: FreeEvidence = {
 	educationFacts: 'BSc CS — Example University',
 	commitPrEvidence: '',
 	profileIntelligence: '',
+	achievementEvidence: '',
 };
 
 const GOOD: FreeResumeOutput = {
@@ -315,6 +318,34 @@ describe('free writer eval — grounded narrative', () => {
 		const cov = groundedAtsCoverage(JSON.stringify(resumeWithIam), jdKeywords, aliasIdentity);
 		expect(cov.covered).toEqual(expect.arrayContaining(['IAM']));
 		expect(cov.covered).not.toContain('GraphQL');
+	});
+
+	// -----------------------------------------------------------------------
+	// Cover-letter contract: no forward-looking fabrication + challenge-led hook
+	// -----------------------------------------------------------------------
+
+	// A hand-built cover-letter fixture grounded in EV evidence (no numeric
+	// tokens that are absent from the corpus). Uses "enrichment" to satisfy the
+	// challenge/achievement regex and "consolidated" to satisfy decision-impact.
+	const GOOD_CL: CoverLetter = {
+		greeting: 'Dear Hiring Manager',
+		paragraphs: [
+			'The enrichment pipeline challenge attracted me to this role: wiring Bedrock into a knowledge-base so grounding is deterministic, not hopeful.',
+			'At Acme Corp I consolidated the ingestion strategy, retired the ad-hoc ETL layer, and shipped a Karpenter-backed EKS cluster that made the platform autoscale without manual tuning.',
+		],
+		signoff: GOOD.coverLetter.signoff,
+	};
+
+	it('eval: a forward-looking skill-acquisition cover letter is flagged by the guard', () => {
+		const letter = { greeting: 'Dear Hiring Manager', paragraphs: ['I am actively beginning Azure onboarding.'], signoff: GOOD.coverLetter.signoff } as never;
+		expect(validateCoverLetter(letter, 'Solutions Support Engineer', '').some((v) => v.code === 'forward_looking_skill_claim')).toBe(true);
+	});
+
+	it('eval: a good cover letter references a challenge/achievement and a decision impact', () => {
+		const text = GOOD_CL.paragraphs.join(' ');
+		expect(/bedrock:Rerank|simulate-principal-policy|enrichment/i.test(text)).toBe(true);     // challenge/achievement
+		expect(/retir(e|ed)|cut .* layer|reduced|consolidat/i.test(text)).toBe(true);             // a decision-impact phrase
+		expect(gradeFreeResume({ ...GOOD, coverLetter: GOOD_CL }, EV).pass).toBe(true);  // grounded
 	});
 
 	it('combined-overview judge (mocked) gates on threshold', async () => {

@@ -23,6 +23,7 @@ describe('gatherFreeEvidence', () => {
         expect(typeof ev.extractedTech).toBe('string');
         expect(typeof ev.commitPrEvidence).toBe('string');
         expect(typeof ev.profileIntelligence).toBe('string');
+        expect(typeof ev.achievementEvidence).toBe('string');
     });
 
     it('collects RAG passages from the injected retriever across the JD-derived queries', async () => {
