@@ -188,3 +188,27 @@ describe('reenrichSkippedChunks', () => {
         expect(selectSql).toMatch(/repo_full_name = \$1/);     // still repo-scoped
     });
 });
+
+describe('reenrichSkippedChunks — Tier-1-only (no enricher)', () => {
+    it('applies deterministic Tier-1 skills and makes NO LLM call when enricher is absent', async () => {
+        const captured = { updates: [] as unknown[] };
+        const fakePool = {
+            query: async (sql: string, params?: unknown[]) => {
+                if (/SELECT .*file_tech_stack|FROM document_embeddings/i.test(sql)) {
+                    return { rows: [{ id: 'c1', file_path: 'a.ts', content: 'x', heading: null, file_tech_stack: ['kubernetes'], content_hash: 'h1' }] };
+                }
+                if (/UPDATE document_embeddings/i.test(sql)) { captured.updates.push(params); return { rowCount: 1, rows: [] }; }
+                return { rows: [] };
+            },
+        } as never;
+
+        const tier1Map = new Map<string, readonly string[]>([['kubernetes', ['kubernetes networking']]]);
+        // enricher omitted entirely — must not throw, must not call any LLM.
+        const result = await reenrichSkippedChunks(fakePool, undefined, {
+            userId: 'u1', repoFullName: 'me/r', tier1Map, dedupCache: false, deadlineMs: Date.now() + 60_000,
+        });
+
+        expect(result.tier1Resolved ?? result.enriched ?? 0).toBeGreaterThanOrEqual(1); // Tier-1 skills resolved
+        expect(captured.updates.length).toBeGreaterThan(0);                              // Tier-1 skills written
+    });
+});

@@ -91,7 +91,7 @@ interface SkippedRow {
  */
 export async function reenrichSkippedChunks(
     pool: Pool,
-    enricher: IChunkEnricher,
+    enricher: IChunkEnricher | undefined,
     opts: ReenrichOptions = {},
 ): Promise<ReenrichResult> {
     // Backfill targets: chunks the cap skipped ('skipped_quota') AND chunks that
@@ -128,9 +128,11 @@ export async function reenrichSkippedChunks(
     // (+ vocab size, so vocabulary growth re-enriches rather than serving stale
     // canonical skills). Without this, flipping ENRICH_CANONICAL would copy the
     // old free-text skills out of the cache.
-    const modelId = opts.canonicalVocab
-        ? `${enricher.modelId ?? 'unknown'}#canon:${opts.canonicalVocab.length}`
-        : (enricher.modelId ?? 'unknown');
+    let modelId = 'tier1-only';
+    if (enricher) {
+        const base = enricher.modelId ?? 'unknown';
+        modelId = opts.canonicalVocab ? `${base}#canon:${opts.canonicalVocab.length}` : base;
+    }
     const cache = await loadEnrichmentCache(pool, opts, rows, modelId);
     const freshCache = new Map<string, string[]>();
     const remember = (hash: string | null, skills: string[]): void => {
@@ -172,6 +174,31 @@ export async function reenrichSkippedChunks(
         );
     }
 
+    /**
+     * Residue LLM path — controlled-vocab or free-text. Called only when
+     * an enricher is present; extracted to keep `processRow` under complexity 10.
+     */
+    async function enrichWithLlm(row: SkippedRow, e: IChunkEnricher): Promise<void> {
+        if (opts.canonicalVocab && e.enrichTextCanonical) {
+            const { canonical, newSkills } = await e.enrichTextCanonical(opts.canonicalVocab, row.file_path, row.content, row.heading ?? undefined);
+            await writeSkills(row.id, canonical);
+            remember(row.content_hash, canonical);
+            newSkillsQueued += newSkills.length;
+            enriched += 1;
+            return;
+        }
+        const { skills } = await e.enrich({
+            filePath:    row.file_path,
+            heading:     row.heading ?? undefined,
+            content:     row.content,
+            chunkIndex:  0,
+            totalChunks: 1,
+        });
+        await writeSkills(row.id, skills);
+        remember(row.content_hash, skills);
+        enriched += 1;
+    }
+
     async function processRow(row: SkippedRow): Promise<void> {
         try {
             // WS5 content-hash dedup: if this exact content was already enriched
@@ -193,27 +220,11 @@ export async function reenrichSkippedChunks(
                 enriched += 1;
                 return;
             }
-            // Controlled-vocabulary LLM (the vocabulary fix): emit ONLY canonical
-            // skill_ontology terms -> the chunk is canonical, so the && lane fires.
-            if (opts.canonicalVocab && enricher.enrichTextCanonical) {
-                const { canonical, newSkills } = await enricher.enrichTextCanonical(opts.canonicalVocab, row.file_path, row.content, row.heading ?? undefined);
-                await writeSkills(row.id, canonical);
-                remember(row.content_hash, canonical);
-                newSkillsQueued += newSkills.length;
-                enriched += 1;
-                return;
+            // Residue LLM path — skipped entirely when no enricher is supplied
+            // (free-tier / Tier-1-only pass: zero Bedrock calls).
+            if (enricher) {
+                await enrichWithLlm(row, enricher);
             }
-            // Residue -> the free-text LLM enricher (today's path).
-            const { skills } = await enricher.enrich({
-                filePath:    row.file_path,
-                heading:     row.heading ?? undefined,
-                content:     row.content,
-                chunkIndex:  0,
-                totalChunks: 1,
-            });
-            await writeSkills(row.id, skills);
-            remember(row.content_hash, skills);
-            enriched += 1;
         } catch (err) {
             // Leave the row as skipped_quota so the next run retries it.
             recordFailure(err);
