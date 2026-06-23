@@ -1,5 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
+import { parseVector } from '../enrichment/assignSkillsByEmbedding.js';
 
 /**
  * Reads the global skill ontology + aliases (migration 092). The deterministic
@@ -76,6 +77,27 @@ export class SkillOntologyRepository {
             `UPDATE skill_ontology SET embedding = $2::vector, updated_at = now() WHERE id = $1`,
             [id, `[${embedding.join(',')}]`],
         );
+    }
+
+    /**
+     * Vectors for the given canonical skills, from skill_ontology.embedding
+     * (migration 094). Skills with a NULL/unparseable embedding are absent from
+     * the map (caller falls back to surface-match). No RLS -- reference data.
+     */
+    async loadSkillVectors(names: readonly string[]): Promise<Map<string, number[]>> {
+        const out = new Map<string, number[]>();
+        if (names.length === 0) return out;
+        const { rows } = await this.pool.query<{ canonical_name: string; embedding: string | null }>(
+            `SELECT canonical_name, embedding::text AS embedding
+               FROM skill_ontology
+              WHERE canonical_name = ANY($1) AND embedding IS NOT NULL`,
+            [names],
+        );
+        for (const r of rows) {
+            const v = parseVector(r.embedding);
+            if (v) out.set(r.canonical_name, v);
+        }
+        return out;
     }
 
     /**
