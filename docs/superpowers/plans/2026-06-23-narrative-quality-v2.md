@@ -143,8 +143,11 @@ COMPANY BRIDGE (required, grounded in the JD signal only):
   skill.
 READABILITY:
 • Keep sentences to 1-2 lines. Split comma-joined independent clauses into separate
-  sentences; prefer a full stop or em-dash over a comma-splice. No sentence over ~40
-  words.
+  sentences. No sentence over ~40 words.
+• PUNCTUATION: use em-dashes (—) SPARINGLY — at most one per paragraph, and never as
+  the default clause separator. Prefer commas, full stops, or colons. (The free path
+  currently over-produces em-dashes (17-24 per resume) while the paid path uses none;
+  this rule brings them into line.)
 • Concision over density: cut the least JD-relevant specifics and reinvest the space
   in company/customer fit, not more proof.
 • Keep the AI/automation material only where the JD calls for it (it is JD-relevant
@@ -169,6 +172,13 @@ PLAIN-LANGUAGE OUTCOME + GROUNDED METRICS:
   40%") appears ONLY if the evidence measured it; otherwise use the plain-language
   outcome and the real counts.
 ```
+
+**Lead by example (punctuation):** the free persona's OWN prose currently uses ~24
+em-dashes, which the model mirrors into the output. While adding the rules, replace
+the most egregious em-dash runs in the persona's instruction prose with commas /
+full stops / colons (do NOT change meaning) so the prompt models the style it asks
+for. Also fix the greeting example on the `greeting` schema line — it currently reads
+`"Dear Hiring Manager"` (no comma); make it `"Dear Hiring Manager,"`.
 
 - [ ] **Step 2: Verify the persona still assembles + suite green**
 
@@ -201,7 +211,7 @@ surface grounded metrics, deriving magnitude as words (no coined %)."
 
 Read `strategist-persona.ts`. Locate the COVER LETTER RULES block and the resume/experience generation rules. Add the SAME substance as Task 2, adapted to the paid persona's voice/format (plain text, 3 paragraphs, exact target role, fixed signoff, no markdown, realised impact only, omit-gaps):
 - **Company bridge:** name what the product does from `companyProblem` (+ JD requirement vocabulary in the brief); translate one verified strength into operating it / supporting its customers; transferably translate an unevidenced required domain (never name the gap / claim the skill — the `forward_looking_skill_claim` guard remains the backstop).
-- **Readability:** 1-2 line sentences; no sentence over ~40 words; split comma-splices; greeting ends with a comma.
+- **Readability:** 1-2 line sentences; no sentence over ~40 words; split comma-splices; greeting ends with a comma; use em-dashes sparingly (≤1 per paragraph, never the default separator) — the paid persona is already lean here, keep it that way.
 - **Density + AI-tie:** concision over density; keep AI material only where the JD calls for it, compressed.
 - **Plain-language outcome + grounded/derived metrics:** lead with the plain-language outcome; surface grounded numbers from the brief/evidence; derived magnitude as WORDS; never coin a `%`; a literal `%` only when grounded.
 
