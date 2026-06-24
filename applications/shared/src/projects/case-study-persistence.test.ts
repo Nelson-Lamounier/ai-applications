@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from '@jest/globals';
 
-import { persistCaseStudy } from './case-study-persistence.js';
+import { persistCaseStudy, upsertArchitecture } from './case-study-persistence.js';
 import type { CaseStudy } from './case-study-types.js';
 
 interface CapturedQuery {
@@ -179,5 +179,71 @@ describe('persistCaseStudy — replace/prune semantics (no accumulation)', () =>
         expect(deletesFor(calls, 'project_highlights')).toHaveLength(0);
         expect(persisted.highlightsInserted).toBe(0);
         expect(persisted.highlightsPruned).toBe(0);
+    });
+});
+
+describe('upsertArchitecture — Mermaid normalisation', () => {
+    it('normalises a literal-\\n Mermaid diagram before persisting', async () => {
+        const calls: { sql: string; params: readonly unknown[] }[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const client: any = {
+            async query(sql: string, params: readonly unknown[] = []) {
+                calls.push({ sql, params });
+                return { rows: [], rowCount: 1 };
+            },
+        };
+        const input: Parameters<typeof upsertArchitecture>[1] = {
+            projectId:     'proj-x',
+            userId:        'user-x',
+            pipelineRunId: 'run-x',
+            model:         'sonnet',
+            inputHash:     'h',
+            caseStudy: {
+                ...emptyCaseStudy,
+                architecture: {
+                    diagramFormat: 'mermaid',
+                    diagramSource: 'graph LR\n  App[admin-api BFF\\nHono]',
+                    nodes: [],
+                    edges: [],
+                },
+            },
+        };
+        await upsertArchitecture(client, input);
+        const insert = calls.find((c) => /INSERT INTO project_architecture/i.test(c.sql))!;
+        const sourceParam = insert.params[3] as string; // diagram_source is $4
+        expect(sourceParam).not.toMatch(/\\n/);
+        expect(sourceParam).toContain('["admin-api BFF<br/>Hono"]');
+    });
+
+    it('does not modify an SVG diagram source', async () => {
+        const calls: { sql: string; params: readonly unknown[] }[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const client: any = {
+            async query(sql: string, params: readonly unknown[] = []) {
+                calls.push({ sql, params });
+                return { rows: [], rowCount: 1 };
+            },
+        };
+        const svgSource = '<svg><text>App\\nServer</text></svg>';
+        const input: Parameters<typeof upsertArchitecture>[1] = {
+            projectId:     'proj-y',
+            userId:        'user-y',
+            pipelineRunId: 'run-y',
+            model:         'sonnet',
+            inputHash:     'h2',
+            caseStudy: {
+                ...emptyCaseStudy,
+                architecture: {
+                    diagramFormat: 'svg',
+                    diagramSource: svgSource,
+                    nodes: [],
+                    edges: [],
+                },
+            },
+        };
+        await upsertArchitecture(client, input);
+        const insert = calls.find((c) => /INSERT INTO project_architecture/i.test(c.sql))!;
+        const sourceParam = insert.params[3] as string; // diagram_source is $4
+        expect(sourceParam).toBe(svgSource); // untouched
     });
 });
