@@ -461,9 +461,18 @@ async function doExtractAndEmbed(
             qualityScore: score, domain: extracted.domain, confidence: extracted.confidence,
         }, 'profile_extraction.complete');
     } catch (profileErr) {
+        // Best-effort: the profile rollup is an enrichment layer, NOT the core
+        // deliverable. A failure here (e.g. a Bedrock stream cancel/timeout) must
+        // NOT abort the ingestion -- RAG embeddings + technology extraction are the
+        // primary output and run after this. Mark the profile 'failed', log, and
+        // return so the sync still completes. (Previously this re-threw, so a
+        // single profile-LLM blip lost the entire RAG index for the repo.)
         profileExtractCallsTotal().inc({ outcome: 'failed' });
-        await deps.profileRepo.updateStatus(profileId, env.userId, 'failed', String(profileErr));
-        throw profileErr;
+        await deps.profileRepo.updateStatus(profileId, env.userId, 'failed', String(profileErr)).catch(() => {});
+        log.warn(
+            { err: String(profileErr), repoFullName: env.repoFullName },
+            'profile_extraction.failed_non_fatal -- continuing with RAG + technology extraction',
+        );
     }
 }
 
@@ -801,6 +810,9 @@ async function main(): Promise<void> {
             const bundle         = await profileCollector.collect(env.repoFullName, prefetchedFiles);
             stopCollect();
             const classification = classifyRepo(bundle);
+            // Best-effort: doExtractAndEmbed marks the profile 'failed' and returns
+            // (never throws) -- a profile-rollup failure must not abort the run, so
+            // RAG embeddings + technology extraction below still complete.
             await doExtractAndEmbed({ profileRepo, profileExtractor, embedder, embRepo }, env, bundle, classification, profileInputHash);
         }
 
