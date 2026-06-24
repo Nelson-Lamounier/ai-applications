@@ -71,3 +71,31 @@ describe('python requirements parser', () => {
     expect(normalisePython('typing_extensions')).toBe('typing-extensions');
   });
 });
+
+describe('python pyproject parser', () => {
+  const py = spec('python-pyproject');
+  it('reads PEP 621 [project].dependencies (array) + normalises', () => {
+    const toml = [
+      '[project]', 'name = "x"',
+      'dependencies = ["Django>=4.2", "requests[security]==2.31.0", "PyYAML"]',
+    ].join('\n');
+    expect(py.parse(toml).sort()).toEqual(['django', 'pyyaml', 'requests']);
+    expect(py.normalise('PyYAML')).toBe('pyyaml');
+  });
+  it('reads [tool.poetry.dependencies] table keys, dropping python', () => {
+    const toml = ['[tool.poetry.dependencies]', 'python = "^3.11"', 'fastapi = "^0.110"', 'httpx = "*"'].join('\n');
+    expect(py.parse(toml).sort()).toEqual(['fastapi', 'httpx']);
+  });
+});
+
+describe('rust parser', () => {
+  const rust = spec('rust');
+  it('reads [dependencies], [dev-dependencies], [build-dependencies] keys', () => {
+    const toml = [
+      '[dependencies]', 'serde = "1"', 'tokio = { version = "1", features = ["full"] }',
+      '[dev-dependencies]', 'criterion = "0.5"',
+      '[build-dependencies]', 'cc = "1"',
+    ].join('\n');
+    expect(rust.parse(toml).sort()).toEqual(['cc', 'criterion', 'serde', 'tokio']);
+  });
+});

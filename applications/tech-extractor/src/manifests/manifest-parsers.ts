@@ -1,4 +1,5 @@
 /** @format */
+import { parse as parseToml } from 'smol-toml';
 
 /** One ecosystem's manifest handling: how to recognise the file, parse direct
  *  dependency names from it, and normalise a name for comparison against syft's
@@ -126,5 +127,76 @@ const pythonRequirements: ParserSpec = {
     normalise: normalisePython,
 };
 
+/** Safe TOML parse returning {} on error (fail-open). */
+function safeToml(content: string): Record<string, unknown> {
+    try {
+        return parseToml(content) as Record<string, unknown>;
+    } catch {
+        return {};
+    }
+}
+
+/** First identifier of a PEP 508 requirement string ("Django>=4.2" -> "Django"). */
+function pep508Name(req: string): string | null {
+    const m = req.trim().match(/^([A-Za-z0-9._-]+)/);
+    return m ? m[1] : null;
+}
+
+/** Add PEP 508 dep-array entries into `out`, normalised. */
+function addPep508Array(arr: unknown, out: Set<string>): void {
+    if (!Array.isArray(arr)) return;
+    for (const d of arr) {
+        if (typeof d === 'string') { const n = pep508Name(d); if (n) out.add(normalisePython(n)); }
+    }
+}
+
+/** Add PEP 621 [project] deps (direct + optional groups) into `out`. */
+function addPep621(project: Record<string, unknown> | undefined, out: Set<string>): void {
+    if (!project) return;
+    addPep508Array(project['dependencies'], out);
+    const optional = project['optional-dependencies'];
+    if (optional && typeof optional === 'object') {
+        for (const group of Object.values(optional as Record<string, unknown>)) addPep508Array(group, out);
+    }
+}
+
+/** Add [tool.poetry.dependencies] keys (excluding the python version pin) into `out`. */
+function addPoetryDeps(tool: Record<string, unknown> | undefined, out: Set<string>): void {
+    const poetry = tool?.['poetry'] as Record<string, unknown> | undefined;
+    const deps = poetry?.['dependencies'] as Record<string, unknown> | undefined;
+    if (!deps || typeof deps !== 'object') return;
+    for (const k of Object.keys(deps)) if (k.toLowerCase() !== 'python') out.add(normalisePython(k));
+}
+
+const pythonPyproject: ParserSpec = {
+    id: 'python-pyproject',
+    syftEcosystems: ['python'],
+    matches: (p) => basename(p) === 'pyproject.toml',
+    parse: (content) => {
+        const t = safeToml(content);
+        const names = new Set<string>();
+        addPep621(t['project'] as Record<string, unknown> | undefined, names);
+        addPoetryDeps(t['tool'] as Record<string, unknown> | undefined, names);
+        return [...names];
+    },
+    normalise: normalisePython,
+};
+
+const rust: ParserSpec = {
+    id: 'rust',
+    syftEcosystems: ['rust-crate'],
+    matches: (p) => basename(p) === 'Cargo.toml',
+    parse: (content) => {
+        const t = safeToml(content);
+        const names = new Set<string>();
+        for (const table of ['dependencies', 'dev-dependencies', 'build-dependencies']) {
+            const map = t[table];
+            if (map && typeof map === 'object') for (const k of Object.keys(map)) names.add(k);
+        }
+        return [...names];
+    },
+    normalise: normaliseDefault,
+};
+
 /** Registry. Task 2 appends python-pyproject + rust. */
-export const PARSER_SPECS: ParserSpec[] = [npm, go, php, ruby, pythonRequirements];
+export const PARSER_SPECS: ParserSpec[] = [npm, go, php, ruby, pythonRequirements, pythonPyproject, rust];
