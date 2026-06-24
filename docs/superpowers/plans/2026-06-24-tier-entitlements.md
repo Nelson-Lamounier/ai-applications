@@ -13,7 +13,7 @@
 - Prose/comments/commits in **English (UK)**; **ASCII only** (no diacritics).
 - **No "Co-Authored-By: Claude"** trailer in commits.
 - Run **ESLint** before considering any change complete: `cd tucaken-app && yarn exec eslint admin-api/src --config admin-api/eslint.config.js --no-ignore`.
-- Feature work on a branch off `develop` in each repo; never commit feature work to `develop`/`main`. ai-applications branch: `feat/tier-entitlements`. tucaken-app: create `feat/tier-entitlements` off its `develop`.
+- Feature work on a dedicated branch; never commit feature work to a base branch. **ai-applications** branch `feat/tier-entitlements` off `develop` (this repo integrates on develop). **tucaken-app** branch `feat/tier-entitlements` off `origin/main` (this repo integrates on main — confirmed by recent PRs #155-159). Do not stage the unrelated untracked WIP present on the tucaken-app working tree.
 - Migrations are numbered + checksum-ledgered; **never edit a historical migration**. Next number is **103**.
 - Enforce limits at the **dispatch/route boundary**, never via display copy.
 - Authenticated handlers derive `userId` from verified claims (`requireUserId`); never trust client-supplied plan/tier/enrichment.
