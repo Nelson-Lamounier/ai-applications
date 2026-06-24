@@ -68,6 +68,7 @@ import { scoreProfile } from './util/scoreProfile.js';
 import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
 import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
 import { patchDeterministicProfileFacts } from './util/patchProfileFacts.js';
+import { applyPostSyncProjectAction } from './util/applyPostSyncProjectAction.js';
 import { friendlyIngestionError } from './friendly-error.js';
 import type { RepoFile } from '@bedrock/shared';
 import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
@@ -937,6 +938,13 @@ async function main(): Promise<void> {
                 }, 'profile synthesizers disabled — rollup synthesis will be skipped');
             }
             await refreshUserProfileRollup(rollupRepo, env.userId, mirrorSynth, directionSynth, reconciliationSynth, careerRepo, diagnosticNarrator, diagnosticInputsRepo);
+        }
+
+        // Apply any Add-time project intent (build / link) that was stamped when
+        // the user added this repo before its first sync. Best-effort -- never throws.
+        const projectAction = await applyPostSyncProjectAction(pgPool, env.userId, env.repoFullName);
+        if (projectAction !== 'none') {
+            log.info({ repoFullName: env.repoFullName, projectAction }, 'post_sync_project_action.applied');
         }
 
         // Authoritative run cost: SUM every lane booked to prompt_invocations
