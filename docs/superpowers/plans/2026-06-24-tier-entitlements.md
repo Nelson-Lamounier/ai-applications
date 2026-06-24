@@ -31,6 +31,8 @@
 
 `trial` mirrors `pro` (a trial is a paid-tier taste). Full-access override → premium-equivalent limits + `full` enrichment regardless of plan.
 
+**Full-access is role-based (supersedes any `email`-based wording in task bodies below).** Per a security-review decision, `isFullAccess` is driven by the user's persisted `role === 'admin'` (already returned by `getUserPlanStatus`), NOT by the `AB_FREE_TIER_EMAILS` / `ENRICHMENT_TOGGLE_EMAILS` allowlists. Auditable, fail-closed, decoupled from the A/B lists. The test/owner account gets full access via its existing Cognito-admin-group → `role='admin'` provisioning. Everywhere a task says to thread `email` into `entitlementsFor` / `resolveEnrichmentEnv` / `getPlanLimit` for the override, thread the user's `role` (from `planStatus.role`) instead. `entitlements.ts` therefore imports NOTHING from `ab-free-tier`/`enrichment-toggle`.
+
 ---
 
 ## File Structure
@@ -129,15 +131,17 @@ git commit -m "feat(rds): add premium plan tier to users.plan CHECK (migration 1
 - Modify: `admin-api/src/lib/repositories/users.ts:221` (extend `EffectivePlan`)
 
 **Interfaces:**
-- Consumes: `isFreeTierAllowed` from `./ab-free-tier.js`, `isEnrichmentToggleAllowed` from `./enrichment-toggle.js`.
+- Consumes: nothing from `ab-free-tier`/`enrichment-toggle` (full-access is role-based — see Global Constraints).
 - Produces:
   - `type EffectivePlan = 'free' | 'trial' | 'pro' | 'premium'` (extended in users.ts; re-exported via entitlements).
   - `type EnrichmentMode = 'tier1' | 'full'`
   - `interface Entitlements { repos: number; projects: number; resumesPerMonth: number; ingestionJobsPerMonth: number; enrichment: EnrichmentMode }`
   - `const ENTITLEMENTS: Record<EffectivePlan, Entitlements>`
-  - `function isFullAccess(email: string | null | undefined): boolean`
-  - `function entitlementsFor(plan: EffectivePlan, email?: string | null): Entitlements`
+  - `function isFullAccess(role: string | null | undefined): boolean` — returns `role === 'admin'`.
+  - `function entitlementsFor(plan: EffectivePlan, role?: string | null): Entitlements` — `isFullAccess(role)` → `ENTITLEMENTS.premium`, else `ENTITLEMENTS[plan]`.
   - `function enrichmentEnv(mode: EnrichmentMode): Record<string, string>`
+
+> **NOTE (role-based revision):** The code/tests printed below in Steps 1-4 show the original email-allowlist design and are SUPERSEDED. `isFullAccess(role)` returns `role === 'admin'`; `entitlementsFor(plan, role)` overrides to premium when admin. Tests assert `isFullAccess('admin') === true`, `isFullAccess('user'|null) === false`, and `entitlementsFor('free','admin')` deep-equals `ENTITLEMENTS.premium`. No env vars, no allowlist imports.
 
 - [ ] **Step 1: Extend the `EffectivePlan` union**
 
