@@ -182,7 +182,7 @@ describe('persistCaseStudy — replace/prune semantics (no accumulation)', () =>
     });
 });
 
-describe('upsertArchitecture — Mermaid normalisation', () => {
+describe('upsertArchitecture -- Mermaid normalisation', () => {
     it('normalises a literal-\\n Mermaid diagram before persisting', async () => {
         const calls: { sql: string; params: readonly unknown[] }[] = [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
