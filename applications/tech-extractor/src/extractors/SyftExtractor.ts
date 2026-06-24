@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Extractor, RawTechnologyEvidence } from './Extractor.js';
+import { filterSyftDirect } from '../manifests/filterSyftDirect.js';
 
 // execFile (NOT exec): array args, no shell — the repo path/binary cannot be
 // shell-injected. The repo has no execFileNoThrow helper, so this is the safe
@@ -30,7 +31,10 @@ export function parseSyftJson(stdout: string): RawTechnologyEvidence[] {
 
 export class SyftExtractor implements Extractor {
     readonly name = 'syft';
-    constructor(private readonly syftBin = process.env.SYFT_BIN ?? 'syft') {}
+    constructor(
+        private readonly syftBin = process.env.SYFT_BIN ?? 'syft',
+        private readonly directByEcosystem?: ReadonlyMap<string, ReadonlySet<string>>,
+    ) {}
 
     async extract(rootDir: string): Promise<RawTechnologyEvidence[]> {
         const { stdout } = await execFileAsync(
@@ -38,6 +42,9 @@ export class SyftExtractor implements Extractor {
             ['scan', `dir:${rootDir}`, '-o', 'syft-json', '-q'],
             { maxBuffer: 64 * 1024 * 1024 },
         );
-        return parseSyftJson(stdout);
+        const rows = parseSyftJson(stdout);
+        // Direct-dependency filter: drop transitive lockfile entries when we have
+        // a manifest-derived direct-set. Absent set -> fail-open (keep all).
+        return this.directByEcosystem ? filterSyftDirect(rows, this.directByEcosystem) : rows;
     }
 }

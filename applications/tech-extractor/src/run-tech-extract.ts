@@ -33,6 +33,7 @@ import { extractProseRanges } from './extractors/CommentExtractor.js';
 import { scanProseRanges } from './extractors/iac/ReadmeParser.js';
 import type { Extractor, RawTechnologyEvidence } from './extractors/Extractor.js';
 import { TechExtractOrchestrator } from './orchestrator/TechExtractOrchestrator.js';
+import { collectDirectDeps } from './manifests/collectDirectDeps.js';
 
 const MAX_TARBALL_BYTES = Number(process.env.MAX_TARBALL_BYTES ?? 200 * 1024 * 1024);
 
@@ -185,8 +186,11 @@ async function main(): Promise<void> {
             const proseSafeAliases = await ontologyRepo.loadProseSafeAliases();
             log.info({ proseSafe: proseSafeAliases.size }, 'prose-safe-aliases.loaded');
 
+            const directByEcosystem = await collectDirectDeps(files, readFile);
+            log.info({ ecosystems: [...directByEcosystem.keys()] }, 'direct-deps.collected');
+
             const extractors: Extractor[] = [
-                new SyftExtractor(),
+                new SyftExtractor(undefined, directByEcosystem),
                 new TreeSitterExtractor(readFile, files, proseSafeAliases),
                 iacExtractor(extractDir, files, proseSafeAliases),
                 // Optional cross-check/fallback lane: GitHub's dependency-graph
