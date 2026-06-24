@@ -38,10 +38,17 @@ that property *provable* (assertion + regression test) rather than rebuilding it
 
 ### Full-access override (test user)
 
+> **SUPERSEDED (security review):** full access is now driven by the persisted
+> `role === 'admin'`, NOT the email allowlists described below. `isFullAccess(role)`
+> returns `role === 'admin'`; the test/owner account gets full access via its
+> Cognito-admin-group provisioning. This decouples the override from the A/B
+> allowlists and is fail-closed. The email-allowlist description that follows is
+> retained for history only. See the implementation plan's Global Constraints.
+
 A full-access override grants unlimited everything plus full enrichment,
 independent of the user's plan row. It is keyed on the **existing email
 allowlist** mechanism (`AB_FREE_TIER_EMAILS` / `ENRICHMENT_TOGGLE_EMAILS`, which
-already default to `lamounier_88@hotmail.com`) — not a hardcoded address. The
+already default to `lamounier_88@hotmail.com`) - not a hardcoded address. The
 entitlements module exposes a single `isFullAccess(email)` predicate that the
 enforcement points consult first; when true, every quota check short-circuits to
 "allowed" and enrichment resolves to `full`. This keeps the override env-driven
