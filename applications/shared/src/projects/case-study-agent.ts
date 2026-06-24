@@ -129,7 +129,10 @@ Rules:
      files plus a thorough README — do not inflate.
   9. \`architecture\` is a Mermaid graph (graph LR or graph TD).
      Rectangles for services, cylinders for datastores, clouds for
-     external services. Keep it readable in 5 seconds.
+     external services. Keep it readable in 5 seconds. For a line break
+     inside a node label use \`<br/>\` and WRAP THE WHOLE LABEL IN DOUBLE
+     QUOTES, never a literal "\\n". Quote any label containing punctuation,
+     e.g. \`App["admin-api BFF<br/>Hono"]\` -- never \`App[admin-api BFF\\nHono]\`.
 
 The input is a compact JSON envelope describing the project, its
 components, its repositories, recent commits, and selected KB passages,

@@ -32,6 +32,7 @@ import {
     stampStackSignals,
     type VerifiedTechEntry,
 } from './case-study-verified-stack.js';
+import { normaliseMermaidSource } from './mermaid-normalise.js';
 
 /** technology_evidence lanes that represent real code-declared dependencies. */
 const CODE_LAYERS = ['syft', 'treesitter', 'iac', 'dockerfile'];
@@ -277,11 +278,14 @@ async function upsertDepthMarkers(
     return true;
 }
 
-async function upsertArchitecture(
+export async function upsertArchitecture(
     client: PoolClient,
     input: PersistCaseStudyInput,
 ): Promise<boolean> {
     const a = input.caseStudy.architecture;
+    const diagramSource = a.diagramFormat === 'mermaid'
+        ? normaliseMermaidSource(a.diagramSource)
+        : a.diagramSource;
     await client.query(
         `INSERT INTO project_architecture (
             user_id, project_id, diagram_format, diagram_source, nodes, edges,
@@ -300,7 +304,7 @@ async function upsertArchitecture(
          WHERE project_architecture.is_user_edited = FALSE`,
         [
             input.userId, input.projectId,
-            a.diagramFormat, a.diagramSource,
+            a.diagramFormat, diagramSource,
             JSON.stringify(a.nodes), JSON.stringify(a.edges),
             input.pipelineRunId,
         ],
