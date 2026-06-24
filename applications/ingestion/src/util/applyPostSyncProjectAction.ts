@@ -30,6 +30,7 @@ export async function applyPostSyncProjectAction(
          JOIN project_repositories pr ON pr.project_component_id = pc.id
          JOIN repositories r ON r.id = pr.repository_id
         WHERE p.user_id = $1::uuid AND r.full_name = $2 AND p.shape = 'single_repo'
+          AND p.status <> 'archived'
         ORDER BY p.created_at DESC LIMIT 1`,
       [userId, repoFullName],
     );
@@ -66,7 +67,7 @@ export async function applyPostSyncProjectAction(
           [proj.id, targetComponentId],
         );
         await client.query(
-          `UPDATE projects SET status = 'archived', post_sync_action = NULL, updated_at = NOW() WHERE id = $1::uuid`,
+          `UPDATE projects SET status = 'archived', post_sync_action = NULL, post_sync_target_project_id = NULL, updated_at = NOW() WHERE id = $1::uuid`,
           [proj.id],
         );
         await client.query(
