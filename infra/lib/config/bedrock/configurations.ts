@@ -57,6 +57,14 @@ export interface ChatbotVpcConfig {
      * so it MUST match the number of public subnets in the SSM list.
      */
     readonly availabilityZones: string[];
+    /**
+     * VPC CIDR (concrete). The Bedrock interface endpoints use privateDnsEnabled,
+     * which makes them resolve VPC-wide, so their security group must admit the
+     * whole VPC on 443 -- otherwise non-chatbot Bedrock consumers (ingestion,
+     * job-strategist, coach) get connections silently dropped. Concrete because a
+     * security-group ingress CIDR cannot be a deploy-time SSM token.
+     */
+    readonly vpcCidr: string;
 }
 
 /**
@@ -162,6 +170,7 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
                 vpcIdSsmParameter: '/shared/vpc/development/vpc-id',
                 publicSubnetIdsSsmParameter: '/shared/vpc/development/public-subnet-ids',
                 availabilityZones: ['eu-west-1a', 'eu-west-1b'],
+                vpcCidr: '10.0.0.0/16',
             },
         },
         logRetention: logs.RetentionDays.ONE_WEEK,

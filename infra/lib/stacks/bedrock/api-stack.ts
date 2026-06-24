@@ -661,13 +661,19 @@ export class BedrockApiStack extends cdk.Stack {
 
         const endpointSecurityGroup = new ec2.SecurityGroup(this, 'ChatbotBedrockEndpointSecurityGroup', {
             vpc,
-            description: 'Allows chatbot Lambdas to reach Bedrock interface endpoints',
+            description: 'Bedrock interface-endpoint access -- VPC-wide (privateDnsEnabled)',
             allowAllOutbound: true,
         });
+        // privateDnsEnabled (below) makes these endpoints resolve VPC-WIDE: every
+        // pod in the VPC resolves bedrock-runtime.<region>.amazonaws.com to these
+        // endpoint ENIs. So the SG MUST admit the whole VPC on 443 -- scoping it to
+        // only the chatbot Lambda SG silently dropped (ETIMEDOUT) every other
+        // in-VPC Bedrock consumer (ingestion, job-strategist, coach, ...). The VPC
+        // CIDR rule is a superset of the chatbot Lambda SG, so it covers both.
         endpointSecurityGroup.addIngressRule(
-            lambdaSecurityGroup,
+            ec2.Peer.ipv4(cfg.vpcCidr),
             ec2.Port.tcp(443),
-            'HTTPS from chatbot Lambda ENIs',
+            'HTTPS from the whole VPC (privateDns Bedrock endpoint is VPC-wide)',
         );
 
         for (const [id, service] of [
