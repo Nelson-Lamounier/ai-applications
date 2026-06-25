@@ -26,11 +26,78 @@ import {
 } from './evals/run-article-eval.js';
 import { runWriterEval, writerEvalPassRate, WRITER_MIN_PASS } from './evals/run-writer-eval.js';
 import { runQaEval, qaEvalPasses, QA_MIN_ACCURACY } from './evals/run-qa-eval.js';
+import { toEvalRunRows, persistEvalRuns } from './evals/persist-eval.js';
 
 function required(name: string): string {
     const v = process.env[name];
     if (!v) throw new Error(`Missing required env var: ${name}`);
     return v;
+}
+
+interface EvalOutcome {
+    readonly research: Awaited<ReturnType<typeof runResearchEval>>;
+    readonly writer:   Awaited<ReturnType<typeof runWriterEval>>;
+    readonly qa:       Awaited<ReturnType<typeof runQaEval>>;
+    readonly researchPass: boolean;
+    readonly writerPass:   boolean;
+    readonly qaPass:       boolean;
+    readonly overallPass:  boolean;
+}
+
+/** Run the three live phases in sequence and apply each phase's gate. */
+async function runAllPhases(pool: ReturnType<typeof getPool>, userId: string): Promise<EvalOutcome> {
+    log('INFO', 'eval: research phase', { userId });
+    const research = await runResearchEval(pool, userId);
+    const researchPass = researchEvalPasses(research);
+
+    log('INFO', 'eval: writer phase', {});
+    const writer = await runWriterEval();
+    const writerPass = writerEvalPassRate(writer) >= WRITER_MIN_PASS;
+
+    log('INFO', 'eval: qa phase', {});
+    const qa = await runQaEval();
+    const qaPass = qaEvalPasses(qa);
+
+    return { research, writer, qa, researchPass, writerPass, qaPass, overallPass: researchPass && writerPass && qaPass };
+}
+
+/** Compact JSONB summary for the pipeline_runs row (UI poll). Pure. */
+function buildSummary(o: EvalOutcome): Record<string, unknown> {
+    return {
+        eval: {
+            overallPass: o.overallPass,
+            research: {
+                pass: o.researchPass,
+                meanRecallPositive: o.research.meanRecallPositive,
+                meanRecallNegative: o.research.meanRecallNegative,
+                floor: RESEARCH_MIN_RECALL_POSITIVE,
+                leakCeiling: RESEARCH_MAX_RECALL_NEGATIVE,
+                perQuery: o.research.perQuery.map((q) => ({ id: q.id, kind: q.kind, repoRecall: q.repoRecall })),
+            },
+            writer: {
+                pass: o.writerPass,
+                passRate: writerEvalPassRate(o.writer),
+                floor: WRITER_MIN_PASS,
+                perBrief: o.writer.map((b) => ({ id: b.id, ok: b.ok, failed: b.checks.filter((c) => !c.passed).map((c) => c.name) })),
+            },
+            qa: {
+                pass: o.qaPass,
+                accuracy: o.qa.accuracy,
+                floor: QA_MIN_ACCURACY,
+                perCase: o.qa.perCase.map((c) => ({ id: c.id, expectedFlag: c.expectedFlag, detected: c.detected })),
+            },
+        },
+    };
+}
+
+/** Chart the run in rag_eval_runs (Grafana). Best-effort — never changes outcome. */
+async function chart(pool: ReturnType<typeof getPool>, o: EvalOutcome): Promise<void> {
+    try {
+        await persistEvalRuns(pool, toEvalRunRows(o.research, o.writer, o.qa, { research: o.researchPass, writer: o.writerPass, qa: o.qaPass }));
+        log('INFO', 'eval: persisted to rag_eval_runs', {});
+    } catch (e) {
+        log('WARN', 'eval: rag_eval_runs persist failed — proceeding', { error: (e as Error).message });
+    }
 }
 
 async function main(): Promise<void> {
@@ -50,56 +117,12 @@ async function main(): Promise<void> {
 
     try {
         await setStatus('running');
-
-        // Research — pgvector retrieval grounding (needs the user's KB).
-        log('INFO', 'eval: research phase', { userId });
-        const research = await runResearchEval(pool, userId);
-        const researchPass = researchEvalPasses(research);
-
-        // Writer — live generation graded by deterministic quality checks.
-        log('INFO', 'eval: writer phase', {});
-        const writer = await runWriterEval();
-        const writerRate = writerEvalPassRate(writer);
-        const writerPass = writerRate >= WRITER_MIN_PASS;
-
-        // QA — judge-the-judge over planted-defect cases.
-        log('INFO', 'eval: qa phase', {});
-        const qa = await runQaEval();
-        const qaPass = qaEvalPasses(qa);
-
-        const overallPass = researchPass && writerPass && qaPass;
-
-        const summary = {
-            eval: {
-                overallPass,
-                research: {
-                    pass: researchPass,
-                    meanRecallPositive: research.meanRecallPositive,
-                    meanRecallNegative: research.meanRecallNegative,
-                    floor: RESEARCH_MIN_RECALL_POSITIVE,
-                    leakCeiling: RESEARCH_MAX_RECALL_NEGATIVE,
-                    perQuery: research.perQuery.map((q) => ({ id: q.id, kind: q.kind, repoRecall: q.repoRecall })),
-                },
-                writer: {
-                    pass: writerPass,
-                    passRate: writerRate,
-                    floor: WRITER_MIN_PASS,
-                    perBrief: writer.map((b) => ({ id: b.id, ok: b.ok, failed: b.checks.filter((c) => !c.passed).map((c) => c.name) })),
-                },
-                qa: {
-                    pass: qaPass,
-                    accuracy: qa.accuracy,
-                    floor: QA_MIN_ACCURACY,
-                    perCase: qa.perCase.map((c) => ({ id: c.id, expectedFlag: c.expectedFlag, detected: c.detected })),
-                },
-            },
-        };
-
-        if (pipelineRunId) await updatePipelineRunMetadata(pool, pipelineRunId, summary);
-        await setStatus(overallPass ? 'complete' : 'failed', overallPass ? undefined : 'one or more eval phases below gate');
-
-        log('INFO', 'eval: done', { overallPass, researchPass, writerPass, qaPass });
-        if (!overallPass) process.exitCode = 2;
+        const o = await runAllPhases(pool, userId);
+        if (pipelineRunId) await updatePipelineRunMetadata(pool, pipelineRunId, buildSummary(o));
+        await chart(pool, o);
+        await setStatus(o.overallPass ? 'complete' : 'failed', o.overallPass ? undefined : 'one or more eval phases below gate');
+        log('INFO', 'eval: done', { overallPass: o.overallPass, researchPass: o.researchPass, writerPass: o.writerPass, qaPass: o.qaPass });
+        if (!o.overallPass) process.exitCode = 2;
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         await setStatus('failed', message);
