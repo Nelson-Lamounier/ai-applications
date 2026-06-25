@@ -1,4 +1,4 @@
--- 103_premium_plan_tier.sql
+-- 105_premium_plan_tier.sql
 -- Add the 'premium' subscription tier.
 --   1. Widen the users.plan CHECK constraint to allow 'premium'.
 --   2. effective_plan is app-computed only (CASE in SELECT, not materialised) - no view/column redefinition needed.
