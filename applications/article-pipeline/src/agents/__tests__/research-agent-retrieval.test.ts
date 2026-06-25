@@ -111,7 +111,9 @@ describe('executeResearchAgent — retrieval source', () => {
         });
     });
 
-    it('uses PgVectorRetriever when RESEARCH_RETRIEVAL_SOURCE=pgvector', async () => {
+    it('uses PgVectorRetriever with DEEP depth for a short kb-augmented prompt', async () => {
+        // Default mocked S3 draft ('# Test Draft') is < KB_AUGMENTED_THRESHOLD, so
+        // mode resolves to 'kb-augmented' → deep pull (the KB supplies substance).
         process.env['RESEARCH_RETRIEVAL_SOURCE'] = 'pgvector';
         await executeResearchAgent(makeCtx(), fakePool);
         expect(MockPgVectorRetriever).toHaveBeenCalledTimes(1);
@@ -119,8 +121,30 @@ describe('executeResearchAgent — retrieval source', () => {
         expect(mockRetrieve).toHaveBeenCalledWith(
             'user-00000000-0000-0000-0000-000000000001',
             expect.any(String),
-            expect.objectContaining({ maxProfiles: 5, maxChunks: 5 }),
+            expect.objectContaining({
+                maxProfiles:        6,
+                maxChunks:          12,
+                neighbourRadius:    2,
+                boostByRepoSignals: ['has_ci', 'has_iac'],
+            }),
         );
+    });
+
+    it('uses PgVectorRetriever with LIGHT depth for a long legacy-transform draft', async () => {
+        // A draft longer than KB_AUGMENTED_THRESHOLD resolves to 'legacy-transform'
+        // → light pull (the draft already carries its own content; KB supplements).
+        process.env['RESEARCH_RETRIEVAL_SOURCE'] = 'pgvector';
+        const longDraft = '# Long Draft\n' + 'word '.repeat(600); // > 500 chars
+        mockS3Send.mockReset();
+        mockS3Send.mockResolvedValue({
+            Body: { transformToString: jest.fn<() => Promise<string>>().mockResolvedValue(longDraft) },
+        });
+        await executeResearchAgent(makeCtx(), fakePool);
+        expect(mockRetrieve).toHaveBeenCalledTimes(1);
+        const opts = (mockRetrieve.mock.calls[0] as unknown[])[2] as Record<string, unknown>;
+        expect(opts).toMatchObject({ maxProfiles: 4, maxChunks: 6, neighbourRadius: 1 });
+        // Light mode must NOT apply the repo-signal boost reserved for deep pulls.
+        expect(opts).not.toHaveProperty('boostByRepoSignals');
     });
 
     it('does NOT use PgVectorRetriever when RESEARCH_RETRIEVAL_SOURCE=bedrock-kb (default)', async () => {

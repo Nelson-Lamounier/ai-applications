@@ -36,6 +36,7 @@ import {
     type SuggestedReference,
 } from '@bedrock/shared';
 import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
+import { PGVECTOR_DEPTH } from './retrieval-depth.js';
 import type { Pool } from 'pg';
 
 // =============================================================================
@@ -73,7 +74,7 @@ const TABLE_NAME = process.env.PIPELINE_TABLE_NAME ?? '';
 /** Character threshold for KB-augmented mode detection */
 const KB_AUGMENTED_THRESHOLD = 500;
 
-/** Maximum KB passages to retrieve */
+/** Maximum KB passages to retrieve (Bedrock KB path — fixed depth). */
 const MAX_KB_PASSAGES = 10;
 
 const RESEARCH_RETRIEVAL_SOURCE = (): string => process.env['RESEARCH_RETRIEVAL_SOURCE'] ?? 'bedrock-kb';
@@ -225,19 +226,27 @@ async function queryKnowledgeBase(query: string): Promise<KbPassage[]> {
 /**
  * Query RDS pgvector for relevant passages from repository_profile_embeddings
  * and document_embeddings. Used when RESEARCH_RETRIEVAL_SOURCE=pgvector.
+ *
+ * Retrieval depth is mode-aware (see {@link PGVECTOR_DEPTH}): a short
+ * kb-augmented prompt pulls deeper because the KB must supply the substance,
+ * whereas a long legacy-transform draft pulls lighter to supplement rather
+ * than swamp the author's own content.
  */
-async function queryPgVector(userId: string, query: string, pool: Pool): Promise<KbPassage[]> {
-    log('INFO', 'Querying pgvector', { agent: 'research', userId, queryLength: query.length });
+async function queryPgVector(userId: string, query: string, pool: Pool, mode: PipelineMode): Promise<KbPassage[]> {
+    const depth = PGVECTOR_DEPTH[mode];
+    log('INFO', 'Querying pgvector', { agent: 'research', userId, queryLength: query.length, mode, maxProfiles: depth.maxProfiles, maxChunks: depth.maxChunks });
 
     const embedder  = new TitanEmbeddingProvider(process.env['AWS_REGION'] ?? 'eu-west-1');
     const retriever = new PgVectorRetriever(pool, embedder);
 
     const passages: RetrievedPassage[] = await retriever.retrieve(userId, query, {
-        maxProfiles: MAX_KB_PASSAGES / 2,
-        maxChunks:   MAX_KB_PASSAGES / 2,
+        maxProfiles:        depth.maxProfiles,
+        maxChunks:          depth.maxChunks,
+        neighbourRadius:    depth.neighbourRadius,
+        ...(depth.boostByRepoSignals ? { boostByRepoSignals: depth.boostByRepoSignals } : {}),
     });
 
-    log('INFO', 'pgvector retrieval complete', { agent: 'research', passageCount: passages.length });
+    log('INFO', 'pgvector retrieval complete', { agent: 'research', passageCount: passages.length, mode });
 
     // Silent-degradation guard: a 0-passage result is indistinguishable from a
     // healthy run downstream (the agent simply writes from the draft alone, and
@@ -609,7 +618,7 @@ export async function executeResearchAgent(
                 'executeResearchAgent: ctx.userId is required when RESEARCH_RETRIEVAL_SOURCE=pgvector',
             );
         }
-        kbPassages = await queryPgVector(ctx.userId, draftContent.substring(0, 1000), pool);
+        kbPassages = await queryPgVector(ctx.userId, draftContent.substring(0, 1000), pool, mode);
     } else {
         kbPassages = await queryKnowledgeBase(draftContent);
     }
