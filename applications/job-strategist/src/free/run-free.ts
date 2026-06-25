@@ -23,7 +23,9 @@ import type { FreeEvidence } from './gather-evidence.js';
 import type { FreeWriter, FreeResumeOutput } from '../agents/free-resume-writer.js';
 import type { AtsCoverage } from '../ats/grounded-coverage.js';
 import type { AtsCheckResult } from '../ats/ats-check.schema.js';
+import type { EvidenceFit } from '../ats/evidence-fit.js';
 import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
+import { evidenceFitScore } from '../ats/evidence-fit.js';
 import { jdAtsKeywords } from '../ats/jd-keywords-union.js';
 import { guardCoverLetter } from '../agents/cover-letter-guard.js';
 
@@ -93,6 +95,28 @@ function toAtsCheck(coverage: AtsCoverage): AtsCheckResult {
 }
 
 // =============================================================================
+// EVIDENCE CORPUS HELPER
+// =============================================================================
+
+/**
+ * Flatten the gathered FreeEvidence into one text blob for the deterministic
+ * evidence-fit score — every source the writer may ground a claim in, so the
+ * score reflects what the candidate actually has, not what the resume printed.
+ */
+function freeEvidenceCorpus(e: FreeEvidence): string {
+    return [
+        ...e.kbPassages,
+        e.extractedTech,
+        e.careerFacts,
+        e.educationFacts,
+        e.projectEvidence,
+        e.commitPrEvidence,
+        e.profileIntelligence,
+        e.achievementEvidence,
+    ].join('\n');
+}
+
+// =============================================================================
 // METADATA HELPER
 // =============================================================================
 
@@ -100,6 +124,7 @@ function buildFreeMetadata(
     resume:      FreeResumeOutput['resume'],
     coverLetter: CoverLetter | null,
     ats:         AtsCoverage,
+    fit:         EvidenceFit,
     jdSignal:    JdSignal,
     ctx:         BasePipelineContext,
 ): Record<string, unknown> {
@@ -108,6 +133,9 @@ function buildFreeMetadata(
             tailoredResumeData: resume,
             coverLetter,
             atsCheck:           toAtsCheck(ats),
+            // Deterministic evidence-fit score (zero-LLM) — what the user has
+            // evidence for vs the JD. Distinct from atsCheck (resume-side).
+            evidenceFit:        fit,
             mode:               'free',
         },
         jdExtraction: jdSignal,
@@ -161,10 +189,13 @@ export async function runFreeTier(
         '',   // yearsGapFraming — not computed in free tier
     );
 
-    // 5. Grounded ATS keyword coverage (deterministic, no LLM)
+    // 5. Grounded ATS keyword coverage (resume-side) + evidence-fit score
+    //    (candidate-side). Both deterministic, no LLM — they reuse the same
+    //    alias map, so the fit score adds zero marginal cost.
     const jdKeywords = jdAtsKeywords(jdSignal);
     const aliasToCanonical = await deps.aliasMap(pool);
     const ats = groundedAtsCoverage(JSON.stringify(resume), jdKeywords, aliasToCanonical);
+    const fit = evidenceFitScore(jdSignal, freeEvidenceCorpus(evidence), aliasToCanonical);
 
     // 6. Persist resume
     await deps.persistResume(pool, {
@@ -180,7 +211,7 @@ export async function runFreeTier(
     await deps.persistMeta(
         pool,
         env.pipelineRunId,
-        buildFreeMetadata(resume, guardedLetter, ats, jdSignal, ctx),
+        buildFreeMetadata(resume, guardedLetter, ats, fit, jdSignal, ctx),
     );
 
     // 8. Mark job application as 'analysis-ready'
