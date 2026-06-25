@@ -29,6 +29,7 @@ import {
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
     BedrockChunkEnricher,
+    RdsOntologyGapRecorder,
     SkillOntologyRepository,
     SkillEmbeddingResolver,
     PhraseSkillResolver,
@@ -355,6 +356,27 @@ async function buildSkillResolver(
     const resolver = new SkillEmbeddingResolver(pool, threshold);
     const phraseResolver = new PhraseSkillResolver(embedder, resolver);
     return (phrase: string) => phraseResolver.resolve(phrase);
+}
+
+/**
+ * Build the ontology-gap control-data sink (migration 109) stamped with this
+ * run's context (user, repo, enrichment model, ontology size). The skill_ontology
+ * count is best-effort — a query failure leaves it null and never blocks the run.
+ */
+async function buildGapRecorder(
+    pool: Pool,
+    env: { userId: string; repoFullName: string },
+): Promise<RdsOntologyGapRecorder> {
+    const ontologyVersion = await pool
+        .query<{ n: string }>('SELECT count(*)::int AS n FROM skill_ontology')
+        .then((r) => Number(r.rows[0]?.n ?? 0))
+        .catch(() => null);
+    return new RdsOntologyGapRecorder(pool, {
+        userId:           env.userId,
+        repoFullName:     env.repoFullName,
+        modelId:          process.env.ENRICHMENT_MODEL_ID ?? null,
+        ontologyVersion,
+    });
 }
 
 async function embedProfile(
@@ -714,6 +736,12 @@ async function main(): Promise<void> {
         const resolveSkill = await buildSkillResolver(pgPool, skillOntologyRepo, embedder)
             .catch((err) => { console.warn('[ingestion] skill embedding resolver disabled (non-fatal)', err); return undefined; });
 
+        // Control-data sink (migration 109): record skill phrases that did not
+        // canonicalise so the ontology can be grown from real usage. Best-effort
+        // — only captures when the fuzzy resolver ran (premium path) and still
+        // returned no canonical. Capture failures never affect ingestion.
+        const gapRecorder = await buildGapRecorder(pgPool, env);
+
         enricher = BedrockChunkEnricher.fromEnvironment(
             {
                 pool:     pgPool,
@@ -723,6 +751,7 @@ async function main(): Promise<void> {
             },
             skillAliasToCanonical,
             resolveSkill,
+            gapRecorder,
         );
     }
 
@@ -1016,6 +1045,8 @@ async function main(): Promise<void> {
         // Drain in-flight cost-record writes before the pool they share closes —
         // else the last enriched chunks' cost INSERTs race the close and are lost.
         await withTimeout(enricher?.flushCosts?.() ?? Promise.resolve(), 5_000, 'cost-flush').catch(() => { /* non-fatal */ });
+        // Flush buffered ontology-gap control data on the same shared pool, before close.
+        await withTimeout(enricher?.flushGaps?.() ?? Promise.resolve(), 5_000, 'gap-flush').catch(() => { /* non-fatal */ });
         await withTimeout(
             Promise.allSettled([vectorStore.end(), syncState.end(), pgPool.end()]),
             10_000, 'db-pools',

@@ -346,6 +346,8 @@ export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './rds/ind
 export type { SkillMatch } from './rds/index.js';
 export { PhraseSkillResolver } from './rds/index.js';
 export { canonicaliseSkills } from './rds/index.js';
+export { RdsOntologyGapRecorder, NullOntologyGapRecorder } from './rds/index.js';
+export type { IOntologyGapRecorder, OntologyGap, OntologyGapContext } from './rds/index.js';
 export { dedupeSkillCanonicals } from './rds/index.js';
 export { groupChunksByFile, assignSkillsToChunks } from './rds/index.js';
 export { tier1SkillsFromTech, TechSkillMapRepository } from './rds/index.js';

@@ -32,6 +32,8 @@ import type { RawChunk } from '../types.js';
 import type { Pool } from 'pg';
 import { recordBedrockCost } from '../bedrock-cost.js';
 import { canonicaliseSkills } from '../ontology/canonicaliseSkills.js';
+import { NullOntologyGapRecorder } from '../ontology/OntologyGapRecorder.js';
+import type { IOntologyGapRecorder } from '../ontology/OntologyGapRecorder.js';
 import { buildExtractionBody, buildPackExtractionBody, parsePackSkills, type PackBodyItem } from './extractionBody.js';
 import { buildCanonicalExtractionBody, parseCanonicalSkills, type CanonicalSplit } from './canonicalVocabExtraction.js';
 import { BedrockBatchEnrich, buildEnrichRecords, type BatchEnrichItem } from '../../bedrock/BedrockBatchEnrich.js';
@@ -72,6 +74,13 @@ export interface BedrockChunkEnricherConfig {
      * wins. Omit to keep alias-only behaviour.
      */
     readonly resolveSkill?: (phrase: string) => Promise<string | null>;
+    /**
+     * Optional control-data sink (migration 109). When present, every emitted
+     * skill phrase the resolver could not canonicalise (kept raw) is recorded so
+     * the ontology can be grown from real usage. Best-effort: capture never
+     * affects enrichment. Omit (default null recorder) to disable capture.
+     */
+    readonly recorder?: IOntologyGapRecorder;
 }
 
 /**
@@ -97,6 +106,8 @@ export class BedrockChunkEnricher implements IChunkEnricher {
     private readonly costCtx?: ChunkEnricherCostContext;
     private readonly aliasToCanonical?: ReadonlyMap<string, string>;
     private readonly resolveSkill?: (phrase: string) => Promise<string | null>;
+    /** Control-data sink for unresolved skill phrases (default: no-op). */
+    private readonly recorder: IOntologyGapRecorder;
     /**
      * In-flight cost-record writes. recordBedrockCost is non-blocking (a cost
      * failure must never break enrichment), but the writes share the caller's
@@ -114,18 +125,21 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         this.costCtx = costCtx;
         this.aliasToCanonical = config.aliasToCanonical;
         this.resolveSkill = config.resolveSkill;
+        this.recorder = config.recorder ?? new NullOntologyGapRecorder();
     }
 
     static fromEnvironment(
         costCtx?: ChunkEnricherCostContext,
         aliasToCanonical?: ReadonlyMap<string, string>,
         resolveSkill?: (phrase: string) => Promise<string | null>,
+        recorder?: IOntologyGapRecorder,
     ): BedrockChunkEnricher {
         return new BedrockChunkEnricher({
             modelId: process.env.ENRICHMENT_MODEL_ID,
             region:  process.env.AWS_REGION,
             ...(aliasToCanonical ? { aliasToCanonical } : {}),
             ...(resolveSkill ? { resolveSkill } : {}),
+            ...(recorder ? { recorder } : {}),
         }, costCtx);
     }
 
@@ -335,6 +349,20 @@ export class BedrockChunkEnricher implements IChunkEnricher {
      * of `d.skills && query.skills` cannot drift.
      */
     private resolveSkills(raw: unknown): Promise<string[]> {
-        return canonicaliseSkills(raw, this.aliasToCanonical, this.resolveSkill);
+        return canonicaliseSkills(
+            raw,
+            this.aliasToCanonical,
+            this.resolveSkill,
+            (phrase) => this.recorder.record({ kind: 'skill', rawPhrase: phrase }),
+        );
+    }
+
+    /**
+     * Flush buffered ontology-gap control data. Best-effort; call once after
+     * enrichment completes, alongside flushCosts(), before the caller closes the
+     * shared pool. A no-op when the null recorder is in use.
+     */
+    flushGaps(): Promise<void> {
+        return this.recorder.flush();
     }
 }

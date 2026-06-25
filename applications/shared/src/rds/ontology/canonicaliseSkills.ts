@@ -15,11 +15,37 @@
  * overlap silently misses. Extracting the cascade here guarantees they cannot
  * drift. Stage 3 is skipped when no resolver is wired (alias-only), and is
  * fail-safe (any resolver error keeps the raw phrase, never throws).
+ *
+ * `onUnresolved` (optional) is a control-data hook: it fires for a phrase a
+ * resolver WAS asked to resolve but could not (returned null → kept raw) — a
+ * genuine ontology gap. It never fires on an alias hit, a successful fold, or
+ * when no resolver is supplied. Synchronous + best-effort; a throwing callback is
+ * swallowed so it can never affect canonicalisation.
  */
+/**
+ * Stage 3 for one alias-miss phrase: embedding nearest-canonical, else raw.
+ * Fires `onUnresolved` only when a resolver ran but found no canonical (kept
+ * raw) — best-effort, a throwing callback is swallowed.
+ */
+async function resolveResidual(
+    cleaned: string,
+    resolveSkill?: (phrase: string) => Promise<string | null>,
+    onUnresolved?: (phrase: string) => void,
+): Promise<string> {
+    const fuzzy = resolveSkill
+        ? await resolveSkill(cleaned).catch(() => null)
+        : null;
+    if (resolveSkill && fuzzy === null && onUnresolved) {
+        try { onUnresolved(cleaned); } catch { /* best-effort control data */ }
+    }
+    return fuzzy ?? cleaned;
+}
+
 export async function canonicaliseSkills(
     raw: unknown,
     aliasToCanonical?: ReadonlyMap<string, string>,
     resolveSkill?: (phrase: string) => Promise<string | null>,
+    onUnresolved?: (phrase: string) => void,
 ): Promise<string[]> {
     if (!Array.isArray(raw)) return [];
     const seen = new Set<string>();
@@ -29,10 +55,7 @@ export async function canonicaliseSkills(
         if (!cleaned) continue;
         const alias = aliasToCanonical?.get(cleaned);
         if (alias) { seen.add(alias); continue; }
-        const fuzzy = resolveSkill
-            ? await resolveSkill(cleaned).catch(() => null)
-            : null;
-        seen.add(fuzzy ?? cleaned);
+        seen.add(await resolveResidual(cleaned, resolveSkill, onUnresolved));
     }
     return Array.from(seen);
 }

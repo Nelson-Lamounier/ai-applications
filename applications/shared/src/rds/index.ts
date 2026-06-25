@@ -118,6 +118,8 @@ export { SkillEmbeddingResolver, DEFAULT_SKILL_MATCH_THRESHOLD } from './ontolog
 export type { SkillMatch } from './ontology/SkillEmbeddingResolver.js';
 export { PhraseSkillResolver } from './ontology/PhraseSkillResolver.js';
 export { canonicaliseSkills } from './ontology/canonicaliseSkills.js';
+export { RdsOntologyGapRecorder, NullOntologyGapRecorder } from './ontology/OntologyGapRecorder.js';
+export type { IOntologyGapRecorder, OntologyGap, OntologyGapContext } from './ontology/OntologyGapRecorder.js';
 export { dedupeSkillCanonicals } from './ontology/dedupeSkillCanonicals.js';
 export type { DedupCandidate, DedupAction, DedupOptions } from './ontology/dedupeSkillCanonicals.js';
 export { groupChunksByFile } from './enrichment/groupChunksByFile.js';
