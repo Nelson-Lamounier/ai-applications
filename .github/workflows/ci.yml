@@ -382,6 +382,14 @@ jobs:
           yarn workspace @bedrock/job-strategist test
           src/ats src/render src/evals/graders/ats-grader.test.ts
 
+      - name: Run article-pipeline tests
+        # Gates the per-phase golden-eval pure scorers (research repo-recall,
+        # writer quality checks, QA judge-the-judge) plus the agent unit tests.
+        # CLAUDE.md rule 5: no prompt/retrieval change ships without its eval —
+        # this makes the deterministic core of those evals a required check. The
+        # live Bedrock-backed runners stay gated (RUN_ARTICLE_*_EVAL) and manual.
+        run: yarn workspace @bedrock/article-pipeline test
+
   # ============================================================================
   # CI Summary (Gate)
   # ============================================================================

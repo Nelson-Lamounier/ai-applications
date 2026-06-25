@@ -124,7 +124,7 @@ async function main(): Promise<void> {
 
         // Final persist — write the rendered MDX back to platform RDS.
         // Use scrubbedContent computed above; grounding flag mode never alters it.
-        await persistArticle(pool, env.slug, scrubbedContent);
+        await persistArticle(pool, env.slug, scrubbedContent, env.foundationModel);
 
         // Attach grounding result to pipeline_runs.metadata (JSONB — no migration needed).
         if (groundingMeta !== undefined) {
