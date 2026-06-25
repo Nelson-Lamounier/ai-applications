@@ -43,15 +43,19 @@ export async function updatePipelineRunMetadata(
  * Persist the rendered article markdown back to platform RDS.
  *
  * Sets status='review' — admin-api owns the eventual transition to 'published'.
+ * Stamps ai_model with the foundation model that wrote the content so a
+ * published article's provenance (which model generated it) is always queryable
+ * from the row itself, never inferred from deploy timelines.
  */
 export async function persistArticle(
     pool: Pool,
     slug: string,
     contentMd: string,
+    aiModel: string,
 ): Promise<void> {
     const result = await pool.query(
-        `UPDATE articles SET content_md = $2, status = 'review', updated_at = NOW() WHERE slug = $1`,
-        [slug, contentMd],
+        `UPDATE articles SET content_md = $2, ai_model = $3, status = 'review', updated_at = NOW() WHERE slug = $1`,
+        [slug, contentMd, aiModel],
     );
     if (result.rowCount === 0) {
         throw new Error(`persistArticle: no articles row found for slug '${slug}' — ensure article placeholder is created before dispatching the K8s Job`);

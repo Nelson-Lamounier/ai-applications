@@ -15,6 +15,12 @@ export interface PipelineEnv {
     readonly mode:          string;
     readonly pipelineId:    string;
     readonly environment:   string;
+    /**
+     * Writer-agent foundation model id, recorded as articles.ai_model for
+     * provenance. Mirrors the writer-agent's own fallback so the persisted value
+     * is exactly the model that generated the content.
+     */
+    readonly foundationModel: string;
     readonly pg: {
         readonly host:     string;
         readonly port:     number;
@@ -41,6 +47,9 @@ export function parseEnv(): PipelineEnv {
         mode:        process.env['MODE']        ?? 'standard',
         pipelineId:  process.env['PIPELINE_ID'] ?? pipelineRunId,
         environment: process.env['ENVIRONMENT'] ?? 'production',
+        // Mirror writer-agent.ts WRITER_MODEL fallback so ai_model records the
+        // exact model that wrote the article, even when FOUNDATION_MODEL is unset.
+        foundationModel: process.env['FOUNDATION_MODEL'] ?? 'eu.anthropic.claude-sonnet-4-6',
         pg: {
             host:     required('PG_HOST'),
             port:     Number.parseInt(process.env['PG_PORT'] ?? '5432', 10),

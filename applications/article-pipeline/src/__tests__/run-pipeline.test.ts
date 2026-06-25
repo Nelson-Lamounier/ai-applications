@@ -146,6 +146,7 @@ Object.assign(process.env, {
     PG_PASSWORD:     'testpass',
     RESEARCH_MODEL:  'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
     WRITER_MODEL:    'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+    FOUNDATION_MODEL:'eu.anthropic.claude-sonnet-4-6',
     QA_MODEL:        'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
 });
 
@@ -183,6 +184,10 @@ describe('run-pipeline — MDX-persist PII scrub', () => {
     it('calls persistArticle with redacted MDX — [EMAIL] token is present', () => {
         const contentArg = persistArgs[2] as string;
         expect(contentArg).toContain('[EMAIL]');
+    });
+
+    it('stamps ai_model provenance with the writer foundation model', () => {
+        expect(persistArgs[3]).toBe('eu.anthropic.claude-sonnet-4-6');
     });
 });
 
