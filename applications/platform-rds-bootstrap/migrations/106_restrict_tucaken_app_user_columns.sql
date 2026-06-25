@@ -1,4 +1,4 @@
--- 104_restrict_tucaken_app_user_columns.sql
+-- 106_restrict_tucaken_app_user_columns.sql
 --
 -- Defence-in-depth for the subscription tier-change lockdown.
 --
