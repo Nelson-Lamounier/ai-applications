@@ -32,4 +32,32 @@ describe('canonicaliseSkills', () => {
     it('no resolver wired => alias-only (query and corpus stay identical when both omit it)', async () => {
         expect(await canonicaliseSkills(['cdk', 'unknown'], alias)).toEqual(['iac with cdk', 'unknown']);
     });
+
+    describe('onUnresolved control-data hook', () => {
+        it('fires only for a genuine unknown (resolver present, returned null)', async () => {
+            const resolveSkill = jest.fn(async (p: string) => (p === 'known' ? 'canon' : null));
+            const onUnresolved = jest.fn();
+            await canonicaliseSkills(['known', 'mystery-tool'], alias, resolveSkill, onUnresolved);
+            expect(onUnresolved.mock.calls.map((c) => c[0])).toEqual(['mystery-tool']);
+        });
+
+        it('does not fire on an alias hit or a successful fold', async () => {
+            const resolveSkill = jest.fn(async () => 'folded');
+            const onUnresolved = jest.fn();
+            await canonicaliseSkills(['cdk', 'phrase'], alias, resolveSkill, onUnresolved);
+            expect(onUnresolved).not.toHaveBeenCalled();
+        });
+
+        it('does not fire when no resolver is supplied (alias-only mode)', async () => {
+            const onUnresolved = jest.fn();
+            await canonicaliseSkills(['unknown'], alias, undefined, onUnresolved);
+            expect(onUnresolved).not.toHaveBeenCalled();
+        });
+
+        it('swallows a throwing callback (capture never affects canonicalisation)', async () => {
+            const resolveSkill = jest.fn(async () => null);
+            const out = await canonicaliseSkills(['x'], new Map(), resolveSkill, () => { throw new Error('boom'); });
+            expect(out).toEqual(['x']);
+        });
+    });
 });
