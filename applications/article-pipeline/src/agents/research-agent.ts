@@ -22,7 +22,7 @@ import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
 import { z } from 'zod';
 import {
-    runAgent, parseJsonResponse, log, PgVectorRetriever, TitanEmbeddingProvider, PiiScrubber,
+    runAgent, parseJsonResponse, log, emitEmfMetric, PgVectorRetriever, TitanEmbeddingProvider, PiiScrubber,
     type AgentConfig,
     type AgentResult,
     type ComplexityAnalysis,
@@ -238,6 +238,19 @@ async function queryPgVector(userId: string, query: string, pool: Pool): Promise
     });
 
     log('INFO', 'pgvector retrieval complete', { agent: 'research', passageCount: passages.length });
+
+    // Silent-degradation guard: a 0-passage result is indistinguishable from a
+    // healthy run downstream (the agent simply writes from the draft alone, and
+    // the grounding verifier gets no context). Surface it as a CloudWatch metric
+    // so an empty KB for this user — or a misrouted USER_ID — is alertable rather
+    // than invisible. Emitted every run so KbEmpty=0/1 forms a usable ratio.
+    if (passages.length === 0) {
+        log('WARN', 'pgvector retrieval returned zero passages — article will be written without KB grounding', { agent: 'research', userId });
+    }
+    emitEmfMetric('ArticlePipeline', { Stage: 'retrieval', Source: 'pgvector' }, [
+        { name: 'KbEmpty',         value: passages.length === 0 ? 1 : 0, unit: 'Count' },
+        { name: 'KbPassageCount',  value: passages.length,               unit: 'Count' },
+    ]);
 
     return passages.map((p) => ({
         text:      p.text,
