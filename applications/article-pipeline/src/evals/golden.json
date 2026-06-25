@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "_note": "Repos are the live user KB at authoring time (document_embeddings, verified on dev). Prompts mimic real short article briefs; mode is 'kb-augmented' for short briefs (deep pull) and 'legacy-transform' for long drafts (light pull). Negatives are off-topic for this KB and should NOT surface the named repos.",
+  "queries": [
+    {
+      "id": "rag-ingestion",
+      "prompt": "Write about how I built the RAG ingestion pipeline — chunking, Titan embeddings and pgvector hybrid retrieval.",
+      "mode": "kb-augmented",
+      "expectedRepos": ["Nelson-Lamounier/ai-applications"],
+      "kind": "positive"
+    },
+    {
+      "id": "argocd-bootstrap",
+      "prompt": "Write about bootstrapping my Kubernetes cluster with ArgoCD, Helm and GitOps.",
+      "mode": "kb-augmented",
+      "expectedRepos": ["Nelson-Lamounier/kubernetes-bootstrap"],
+      "kind": "positive"
+    },
+    {
+      "id": "eks-cdk-infra",
+      "prompt": "Write about the AWS infrastructure behind the platform — EKS, CDK, observability and delivery.",
+      "mode": "kb-augmented",
+      "expectedRepos": ["Nelson-Lamounier/tucaken-infra"],
+      "kind": "positive"
+    },
+    {
+      "id": "admin-api-pipelines",
+      "prompt": "Write about the admin-api that dispatches Kubernetes Jobs for the article and strategist pipelines.",
+      "mode": "kb-augmented",
+      "expectedRepos": ["Nelson-Lamounier/tucaken-app"],
+      "kind": "positive"
+    },
+    {
+      "id": "k8s-and-rag-combined",
+      "prompt": "Write a long-form deep dive covering both the RAG retrieval system and the Kubernetes platform it runs on, from ingestion through ArgoCD-managed deployment. Cover the ingestion chunkers, the Bedrock enrichment step, the pgvector hybrid retriever with reciprocal-rank fusion, and how the cluster is bootstrapped and kept in sync via GitOps with Helm charts and IngressRoutes. Include the trade-offs made along the way and the observability that ties it together.",
+      "mode": "legacy-transform",
+      "expectedRepos": ["Nelson-Lamounier/ai-applications", "Nelson-Lamounier/kubernetes-bootstrap"],
+      "kind": "positive"
+    },
+    {
+      "id": "negative-cooking",
+      "prompt": "Write a beginner's guide to making sourdough bread at home, covering starters, hydration and bake times.",
+      "mode": "kb-augmented",
+      "expectedRepos": ["Nelson-Lamounier/ai-applications", "Nelson-Lamounier/kubernetes-bootstrap"],
+      "kind": "negative"
+    }
+  ]
+}
