@@ -937,5 +937,13 @@ export async function main(): Promise<void> {
 
 // Only auto-execute when run as the K8s Job entrypoint, not when imported by tests.
 if (require.main === module) {
-    main().catch(() => process.exit(1));
+    // Exit EXPLICITLY on success too. main() finishes its work and closes the pg
+    // pool, but module-scope handles (S3Client, PgSemanticCache, fire-and-forget
+    // promises) keep the event loop alive, so the process would otherwise hang —
+    // leaving the K8s Job Running 0/1 until activeDeadlineSeconds force-kills it
+    // (~30min) and burning a node slice every run. process.exit(0) ends it cleanly.
+    main().then(
+        () => process.exit(0),
+        () => process.exit(1),
+    );
 }
