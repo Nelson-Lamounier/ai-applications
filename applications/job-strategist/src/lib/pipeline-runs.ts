@@ -102,6 +102,41 @@ export async function updateJobApplicationStatus(
     );
 }
 
+/** A project entry is persistable only with a non-empty name AND description. */
+function isUsableProject(p: unknown): boolean {
+    if (typeof p !== 'object' || p === null) return false;
+    const entry = p as Record<string, unknown>;
+    const name = entry['name'];
+    const description = entry['description'];
+    return typeof name === 'string' && name.trim().length > 0
+        && typeof description === 'string' && description.trim().length > 0;
+}
+
+/**
+ * Strip project entries the LLM emitted without a usable description before the
+ * resume is validated for persistence.
+ *
+ * The Strategist occasionally returns a `projects[]` entry missing `description`
+ * (most likely when the user has no grounded Project to draw on). Because
+ * StructuredResumeDataSchema requires `description`, a single such entry would
+ * fail safeParse and void the WHOLE persist — silently dropping an otherwise
+ * complete resume (and, on the post-ATS re-persist, the keyword improvements).
+ * Dropping just the malformed project keeps the rest. Returns the input
+ * unchanged (same reference) when nothing needs removing.
+ */
+export function dropInvalidProjects(raw: unknown): { resume: unknown; droppedProjects: number } {
+    if (typeof raw !== 'object' || raw === null) return { resume: raw, droppedProjects: 0 };
+    const record = raw as Record<string, unknown>;
+    const projects = record['projects'];
+    if (!Array.isArray(projects)) return { resume: raw, droppedProjects: 0 };
+
+    const cleaned = projects.filter(isUsableProject);
+    const droppedProjects = projects.length - cleaned.length;
+    if (droppedProjects === 0) return { resume: raw, droppedProjects: 0 };
+
+    return { resume: { ...record, projects: cleaned }, droppedProjects };
+}
+
 /**
  * Persist the Strategist-authored tailored resume to PG resumes.
  *
@@ -122,7 +157,16 @@ export async function persistTailoredResume(
         tailoredResume:  unknown;        // raw — validated below
     },
 ): Promise<{ resumeId: string } | null> {
-    const validated = StructuredResumeDataSchema.safeParse(args.tailoredResume);
+    // Salvage a resume with a single malformed project rather than dropping the
+    // whole persist (the re-persist after the ATS/keyword pass used to die here).
+    const { resume: cleanedResume, droppedProjects } = dropInvalidProjects(args.tailoredResume);
+    if (droppedProjects > 0) {
+        console.warn('[strategist] dropped malformed project entries before persistence', {
+            pipelineId: args.pipelineId, droppedProjects,
+        });
+    }
+
+    const validated = StructuredResumeDataSchema.safeParse(cleanedResume);
     if (!validated.success) {
         console.warn('[strategist] tailored_resume_json failed schema validation — skipping persistence', {
             pipelineId: args.pipelineId, error: validated.error.message,
