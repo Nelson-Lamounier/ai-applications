@@ -55,6 +55,7 @@ articles.get('/api/articles', async (c) => {
     `SELECT slug, title, excerpt, published_at, tags, cover_image
        FROM articles
       WHERE status = 'published'
+        AND destinations @> ARRAY['portfolio']
       ORDER BY published_at DESC NULLS LAST`,
   );
 
@@ -89,7 +90,8 @@ articles.get('/api/articles/:slug', async (c) => {
     `SELECT slug, title, excerpt, content_md, tags, ai_generated, ai_model,
             cover_image, published_at, created_at, updated_at
        FROM articles
-      WHERE slug = $1 AND status = 'published'`,
+      WHERE slug = $1 AND status = 'published'
+        AND destinations @> ARRAY['portfolio']`,
     [slug],
   );
 
