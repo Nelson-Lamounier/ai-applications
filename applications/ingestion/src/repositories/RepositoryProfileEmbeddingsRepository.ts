@@ -7,7 +7,7 @@ const piiScrubber = new PiiScrubber();
 export interface ProfileEmbeddingRow {
     userId:      string;
     profileId:   string;
-    chunkType:   'one_liner' | 'description' | 'highlight';
+    chunkType:   'one_liner' | 'description' | 'highlight' | 'lifecycle';
     content:     string;
     contentHash: string;
     embedding:   number[];
