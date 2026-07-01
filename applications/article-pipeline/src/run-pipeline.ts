@@ -83,15 +83,30 @@ async function main(): Promise<void> {
         await updatePipelineRun(pool, env.pipelineRunId, 'researching');
         const research = await timed('research', () => executeResearchAgent(ctx, pool));
 
+        // Fold a structured topic brief (if the article-job carried one) into the
+        // research result: its problem/angle seeds the author direction when the
+        // draft did not, and its author-confirmed verified metrics reach the
+        // Writer's authoritative "Verified Metrics" block (Gap 3). No brief → the
+        // research result is used unchanged (draft-only path).
+        const brief = env.articleBrief;
+        const researchData = brief
+            ? {
+                ...research.data,
+                verifiedMetrics: brief.verifiedMetrics ?? research.data.verifiedMetrics,
+                authorDirection: research.data.authorDirection
+                    || [brief.problem, brief.angle].filter(Boolean).join(' — '),
+              }
+            : research.data;
+
         await updatePipelineRun(pool, env.pipelineRunId, 'writing');
-        const writer = await timed('writing', () => executeWriterAgent(ctx, research.data));
+        const writer = await timed('writing', () => executeWriterAgent(ctx, researchData));
 
         await updatePipelineRun(pool, env.pipelineRunId, 'qa');
         const qa = await timed('qa', () => executeQaAgent(
             ctx,
             writer.data,
-            research.data.technicalFacts,
-            research.data.mode,
+            researchData.technicalFacts,
+            researchData.mode,
         ));
 
         // Grounding check (flag mode) — always-on, never blocks persist.
@@ -124,7 +139,15 @@ async function main(): Promise<void> {
 
         // Final persist — write the rendered MDX back to platform RDS.
         // Use scrubbedContent computed above; grounding flag mode never alters it.
-        await persistArticle(pool, env.slug, scrubbedContent, env.foundationModel);
+        // Write the Writer's title/excerpt/tags into their own columns so the
+        // portfolio (public-api) and admin dashboard render the real SEO metadata,
+        // not the placeholder slug. The DB slug (env.slug) stays authoritative;
+        // the Writer's frontmatter slug is intentionally not used for the URL.
+        await persistArticle(pool, env.slug, scrubbedContent, env.foundationModel, {
+            title:   writer.data.metadata.title,
+            excerpt: writer.data.metadata.description,
+            tags:    writer.data.metadata.tags,
+        });
 
         // Attach grounding result to pipeline_runs.metadata (JSONB — no migration needed).
         if (groundingMeta !== undefined) {

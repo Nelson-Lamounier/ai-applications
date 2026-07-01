@@ -35,6 +35,7 @@ import {
     type LoadCaseStudyContextResult,
 } from './case-study-loader.js';
 import { reconstructPriorCaseStudy, underrepresentedRepos, scopeEvidenceToRepos } from './case-study-refine.js';
+import { deriveArticleCandidates } from './article-topic-discovery.js';
 import {
     persistCaseStudy,
     type PersistCaseStudySummary,
@@ -79,6 +80,8 @@ export interface RunCaseStudyOutput {
     readonly persisted:  PersistCaseStudySummary;
     readonly inputHash:  string;
     readonly contextLoaded: LoadCaseStudyContextResult;
+    /** Article topic candidates written as a byproduct (0 when the feature is off or discovery no-ops). */
+    readonly topicCandidatesWritten: number;
 }
 
 export interface GroundingSummary {
@@ -273,6 +276,27 @@ export async function runCaseStudyOrchestration(
         );
     }
 
+    // 5. Article topic discovery (best-effort byproduct). Reuses the case study
+    // just produced — no re-scan/re-embed — to write narrow, problem-framed
+    // article candidates keyed by github_repo_id. Fail-open and feature-flagged:
+    // it must NEVER fail or slow the case-study run. Off unless ARTICLE_TOPIC_DISCOVERY=1.
+    let topicCandidatesWritten = 0;
+    if (process.env['ARTICLE_TOPIC_DISCOVERY'] === '1') {
+        topicCandidatesWritten = await runStage(input.workflow, 'project.case_study.topic_discovery', async () => {
+            try {
+                return await deriveArticleCandidates(pool, {
+                    userId:        contextLoaded.userId,
+                    projectId:     input.projectId,
+                    pipelineRunId: input.pipelineRunId,
+                    caseStudy,
+                    repoFullNames: contextLoaded.context.repositories.map((r) => r.fullName),
+                });
+            } catch {
+                return 0; // best-effort; a discovery failure never breaks case-study generation
+            }
+        });
+    }
+
     return {
         cacheHit,
         refined,
@@ -281,6 +305,7 @@ export async function runCaseStudyOrchestration(
         persisted,
         inputHash,
         contextLoaded,
+        topicCandidatesWritten,
     };
 }
 

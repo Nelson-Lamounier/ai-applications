@@ -16,7 +16,8 @@ export type QaDimensionKey =
     | 'seoCompliance'
     | 'mdxStructure'
     | 'metadataQuality'
-    | 'contentQuality';
+    | 'contentQuality'
+    | 'specificityAndResult';
 
 export interface QaGoldenCase {
     readonly id: string;

@@ -25,6 +25,7 @@ const VALID_QA = {
         mdxStructure: DIM,
         metadataQuality: DIM,
         contentQuality: { score: 70, issues: [{ severity: 'warning', location: 'intro', description: 'thin', fix: 'expand' }] },
+        specificityAndResult: DIM,
     },
     summary: 'Solid article, minor intro tweak.',
     confidenceOverride: 85,

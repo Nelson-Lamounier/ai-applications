@@ -34,18 +34,27 @@ jest.mock('../lib/pg.js', () => ({
 // Writer agent returns MDX containing a raw PII address — simulates an article
 // body the writer produced before the pipeline's MDX-persist scrub step.
 const RAW_PII_EMAIL = 'contact@company.io';
+// Real WriterResult shape: { content, metadata: {...}, shotList }. The persist
+// step reads metadata.title/description/tags, so the mock must nest them.
 const mockWriterData = {
-    content:        `# My Article\n\nContact ${RAW_PII_EMAIL} for more info.\n`,
-    title:          'My Article',
-    tags:           [],
-    tldr:           '',
-    description:    '',
-    heroImage:      '',
-    seoTitle:       '',
-    seoDescription: '',
-    readingTime:    1,
-    complexity:     { tier: 'LOW', budgetTokens: 2048, reason: '', signals: {} },
-    suggestions:    [],
+    content:  `# My Article\n\nContact ${RAW_PII_EMAIL} for more info.\n`,
+    metadata: {
+        title:               'From Failure to Certification: the SPIDER Method',
+        description:         'A concise, specific SEO meta description for the test article.',
+        tags:                ['aws', 'devops', 'certification'],
+        slug:                'my-article',
+        publishDate:         '2026-07-01',
+        readingTime:         1,
+        category:            'DevOps',
+        aiSummary:           'A short teaser.',
+        technicalConfidence: 90,
+        skillsDemonstrated:  [],
+        processingNote:      '',
+        primaryKeyword:      'aws devops certification',
+        secondaryKeywords:   [],
+    },
+    shotList:            [],
+    suggestedReferences: [],
 };
 
 const mockResearchData = {
@@ -188,6 +197,14 @@ describe('run-pipeline — MDX-persist PII scrub', () => {
 
     it('stamps ai_model provenance with the writer foundation model', () => {
         expect(persistArgs[3]).toBe('eu.anthropic.claude-sonnet-4-6');
+    });
+
+    it('writes the Writer title/excerpt/tags into their own columns (not the placeholder slug)', () => {
+        expect(persistArgs[4]).toEqual({
+            title:   'From Failure to Certification: the SPIDER Method',
+            excerpt: 'A concise, specific SEO meta description for the test article.',
+            tags:    ['aws', 'devops', 'certification'],
+        });
     });
 });
 

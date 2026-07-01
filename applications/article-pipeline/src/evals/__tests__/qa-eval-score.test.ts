@@ -11,11 +11,12 @@ function qaResult(over: Partial<QaValidationResult['dimensions']> = {}, recommen
         overallScore: 90,
         recommendation,
         dimensions: {
-            technicalAccuracy: clean(),
-            seoCompliance:     clean(),
-            mdxStructure:      clean(),
-            metadataQuality:   clean(),
-            contentQuality:    clean(),
+            technicalAccuracy:    clean(),
+            seoCompliance:        clean(),
+            mdxStructure:         clean(),
+            metadataQuality:      clean(),
+            contentQuality:       clean(),
+            specificityAndResult: clean(),
             ...over,
         },
         summary: 's',
@@ -24,6 +25,13 @@ function qaResult(over: Partial<QaValidationResult['dimensions']> = {}, recommen
 }
 
 describe('scoreQaCase', () => {
+    it('detects a broad-overview article via the specificityAndResult dimension', () => {
+        const c: QaGoldenCase = { id: 'broad-overview', expectedFlag: 'specificityAndResult' };
+        const r = scoreQaCase(c, qaResult({ specificityAndResult: { score: 40, issues: [] } }, 'revise'));
+        expect(r.detected).toBe(true);
+        expect(r.flaggedDimensionScore).toBe(40);
+    });
+
     it('detects a planted defect when its dimension scores below threshold', () => {
         const c: QaGoldenCase = { id: 'mdx-broken', expectedFlag: 'mdxStructure' };
         const r = scoreQaCase(c, qaResult({ mdxStructure: { score: 40, issues: [] } }, 'revise'));
