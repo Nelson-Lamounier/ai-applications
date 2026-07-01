@@ -30,7 +30,11 @@ export class RepositoryProfileEmbeddingsRepository {
                 return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}::vector, $${base + 7}::jsonb)`;
             }).join(', ');
 
+            // Accumulate the prune map in the SAME pass as `values` (no second
+            // scrub): profileId → { chunkTypes, scrubbedHashes } of this batch, used
+            // to prune superseded rows per profile after the INSERT.
             const values: unknown[] = [];
+            const pruneMap = new Map<string, { chunkTypes: Set<string>; scrubbedHashes: Set<string> }>();
             for (const row of rows) {
                 if (row.embedding.some(v => !Number.isFinite(v))) {
                     throw new Error(
@@ -49,6 +53,16 @@ export class RepositoryProfileEmbeddingsRepository {
                     `[${row.embedding.join(',')}]`,
                     JSON.stringify(row.metadata ?? {}),
                 );
+                const existing = pruneMap.get(row.profileId);
+                if (existing) {
+                    existing.chunkTypes.add(row.chunkType);
+                    existing.scrubbedHashes.add(scrubbedHash);
+                } else {
+                    pruneMap.set(row.profileId, {
+                        chunkTypes:     new Set([row.chunkType]),
+                        scrubbedHashes: new Set([scrubbedHash]),
+                    });
+                }
             }
 
             await client.query(
@@ -60,6 +74,19 @@ export class RepositoryProfileEmbeddingsRepository {
                          last_synced_at = now()`,
                 values,
             );
+
+            // Prune superseded rows for each profile in the batch.
+            // Scoped to chunk_type = ANY(batchTypes) so rows of types NOT in this
+            // batch (e.g. 'lifecycle') are never touched.
+            for (const [profileId, { chunkTypes, scrubbedHashes }] of pruneMap) {
+                await client.query(
+                    `DELETE FROM repository_profile_embeddings
+                      WHERE profile_id   = $1::uuid
+                        AND chunk_type   = ANY($2::text[])
+                        AND content_hash <> ALL($3::text[])`,
+                    [profileId, [...chunkTypes], [...scrubbedHashes]],
+                );
+            }
 
             await client.query('COMMIT');
         } catch (err) {
