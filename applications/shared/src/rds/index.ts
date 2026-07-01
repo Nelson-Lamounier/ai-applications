@@ -142,6 +142,14 @@ export { SkillOntologyRepository }          from './implementations/SkillOntolog
 export { TechnologyEvidenceRepository }     from './implementations/TechnologyEvidenceRepository.js';
 export { TechnologyCandidateRepository }    from './implementations/TechnologyCandidateRepository.js';
 export { TechnologyParityRunRepository }    from './implementations/TechnologyParityRunRepository.js';
+export { ArticleTopicCandidateRepository }  from './implementations/ArticleTopicCandidateRepository.js';
+export type {
+    ArticleTopicCandidate,
+    ArticleTopicCandidateInput,
+    ArticleTopicCandidateStatus,
+    VerifiedMetric,
+    EvidenceRef,
+} from './implementations/ArticleTopicCandidateRepository.js';
 export type {
     SourceLayer, RawTechnologyEvidence, TechnologyEvidenceRow,
     OntologyRow, ParityRunRow,
