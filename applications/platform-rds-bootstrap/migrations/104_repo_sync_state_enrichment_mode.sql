@@ -39,6 +39,10 @@ UPDATE prompt_invocations pi
 -- --- Step 3: Backfill enrichment_mode and enrichment_model from history -----
 -- A repo with >=1 chunk-enrich invocation was LLM-enriched, else tier1.
 -- The most recent model_id is recorded per repo.
+-- NOTE: 'none' (genuinely disabled enrichment) is a forward-only value written
+-- by the worker at sync time; it cannot be reconstructed here because no
+-- historical marker distinguishes a disabled run from a tier1 run. The absence
+-- of 'none' in backfilled rows is expected, not a bug.
 WITH llm AS (
     SELECT user_id, github_repo_id,
            (array_agg(model_id ORDER BY invoked_at DESC))[1] AS model_id
