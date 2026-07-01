@@ -771,6 +771,21 @@ export class RdsVectorStore implements IVectorStore {
     }
 
     // =========================================================================
+    // IVectorStore.countChunks
+    // =========================================================================
+
+    async countChunks(userId: string, repoFullName: string): Promise<number> {
+        const result = await this.execute<{ n: number }>(
+            `SELECT COUNT(*)::int AS n
+               FROM document_embeddings
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName],
+        );
+
+        return result.rows[0]?.n ?? 0;
+    }
+
+    // =========================================================================
     // Private — pg pool wrapper
     // =========================================================================
 

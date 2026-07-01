@@ -33,10 +33,22 @@ import { jest } from '@jest/globals';
 
 class FakeVectorStore implements IVectorStore {
     public upserts: DocumentChunk[][] = [];
+    /**
+     * Cumulative chunks the store reports as persisted for the repo, independent
+     * of how many chunks a given run touched. Defaults to "sum of everything
+     * upserted so far" so full-reindex tests keep their intuitive numbers, but a
+     * test can override it to simulate an incremental run over a large existing KB.
+     */
+    public storedChunkCount: number | null = null;
 
     async upsertBatch(chunks: DocumentChunk[]): Promise<UpsertBatchResult> {
         this.upserts.push(chunks);
         return { inserted: chunks.length, updated: 0, skipped: 0, errors: 0 };
+    }
+
+    async countChunks(_userId: string, _repoFullName: string): Promise<number> {
+        if (this.storedChunkCount !== null) return this.storedChunkCount;
+        return this.upserts.reduce((acc, batch) => acc + batch.length, 0);
     }
 
     async checkContentHashes(
@@ -294,6 +306,33 @@ describe('IngestionPipeline — incremental-safe pruning', () => {
         await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0)]);
 
         expect(pruneSpy).toHaveBeenCalledWith('u1', 'o/r', ['a.ts']);
+    });
+});
+
+describe('IngestionPipeline — chunk_count reflects the whole repo, not the run', () => {
+    let store: FakeVectorStore;
+    let sync:  FakeSyncState;
+    let embed: FakeEmbedder;
+
+    beforeEach(() => {
+        store = new FakeVectorStore();
+        sync  = new FakeSyncState();
+        embed = new FakeEmbedder();
+    });
+
+    // Regression: on an incremental sync only the changed chunks flow through the
+    // run, so `rawChunks.length` is a tiny delta. Persisting that delta as
+    // chunk_count made large, well-indexed repos read as "<200 chunks". The
+    // stored count must be the cumulative document_embeddings total for the repo.
+    it('writes the cumulative stored chunk count to markComplete, not just this run', async () => {
+        store.storedChunkCount = 4175; // large existing KB from prior full sync
+        const pipeline = new IngestionPipeline(store, sync, embed);
+
+        // Incremental run: only two files changed this pass.
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.ts', 0), makeChunk('b.ts', 0)]);
+
+        const callArgs = sync.markCompleteCalls[0];
+        expect(callArgs[3]).toBe(4175); // chunk_count = cumulative, not the 2-chunk delta
     });
 });
 

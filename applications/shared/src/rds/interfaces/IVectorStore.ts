@@ -59,4 +59,13 @@ export interface IVectorStore {
         repoFullName: string,
         currentFilePaths: string[],
     ): Promise<number>;
+
+    /**
+     * Count the chunks currently persisted for a (userId, repoFullName). This is
+     * the cumulative KB size for the repo, NOT the number of chunks touched by a
+     * single run — an incremental sync only re-embeds changed files, so the run's
+     * chunk count is a delta. Callers that report "how big is this repo's KB"
+     * (e.g. repo_sync_state.chunk_count) must use this, read after upsert + prune.
+     */
+    countChunks(userId: string, repoFullName: string): Promise<number>;
 }
