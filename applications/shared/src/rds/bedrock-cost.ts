@@ -59,6 +59,10 @@ export interface CostRecord {
   systemPromptHash?: string;
   latencyMs?:        number;
   traceId?:          string;
+  // Immutable GitHub numeric repo id. Populated by chunk-enrich cost rows so
+  // spend can be attributed to a specific repo in the prompt_invocations table.
+  // NULL for all other pipelines that have no repo in scope.
+  githubRepoId?: number | null;
 }
 
 export function computeCostCents(
@@ -124,8 +128,8 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
        (pipeline, agent, model_id, system_prompt_hash, input_cost_cents, output_cost_cents,
        total_cost_cents, latency_ms, user_id, import_id, repo_name,
         application_id, project_id, sync_kind, trace_id,
-        system_prompt_tokens, user_message_tokens, output_tokens)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, $15, 0, $16, $17)`,
+        system_prompt_tokens, user_message_tokens, output_tokens, github_repo_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, $15, 0, $16, $17, $18)`,
     [
       record.pipeline,                            // $1  pipeline
       record.agent ?? '__direct_invoke__',        // $2  agent
@@ -144,6 +148,7 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
       record.traceId ?? null,                     // $15 trace_id
       record.inputTokens,                         // $16 user_message_tokens
       record.outputTokens,                        // $17 output_tokens
+      record.githubRepoId ?? null,                // $18 github_repo_id
     ],
   );
 

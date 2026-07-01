@@ -1,4 +1,4 @@
-import { computeCostCents, recordInvocationToRds } from './bedrock-cost';
+import { computeCostCents, recordBedrockCost, recordInvocationToRds } from './bedrock-cost';
 import type { AgentInvocationLog } from '../types.js';
 
 describe('computeCostCents', () => {
@@ -121,4 +121,17 @@ describe('recordInvocationToRds', () => {
     await recordInvocationToRds(pool, 'job-strategist')({ ...baseLog, userId: undefined });
     expect(query).not.toHaveBeenCalled();
   });
+});
+
+test('recordBedrockCost writes github_repo_id when provided', async () => {
+    const calls: unknown[][] = [];
+    const pool = { query: async (sql: string, params: unknown[]) => { calls.push([sql, params]); return { rows: [] }; } };
+    await recordBedrockCost(pool as never, {
+        userId: '00000000-0000-0000-0000-000000000001',
+        modelId: 'm', pipeline: 'repo-sync', agent: 'chunk-enrich',
+        inputTokens: 1, outputTokens: 1, repoName: 'o/r', githubRepoId: 4242,
+    });
+    const [sql, params] = calls[0] as [string, unknown[]];
+    expect(sql).toContain('github_repo_id');
+    expect(params).toContain(4242);
 });

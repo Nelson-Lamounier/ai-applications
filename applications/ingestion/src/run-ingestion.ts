@@ -744,10 +744,11 @@ async function main(): Promise<void> {
 
         enricher = BedrockChunkEnricher.fromEnvironment(
             {
-                pool:     pgPool,
-                userId:   env.userId,
-                repoName: env.repoFullName,
-                syncKind: syncType,
+                pool:        pgPool,
+                userId:      env.userId,
+                repoName:    env.repoFullName,
+                syncKind:    syncType,
+                githubRepoId: env.githubRepoId,
             },
             skillAliasToCanonical,
             resolveSkill,
