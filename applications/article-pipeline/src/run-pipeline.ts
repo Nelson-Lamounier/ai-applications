@@ -124,7 +124,15 @@ async function main(): Promise<void> {
 
         // Final persist — write the rendered MDX back to platform RDS.
         // Use scrubbedContent computed above; grounding flag mode never alters it.
-        await persistArticle(pool, env.slug, scrubbedContent, env.foundationModel);
+        // Write the Writer's title/excerpt/tags into their own columns so the
+        // portfolio (public-api) and admin dashboard render the real SEO metadata,
+        // not the placeholder slug. The DB slug (env.slug) stays authoritative;
+        // the Writer's frontmatter slug is intentionally not used for the URL.
+        await persistArticle(pool, env.slug, scrubbedContent, env.foundationModel, {
+            title:   writer.data.metadata.title,
+            excerpt: writer.data.metadata.description,
+            tags:    writer.data.metadata.tags,
+        });
 
         // Attach grounding result to pipeline_runs.metadata (JSONB — no migration needed).
         if (groundingMeta !== undefined) {

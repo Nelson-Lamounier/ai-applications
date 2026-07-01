@@ -39,6 +39,16 @@ export async function updatePipelineRunMetadata(
     );
 }
 
+/** Queryable article metadata written to the articles columns the portfolio renders from. */
+export interface PersistArticleMetadata {
+    /** SEO title from the Writer (frontmatter `title`). Replaces the placeholder slug-as-title. */
+    readonly title: string;
+    /** 150–160 char meta description from the Writer (frontmatter `description`). */
+    readonly excerpt: string;
+    /** Canonical tag vocabulary the Writer selected. */
+    readonly tags: readonly string[];
+}
+
 /**
  * Persist the rendered article markdown back to platform RDS.
  *
@@ -46,16 +56,30 @@ export async function updatePipelineRunMetadata(
  * Stamps ai_model with the foundation model that wrote the content so a
  * published article's provenance (which model generated it) is always queryable
  * from the row itself, never inferred from deploy timelines.
+ *
+ * Also writes the Writer's `title`, `excerpt`, and `tags` into their own columns.
+ * The public-api (portfolio) and admin dashboard render from these columns, not
+ * from the MDX frontmatter — without this, every generated article surfaced with
+ * the raw placeholder slug as its title and no excerpt or tags.
  */
 export async function persistArticle(
     pool: Pool,
     slug: string,
     contentMd: string,
     aiModel: string,
+    metadata: PersistArticleMetadata,
 ): Promise<void> {
     const result = await pool.query(
-        `UPDATE articles SET content_md = $2, ai_model = $3, status = 'review', updated_at = NOW() WHERE slug = $1`,
-        [slug, contentMd, aiModel],
+        `UPDATE articles
+            SET content_md = $2,
+                ai_model   = $3,
+                title      = $4,
+                excerpt    = $5,
+                tags       = $6,
+                status     = 'review',
+                updated_at = NOW()
+          WHERE slug = $1`,
+        [slug, contentMd, aiModel, metadata.title, metadata.excerpt, [...metadata.tags]],
     );
     if (result.rowCount === 0) {
         throw new Error(`persistArticle: no articles row found for slug '${slug}' — ensure article placeholder is created before dispatching the K8s Job`);
