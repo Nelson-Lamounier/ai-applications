@@ -25,6 +25,7 @@ function makeExtracted(overrides: Partial<ExtractedRepoData> = {}): ExtractedRep
         },
         confidence: 0.9,
         missing:    [],
+        lifecycle:  [],
         ...overrides,
     };
 }
