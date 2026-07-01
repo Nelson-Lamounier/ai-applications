@@ -83,15 +83,30 @@ async function main(): Promise<void> {
         await updatePipelineRun(pool, env.pipelineRunId, 'researching');
         const research = await timed('research', () => executeResearchAgent(ctx, pool));
 
+        // Fold a structured topic brief (if the article-job carried one) into the
+        // research result: its problem/angle seeds the author direction when the
+        // draft did not, and its author-confirmed verified metrics reach the
+        // Writer's authoritative "Verified Metrics" block (Gap 3). No brief → the
+        // research result is used unchanged (draft-only path).
+        const brief = env.articleBrief;
+        const researchData = brief
+            ? {
+                ...research.data,
+                verifiedMetrics: brief.verifiedMetrics ?? research.data.verifiedMetrics,
+                authorDirection: research.data.authorDirection
+                    || [brief.problem, brief.angle].filter(Boolean).join(' — '),
+              }
+            : research.data;
+
         await updatePipelineRun(pool, env.pipelineRunId, 'writing');
-        const writer = await timed('writing', () => executeWriterAgent(ctx, research.data));
+        const writer = await timed('writing', () => executeWriterAgent(ctx, researchData));
 
         await updatePipelineRun(pool, env.pipelineRunId, 'qa');
         const qa = await timed('qa', () => executeQaAgent(
             ctx,
             writer.data,
-            research.data.technicalFacts,
-            research.data.mode,
+            researchData.technicalFacts,
+            researchData.mode,
         ));
 
         // Grounding check (flag mode) — always-on, never blocks persist.

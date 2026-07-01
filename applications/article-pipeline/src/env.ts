@@ -6,6 +6,27 @@
  * Required: PIPELINE_RUN_ID, SLUG, S3_BUCKET, S3_SOURCE_KEY, PG_*, USER_ID.
  * Optional with defaults: MODE, PIPELINE_ID.
  */
+/** A measured number the author confirmed for a topic — safe for the Writer to cite (Gap 3). */
+export interface BriefVerifiedMetric {
+    readonly label:   string;
+    readonly value:   string;
+    readonly unit?:   string;
+    readonly source?: string;
+}
+
+/**
+ * Structured article brief, carried from a chosen topic candidate via the
+ * ARTICLE_BRIEF env var (JSON). Replaces the bare short prompt: it names the
+ * narrow problem/angle and carries author-confirmed verified metrics so real
+ * numbers survive the anti-fabrication rail. Absent for draft-only dispatches.
+ */
+export interface ArticleBrief {
+    readonly problem?:         string;
+    readonly angle?:           string;
+    readonly primaryKeyword?:  string;
+    readonly verifiedMetrics?: readonly BriefVerifiedMetric[];
+}
+
 export interface PipelineEnv {
     readonly userId:       string;
     readonly pipelineRunId: string;
@@ -15,6 +36,8 @@ export interface PipelineEnv {
     readonly mode:          string;
     readonly pipelineId:    string;
     readonly environment:   string;
+    /** Structured brief from a chosen topic candidate (JSON in ARTICLE_BRIEF); undefined for draft-only runs. */
+    readonly articleBrief?: ArticleBrief;
     /**
      * Writer-agent foundation model id, recorded as articles.ai_model for
      * provenance. Mirrors the writer-agent's own fallback so the persisted value
@@ -36,9 +59,22 @@ function required(name: string): string {
     return v;
 }
 
+/** Parse the optional ARTICLE_BRIEF env var; malformed JSON is ignored (fail-open to draft-only). */
+export function parseArticleBrief(): ArticleBrief | undefined {
+    const raw = process.env['ARTICLE_BRIEF'];
+    if (!raw) return undefined;
+    try {
+        const parsed = JSON.parse(raw) as ArticleBrief;
+        return typeof parsed === 'object' && parsed !== null ? parsed : undefined;
+    } catch {
+        return undefined; // a broken brief must not fail the run; fall back to draft-only
+    }
+}
+
 export function parseEnv(): PipelineEnv {
     const pipelineRunId = required('PIPELINE_RUN_ID');
     return {
+        articleBrief: parseArticleBrief(),
         userId:       required('USER_ID'),
         pipelineRunId,
         slug:        required('SLUG'),

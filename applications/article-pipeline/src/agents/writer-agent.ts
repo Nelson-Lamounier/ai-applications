@@ -97,6 +97,22 @@ function buildContextSection(research: ResearchResult, retryAttempt: number, ver
                   research.authorDirection
               ]
             : []),
+        ...((research.verifiedMetrics?.length ?? 0) > 0
+            ? [
+                  ``,
+                  `## ✅ Verified Metrics (authoritative — you MAY cite these)`,
+                  `> These are real, author-confirmed measured numbers for this work.`,
+                  `> They are an AUTHORITATIVE source: cite them directly in the Challenge`,
+                  `> Log and the Value Bridge to give the article a concrete result. Do NOT`,
+                  `> alter the values, and do NOT invent additional numbers beyond these.`,
+                  ``,
+                  ...(research.verifiedMetrics ?? []).map((m) => {
+                      const unit = m.unit ? ` ${m.unit}` : '';
+                      const src = m.source ? ` (source: ${m.source})` : '';
+                      return `- ${m.label}: ${m.value}${unit}${src}`;
+                  }),
+              ]
+            : []),
         ...(research.previousVersionContent
             ? [
                   ``,

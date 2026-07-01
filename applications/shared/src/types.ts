@@ -383,6 +383,19 @@ export interface ResearchResult {
     readonly authorDirection: string;
 
     /**
+     * Author-confirmed measured numbers from the topic brief (Gap 3). Injected
+     * into the Writer's authoritative "Verified Metrics" block so real war-story
+     * numbers (cost, latency, RCU, %) survive the anti-fabrication rail. Empty or
+     * absent when the article-job was dispatched without a structured brief.
+     */
+    readonly verifiedMetrics?: ReadonlyArray<{
+        readonly label:   string;
+        readonly value:   string;
+        readonly unit?:   string;
+        readonly source?: string;
+    }>;
+
+    /**
      * MDX content from the previous version (v{n-1}).
      *
      * Undefined for first-ever pipeline runs (v1). When present,
