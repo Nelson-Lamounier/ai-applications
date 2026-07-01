@@ -12,7 +12,7 @@
   "dependencies": {
     "@bedrock/shared": "workspace:*",
     "@kubernetes/client-node": "^0.22.3",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.2.0",
     "pg": "^8.20.0",
     "prom-client": "^15.1.3"
   },
