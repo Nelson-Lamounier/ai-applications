@@ -31,13 +31,21 @@ COPY infra/package.json                            ./infra/
 COPY mcp-servers/tucaken-smoke/package.json     ./mcp-servers/tucaken-smoke/
 RUN yarn install --immutable
 
+# @bedrock/shared is a workspace dependency (K8s observability bootstrap). Its
+# TypeScript must be compiled and its package present at runtime, so copy its
+# sources and build it alongside the watcher via TS project references.
+COPY applications/shared/tsconfig.json ./applications/shared/
+COPY applications/shared/src           ./applications/shared/src/
+
 COPY applications/platform-job-watcher/tsconfig.json ./applications/platform-job-watcher/
 COPY applications/platform-job-watcher/src            ./applications/platform-job-watcher/src/
 
-RUN node_modules/.bin/tsc -b applications/platform-job-watcher --force \
+RUN node_modules/.bin/tsc -b applications/shared applications/platform-job-watcher --force \
  || [ -f applications/platform-job-watcher/dist/run-watcher.js ]
 
-RUN yarn workspaces focus @platform/job-watcher --production
+# Focus @bedrock/shared too so its runtime deps (pino, prom-client, …) are
+# installed and the node_modules/@bedrock/shared workspace symlink is created.
+RUN yarn workspaces focus @bedrock/shared @platform/job-watcher --production
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
@@ -48,6 +56,11 @@ WORKDIR /app
 
 COPY --from=builder --chown=appuser:appgroup /app/applications/platform-job-watcher/dist     ./applications/platform-job-watcher/dist
 COPY --from=builder --chown=appuser:appgroup /app/applications/platform-job-watcher/package.json ./applications/platform-job-watcher/
+# @bedrock/shared workspace package: node_modules/@bedrock/shared is a symlink
+# into applications/shared, so its compiled dist + manifest must be copied or
+# the import resolves to a dangling link (ERR_MODULE_NOT_FOUND at startup).
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/dist         ./applications/shared/dist
+COPY --from=builder --chown=appuser:appgroup /app/applications/shared/package.json ./applications/shared/
 COPY --from=builder --chown=appuser:appgroup /app/node_modules                                  ./node_modules
 
 USER appuser
