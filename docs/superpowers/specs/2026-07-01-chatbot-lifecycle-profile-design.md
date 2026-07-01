@@ -90,6 +90,10 @@ Component-by-component. All code paths verified against the repo.
   rule to `SYSTEM_PROMPT` (lines 95–122): populate `lifecycle` ONLY from explicit
   evidence (README migration notes, CHANGELOG, ADRs); never infer a migration
   that is not stated. Empty array when no migration evidence exists.
+- **Bump `ProfileExtractor.version`** (line 133, `'1' → '2'`). This is load-bearing:
+  the profile skip-gate (§6) hashes the version, so bumping it forces every repo
+  to re-extract on its next ingest and thereby emit the new `lifecycle` chunk.
+  Without the bump, unchanged repos keep their cached profile and never gain one.
 
 The field flows unchanged into persistence: `RepositoryProfileRepository.upsert()`
 writes the whole `ExtractedRepoData` into the `repository_profiles.extracted`
@@ -159,10 +163,27 @@ Scoped to `frontend-portfolio`, `tucaken-app`, `kubernetes-bootstrap`.
 
 ### 6. Re-ingest affected repos
 
-Re-ingest with `FORCE_REINDEX=true` so profiles are re-extracted (populating
-`lifecycle`) and chunks re-embedded under the updated filter, and so
-kubernetes-bootstrap's current EKS-primary README (corrected 2026-06-25, last
-embedded 2026-06-20) finally lands:
+Two independent gates must both be satisfied, because they control different
+layers:
+
+- **Profile re-extraction (populates `lifecycle`)** is gated by
+  `evaluateExtractSkip` (`run-ingestion.ts:833`), which hashes
+  `HEAD commit SHA + ProfileExtractor.version` and skips when it matches a
+  completed extraction. `FORCE_REINDEX` does **not** affect this gate (it only
+  branches the chunk orchestrator at `run-ingestion.ts:857–859`). Therefore, to
+  force re-extraction across repos whose HEAD has not moved, **bump
+  `ProfileExtractor.version`** (`ProfileExtractor.ts:133`, `'1' → '2'`). This
+  invalidates every profile input hash so the next ingest re-extracts and calls
+  `embedProfile`, creating the lifecycle chunk.
+- **Chunk-layer refresh (applies the file-filter exclusions)** needs
+  `FORCE_REINDEX=true` so chunks are re-evaluated under the updated filter, and
+  so kubernetes-bootstrap's EKS-primary README (corrected 2026-06-25, last
+  embedded 2026-06-20) finally lands.
+
+So the rollout is: (1) merge the code (lifecycle field + version bump + filter
+exclusions + migration 104), (2) run the purge (§5), (3) re-ingest each repo
+with `FORCE_REINDEX=true` — the version bump forces profile re-extraction and
+FORCE_REINDEX forces chunk re-embed:
 
 - `frontend-portfolio`, `tucaken-app`, `kubernetes-bootstrap`, `kubernetes-platform`, `tucaken-infra`.
 
