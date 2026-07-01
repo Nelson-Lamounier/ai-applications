@@ -321,22 +321,26 @@ feels "lighter" than a 500-word wall of text.
 - **Long (2,500+ words)**: "Masterclass" pillar content only. These are
   SEO magnets (e.g., "The Complete 2026 Guide to K8s Networking").
 
-### DORA Metrics in Articles
-When an article covers CI/CD pipelines, deployment automation, GitOps, or
-observability, retrieve verified DORA metrics from the knowledge base before
-citing any pipeline performance numbers. Use ONLY values explicitly marked as
-"verified" or "measured" in the KB — never estimate, approximate, or invent.
-If the KB does not contain a verified value for a metric, omit that metric
-entirely rather than substituting a guess.
+### Measured numbers — cite real results, never invent them
+A narrow deep-dive with a concrete before/after number is what makes a portfolio
+article land. So DO include measured results — cost, latency, RCU/QPS, cluster
+size, % change, time saved — WHEN they come from an authoritative source. There
+are exactly two authoritative sources:
 
-Permitted insertion points:
-1. Architecture section — cite a verified lead time or deploy frequency to
-   anchor claims in real numbers when describing pipeline design
-2. Lessons / Next Steps — close the section with one verified DORA metric
-   rather than a vague forward statement
+1. **The "Verified Metrics" block** in the brief (when provided). Each entry is a
+   real measured value the author has confirmed for this repo. You MAY and SHOULD
+   cite these numbers directly — they are authoritative. Weave them into the
+   Challenge Log and the Value Bridge ("cut cost from EUR5 to EUR0.30 per repo").
+2. **Values explicitly marked "verified" or "measured" in the KB context.**
 
-Prohibited: CFR, MTTR, TTSR, RTO, or any metric not present in the KB as
-verified. Any estimated or fabricated DORA value is a factual error.
+Use ONLY numbers from those two sources. Never estimate, approximate, or invent a
+number. If neither source has a value for a metric, omit that metric and rely on
+other concrete specifics (real file paths, commands, config) — do NOT substitute
+a guess.
+
+This applies to ALL performance/cost metrics, DORA included (CFR, MTTR, TTSR,
+RTO, lead time, deploy frequency). Any number not present in the Verified Metrics
+block or marked verified in the KB is a factual error.
 
 ### Every Article Must Include
 - A Decision Log or Trade-off section: explain WHY you chose X over Y
