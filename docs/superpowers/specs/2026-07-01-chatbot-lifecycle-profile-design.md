@@ -51,6 +51,16 @@ chatbot answers temporally — "currently Amazon EKS, migrated from self-managed
 kubeadm" — and current state is authoritative. Because it is structured and
 extracted per repo, it **replicates** to any repo/system that changes.
 
+## Constraints (from review)
+
+- **Admin-only.** The lifecycle feature applies solely to the portfolio owner /
+  admin user (`users.role = 'admin'`, `006_user_roles.sql`; the chatbot already
+  keys off `PORTFOLIO_OWNER_USER_ID`). Regular SaaS users never incur lifecycle
+  extraction — it is only relevant to the owner's chatbot.
+- **Opt-in via a persisted admin setting + UI toggle.** A stored per-admin
+  setting ("Use chatbot") gates the feature, surfaced as a toggle in the admin
+  dashboard. Default OFF. When off, no lifecycle extraction runs.
+
 ## Scope
 
 **In scope (Layer 2):**
@@ -60,11 +70,33 @@ extracted per repo, it **replicates** to any repo/system that changes.
 4. Ingestion exclusions for truly-decommissioned content (`resume-data-esc.ts`, `sm-a/`).
 5. Purge of already-embedded rows for the excluded paths.
 6. Re-ingestion of the affected repos to populate lifecycle + refresh embeddings.
-7. Verification via the live chunk-probe + a retrieval probe.
+7. A persisted admin "chatbot enabled" setting + admin-api endpoint + dashboard toggle, gating (1)/(2)/(6).
+8. Verification via the live chunk-probe + a retrieval probe.
 
 **Out of scope (would be separate specs):** a generalised timeline/event
-subsystem (its own table, dated events, timeline UI). This spec deliberately
-takes the targeted-field approach.
+subsystem (its own table, dated events, timeline UI); making the feature
+available to non-admin users. This spec deliberately takes the targeted-field,
+admin-only approach.
+
+## Delivery phases (decomposition — one plan each)
+
+The work spans three subsystems; it is delivered as three sequential, each
+independently shippable, plans:
+
+- **Phase A — Seed now (immediate correctness).** Migration 104 (`lifecycle`
+  chunk_type) + directly embed one `lifecycle` chunk for the admin's platform
+  repo(s) + purge the stale kubeadm/Calico/golden-AMI chunks + the temporal
+  prompt rule. Outcome: the chatbot answers EKS today for the admin. No toggle
+  dependency (a one-off owner action). Live-ops + migration + prompt.
+- **Phase B — Opt-in setting + admin toggle.** Persisted `chatbot_enabled`
+  admin setting (migration + admin-api endpoint + tucaken-app dashboard toggle,
+  default OFF). Outcome: the admin can turn the chatbot feature on/off. Product
+  feature; no pipeline change yet.
+- **Phase C — Durable lifecycle extraction (gated by Phase B).** `ProfileExtractor`
+  lifecycle field + version bump + FileFilter exclusions + ingestion reads the
+  Phase-B setting and, only when admin + enabled, emits the lifecycle chunk on
+  every re-ingest. Outcome: lifecycle stays correct automatically, superseding
+  the Phase-A manual seed.
 
 ## Design
 
@@ -199,6 +231,45 @@ with `FORCE_REINDEX=true`.
 - Retrieval probe: run the cluster question through `PgVectorRetriever` for the
   portfolio owner and confirm the top passages are EKS/lifecycle, not kubeadm.
 
+### 8. Admin opt-in setting + gating (Phase B)
+
+- **Persisted setting.** Add a boolean `chatbot_enabled` for the admin user,
+  default `false`. Simplest home is a column on `users`
+  (`ALTER TABLE users ADD COLUMN chatbot_enabled boolean NOT NULL DEFAULT false`)
+  — OPEN DECISION vs a general `user_settings(user_id, key, value)` table if more
+  admin flags are foreseen. Recommended: the column (YAGNI; one flag today).
+- **Admin-api endpoint.** `GET`/`PATCH /api/admin/settings/chatbot` (Cognito JWT,
+  `users.role='admin'` enforced server-side) reading/writing the flag.
+- **Dashboard toggle (tucaken-app).** A settings toggle "Use chatbot" in the
+  admin dashboard calling the endpoint. This is the only tucaken-app change; it
+  lives under the admin settings feature slice.
+- **Gating.** The ingestion pipeline reads the flag for the run's user; the
+  lifecycle chunk (§2) is emitted only when `users.role='admin'` AND
+  `chatbot_enabled = true`. Regular users and disabled admins never trigger
+  lifecycle extraction. The Phase-B setting is the durable gate for Phase C.
+
+### 9. Phase A — direct seed (immediate correctness)
+
+Independent of the toggle, to make the admin's chatbot correct today:
+
+1. Apply migration 104 (`lifecycle` chunk_type) to the dev DB.
+2. For the admin's platform repo(s) (e.g. `kubernetes-bootstrap` /
+   `kubernetes-platform` / `tucaken-infra`), embed one `lifecycle` chunk:
+   Titan-embed the sentence
+   `"Kubernetes platform: currently Amazon EKS 1.34, migrated from self-managed kubeadm (2026-05)."`
+   and insert into `repository_profile_embeddings` (chunk_type `'lifecycle'`,
+   the repo's `profile_id`, admin `user_id`, `content_hash`, `embedding`), under
+   `SET LOCAL app.current_user_id` (RLS). Run via the admin-api pod -> PgBouncer,
+   the access path used for the probe; the pod can invoke Bedrock Titan for the
+   embedding.
+3. Run the purge (§5) for the admin's repos so the kubeadm chunks stop
+   out-competing the lifecycle chunk.
+4. Land the temporal prompt rule (§3) and Layer 1.
+5. Verify (§7).
+
+Phase C's re-ingest later regenerates this chunk from the extractor, superseding
+the manual seed idempotently (same `content_hash` → no duplicate).
+
 ## Testing
 
 Jest (`@jest/globals`), following existing patterns:
@@ -213,8 +284,17 @@ Jest (`@jest/globals`), following existing patterns:
   `'lifecycle'` and still rejects unknown types.
 - FileFilter test: `**/resume-data-esc.ts` and `**/sm-a/**` are excluded; a
   sibling legitimate file is still included.
+- Gating test: `embedProfile`/ingestion emits no `lifecycle` chunk when the
+  user is non-admin or `chatbot_enabled = false`; emits one when admin + enabled.
+- Admin-settings endpoint test: `PATCH /api/admin/settings/chatbot` requires an
+  admin JWT (403 for non-admin), persists the flag, and `GET` returns it.
 
 ## Risks
+
+- **Non-admin leakage.** A user without `role='admin'` must never trigger
+  lifecycle extraction or reach the settings endpoint. Mitigated by server-side
+  role checks (not UI-only) on both the endpoint and the ingestion gate; covered
+  by the gating + endpoint tests.
 
 - **Extractor invents a migration.** Mitigated by the grounding rule (evidence-only)
   and the existing extractor's evidence discipline; covered by a test asserting
@@ -231,3 +311,11 @@ Jest (`@jest/globals`), following existing patterns:
 1. Re-ingest trigger mechanism (admin UI / admin-api script / kubectl Job) — default admin UI.
 2. Confirm the exclusion list (`resume-data-esc.ts`, `sm-a/`) — anything else retired?
 3. Lifecycle as a dedicated `chunk_type` (recommended, this spec) vs folding into `description` (no migration). Recommended path chosen for clean retrieval + replicability.
+4. Setting storage: `users.chatbot_enabled` column (recommended) vs a general `user_settings` table.
+5. Which admin platform repo carries the seeded lifecycle chunk in Phase A (recommended: `kubernetes-bootstrap`, the cluster-platform repo).
+
+## Decided (from review)
+
+- **Admin-only**, gated by `users.role='admin'`.
+- **Opt-in** via a persisted `chatbot_enabled` setting + dashboard toggle (default OFF).
+- **Hybrid delivery:** Phase A seed now (immediate) → Phase B toggle → Phase C durable extraction.
