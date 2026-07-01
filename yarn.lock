@@ -6336,6 +6336,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@platform/job-watcher@workspace:applications/platform-job-watcher"
   dependencies:
+    "@bedrock/shared": "workspace:*"
     "@jest/globals": "npm:^29.7.0"
     "@kubernetes/client-node": "npm:^0.22.3"
     "@types/js-yaml": "npm:^4.0.9"
@@ -6344,6 +6345,7 @@ __metadata:
     jest: "npm:^29.7.0"
     js-yaml: "npm:^4.1.0"
     pg: "npm:^8.20.0"
+    prom-client: "npm:^15.1.3"
     ts-jest: "npm:^29.2.6"
     typescript: "npm:^5.7.3"
   languageName: unknown
