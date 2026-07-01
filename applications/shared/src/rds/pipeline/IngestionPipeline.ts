@@ -354,11 +354,19 @@ export class IngestionPipeline {
 
             await this.syncState.markPhase(userId, repoFullName, 'finalizing').catch(() => {});
 
+            // chunk_count must reflect the repo's cumulative KB size, not this
+            // run's chunks. On an incremental sync `rawChunks` is only the changed
+            // -file delta, so persisting rawChunks.length made large repos read as
+            // "<200 chunks". Read the true total from the store (post upsert+prune).
+            const totalChunkCount = await this.vectorStore
+                .countChunks(userId, repoFullName)
+                .catch(() => rawChunks.length);
+
             await this.syncState.markComplete(
                 userId,
                 repoFullName,
                 currentFilePaths.length,
-                rawChunks.length,
+                totalChunkCount,
                 quality.score,
                 quality.breakdown as unknown as Record<string, unknown>,
                 persistRetrieval?.score,
