@@ -261,4 +261,29 @@ describe('BedrockDataStack', () => {
             });
         });
     });
+
+    describe('public-api GitHub App credentials', () => {
+        it('should create the GitHub App secret at the literal legacy name', () => {
+            const { template } = createDataStack();
+            template.hasResourceProperties('AWS::SecretsManager::Secret', {
+                Name: 'k8s/development/public-api-github-app',
+            });
+        });
+
+        it('should retain the GitHub App secret on stack destroy', () => {
+            const { template } = createDataStack();
+            template.hasResource('AWS::SecretsManager::Secret', {
+                Properties: { Name: 'k8s/development/public-api-github-app' },
+                DeletionPolicy: 'Retain',
+                UpdateReplacePolicy: 'Retain',
+            });
+        });
+
+        it('should publish the secret ARN to SSM at /k8s/development/public-api-github-app-arn', () => {
+            const { template } = createDataStack();
+            template.hasResourceProperties('AWS::SSM::Parameter', {
+                Name: '/k8s/development/public-api-github-app-arn',
+            });
+        });
+    });
 });

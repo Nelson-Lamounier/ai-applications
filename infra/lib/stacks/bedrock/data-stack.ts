@@ -430,5 +430,44 @@ export class BedrockDataStack extends cdk.Stack {
             description: 'KMS CMK ARN for oauth_connections token envelope encryption',
             exportName: `${props.namePrefix}-OAuthTokenKeyArn`,
         });
+
+        // ─── public-api GitHub App credentials ────────────────────────────────
+        // Codifies two resources that previously existed only out-of-band:
+        // the Secrets Manager secret holding the GitHub App { appId,
+        // privateKeyPem, webhookSecret } and the SSM parameter that publishes
+        // its ARN. The parameter had been deleted, which froze the
+        // public-api-auth ExternalSecret (public-api's config.ts requires
+        // GITHUB_APP_SECRET_ARN at boot). CDK now owns both so a stack redeploy
+        // cannot lose them again.
+        //
+        // secretName is the LITERAL path the ExternalSecret remoteRef expects
+        // (see kubernetes-bootstrap public-api-auth.yaml) — intentionally not
+        // `${namePrefix}/…`. CDK owns name + RETAIN lifecycle + IAM surface;
+        // the credential VALUE is injected out-of-band (never in source /
+        // CloudFormation), mirroring IngestionGithubTokenSecret above.
+        const publicApiGithubAppSecret = new secretsmanager.Secret(this, 'PublicApiGithubAppSecret', {
+            secretName: 'k8s/development/public-api-github-app',
+            description:
+                'GitHub App creds (appId, privateKeyPem, webhookSecret) consumed by '
+                + 'public-api via ESO (public-api-auth → GITHUB_APP_SECRET_ARN). '
+                + 'Value injected post-deploy.',
+        });
+        // A credential must survive `cdk destroy`; never auto-delete.
+        publicApiGithubAppSecret.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+        NagSuppressions.addResourceSuppressions(publicApiGithubAppSecret, [
+            {
+                id: 'AwsSolutions-SMG4',
+                reason:
+                    'GitHub App private key is an externally-issued third-party credential '
+                    + 'injected out-of-band; Secrets Manager cannot mint/rotate it. Rotated '
+                    + 'manually on key roll (mirrors IngestionGithubTokenSecret rationale).',
+            },
+        ]);
+
+        new ssm.StringParameter(this, 'PublicApiGithubAppArnParam', {
+            parameterName: '/k8s/development/public-api-github-app-arn',
+            stringValue: publicApiGithubAppSecret.secretArn,
+            description: 'Secrets Manager ARN for public-api GitHub App creds (read by public-api-auth ESO)',
+        });
     }
 }
