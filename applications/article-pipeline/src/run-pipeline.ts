@@ -9,7 +9,7 @@
  * On QA pass the rendered draft is persisted to platform RDS articles.status =
  * 'review'. The admin-api owns the eventual transition to 'published'.
  */
-import type { PipelineContext } from '@bedrock/shared';
+import type { PipelineContext, QaValidationResult } from '@bedrock/shared';
 import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
@@ -56,6 +56,37 @@ async function timed<T>(step: string, fn: () => Promise<T>): Promise<T> {
     finally {
         stepDuration.observe({ step }, Number(process.hrtime.bigint() - t0) / 1e9);
     }
+}
+
+/**
+ * Build the pipeline_runs.metadata payload from the QA verdict (+ grounding).
+ * QA issues live per-dimension; flatten them (tagged with their dimension) into
+ * one reviewable list so the admin review UI can show WHY an article needs
+ * revision, not just a score.
+ */
+function buildRunMetadata(
+    qa: QaValidationResult,
+    groundingMeta: object | undefined,
+): Record<string, unknown> {
+    const issues = Object.entries(qa.dimensions).flatMap(([dimension, dim]) =>
+        dim.issues.map((issue) => ({ dimension, ...issue })),
+    );
+    const meta: Record<string, unknown> = {
+        qa: {
+            overallScore:       qa.overallScore,
+            recommendation:     qa.recommendation,
+            confidenceOverride: qa.confidenceOverride,
+            summary:            qa.summary,
+            dimensionScores:    Object.fromEntries(
+                Object.entries(qa.dimensions).map(([k, v]) => [k, v.score]),
+            ),
+            issues,
+        },
+    };
+    if (groundingMeta !== undefined) {
+        meta['grounding'] = groundingMeta;
+    }
+    return meta;
 }
 
 async function main(): Promise<void> {
@@ -149,10 +180,14 @@ async function main(): Promise<void> {
             tags:    writer.data.metadata.tags,
         });
 
-        // Attach grounding result to pipeline_runs.metadata (JSONB — no migration needed).
-        if (groundingMeta !== undefined) {
-            await updatePipelineRunMetadata(pool, env.pipelineRunId, { grounding: groundingMeta });
-        }
+        // Attach QA + grounding results to pipeline_runs.metadata (JSONB — no
+        // migration needed) so the review UI can show WHY an article needs
+        // revision, not just a score.
+        await updatePipelineRunMetadata(
+            pool,
+            env.pipelineRunId,
+            buildRunMetadata(qa.data, groundingMeta),
+        );
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
         outcome = 'success';
