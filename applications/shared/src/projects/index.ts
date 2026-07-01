@@ -121,6 +121,8 @@ export type {
 } from './case-study-orchestrator.js';
 
 export { reconstructPriorCaseStudy, underrepresentedRepos, scopeEvidenceToRepos } from './case-study-refine.js';
+export { deriveArticleCandidates, buildCandidatesFromCaseStudy } from './article-topic-discovery.js';
+export type { DiscoverySource, DeriveCandidatesInput } from './article-topic-discovery.js';
 export {
     runRefineGraders,
     gradeNewRepoCoverage,
