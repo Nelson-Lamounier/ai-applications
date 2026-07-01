@@ -70,6 +70,7 @@ import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
 import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
 import { patchDeterministicProfileFacts } from './util/patchProfileFacts.js';
 import { applyPostSyncProjectAction } from './util/applyPostSyncProjectAction.js';
+import { normalizeEnrichmentMode } from './util/enrichmentMode.js';
 import { friendlyIngestionError } from './friendly-error.js';
 import type { RepoFile } from '@bedrock/shared';
 import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
@@ -758,6 +759,10 @@ async function main(): Promise<void> {
 
     const retrievalProbe = RetrievalProbe.fromEnvironment(pgPool, env.userId, env.repoFullName);
 
+    // Resolve enrichment mode once here (single source of truth) so the stored
+    // value on repo_sync_state.enrichment_mode matches the log event emitted later.
+    const enrichmentMode = resolveEnrichmentMode(!!enricher);
+
     // Embedding/enrichment lineage stamped onto every chunk (metadata.lineage)
     // so a chunk can be reproduced / audited / invalidated when a model or
     // dimension changes. Built from the live providers (single source of truth).
@@ -774,6 +779,8 @@ async function main(): Promise<void> {
         enricher: deferEnrichment ? undefined : enricher,
         retrievalProbe,
         deferEnrichment,
+        enrichmentMode: normalizeEnrichmentMode(enrichmentMode),
+        enrichmentModel: enricher?.modelId ?? null,
     });
 
     const repositoryId  = await resolveRepositoryId(pgPool, env.userId, env.repoFullName);
@@ -925,7 +932,7 @@ async function main(): Promise<void> {
         // the critical path now (in-process, no re-embedding). Best-effort.
         // Free-tier branch: no LLM enricher, but Tier-1 deterministic skills
         // (file_tech_stack → canonical) are still available at zero cost.
-        const enrichmentMode = resolveEnrichmentMode(!!enricher);
+        // enrichmentMode was resolved and hoisted before pipeline construction.
 
         const enrichCost = await sumBookedCostUsd(pgPool, env.userId, env.repoFullName, runStartIso, 'chunk-enrich');
         log.info(

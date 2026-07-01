@@ -117,6 +117,18 @@ export interface IngestionPipelineOptions {
      * path. Set via DEFER_ENRICHMENT by run-ingestion. Default false (inline).
      */
     readonly deferEnrichment?: boolean;
+    /**
+     * Stored enrichment mode for this run. Passed through to markComplete so
+     * repo_sync_state.enrichment_mode records exactly which enrichment tier was
+     * active. Values are the narrow stored enum: 'llm' | 'tier1' | 'none'.
+     */
+    readonly enrichmentMode?: 'llm' | 'tier1' | 'none';
+    /**
+     * Model ID of the LLM enricher used in this run (e.g. 'anthropic.claude-haiku-…').
+     * Null when no LLM enricher was active. Persisted to
+     * repo_sync_state.enrichment_model for lineage and cost attribution.
+     */
+    readonly enrichmentModel?: string | null;
 }
 
 export class IngestionPipeline {
@@ -127,6 +139,8 @@ export class IngestionPipeline {
     private readonly retrievalProbe?: IRetrievalProbe;
     private readonly maxEnrichmentPerRun: number;
     private readonly deferEnrichment: boolean;
+    private readonly enrichmentMode?: 'llm' | 'tier1' | 'none';
+    private readonly enrichmentModel?: string | null;
 
     constructor(
         vectorStore: IVectorStore,
@@ -140,6 +154,8 @@ export class IngestionPipeline {
         this.enricher       = options.enricher;
         this.retrievalProbe = options.retrievalProbe;
         this.deferEnrichment = options.deferEnrichment ?? false;
+        this.enrichmentMode  = options.enrichmentMode;
+        this.enrichmentModel = options.enrichmentModel;
         this.maxEnrichmentPerRun =
             options.maxEnrichmentPerRun
             ?? parseEnrichmentCapFromEnv()
@@ -371,6 +387,8 @@ export class IngestionPipeline {
                 quality.breakdown as unknown as Record<string, unknown>,
                 persistRetrieval?.score,
                 persistRetrieval as unknown as Record<string, unknown> | undefined,
+                this.enrichmentMode ?? 'none',
+                this.enrichmentModel ?? null,
             );
 
             return {
