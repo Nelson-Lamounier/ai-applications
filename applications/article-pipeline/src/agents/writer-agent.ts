@@ -237,12 +237,19 @@ function buildWriterMessage(
  * @throws Error if required fields are missing
  */
 /**
- * Strict safety-net for the Writer's structured JSON. Writer keeps
- * extended thinking so forced tool_use is unavailable; this Zod schema
- * is the constrained-decoding substitute. `.strict()` rejects invented
- * fields; a failure throws rather than persisting placeholder defaults
- * to DynamoDB (structure-output-checklist §5/§7). `content` is prose and
- * stays a free-form string (only emptiness is rejected).
+ * Safety-net for the Writer's structured JSON. Writer keeps extended
+ * thinking so forced tool_use is unavailable; this Zod schema is the
+ * constrained-decoding substitute — it enforces every required field and
+ * its type, and `content` (prose) stays a free-form non-empty string.
+ *
+ * These objects STRIP unknown keys rather than `.strict()`-rejecting them.
+ * Rejecting was too brittle: the model, cued by the frontmatter example
+ * (`author: "Nelson Lamounier"`), intermittently echoes an extra `author`
+ * key into `metadata`, and `.strict()` then threw away the ENTIRE,
+ * already-paid-for generation (~$0.25 of Bedrock spend — research + writer,
+ * billed before this local check runs, with no retry). Stripping keeps the
+ * real fields and silently drops stray ones, so a harmless extra key never
+ * discards an expensive run. Required-field and type validation is unchanged.
  */
 const WriterMetadataSchema = z.object({
     title:               z.string().min(1),
@@ -258,7 +265,7 @@ const WriterMetadataSchema = z.object({
     processingNote:      z.string(),
     primaryKeyword:      z.string().optional(),
     secondaryKeywords:   z.array(z.string()).optional(),
-}).strict();
+});
 
 const ShotListItemSchema = z.object({
     id:          z.string(),
@@ -266,21 +273,21 @@ const ShotListItemSchema = z.object({
     instruction: z.string(),
     context:     z.string(),
     duration:    z.string().optional(),
-}).strict();
+});
 
 const SuggestedReferenceSchema = z.object({
     label:      z.string(),
     url:        z.string(),
     relevance:  z.string(),
     usedInline: z.boolean(),
-}).strict();
+});
 
 const WriterOutputSchema = z.object({
     content:             z.string().min(1, 'Writer Agent: missing or empty "content"'),
     metadata:            WriterMetadataSchema,
     shotList:            z.array(ShotListItemSchema).default([]),
     suggestedReferences: z.array(SuggestedReferenceSchema).optional(),
-}).strict();
+});
 
 /**
  * Parse and validate the Writer Agent's JSON response.
