@@ -65,6 +65,7 @@ import { ReconciliationSynthesizer } from './agents/ReconciliationSynthesizer.js
 import { DiagnosticNarrator } from './agents/DiagnosticNarrator.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
+import { renderLifecycleChunks } from './util/lifecycle-chunks.js';
 import { scoreProfile } from './util/scoreProfile.js';
 import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
 import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
@@ -385,11 +386,12 @@ async function embedProfile(
     extracted: ExtractedRepoData,
     embedder: TitanEmbeddingProvider,
     embRepo: RepositoryProfileEmbeddingsRepository,
+    chatbotEnabled: boolean,
 ): Promise<void> {
     const rows: ProfileEmbeddingRow[] = [];
 
     const addRow = async (
-        chunkType: 'one_liner' | 'description' | 'highlight',
+        chunkType: 'one_liner' | 'description' | 'highlight' | 'lifecycle',
         content: string,
     ): Promise<void> => {
         const embedding   = await embedder.embed(content);
@@ -401,6 +403,17 @@ async function embedProfile(
     await addRow('description', extracted.description);
     for (const highlight of extracted.highlights) {
         await addRow('highlight', highlight);
+    }
+
+    // Lifecycle chunks are chatbot-only (they power temporal "currently X,
+    // migrated from Y" answers). Gated on the owner's chatbot_enabled flag
+    // (Phase B) so non-chatbot users incur no extra embeds. The prune fix scopes
+    // deletes to the batch's chunk_types, so emitting 'lifecycle' here also
+    // supersedes any Phase-A manual seed idempotently.
+    if (chatbotEnabled) {
+        for (const sentence of renderLifecycleChunks(extracted)) {
+            await addRow('lifecycle', sentence);
+        }
     }
 
     await embRepo.upsertBatch(userId, rows);
@@ -444,6 +457,7 @@ async function doExtractAndEmbed(
     bundle: ProfileInputBundle,
     classification: RepoClassification,
     inputHash: string,
+    chatbotEnabled: boolean,
 ): Promise<void> {
     const { id: profileId } = await deps.profileRepo.upsert({
         userId:           env.userId,
@@ -474,7 +488,7 @@ async function doExtractAndEmbed(
         });
 
         const stopEmbed = profileEmbedDurationSeconds().startTimer();
-        await embedProfile(env.userId, profileId, extracted, deps.embedder, deps.embRepo);
+        await embedProfile(env.userId, profileId, extracted, deps.embedder, deps.embRepo, chatbotEnabled);
         stopEmbed();
         await deps.profileRepo.updateStatus(profileId, env.userId, 'completed');
         profileExtractCallsTotal().inc({ outcome: 'success' });
@@ -840,10 +854,17 @@ async function main(): Promise<void> {
             const bundle         = await profileCollector.collect(env.repoFullName, prefetchedFiles);
             stopCollect();
             const classification = classifyRepo(bundle);
+            // Owner opt-in (Phase B): emit chatbot lifecycle chunks only when the
+            // portfolio owner has enabled the chatbot. Best-effort; defaults off so
+            // a lookup failure never adds chatbot-only work.
+            const chatbotEnabled = await pgPool
+                .query<{ chatbot_enabled: boolean }>('SELECT chatbot_enabled FROM users WHERE id = $1::uuid', [env.userId])
+                .then((r) => r.rows[0]?.chatbot_enabled === true)
+                .catch(() => false);
             // Best-effort: doExtractAndEmbed marks the profile 'failed' and returns
             // (never throws) -- a profile-rollup failure must not abort the run, so
             // RAG embeddings + technology extraction below still complete.
-            await doExtractAndEmbed({ profileRepo, profileExtractor, embedder, embRepo }, env, bundle, classification, profileInputHash);
+            await doExtractAndEmbed({ profileRepo, profileExtractor, embedder, embRepo }, env, bundle, classification, profileInputHash, chatbotEnabled);
         }
 
         // Surface file-fetch progress to the UI (the 'fetching' phase). Fire-
