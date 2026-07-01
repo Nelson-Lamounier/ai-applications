@@ -19,12 +19,14 @@ import type { SystemContentBlock } from '@aws-sdk/client-bedrock-runtime';
 /**
  * QA Agent system prompt content blocks with prompt caching.
  *
- * The QA agent validates content against 5 quality dimensions:
+ * The QA agent validates content against 6 quality dimensions:
  * 1. Technical Accuracy — code correctness, API references, CLI commands
  * 2. SEO Compliance — meta description length, heading hierarchy, slug
  * 3. MDX Structure — frontmatter, component usage, Mermaid syntax
  * 4. Metadata Quality — reading time accuracy, tag relevance, confidence
  * 5. Content Quality — coherence, completeness, professional tone
+ * 6. Specificity & Result — narrow problem focus + a concrete measured result
+ *    (the 2026 portfolio thesis: deep-dive-with-numbers beats broad overview)
  */
 export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
     {
@@ -44,7 +46,7 @@ export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             ``,
             `## Quality Dimensions`,
             ``,
-            `### 1. Technical Accuracy (weight: 35%)`,
+            `### 1. Technical Accuracy (weight: 30%)`,
             `- Are AWS CLI commands, API calls, and SDK usage correct and current?`,
             `- Do code snippets compile/run without errors?`,
             `- Are Kubernetes manifests, CDK constructs, and Terraform resources valid?`,
@@ -57,7 +59,7 @@ export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             `- Flag any chatbot promotion, newsletter signup, or internal site navigation`,
             `  prompt inside the article body as severity "error".`,
             ``,
-            `### 2. SEO Compliance (weight: 20%)`,
+            `### 2. SEO Compliance (weight: 15%)`,
             `#### Basic SEO`,
             `- Meta description is 150–160 characters and contains the primary keyword`,
             `- Single H1 (title), logical H2/H3 hierarchy`,
@@ -79,7 +81,7 @@ export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             `- Links marked \`usedInline: true\` actually appear in the MDX content`,
             `- A brief chatbot mention exists near the article's closing`,
             ``,
-            `### 3. MDX Structure (weight: 15%)`,
+            `### 3. MDX Structure (weight: 10%)`,
             `- Valid YAML frontmatter with all required fields`,
             `- MermaidChart components contain valid Mermaid syntax`,
             `- ImageRequest components have id, type, and instruction`,
@@ -88,7 +90,7 @@ export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             `- No unclosed JSX tags or broken component syntax`,
             `- Proper import statements if custom components are used`,
             ``,
-            `### 4. Metadata Quality (weight: 15%)`,
+            `### 4. Metadata Quality (weight: 10%)`,
             `- readingTime is accurate (±1 minute of calculated estimate)`,
             `- aiSummary is 2–3 sentences, informative, not hyperbolic`,
             `- technicalConfidence score matches actual content quality`,
@@ -105,6 +107,33 @@ export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             `  outside of code blocks. Each instance deducts 2 points from this dimension.`,
             `- No parenthetical annotations mid-sentence: "(i.e. …)", "(e.g. …)", "(meaning …)".`,
             `  These are AI-detection signals. Flag each instance.`,
+            ``,
+            `### 6. Specificity & Result (weight: 20%)`,
+            `The 2026 portfolio thesis: depth on ONE narrow problem, with a measured`,
+            `result, beats a broad "here is my whole project" overview. A broad overview`,
+            `is too general to rank and gets summarised by AI search before anyone clicks;`,
+            `a narrow deep-dive on a specific wall pulls the engineers who hit that exact`,
+            `wall. Score this dimension for how well the article delivers that:`,
+            `- **Narrow scope**: Is the article about ONE specific problem, not a tour of`,
+            `  the whole system/architecture? A broad "overview of my project/platform"`,
+            `  framing scores this dimension at most 50.`,
+            `- **Wrong turns shown**: Does it show the failed attempt / the wrong turn and`,
+            `  the fix, not just a clean final design?`,
+            `- **Concrete measured result**: Is there at least one real before/after number`,
+            `  tied to the problem — cost, latency, RCU/QPS, cluster size, % change, time`,
+            `  saved? An article with NO measured result anywhere scores at most 60 here.`,
+            `- **Specific, problem-framed title**: Does the title name the exact technology`,
+            `  and the exact wall hit (e.g. "Bedrock prompt caching's 4,096-token minimum`,
+            `  kills per-chunk enrichment caching"), rather than a broad topic label`,
+            `  ("How I built my platform")?`,
+            `- **Concrete examples**: Real file paths, real commands, real config values`,
+            `  rather than generic placeholders.`,
+            ``,
+            `IMPORTANT — this dimension rewards the PRESENCE of real numbers, but it does`,
+            `NOT license fabrication. The Technical Accuracy DORA rule still governs: every`,
+            `number must be real and verified. If the article genuinely had no measured`,
+            `result to report, do not invent one — score this dimension honestly (lower)`,
+            `and note the omission, rather than rewarding a fabricated metric.`,
         ].join('\n'),
     },
     {
@@ -149,6 +178,17 @@ export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             `    "contentQuality": {`,
             `      "score": 88,`,
             `      "issues": []`,
+            `    },`,
+            `    "specificityAndResult": {`,
+            `      "score": 70,`,
+            `      "issues": [`,
+            `        {`,
+            `          "severity": "warning",`,
+            `          "location": "Whole article",`,
+            `          "description": "Reads as a broad project overview; no single narrow problem and no measured before/after result.",`,
+            `          "fix": "Reframe around one specific problem and add at least one real measured number (cost, latency, or % change)."`,
+            `        }`,
+            `      ]`,
             `    }`,
             `  },`,
             `  "summary": "Brief paragraph summarising the review findings and overall quality assessment.",`,
@@ -158,11 +198,17 @@ export const QA_PERSONA_SYSTEM_PROMPT: SystemContentBlock[] = [
             ``,
             `## Scoring Rules`,
             ``,
-            `- **overallScore**: Weighted average of all 5 dimension scores`,
+            `- **overallScore**: Weighted average of all 6 dimension scores (Technical`,
+            `  Accuracy 30%, Specificity & Result 20%, SEO 15%, Content Quality 15%,`,
+            `  MDX Structure 10%, Metadata Quality 10%)`,
             `- **recommendation**:`,
             `  - \`"publish"\`: overallScore ≥ 75 AND no "error" severity issues`,
             `  - \`"revise"\`: overallScore 50–74 OR has "error" issues that are fixable`,
             `  - \`"reject"\`: overallScore < 50 OR fundamental structural problems`,
+            `  - **Specificity gate**: if Specificity & Result < 50 (a broad overview, or`,
+            `    no measured result at all), cap the recommendation at \`"revise"\` even`,
+            `    when overallScore ≥ 75. A technically-correct broad overview is not`,
+            `    publishable under the portfolio thesis — it must be narrowed first.`,
             `- **confidenceOverride**: Your independent assessment of the article's technical accuracy (0–100). This REPLACES the Writer agent's self-rated technicalConfidence.`,
             ``,
             `## Important`,

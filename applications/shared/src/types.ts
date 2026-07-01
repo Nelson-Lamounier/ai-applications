@@ -576,6 +576,8 @@ export interface QaValidationResult {
         readonly mdxStructure: DimensionResult;
         readonly metadataQuality: DimensionResult;
         readonly contentQuality: DimensionResult;
+        /** Narrow problem focus + a concrete measured result (2026 portfolio thesis). */
+        readonly specificityAndResult: DimensionResult;
     };
     /** Human-readable review summary */
     readonly summary: string;
