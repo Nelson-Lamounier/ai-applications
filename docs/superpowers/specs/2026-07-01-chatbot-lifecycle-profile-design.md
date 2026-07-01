@@ -178,20 +178,23 @@ Rationale: these are the dominant kubeadm/Calico/golden-AMI sources; the
 migration story they represented is captured structurally by the lifecycle
 field, so the raw retired code/resume no longer needs to be searchable.
 
-### 5. Purge already-embedded rows
+### 5. No purge — rely on ranking + temporal framing (revised)
 
-Exclusions stop future embedding but do not remove existing rows. Delete the
-stale rows for the excluded paths from `document_embeddings` for the affected
-repos (read-only-verified pattern; run as a bounded, parameterised DELETE via the
-admin-api pod -> PgBouncer, same access path used for the probe):
+The original bulk purge is **dropped**. A live count showed the excluded paths
+(`resume-data-esc.ts`, `sm-a/`) are only **43 rows** (27 + 8 + 8) of ~428 kubeadm
+chunks — the rest are legitimate files (bootstrap README "prior work",
+`kubeadm-init` tests, docs). The pipeline does **not** auto-prune
+(`RepoIngestionOrchestrator.ts:256`), so deletion is the only removal path — and
+deleting history contradicts the lifecycle-keeps-history principle.
 
-```
-DELETE FROM document_embeddings
- WHERE repo_full_name = ANY($1)
-   AND (file_path LIKE '%/resume-data-esc.ts' OR file_path LIKE '%/sm-a/%');
-```
-
-Scoped to `frontend-portfolio`, `tucaken-app`, `kubernetes-bootstrap`.
+Instead, the seeded/extracted `lifecycle` chunk (dense with EKS/migration terms)
+plus Layer 1 plus the temporal prompt rule should make EKS/lifecycle **rank
+first** for the cluster question; the kubeadm chunks remain as correctly-framed
+history. This is verified by a read-only retrieval probe (§7). No `document_embeddings`
+rows are deleted. Should the probe show kubeadm still dominating, the fallback is
+a profile-layer weight bump or a narrowly-scoped, explicitly-approved removal —
+never an unsupervised bulk delete. FileFilter exclusions (§4) still prevent
+*future* re-embedding of the retired paths for new/re-synced repos.
 
 ### 6. Re-ingest affected repos
 

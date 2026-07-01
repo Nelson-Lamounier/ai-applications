@@ -143,47 +143,50 @@ git commit -m "docs(seed): record Phase A lifecycle-chunk seed runbook"
 
 ---
 
-### Task 3: Purge the stale kubeadm/Calico/golden-AMI chunks for the owner
+### Task 3: Retrieval check — does EKS/lifecycle now win? (NON-destructive; no delete)
 
-**Files:**
-- Append to: `scripts/seed/lifecycle-chunk.md` (record the purge alongside the seed).
+The original purge is **removed**: it would delete only 43 rows (27 sm-a/ + 8 + 8
+resume) of ~428 kubeadm chunks — tiny and ineffective — the pipeline does not
+auto-prune (`RepoIngestionOrchestrator.ts:256`), and deleting history contradicts
+the lifecycle-keeps-history principle. Instead, verify whether the seeded
+lifecycle chunk + Layer 1 + temporal prompt already make EKS rank first. Delete
+nothing. If EKS does not win, STOP and report options for the owner to choose —
+do not delete on your own.
+
+**Files:** none (read-only).
 
 **Interfaces:**
-- Consumes: owner `1d4c645a-…`. Targets `document_embeddings` rows for retired paths so the lifecycle chunk is no longer out-competed.
+- Consumes: the seeded lifecycle chunk (Task 2), owner `1d4c645a-…`.
 
-- [ ] **Step 1: Dry-run — count the rows to be deleted (no mutation)**
+- [ ] **Step 1: Retrieval probe for the cluster question (read-only)**
+
+Query the cluster question through the profile + chunk retrieval for the owner
+and inspect the top-ranked passages. Run in the pod (read-only), embedding the
+query locally first (Titan, as in Task 2 Step 2) and passing the vector in:
 
 ```bash
+export PATH="$HOME/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/local/bin:$PATH" AWS_PROFILE=dev-account AWS_REGION=eu-west-1 KUBECONFIG=$HOME/.kube/config
+Q='How is your Kubernetes cluster set up?'
+node -e "const b=Buffer.from(JSON.stringify({inputText:process.env.Q,dimensions:1024,normalize:true})).toString('base64');process.stdout.write(b)" Q="$Q" > /tmp/q.b64
+aws bedrock-runtime invoke-model --model-id amazon.titan-embed-text-v2:0 --content-type application/json --accept application/json --body "$(cat /tmp/q.b64)" /tmp/q-emb.json >/dev/null
+node -e "require('fs').writeFileSync('/tmp/qvec.txt','['+JSON.parse(require('fs').readFileSync('/tmp/q-emb.json','utf8')).embedding.join(',')+']')"
 POD=$(kubectl --context eks-dev -n admin-api get pods -o name | head -1); POD=${POD#pod/}
-kubectl --context eks-dev -n admin-api exec "$POD" -- sh -c 'NODE_PATH=/app/node_modules node -e "const{Pool}=require(\"pg\");(async()=>{const p=new Pool({host:process.env.PG_HOST,port:+process.env.PG_PORT,database:process.env.PG_DATABASE,user:process.env.PG_USER,password:process.env.PG_PASSWORD});const r=await p.query(\"select repo_full_name, count(*) from document_embeddings where user_id=\x271d4c645a-447e-4b5b-924d-19a3c75a84db\x27 and (file_path like \x27%/resume-data-esc.ts\x27 or file_path like \x27%/sm-a/%\x27) group by repo_full_name order by 1\");console.log(JSON.stringify(r.rows,null,2));await p.end();})()"'
+cat /tmp/qvec.txt | kubectl --context eks-dev -n admin-api exec -i "$POD" -- sh -c 'cat > /tmp/qvec.txt && NODE_PATH=/app/node_modules node -e "const fs=require(\"fs\");const{Pool}=require(\"pg\");const v=fs.readFileSync(\"/tmp/qvec.txt\",\"utf8\").trim();const USER=\"1d4c645a-447e-4b5b-924d-19a3c75a84db\";(async()=>{const p=new Pool({host:process.env.PG_HOST,port:+process.env.PG_PORT,database:process.env.PG_DATABASE,user:process.env.PG_USER,password:process.env.PG_PASSWORD});await p.query(\"select set_config(\x27app.current_user_id\x27,\$1,true)\",[USER]);const prof=await p.query(\"select \x27profile\x27 src, chunk_type, left(content,90) c, 1-(embedding<=>\$1::vector) sim from repository_profile_embeddings where user_id=\$2::uuid order by embedding<=>\$1::vector limit 5\",[v,USER]);const chunk=await p.query(\"select \x27chunk\x27 src, file_path, left(content,90) c, 1-(embedding<=>\$1::vector) sim from document_embeddings where user_id=\$2::uuid order by embedding<=>\$1::vector limit 5\",[v,USER]);console.log(JSON.stringify({profile:prof.rows,chunk:chunk.rows},null,2));await p.end();})()"'
 ```
 
-Expected: rows for `frontend-portfolio` (resume), `tucaken-app` (resume), `kubernetes-bootstrap` (sm-a/…). Record the counts.
+Expected: the seeded `lifecycle` profile chunk appears at/near the top of the
+profile results, and the top chunk-layer results are EKS/README, not `sm-a/`
+kubeadm code.
 
-- [ ] **Step 2: Delete the rows (bounded, parameterised, RLS-scoped)**
+- [ ] **Step 2: Decide — pass or stop**
 
-```bash
-POD=$(kubectl --context eks-dev -n admin-api get pods -o name | head -1); POD=${POD#pod/}
-kubectl --context eks-dev -n admin-api exec "$POD" -- sh -c 'NODE_PATH=/app/node_modules node -e "const{Pool}=require(\"pg\");const USER=\"1d4c645a-447e-4b5b-924d-19a3c75a84db\";(async()=>{const p=new Pool({host:process.env.PG_HOST,port:+process.env.PG_PORT,database:process.env.PG_DATABASE,user:process.env.PG_USER,password:process.env.PG_PASSWORD});const c=await p.connect();try{await c.query(\"BEGIN\");await c.query(\"SELECT set_config(\x27app.current_user_id\x27,\$1,true)\",[USER]);const r=await c.query(\"DELETE FROM document_embeddings WHERE user_id=\$1::uuid AND (file_path LIKE \x27%/resume-data-esc.ts\x27 OR file_path LIKE \x27%/sm-a/%\x27)\",[USER]);await c.query(\"COMMIT\");console.log(\"deleted\",r.rowCount)}catch(e){await c.query(\"ROLLBACK\");console.log(\"ERR\",e.message);process.exit(1)}finally{c.release();await p.end();}})()"'
-```
+If EKS/lifecycle ranks at the top of the profile layer (it is heavily weighted
+in the final RRF merge): Phase A data work is **done** — record the top-5 and
+proceed to Task 4. Do NOT delete anything.
 
-Expected: `deleted <N>` where N equals the dry-run total.
-
-- [ ] **Step 3: Verify the kubeadm signal dropped**
-
-```bash
-POD=$(kubectl --context eks-dev -n admin-api get pods -o name | head -1); POD=${POD#pod/}
-kubectl --context eks-dev -n admin-api exec "$POD" -- sh -c 'NODE_PATH=/app/node_modules node -e "const{Pool}=require(\"pg\");(async()=>{const p=new Pool({host:process.env.PG_HOST,port:+process.env.PG_PORT,database:process.env.PG_DATABASE,user:process.env.PG_USER,password:process.env.PG_PASSWORD});const r=await p.query(\"select count(*) filter (where content ilike \x27%kubeadm%\x27) kubeadm, count(*) filter (where content ilike \x27%golden ami%\x27) golden from document_embeddings where user_id=\x271d4c645a-447e-4b5b-924d-19a3c75a84db\x27\");console.log(JSON.stringify(r.rows[0]));await p.end();})()"'
-```
-
-Expected: `kubeadm` and `golden` counts sharply lower than the pre-purge baseline (428 / 112).
-
-- [ ] **Step 4: Commit the purge record**
-
-```bash
-git add scripts/seed/lifecycle-chunk.md
-git commit -m "docs(seed): record Phase A stale-chunk purge (owner scope)"
-```
+If kubeadm chunks still dominate: **STOP and report** to the owner with the
+ranked evidence and options (e.g. raise the profile-layer weight, or a narrowly
+targeted removal they explicitly approve). Do not mutate data without approval.
 
 ---
 
