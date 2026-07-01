@@ -3,8 +3,9 @@
  * Writer Agent — JSON safety-net validation tests.
  *
  * Writer keeps extended thinking (no forced tool_use), so its structured
- * metadata is guarded by a strict Zod safety-net that fails fast instead
- * of papering over malformed output with placeholder defaults.
+ * metadata is guarded by a Zod safety-net that enforces required fields and
+ * types but STRIPS unknown keys (rather than rejecting them) — a stray key
+ * must not discard an already-paid-for generation.
  */
 
 import type { parseWriterResponse as ParseWriterResponseFn } from './writer-agent.js';
@@ -45,10 +46,21 @@ describe('parseWriterResponse safety-net', () => {
         expect(() => parseWriterResponse(JSON.stringify(broken))).toThrow(/schema validation/i);
     });
 
-    it('throws fast when the model injects an unknown metadata field', () => {
+    it('strips an unknown metadata field instead of failing the run', () => {
         const inj = JSON.parse(VALID);
         inj.metadata.injected = 'nope';
-        expect(() => parseWriterResponse(JSON.stringify(inj))).toThrow(/schema validation/i);
+        const r = parseWriterResponse(JSON.stringify(inj));
+        expect('injected' in r.metadata).toBe(false);
+        expect(r.metadata.title).toBe('Scaling EKS');
+    });
+
+    it('strips the stray `author` key the model echoes from the frontmatter (regression)', () => {
+        const withAuthor = JSON.parse(VALID);
+        withAuthor.metadata.author = 'Nelson Lamounier';
+        const r = parseWriterResponse(JSON.stringify(withAuthor));
+        expect('author' in r.metadata).toBe(false);
+        expect(r.metadata.title).toBe('Scaling EKS');
+        expect(r.metadata.tags).toEqual(['aws', 'kubernetes']);
     });
 
     it('still throws on empty content (prose guard preserved)', () => {
