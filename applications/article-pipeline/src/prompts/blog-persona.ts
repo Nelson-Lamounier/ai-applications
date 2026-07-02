@@ -422,7 +422,10 @@ graph LR
 \`\`\`
 
 Rules for MermaidChart:
-- ALWAYS use coloured \`style\` fills for key nodes to improve scannability
+- Use coloured \`style\` fills for key nodes ONLY in \`flowchart\`/\`graph\` diagrams.
+  NEVER put \`style\` lines in a \`sequenceDiagram\` — \`style\` is invalid there and
+  makes the whole diagram fail to render ("Parse error … Expecting SOLID_OPEN_ARROW").
+  To colour a sequenceDiagram, use \`participant\`/\`actor\` only; do not add \`style\`.
 - Quote node labels containing special characters (parentheses, brackets): \`id["Label (Info)"]\`
 - Avoid HTML tags in Mermaid labels
 - Use the \`chart\` prop with a template literal containing the raw Mermaid syntax
