@@ -144,6 +144,13 @@ jest.mock('../agents/evidence-adjudicator.js', () => ({
 const groundingVerifyMock = jest.fn<() => Promise<unknown>>().mockResolvedValue({
     status: 'GROUNDED', reason: '', ungroundedClaims: [], answer: 'ok',
 });
+// stop-slop prose linter stub — keep the run hermetic (no Bedrock call).
+const proseLintMock = jest.fn<() => Promise<unknown>>().mockResolvedValue({
+    status: 'PASS',
+    score: { directness: 8, rhythm: 8, trust: 8, authenticity: 8, density: 8, total: 40 },
+    belowThreshold: false,
+    issues: [],
+});
 const emitEmfMetricMock = jest.fn<() => void>();
 
 // Observability stubs — avoid real Prometheus setup in tests.
@@ -160,6 +167,9 @@ jest.mock('@bedrock/shared', () => {
         })),
         BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
             verify: groundingVerifyMock,
+        })),
+        BedrockProseLinter: jest.fn().mockImplementation(() => ({
+            lint: proseLintMock,
         })),
         emitEmfMetric: emitEmfMetricMock,
         bootstrapK8sObservability: jest.fn().mockReturnValue({
@@ -362,6 +372,9 @@ async function runPipelineWithMocks(opts: {
             })),
             BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
                 verify: verifyFn,
+            })),
+            BedrockProseLinter: jest.fn().mockImplementation(() => ({
+                lint: proseLintMock,
             })),
             emitEmfMetric: localEmit,
             bootstrapK8sObservability: jest.fn().mockReturnValue({

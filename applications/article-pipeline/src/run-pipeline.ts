@@ -9,8 +9,8 @@
  * On QA pass the rendered draft is persisted to platform RDS articles.status =
  * 'review'. The admin-api owns the eventual transition to 'published'.
  */
-import type { PipelineContext, QaValidationResult } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
+import type { PipelineContext, QaValidationResult, ProseQualityResult } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, BedrockProseLinter, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 
@@ -29,6 +29,9 @@ import {
 
 const piiScrubber = new PiiScrubber();
 const groundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
+// stop-slop prose critic (flag mode): scores the article body for AI-tell
+// language, never mutates content, fails open.
+const proseLinter = new BedrockProseLinter({ mode: 'flag' });
 // Decides the KB-dependent lint findings (enumerated generalisations, dangling
 // caveats, title claims) against the retrieved KB. Fail-safe: DEFECT on doubt.
 const evidenceAdjudicator = new BedrockEvidenceAdjudicator();
@@ -74,6 +77,7 @@ function buildRunMetadata(
     qa: QaValidationResult,
     groundingMeta: object | undefined,
     lintMeta: object | undefined,
+    proseMeta: object | undefined,
     evidenceMeta: object | undefined,
 ): Record<string, unknown> {
     const issues = Object.entries(qa.dimensions).flatMap(([dimension, dim]) =>
@@ -97,10 +101,47 @@ function buildRunMetadata(
     if (lintMeta !== undefined) {
         meta['lint'] = lintMeta;
     }
+    if (proseMeta !== undefined) {
+        meta['prose'] = proseMeta;
+    }
     if (evidenceMeta !== undefined) {
         meta['evidence'] = evidenceMeta;
     }
     return meta;
+}
+
+/**
+ * Prose-quality (stop-slop) lint of the article body — flag mode, fail-open.
+ * Scores the scrubbed content for AI-tell language; never blocks the run and
+ * never mutates content. Returns the verdict slice for pipeline_runs.metadata.
+ */
+async function lintArticleProse(
+    pool: Pool,
+    env: ReturnType<typeof parseEnv>,
+    scrubbedContent: string,
+): Promise<Pick<ProseQualityResult, 'status' | 'score' | 'belowThreshold' | 'issues'> | undefined> {
+    try {
+        const p = await proseLinter.lint({
+            sections: [{ location: 'article.content', register: 'narrative', text: scrubbedContent }],
+            stage:    'review',
+        }, env.userId ? { pool, userId: env.userId } : undefined);
+        if (p.status === 'FAIL') {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                slug:          env.slug,
+                proseScore:    p.score,
+                proseIssues:   p.issues,
+            }, 'article_prose_below_threshold');
+        }
+        return { status: p.status, score: p.score, belowThreshold: p.belowThreshold, issues: [...p.issues] };
+    } catch (e) {
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            error:         (e as Error).message,
+        }, 'Prose linter failed — proceeding');
+        return undefined;
+    }
 }
 
 type ResearchData = Awaited<ReturnType<typeof executeResearchAgent>>['data'];
@@ -300,6 +341,7 @@ async function main(): Promise<void> {
         const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
         const lintMeta = await lintArticleStructure(env, writer.data.metadata.title, scrubbedContent);
         const groundingMeta = await verifyArticleGrounding(pool, env, research.data, scrubbedContent);
+        const proseMeta = await lintArticleProse(pool, env, scrubbedContent);
         // Evidence adjudication decides the KB-dependent lint findings against the KB.
         const evidenceMeta = await adjudicateArticleEvidence(
             pool, env, lintMeta?.findings ?? [], research.data, scrubbedContent,
@@ -323,7 +365,7 @@ async function main(): Promise<void> {
         await updatePipelineRunMetadata(
             pool,
             env.pipelineRunId,
-            buildRunMetadata(qa.data, groundingMeta, lintMeta, evidenceMeta),
+            buildRunMetadata(qa.data, groundingMeta, lintMeta, proseMeta, evidenceMeta),
         );
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
