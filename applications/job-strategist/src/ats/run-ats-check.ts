@@ -101,6 +101,15 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
                 s3: a.s3, pool: a.pool, bucket: a.bucket,
                 resumeId: a.resumeId, userId: a.userId, pdf, check,
             });
+        } else {
+            // No bucket → the PDF was rendered and parse-checked but cannot be
+            // stored, so pdf_s3_key stays NULL and the user gets no canonical PDF.
+            // This used to be a silent no-op that hid a missing ASSETS_BUCKET in
+            // the dispatched Job env; warn loudly so it can never regress invisibly.
+            a.log.warn(
+                { correlationId: a.correlationId, resumeId: a.resumeId },
+                'ATS store skipped: ASSETS_BUCKET unset — canonical PDF not persisted (pdf_s3_key stays NULL)',
+            );
         }
         a.log.info(
             { correlationId: a.correlationId, resumeId: a.resumeId, atsStatus: check.status, atsIssues: check.issues.length },
