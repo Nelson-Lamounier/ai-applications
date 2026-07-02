@@ -16,6 +16,7 @@ import {
   checkLinkShape,
   checkIdentifierLeaks,
   checkEnumeratedGeneralisations,
+  checkHeadingExpressions,
 } from './article-lint-rules.js';
 
 describe('title-coverage (the Golden Path bug)', () => {
@@ -149,5 +150,29 @@ describe('enumerated generalisations (PDB/cert-manager claim)', () => {
     const f = checkEnumeratedGeneralisations(src);
     expect(f.length).toBeGreaterThan(0);
     expect(f[0].message).toContain('per-member KB evidence');
+  });
+});
+
+describe('heading JSX-expression (the acorn-500 render break)', () => {
+  it('flags {#anchor} heading ids as an error', () => {
+    const src = '## The Problem: Hallucination {#the-problem}\n\nbody';
+    const f = checkHeadingExpressions(src);
+    expect(f).toHaveLength(1);
+    expect(f[0].severity).toBe('error');
+    expect(f[0].rule).toBe('heading-jsx-expression');
+    expect(f[0].line).toBe(1);
+  });
+
+  it('ignores clean headings and prose/code braces', () => {
+    const src = [
+      '## A Clean Heading',
+      '',
+      'Prose with `toolChoice: { tool: { name: "x" } }` inline.',
+      '',
+      '```bash',
+      '# not a heading {inside a fence}',
+      '```',
+    ].join('\n');
+    expect(checkHeadingExpressions(src)).toHaveLength(0);
   });
 });
