@@ -10,6 +10,7 @@ import {
     log, emitEmfMetric, withSpan, captureAwsClient,
     InputSanitiser, OutputSanitiser,
     CHATBOT_SYSTEM_PROMPT, buildChatContext, recordZeroResultRetrieval,
+    resolvePortfolioOwnerId,
 } from '@bedrock/shared';
 import { getEnv } from './env.js';
 import { multiQueryRetrieve } from './retrieval.js';
@@ -43,6 +44,15 @@ function getPool(): Pool {
         max:      5,
     });
     return pool;
+}
+
+// Resolve the portfolio owner from the DB (portfolio_owner_id() fn, migration
+// 114) with the env as fail-safe fallback. Cached per warm container — the owner
+// is global and effectively immutable, so this costs one query per cold start.
+let ownerIdPromise: Promise<string> | undefined;
+function getOwnerId(fallback: string): Promise<string> {
+    ownerIdPromise ??= resolvePortfolioOwnerId(getPool(), fallback);
+    return ownerIdPromise;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -136,7 +146,8 @@ export const handler = withSpan('chatbot-public.handler', async (
         let rawResponse: string;
 
         if (CHATBOT_RETRIEVAL_SOURCE() === 'rds-pgvector') {
-            const passages     = await multiQueryRetrieve(env.portfolioOwnerUserId, inputCheck.sanitised, getPool());
+            const ownerId      = await getOwnerId(env.portfolioOwnerUserId);
+            const passages     = await multiQueryRetrieve(ownerId, inputCheck.sanitised, getPool());
             if (passages.length === 0) {
                 recordZeroResultRetrieval({
                     namespace: EMF_NAMESPACE, appLabel: 'chatbot-public',
@@ -147,7 +158,7 @@ export const handler = withSpan('chatbot-public.handler', async (
             const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
             rawResponse        = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised, {
                 pool:   getPool(),
-                userId: env.portfolioOwnerUserId,
+                userId: ownerId,
             });
         } else {
             const agentCmd = new InvokeAgentCommand({

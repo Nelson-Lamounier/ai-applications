@@ -169,3 +169,5 @@ export { OntologyReviewQueueRepository }    from './implementations/OntologyRevi
 export type { OntologyReviewQueueInput }    from './implementations/OntologyReviewQueueRepository.js';
 export { OntologySkippedImportRepository }  from './implementations/OntologySkippedImportRepository.js';
 export type { OntologySkippedImportInput }  from './implementations/OntologySkippedImportRepository.js';
+
+export { resolvePortfolioOwnerId } from './portfolioOwner.js';
