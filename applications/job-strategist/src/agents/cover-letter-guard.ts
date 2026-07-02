@@ -18,6 +18,11 @@ const GAP_PATTERNS: ReadonlyArray<RegExp> = [
     /while I (?:do not|have not|don['’]t|haven['’]t|lack)\b/i,
 ];
 const UNREALISED = /pending (?:security )?review|not yet (?:shipped|deployed|in production)|once (?:approved|shipped)/i;
+// Third-person self-reference — a cover letter speaks as "I". The strategist's
+// internal artifacts (yearsGap.framingLine, fit summaries) are authored in
+// third person ("this candidate brings…") and have leaked verbatim into
+// letters. Any candidate self-reference in third person is a violation.
+const THIRD_PERSON_SELF = /\b(?:this|the)\s+candidate(?:['’]s)?\b/i;
 // Forward-looking skill-acquisition claim — the candidate states they are
 // learning/onboarding a skill they lack (e.g. "actively beginning Azure
 // onboarding"). Two-part check: an intent adverb must appear within 40 chars
@@ -86,6 +91,7 @@ export function validateCoverLetter(letter: CoverLetter, targetRole: string, lea
         if (re.test(text)) { out.push({ code: 'names_gap', detail: `Matched self-rejection/arguing pattern: ${re}` }); break; }
     }
     if (hasForwardLookingSkillClaim(text)) out.push({ code: 'forward_looking_skill_claim', detail: 'Claims to be actively learning/onboarding a skill — omit unevidenced forward-looking acquisition; use grounded transferable framing instead.' });
+    if (THIRD_PERSON_SELF.test(text)) out.push({ code: 'third_person_voice', detail: 'Letter refers to "this candidate"/"the candidate" — cover letters speak in first person; rewrite the sentence as "I…" with the same facts.' });
     if (UNREALISED.test(text)) out.push({ code: 'unrealised_impact', detail: 'Claims not-yet-realised impact.' });
     if (MARKDOWN.test(text))   out.push({ code: 'has_markdown', detail: 'Agent emitted markdown formatting — the UI/PDF owns formatting; output must be plain text.' });
     if (hasLongSentence(letter.paragraphs)) {
@@ -145,7 +151,8 @@ export async function rewriteCoverLetter(
         'Rules:',
         `- Name the position EXACTLY as "${ctx.targetRole}" — never as "${ctx.leadIdentity}" or a team name.`,
         '- Remove every sentence that names, apologises for, or argues against a gap or missing experience. Delete them, do not replace.',
-        ctx.yearsGapFraming ? `- Where tenure is mentioned, use this true framing instead: "${ctx.yearsGapFraming}".` : '- Do not state a single-role tenure that undersells the candidate.',
+        '- The letter speaks in FIRST PERSON. Rewrite any sentence that says "this candidate" or "the candidate" as an "I…" sentence carrying the same facts. Never copy internal framing text verbatim.',
+        ctx.yearsGapFraming ? `- Where tenure is mentioned, restate this true framing in first person, paraphrased in the letter's own voice (never verbatim): "${ctx.yearsGapFraming}".` : '- Do not state a single-role tenure that undersells the candidate.',
         '- Remove claims of not-yet-realised impact (e.g. "pending review").',
         '- Split any sentence longer than ~40 words into shorter sentences; prefer a full stop or comma over an em-dash.',
         '- Ensure the greeting ends with a comma (e.g. "Dear Hiring Manager,").',
@@ -175,7 +182,29 @@ export async function rewriteCoverLetter(
     }
 }
 
-/** Validate → rewrite on violation → return. Never throws. */
+/**
+ * Deterministic backstop for the first-person rule: when the Haiku rewrite
+ * fails (fail-open) or leaves third-person self-references behind, DELETE the
+ * offending sentences rather than attempt a mechanical pronoun swap — the
+ * guard's contract for unfixable content is cut, not mangle.
+ */
+export function stripThirdPersonSentences(letter: CoverLetter): { letter: CoverLetter; stripped: boolean } {
+    let stripped = false;
+    const paragraphs = letter.paragraphs
+        .map((p) => {
+            const kept = p.split(/(?<=[.!?])\s+/).filter((s) => {
+                const hit = THIRD_PERSON_SELF.test(s);
+                if (hit) stripped = true;
+                return !hit;
+            });
+            return kept.join(' ').trim();
+        })
+        .filter((p) => p.length > 0);
+    if (!stripped) return { letter, stripped };
+    return { letter: { ...letter, paragraphs }, stripped };
+}
+
+/** Validate → rewrite on violation → deterministic voice backstop → return. Never throws. */
 export async function guardCoverLetter(
     letter: CoverLetter | null,
     targetRole: string,
@@ -186,5 +215,7 @@ export async function guardCoverLetter(
     const violations = validateCoverLetter(letter, targetRole, leadIdentity);
     if (violations.length === 0) return { letter: stripEmDashes(letter), violations };
     const fixed = await rewriteCoverLetter(letter, violations, { targetRole, leadIdentity, yearsGapFraming });
-    return { letter: stripEmDashes(fixed), violations };
+    const { letter: voiced, stripped } = stripThirdPersonSentences(fixed);
+    if (stripped) violations.push({ code: 'third_person_stripped', detail: 'Rewrite left third-person self-references — offending sentences deleted deterministically.' });
+    return { letter: stripEmDashes(voiced), violations };
 }

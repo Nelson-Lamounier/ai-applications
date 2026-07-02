@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import { validateCoverLetter, guardCoverLetter, type CoverLetter } from './cover-letter-guard.js';
+import { validateCoverLetter, guardCoverLetter, stripThirdPersonSentences, type CoverLetter } from './cover-letter-guard.js';
 
 /** Wrap a body string in a structured CoverLetter for the content checks. */
 const cl = (body: string): CoverLetter => ({
@@ -127,5 +127,43 @@ describe('guardCoverLetter', () => {
         expect(r.violations).toEqual([]);
         expect(mockRun).not.toHaveBeenCalled();
         expect(r.letter?.paragraphs[0]).toBe('I build production AI support, the biggest win. The AI Support Engineer role at OpenAI fits.');
+    });
+});
+
+describe('third-person voice (framingLine leakage)', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('flags "this candidate" phrasing as third_person_voice', () => {
+        const letter = clObj(['Across support roles, this candidate brings approximately 5 years of experience. The AI Support Engineer role fits.']);
+        const v = validateCoverLetter(letter, 'AI Support Engineer', '');
+        expect(v.map((x) => x.code)).toContain('third_person_voice');
+    });
+
+    it("flags the possessive \"the candidate's\" form", () => {
+        const letter = clObj(["The candidate's AWS depth is strong. The AI Support Engineer role fits."]);
+        const v = validateCoverLetter(letter, 'AI Support Engineer', '');
+        expect(v.map((x) => x.code)).toContain('third_person_voice');
+    });
+
+    it('does not flag first-person tenure framing', () => {
+        const letter = clObj(['I bring approximately 5 years across support and cloud infrastructure. The AI Support Engineer role fits.']);
+        const v = validateCoverLetter(letter, 'AI Support Engineer', '');
+        expect(v.map((x) => x.code)).not.toContain('third_person_voice');
+    });
+
+    it('stripThirdPersonSentences deletes only the offending sentence', () => {
+        const letter = clObj(['This candidate brings 5 years of experience. I built the production RAG pipeline end-to-end.']);
+        const { letter: out, stripped } = stripThirdPersonSentences(letter);
+        expect(stripped).toBe(true);
+        expect(out.paragraphs[0]).toBe('I built the production RAG pipeline end-to-end.');
+    });
+
+    it('guardCoverLetter deterministically strips third-person left behind by the rewrite', async () => {
+        const stillBad = clObj(['This candidate brings 5 years of experience. I fit the AI Support Engineer role.']);
+        mockRun.mockResolvedValue({ data: stillBad });
+        const bad = clObj(['Across roles, this candidate brings 5 years. I fit the AI Support Engineer role.']);
+        const r = await guardCoverLetter(bad, 'AI Support Engineer', '', '5 years across support');
+        expect(r.violations.map((v) => v.code)).toEqual(expect.arrayContaining(['third_person_voice', 'third_person_stripped']));
+        expect(r.letter?.paragraphs.join(' ')).not.toMatch(/this candidate/i);
     });
 });

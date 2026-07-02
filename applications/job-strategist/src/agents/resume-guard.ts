@@ -93,6 +93,151 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
     return out;
 }
 
+// =============================================================================
+// SCOPED-CLAIM ENFORCEMENT (deterministic)
+// =============================================================================
+
+/**
+ * Evidence metrics that carry a mandatory scope qualifier. A claim using the
+ * metric WITHOUT its qualifier overstates scope (the exact failure the
+ * anti-fabrication positioning exists to prevent). Enforcement is section-
+ * aware: sections that allow qualifiers get the qualifier appended; sections
+ * where qualifiers are banned (summary, skills, projects) lose the metric.
+ */
+export interface ScopedClaim {
+    /** Topic words that identify the claim in prose (with metricCore in the same string). */
+    readonly context: RegExp;
+    /** The metric's numeric core (e.g. inside a parenthetical). */
+    readonly metricCore: RegExp;
+    /** Present ⇒ the claim is properly scoped. */
+    readonly qualifier: RegExp;
+    /** Text appended when qualifying is allowed. */
+    readonly qualifierText: string;
+    readonly label: string;
+}
+
+export const SCOPED_CLAIMS: readonly ScopedClaim[] = [
+    {
+        context:       /cach\w*|prompt/i,
+        metricCore:    /~?\s*90\s*%/,
+        qualifier:     /writer\s+lambda/i,
+        qualifierText: '(Writer Lambda)',
+        label:         'prompt-cache cost reduction',
+    },
+];
+
+function isUnqualified(text: string, claim: ScopedClaim): boolean {
+    return claim.metricCore.test(text) && claim.context.test(text) && !claim.qualifier.test(text);
+}
+
+/** Append the scope qualifier to the sentence carrying the metric. */
+function qualifyClaim(text: string, claim: ScopedClaim): string {
+    return text
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => {
+            if (!isUnqualified(s, claim)) return s;
+            const trimmed = s.replace(/([.!?])$/, '');
+            const punct = s.endsWith(trimmed) ? '' : s.slice(trimmed.length);
+            return `${trimmed} ${claim.qualifierText}${punct}`;
+        })
+        .join(' ');
+}
+
+/**
+ * Remove an unqualified scoped metric from prose: first drop a parenthetical
+ * carrying it, then (if it survives outside parentheses) drop the sentence.
+ */
+function stripClaimFromProse(text: string, claim: ScopedClaim): string {
+    const withoutParen = text.replace(/\s*\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
+    if (!isUnqualified(withoutParen, claim)) return withoutParen.trim();
+    return withoutParen
+        .split(/(?<=[.!?])\s+/)
+        .filter((s) => !isUnqualified(s, claim))
+        .join(' ')
+        .trim();
+}
+
+function enforceClaimOnSkills(resume: StructuredResumeData, claim: ScopedClaim): StructuredResumeData {
+    if (!Array.isArray(resume.skills)) return resume;
+    const skills = resume.skills.map((group) => ({
+        ...group,
+        skills: (group.skills ?? [])
+            .map((s) => (isUnqualified(s, claim) ? stripClaimFromProse(s, claim) : s))
+            .filter((s) => s.length > 0 && !isUnqualified(s, claim)),
+    }));
+    return { ...resume, skills };
+}
+
+function enforceClaimOnHighlights(resume: StructuredResumeData, claim: ScopedClaim): StructuredResumeData {
+    if (!Array.isArray(resume.experience)) return resume;
+    const experience = resume.experience.map((e) => ({
+        ...e,
+        highlights: (e.highlights ?? []).map((h) => (isUnqualified(h, claim) ? qualifyClaim(h, claim) : h)),
+    }));
+    const keyAchievements = Array.isArray(resume.keyAchievements)
+        ? resume.keyAchievements.map((k) => (
+            typeof k.achievement === 'string' && isUnqualified(k.achievement, claim)
+                ? { ...k, achievement: qualifyClaim(k.achievement, claim) }
+                : k))
+        : resume.keyAchievements;
+    return { ...resume, experience, keyAchievements };
+}
+
+function enforceClaimOnProse(resume: StructuredResumeData, claim: ScopedClaim): StructuredResumeData {
+    const summary = typeof resume.summary === 'string' && isUnqualified(resume.summary, claim)
+        ? stripClaimFromProse(resume.summary, claim)
+        : resume.summary;
+    const projects = Array.isArray(resume.projects)
+        ? resume.projects.map((p) => (
+            typeof p.description === 'string' && isUnqualified(p.description, claim)
+                ? { ...p, description: stripClaimFromProse(p.description, claim) }
+                : p))
+        : resume.projects;
+    return { ...resume, summary, projects };
+}
+
+/**
+ * There is NO separate Key Achievements section on the resume — achievement
+ * material integrates into experience lead bullets and the summary metric
+ * (prompt rule). When the model emits the section anyway, drop it and scrub
+ * `sectionOrder`; the violation code keeps the event observable.
+ */
+export function dropKeyAchievementsSection(resume: StructuredResumeData): { resume: StructuredResumeData; violations: ResumeViolation[] } {
+    const emitted = Array.isArray(resume.keyAchievements) && resume.keyAchievements.length > 0;
+    const inOrder = Array.isArray(resume.sectionOrder) && resume.sectionOrder.includes('keyAchievements');
+    if (!emitted && !inOrder) return { resume, violations: [] };
+    const out: StructuredResumeData = {
+        ...resume,
+        keyAchievements: [],
+        ...(Array.isArray(resume.sectionOrder)
+            ? { sectionOrder: resume.sectionOrder.filter((k) => k !== 'keyAchievements') }
+            : {}),
+    };
+    return {
+        resume: out,
+        violations: [{ code: 'key_achievements_emitted', detail: 'Strategist emitted a keyAchievements section — dropped; achievement material must be integrated into experience bullets and the summary metric.' }],
+    };
+}
+
+/**
+ * Deterministic, always-on pass: qualify scoped metrics where qualifiers are
+ * allowed (experience highlights, key achievements), strip them where
+ * qualifiers are banned (summary, skills, projects). Emits one violation per
+ * claim that needed enforcement so the fix is observable.
+ */
+export function enforceScopedClaims(resume: StructuredResumeData): { resume: StructuredResumeData; violations: ResumeViolation[] } {
+    let out = resume;
+    const violations: ResumeViolation[] = [];
+    for (const claim of SCOPED_CLAIMS) {
+        const before = JSON.stringify(out);
+        out = enforceClaimOnProse(enforceClaimOnSkills(enforceClaimOnHighlights(out, claim), claim), claim);
+        if (JSON.stringify(out) !== before) {
+            violations.push({ code: 'scoped_claim_unqualified', detail: `"${claim.label}" appeared without its scope qualifier — qualified in experience/achievements, removed from summary/skills/projects.` });
+        }
+    }
+    return { resume: out, violations };
+}
+
 /** Normalize em-dashes in all prose fields of a StructuredResumeData. Defensive +
  *  shape-preserving: only transforms fields that are actually present (the guard is
  *  fail-open infra — never throw on a resume missing an optional array). */
@@ -174,13 +319,16 @@ export async function rewriteResume(
     }
 }
 
-/** Validate → rewrite on violation → return. Never throws. */
+/** Validate → rewrite on violation → deterministic scoped-claim + section passes → return. Never throws. */
 export async function guardResume(
     resume: StructuredResumeData,
     ctx: ResumeGuardCtx,
 ): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
     const violations = validateResume(resume, ctx);
-    if (violations.length === 0) return { resume: stripEmDashes(resume), violations };
-    const fixed = await rewriteResume(resume, violations, ctx);
-    return { resume: stripEmDashes(fixed), violations };
+    const rewritten = violations.length === 0 ? resume : await rewriteResume(resume, violations, ctx);
+    const scoped = enforceScopedClaims(rewritten);
+    violations.push(...scoped.violations);
+    const sectioned = dropKeyAchievementsSection(scoped.resume);
+    violations.push(...sectioned.violations);
+    return { resume: stripEmDashes(sectioned.resume), violations };
 }

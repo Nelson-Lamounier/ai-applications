@@ -118,8 +118,10 @@ The Professional Summary must only contain concepts that either:
 The professional summary's FIRST sentence MUST echo the SELECTED ARCHETYPE's lead identity (the same positioning the headline + cover letter share) and lead with the candidate's strongest CAPABILITY / differentiator — NEVER a claimed job title. For a support / customer-engineering archetype, lead with the support-and-AI differentiator (e.g. "Builds production AI systems and applies the same root-cause methodology to customer escalations…"), NEVER an infrastructure-first identity ("Cloud infrastructure engineer…") and NEVER a title-first opener ("Support engineer with…"). Then the strongest number, then the AI/portfolio hook, then the cert. When a YEARS GAP FRAMING line is provided, the opener uses its (corrected) year count; never state a single-role tenure that undersells.
 Rules: NEVER open with the certification name. Action-first, not title-first.
 
-**kubeadm differentiator for TSE / Kubernetes roles, MUST articulate the WHY:**
-> "kubeadm exposes control plane internals, etcd, kube-apiserver, kubelet, Calico CNI, that managed Kubernetes services abstract away. That is the layer that breaks in production customer escalations."
+**kubeadm differentiator for TSE / Kubernetes roles, MUST articulate the WHY (as history, not present):**
+> "Built the cluster with kubeadm first — control plane internals, etcd, kube-apiserver, kubelet, Calico CNI, the layer managed Kubernetes abstracts away and the layer that breaks in production customer escalations — then migrated it to managed EKS."
+
+Always pair kubeadm with the EKS migration; never present kubeadm as the current platform.
 
 **Use the managed service name from the JD, never hardcode one:**
 | JD mentions | Managed service to name |
@@ -187,7 +189,7 @@ Technical Support / Customer Engineering roles:
 - 4 Bedrock AI applications
 - 265+ CDK test assertions
 - 22+ GitHub Actions workflows
-- ~90% prompt cache cost reduction (Writer Lambda only, scoped qualifier required)
+- ~90% prompt cache cost reduction (Writer Lambda only — the "Writer Lambda" scope qualifier is MANDATORY wherever this number appears; a section that bans qualifiers (summary, skills, projects) must OMIT the number entirely, never publish it unscoped)
 - DORA metrics (lead time, TTSR, CFR): DO NOT use until real measured values exist. Omit entirely if no concrete value is confirmed.
 
 ## Step-by-Step: Key Projects
@@ -281,7 +283,7 @@ These are absolute, not suggestions:
 4. **NEVER claim Terraform experience**, CDK only. Say "AWS CDK TypeScript (equivalent IaC capability)" if asked.
 5. **NEVER say "enterprise-scale" or "100+ node clusters"**, dual-pool cluster, max 6 nodes.
 6. **NEVER say "SLO-based error budgets" or "burn-rate alerts"**, threshold-based alerting only.
-7. **NEVER claim EKS/GKE/AKS**, say "evaluated managed K8s, chose kubeadm for full-stack learning depth."
+7. **NEVER claim GKE/AKS** (never used). **EKS IS current and claimable** — the platform runs on managed EKS today (code stack authoritative: aws-eks, Karpenter, Pod Identity). kubeadm appears ONLY as the migration narrative ("built self-managed Kubernetes via kubeadm, migrated it to managed EKS"), never as the current platform. A Skills section naming Kubernetes MUST name EKS as current.
 8. **NEVER claim fine-tuning or RLHF**, Bedrock API only, no model training.
 9. **NEVER claim Commander.js CLI**, justfile task runner + TypeScript scripts.
 10. **ALWAYS add scope qualifier in experience bullets**, "solo-operated" or "self-managed". BANNED in Professional Summary AND Skills section.
@@ -293,7 +295,8 @@ These are absolute, not suggestions:
 | Concept | Status |
 |---|---|
 | Self-healing workloads (ArgoCD) | STRONG |
-| Kubernetes internals (kubeadm) | STRONG |
+| Managed EKS (Pod Identity, Karpenter autoscaling) — CURRENT platform | STRONG |
+| Kubernetes internals (kubeadm — historical: built, then migrated to EKS) | STRONG |
 | GitOps delivery (ArgoCD App-of-Apps, 25 apps) | STRONG |
 | CI/CD pipeline design (22+ workflows) | STRONG |
 | Three-pillar observability (Prometheus/Loki/Tempo) | STRONG |
@@ -339,7 +342,7 @@ What is NOT in the portfolio and why. Overclaiming on any of these points risks 
 
 Do NOT claim these:
 
-- **EKS / GKE / AKS**, deliberate choice to use kubeadm for learning depth
+- **GKE / AKS**, never used. (EKS WAS built — it is the current platform after the kubeadm migration; claim it as current, never as "not built".)
 - **Terraform**, CDK only; can say "familiar with Terraform concepts, implemented IaC via CDK"
 - **Helm chart authoring from scratch**, used existing charts; "configured and customised third-party Helm charts"
 - **Service mesh (Istio, Linkerd)**, Traefik v3 provides L7 ingress. NEVER use "service mesh". Use "Traefik v3 ingress and cross-namespace routing" instead. No mTLS between pods.
@@ -629,11 +632,12 @@ Canonical achievement statements grounded in implementation evidence. Preserve s
 
 ### Kubernetes / TSE / SRE / Container Operations
 \`\`\`
-Self-hosted Kubernetes cluster via kubeadm on AWS EC2, bootstrapped control plane
-from scratch, configured Calico CNI for pod networking with namespace-level
-NetworkPolicies, ArgoCD App-of-Apps GitOps delivery (25 applications) with
+Built self-managed Kubernetes via kubeadm on AWS EC2 (control plane from scratch,
+Calico CNI pod networking with namespace-level NetworkPolicies, etcd and PKI backup
+to S3), then migrated the platform to managed EKS (Pod Identity, Karpenter
+autoscaling); ArgoCD App-of-Apps GitOps delivery (25 applications) with
 self-healing and drift correction, Traefik v3 ingress with cross-namespace routing
-and middleware chains, etcd and PKI backup to S3 with ~5–8 min control-plane RTO.
+and middleware chains.
 \`\`\`
 
 ### Platform / Infrastructure / IaC
