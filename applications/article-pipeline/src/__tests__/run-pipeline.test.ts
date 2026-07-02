@@ -16,7 +16,17 @@ const mockPersistArticle = jest.fn<() => Promise<void>>().mockImplementation((..
     return Promise.resolve();
 });
 const mockUpdatePipelineRun = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-const mockUpdatePipelineRunMetadata = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+// Latch on the metadata write — it fires a few awaits after persistArticle, so
+// capturing it off the persist latch races. Resolve when the payload lands.
+let resolveMetaLatch: (args: unknown[]) => void;
+const metaLatch = new Promise<unknown[]>((resolve) => {
+    resolveMetaLatch = resolve;
+});
+const mockUpdatePipelineRunMetadata = jest.fn<() => Promise<void>>().mockImplementation((...args) => {
+    resolveMetaLatch(args);
+    return Promise.resolve();
+});
 
 jest.mock('../lib/pipeline-runs.js', () => ({
     persistArticle:            mockPersistArticle,
@@ -71,11 +81,23 @@ const mockResearchData = {
     seoResearch:            undefined,
 };
 
+// Full QaValidationResult shape — buildRunMetadata iterates `dimensions`, so a
+// legacy `{ overallScore, issues }` mock throws and aborts main() before the
+// metadata write. Mirror the real per-dimension breakdown.
+const cleanDim = { score: 88, issues: [] };
 const mockQaData = {
     overallScore:   85,
-    recommendation: 'PASS',
-    issues:         [],
-    suggestions:    [],
+    recommendation: 'publish',
+    dimensions: {
+        technicalAccuracy:    cleanDim,
+        seoCompliance:        cleanDim,
+        mdxStructure:         cleanDim,
+        metadataQuality:      cleanDim,
+        contentQuality:       cleanDim,
+        specificityAndResult: cleanDim,
+    },
+    summary:            'Solid draft, ready for review.',
+    confidenceOverride: 88,
 };
 
 const fakeAgentResult = <T>(data: T) => ({
@@ -109,6 +131,14 @@ jest.mock('../agents/qa-agent.js', () => ({
 const groundingVerifyMock = jest.fn<() => Promise<unknown>>().mockResolvedValue({
     status: 'GROUNDED', reason: '', ungroundedClaims: [], answer: 'ok',
 });
+// A fresh PASS verdict for the stop-slop prose linter (flag mode, fail-open).
+const PROSE_PASS = {
+    status: 'PASS',
+    score: { directness: 8, rhythm: 8, trust: 8, authenticity: 8, density: 8, total: 40 },
+    belowThreshold: false,
+    issues: [],
+};
+const proseLintMock = jest.fn<() => Promise<unknown>>().mockResolvedValue(PROSE_PASS);
 const emitEmfMetricMock = jest.fn<() => void>();
 
 // Observability stubs — avoid real Prometheus setup in tests.
@@ -125,6 +155,9 @@ jest.mock('@bedrock/shared', () => {
         })),
         BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
             verify: groundingVerifyMock,
+        })),
+        BedrockProseLinter: jest.fn().mockImplementation(() => ({
+            lint: proseLintMock,
         })),
         emitEmfMetric: emitEmfMetricMock,
         bootstrapK8sObservability: jest.fn().mockReturnValue({
@@ -166,6 +199,8 @@ Object.assign(process.env, {
 
 let sharedPersistArgs: unknown[];
 let sharedEmittedMetrics: Array<{ name: string; value: number }> = [];
+let sharedProseLintArgs: unknown[];
+let sharedMetadataArg: Record<string, unknown>;
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -183,6 +218,11 @@ describe('run-pipeline — MDX-persist PII scrub', () => {
         sharedEmittedMetrics = emitEmfMetricMock.mock.calls.flatMap(
             (call) => (call as unknown[])[2] as Array<{ name: string; value: number }>,
         );
+        // Capture the prose-lint call + the metadata payload from the same run.
+        // Await the metadata latch: the write lands a few awaits after persist.
+        sharedProseLintArgs = (proseLintMock.mock.calls[0] ?? []) as unknown[];
+        const metaArgs = await metaLatch;
+        sharedMetadataArg = (metaArgs[2] ?? {}) as Record<string, unknown>;
     }, 10_000);
 
     it('calls persistArticle with redacted MDX — raw PII email is absent', () => {
@@ -235,6 +275,42 @@ describe('run-pipeline — grounding flag-mode post-QA (happy path, GROUNDED)', 
     });
 });
 
+// ─── Prose-quality (stop-slop) flag-mode tests ───────────────────────────────
+
+describe('run-pipeline — prose-quality (stop-slop) flag-mode post-QA', () => {
+    // Re-uses the single module-level run; sharedProseLintArgs / sharedMetadataArg
+    // were captured in beforeAll before clearMocks reset the spies.
+
+    it('lints the scrubbed article body as a single narrative section', async () => {
+        await persistLatch;
+        const input = sharedProseLintArgs[0] as {
+            sections: Array<{ location: string; register: string; text: string }>;
+            stage?: string;
+        };
+        expect(input.sections).toHaveLength(1);
+        const [section] = input.sections;
+        expect(section.register).toBe('narrative');
+        expect(section.location).toBe('article.content');
+        // Must lint exactly the scrubbed content — never raw PII, never mutated.
+        expect(section.text).toBe(EXPECTED_SCRUBBED_CONTENT);
+        expect(section.text).not.toContain(RAW_PII_EMAIL);
+    });
+
+    it('passes the cost context (pool + userId) so Sonnet spend is booked', async () => {
+        await persistLatch;
+        const costCtx = sharedProseLintArgs[1] as { userId?: string } | undefined;
+        expect(costCtx?.userId).toBe('user-00000000-0000-0000-0000-000000000001');
+    });
+
+    it('folds the prose verdict into pipeline_runs.metadata under `prose`', async () => {
+        await persistLatch;
+        expect(sharedMetadataArg).toHaveProperty('prose');
+        const prose = sharedMetadataArg['prose'] as { status: string; belowThreshold: boolean };
+        expect(prose.status).toBe('PASS');
+        expect(prose.belowThreshold).toBe(false);
+    });
+});
+
 /**
  * Drive a fresh pipeline run with custom @bedrock/shared and pipeline-runs mocks.
  *
@@ -248,6 +324,7 @@ describe('run-pipeline — grounding flag-mode post-QA (happy path, GROUNDED)', 
 async function runPipelineWithMocks(opts: {
     verifyImpl: () => Promise<unknown>;
     emitImpl?: () => void;
+    proseImpl?: () => Promise<unknown>;
 }): Promise<{ persistArgs: unknown[]; emitCalls: unknown[][] }> {
     let resolveLatch!: (args: unknown[]) => void;
     const latch = new Promise<unknown[]>((res) => { resolveLatch = res; });
@@ -262,6 +339,8 @@ async function runPipelineWithMocks(opts: {
         opts.emitImpl?.(...(args as [])); // S4325 false-positive: `args` is unknown[], TS requires the cast to spread into () => void
     });
     const verifyFn = jest.fn<() => Promise<unknown>>().mockImplementation(opts.verifyImpl);
+    const proseFn = jest.fn<() => Promise<unknown>>()
+        .mockImplementation(opts.proseImpl ?? (() => Promise.resolve(PROSE_PASS)));
 
     // Reset and re-register all mocks so the module re-evaluates (runs main()).
     jest.resetModules();
@@ -282,6 +361,9 @@ async function runPipelineWithMocks(opts: {
             })),
             BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
                 verify: verifyFn,
+            })),
+            BedrockProseLinter: jest.fn().mockImplementation(() => ({
+                lint: proseFn,
             })),
             emitEmfMetric: localEmit,
             bootstrapK8sObservability: jest.fn().mockReturnValue({
@@ -363,6 +445,18 @@ describe('run-pipeline — grounding flag-mode post-QA (NOT_GROUNDED + fail-open
         });
         // Pipeline must still resolve (persistArticle is called) — fail-open.
         await expect(result).resolves.toBeDefined();
+    }, 15_000);
+
+    it('does not hard-fail when the prose linter throws (fail-open)', async () => {
+        const { persistArgs } = await runPipelineWithMocks({
+            verifyImpl: () => Promise.resolve({
+                status: 'GROUNDED', reason: '', ungroundedClaims: [], answer: 'ok',
+            }),
+            proseImpl: () => Promise.reject(new Error('prose linter down')),
+        });
+        // A throwing prose linter must never block persist — content still written,
+        // still the scrubbed body (prose flag mode never mutates content).
+        expect(persistArgs[2]).toBe(EXPECTED_SCRUBBED_CONTENT);
     }, 15_000);
 });
 

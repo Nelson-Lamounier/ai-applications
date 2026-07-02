@@ -9,8 +9,9 @@
  * On QA pass the rendered draft is persisted to platform RDS articles.status =
  * 'review'. The admin-api owns the eventual transition to 'published'.
  */
-import type { PipelineContext, QaValidationResult } from '@bedrock/shared';
-import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
+import type { PipelineContext, QaValidationResult, ProseQualityResult } from '@bedrock/shared';
+import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, BedrockProseLinter, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
+import type { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent } from './agents/research-agent.js';
@@ -26,6 +27,10 @@ import {
 
 const piiScrubber = new PiiScrubber();
 const groundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
+// stop-slop prose-quality critic. Flag mode: scores the article body for
+// AI-tell language, never mutates content, fails open. Shares the same
+// architectural slot as the grounding verifier.
+const proseLinter = new BedrockProseLinter({ mode: 'flag' });
 const obs = bootstrapK8sObservability({ serviceName: 'article-pipeline' });
 const log = obs.logger;
 
@@ -67,6 +72,7 @@ async function timed<T>(step: string, fn: () => Promise<T>): Promise<T> {
 function buildRunMetadata(
     qa: QaValidationResult,
     groundingMeta: object | undefined,
+    proseMeta: object | undefined,
 ): Record<string, unknown> {
     const issues = Object.entries(qa.dimensions).flatMap(([dimension, dim]) =>
         dim.issues.map((issue) => ({ dimension, ...issue })),
@@ -86,7 +92,84 @@ function buildRunMetadata(
     if (groundingMeta !== undefined) {
         meta['grounding'] = groundingMeta;
     }
+    if (proseMeta !== undefined) {
+        meta['prose'] = proseMeta;
+    }
     return meta;
+}
+
+/**
+ * Prose-quality (stop-slop) lint of the article body — flag mode, fail-open.
+ * Scores the scrubbed content for AI-tell language; never blocks the run and
+ * never mutates content. Returns the verdict slice for pipeline_runs.metadata,
+ * or undefined if the linter errored (so the run still completes cleanly).
+ * Extracted from main() to keep its cyclomatic complexity within budget.
+ */
+async function lintArticleProse(
+    pool: Pool,
+    env: ReturnType<typeof parseEnv>,
+    scrubbedContent: string,
+): Promise<Pick<ProseQualityResult, 'status' | 'score' | 'belowThreshold' | 'issues'> | undefined> {
+    try {
+        const p = await proseLinter.lint({
+            sections: [{ location: 'article.content', register: 'narrative', text: scrubbedContent }],
+            stage:    'review',
+        }, env.userId ? { pool, userId: env.userId } : undefined);
+        if (p.status === 'FAIL') {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                slug:          env.slug,
+                proseScore:    p.score,
+                proseIssues:   p.issues,
+            }, 'article_prose_below_threshold');
+        }
+        return { status: p.status, score: p.score, belowThreshold: p.belowThreshold, issues: [...p.issues] };
+    } catch (e) {
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            error:         (e as Error).message,
+        }, 'Prose linter failed — proceeding');
+        return undefined;
+    }
+}
+
+type ResearchData = Awaited<ReturnType<typeof executeResearchAgent>>['data'];
+
+/**
+ * Grounding check (flag mode) — always-on, never blocks persist. Fail-open: any
+ * verifier error is logged and swallowed so the article still proceeds to
+ * 'review'. Extracted from main() to keep its cyclomatic complexity in budget.
+ */
+async function verifyArticleGrounding(
+    pool: Pool,
+    env: ReturnType<typeof parseEnv>,
+    researchData: ResearchData,
+    scrubbedContent: string,
+): Promise<Pick<Awaited<ReturnType<typeof groundingVerifier.verify>>, 'status' | 'reason' | 'ungroundedClaims'> | undefined> {
+    try {
+        const g = await groundingVerifier.verify({
+            query:        `${env.slug} ${researchData.authorDirection ?? ''}`.trim().slice(0, 500),
+            contextChunks: (researchData.kbPassages ?? []).map((p) => p.text),
+            answer:       scrubbedContent,
+        }, env.userId ? { pool, userId: env.userId } : undefined);
+        emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
+            { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
+            { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },
+            { name: 'UngroundedClaimCount',  value: g.ungroundedClaims.length,             unit: 'Count' },
+        ]);
+        return { status: g.status, reason: g.reason, ungroundedClaims: [...g.ungroundedClaims] };
+    } catch (e) {
+        emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: 'ERROR' }, [
+            { name: 'GroundingError', value: 1, unit: 'Count' },
+        ]);
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            error:         (e as Error).message,
+        }, 'Grounding verifier failed — proceeding');
+        return undefined;
+    }
 }
 
 async function main(): Promise<void> {
@@ -140,33 +223,13 @@ async function main(): Promise<void> {
             researchData.mode,
         ));
 
-        // Grounding check (flag mode) — always-on, never blocks persist.
-        // Runs post-QA, pre-persist. Fail-open: any verifier error is logged and
-        // ignored so the article always proceeds to 'review'.
+        // Grounding + prose-quality (stop-slop), both flag mode + fail-open —
+        // see verifyArticleGrounding / lintArticleProse. Run post-QA,
+        // pre-persist; neither blocks the run nor mutates content. scrubbedContent
+        // is what both verifiers see and what gets persisted.
         const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
-        let groundingMeta: Pick<Awaited<ReturnType<typeof groundingVerifier.verify>>, 'status' | 'reason' | 'ungroundedClaims'> | undefined;
-        try {
-            const g = await groundingVerifier.verify({
-                query:        `${env.slug} ${research.data.authorDirection ?? ''}`.trim().slice(0, 500),
-                contextChunks: (research.data.kbPassages ?? []).map((p) => p.text),
-                answer:       scrubbedContent,
-            }, env.userId ? { pool, userId: env.userId } : undefined);
-            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
-                { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
-                { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },
-                { name: 'UngroundedClaimCount',  value: g.ungroundedClaims.length,             unit: 'Count' },
-            ]);
-            groundingMeta = { status: g.status, reason: g.reason, ungroundedClaims: [...g.ungroundedClaims] };
-        } catch (e) {
-            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: 'ERROR' }, [
-                { name: 'GroundingError', value: 1, unit: 'Count' },
-            ]);
-            log.warn({
-                pipelineRunId: env.pipelineRunId,
-                slug:          env.slug,
-                error:         (e as Error).message,
-            }, 'Grounding verifier failed — proceeding');
-        }
+        const groundingMeta = await verifyArticleGrounding(pool, env, research.data, scrubbedContent);
+        const proseMeta = await lintArticleProse(pool, env, scrubbedContent);
 
         // Final persist — write the rendered MDX back to platform RDS.
         // Use scrubbedContent computed above; grounding flag mode never alters it.
@@ -186,7 +249,7 @@ async function main(): Promise<void> {
         await updatePipelineRunMetadata(
             pool,
             env.pipelineRunId,
-            buildRunMetadata(qa.data, groundingMeta),
+            buildRunMetadata(qa.data, groundingMeta, proseMeta),
         );
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
