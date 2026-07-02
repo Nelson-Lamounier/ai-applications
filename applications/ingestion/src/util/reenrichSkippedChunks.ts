@@ -52,6 +52,18 @@ export interface ReenrichOptions {
      * content yields identical skills.
      */
     readonly dedupCache?: boolean;
+    /**
+     * Chunks per model call for the canonical LLM residue (feature 004 applied
+     * to THIS deferred pass — with DEFER_ENRICHMENT=1 in production, this is
+     * the pass where per-chunk prompt overhead actually bills). Cache hits and
+     * Tier-1 rows are resolved per-row as before; only the residue is packed.
+     * Requires `canonicalVocab` + `enricher.enrichPackCanonical`; 0/1/undefined
+     * keeps today's per-chunk behaviour. Missing keys and pack errors fall back
+     * to per-chunk (fail-safe, mirrors the inline ENRICH_PACK path).
+     */
+    readonly packSize?: number;
+    /** Character budget per pack (guards the model's context). Default 24000. */
+    readonly packMaxChars?: number;
 }
 
 export interface ReenrichResult {
@@ -77,6 +89,59 @@ interface SkippedRow {
     content:   string;
     content_hash: string | null;
     file_tech_stack: string[] | null;
+}
+
+/**
+ * Pack options from the worker env (shared by run-ingestion's deferred pass
+ * and the run-reenrich entrypoint so the two lanes can never drift).
+ * ENRICH_PACK=1 enables canonical packing; size/chars tune the pack shape.
+ */
+export function packOptionsFromEnv(): { packSize: number; packMaxChars: number } {
+    const maxChars = Number.parseInt(process.env['ENRICH_PACK_MAX_CHARS'] ?? '24000', 10) || 24_000;
+    if (process.env['ENRICH_PACK'] !== '1') return { packSize: 0, packMaxChars: maxChars };
+    const packSize = Number.parseInt(process.env['ENRICH_PACK_SIZE'] ?? '20', 10) || 20;
+    return { packSize, packMaxChars: maxChars };
+}
+
+/**
+ * Method-aware model id for the WS5 dedup-cache key: canonical and free-text
+ * enrichment share a Bedrock model but produce DIFFERENT skills, so the key
+ * folds in the method (+ vocab size, so vocabulary growth re-enriches rather
+ * than serving stale canonical skills).
+ */
+function dedupModelId(enricher: IChunkEnricher | undefined, opts: ReenrichOptions): string {
+    if (!enricher) return 'tier1-only';
+    const base = enricher.modelId ?? 'unknown';
+    return opts.canonicalVocab ? `${base}#canon:${opts.canonicalVocab.length}` : base;
+}
+
+interface PackConfig { packSize: number; maxChars: number; enabled: boolean }
+
+/** Canonical packing is active only when asked for AND the canonical pack path exists. */
+function resolvePackConfig(opts: ReenrichOptions, enricher: IChunkEnricher | undefined): PackConfig {
+    const packSize = Math.trunc(opts.packSize ?? 0);
+    const maxChars = Math.max(1_000, Math.trunc(opts.packMaxChars ?? 24_000));
+    const enabled = packSize > 1 && !!opts.canonicalVocab && !!enricher?.enrichPackCanonical;
+    return { packSize, maxChars, enabled };
+}
+
+/** Greedy grouping: a pack closes at `packSize` chunks or `maxChars` characters. */
+function groupIntoPacks(rows: readonly SkippedRow[], packSize: number, maxChars: number): SkippedRow[][] {
+    const packs: SkippedRow[][] = [];
+    let current: SkippedRow[] = [];
+    let chars = 0;
+    for (const row of rows) {
+        const packFull = current.length >= packSize || (current.length > 0 && chars + row.content.length > maxChars);
+        if (packFull) {
+            packs.push(current);
+            current = [];
+            chars = 0;
+        }
+        current.push(row);
+        chars += row.content.length;
+    }
+    if (current.length > 0) packs.push(current);
+    return packs;
 }
 
 /**
@@ -123,16 +188,9 @@ export async function reenrichSkippedChunks(
 
     // WS5 content-hash dedup: pre-load the cache for this run's content hashes,
     // and accumulate freshly-enriched (hash -> skills) to write back at the end.
-    // Cache scope is METHOD-aware: canonical and free-text enrichment use the same
-    // Bedrock model but produce DIFFERENT skills, so the key folds in the method
-    // (+ vocab size, so vocabulary growth re-enriches rather than serving stale
-    // canonical skills). Without this, flipping ENRICH_CANONICAL would copy the
-    // old free-text skills out of the cache.
-    let modelId = 'tier1-only';
-    if (enricher) {
-        const base = enricher.modelId ?? 'unknown';
-        modelId = opts.canonicalVocab ? `${base}#canon:${opts.canonicalVocab.length}` : base;
-    }
+    // Cache scope is METHOD-aware — see dedupModelId. Without this, flipping
+    // ENRICH_CANONICAL would copy the old free-text skills out of the cache.
+    const modelId = dedupModelId(enricher, opts);
     /** Build the composite cache key that folds model identity into the hash. */
     const cacheKey = (hash: string): string => `${hash}#${modelId}`;
     const cache = await loadEnrichmentCache(pool, opts, rows, modelId, cacheKey);
@@ -201,7 +259,19 @@ export async function reenrichSkippedChunks(
         enriched += 1;
     }
 
+    // Canonical packing (feature 004, deferred lane): active only when the
+    // caller asked for it AND the canonical path + pack method are available.
+    const pack = resolvePackConfig(opts, enricher);
+    const llmResidue: SkippedRow[] = [];
+
+    /** One row fully accounted for (progress + remaining bookkeeping). */
+    const markDone = (): void => {
+        done += 1;
+        opts.onProgress?.(done, rows.length);
+    };
+
     async function processRow(row: SkippedRow): Promise<void> {
+        let deferredToPack = false;
         try {
             // WS5 content-hash dedup: if this exact content was already enriched
             // (same user + model), copy those skills — NO LLM call. This is what
@@ -224,15 +294,79 @@ export async function reenrichSkippedChunks(
             }
             // Residue LLM path — skipped entirely when no enricher is supplied
             // (free-tier / Tier-1-only pass: zero Bedrock calls).
-            if (enricher) {
-                await enrichWithLlm(row, enricher);
+            if (!enricher) return;
+            if (pack.enabled) {
+                // Defer to the pack phase; completion is counted there so a
+                // deadline stop still reports these rows as `remaining`.
+                llmResidue.push(row);
+                deferredToPack = true;
+                return;
             }
+            await enrichWithLlm(row, enricher);
         } catch (err) {
             // Leave the row as skipped_quota so the next run retries it.
             recordFailure(err);
         } finally {
-            done += 1;
-            opts.onProgress?.(done, rows.length);
+            if (!deferredToPack) markDone();
+        }
+    }
+
+    /** Per-chunk fallback for a residue row (pack error / missing key). */
+    async function fallBackPerChunk(row: SkippedRow): Promise<void> {
+        try {
+            await enrichWithLlm(row, enricher as IChunkEnricher);
+        } catch (err) {
+            recordFailure(err);
+        } finally {
+            markDone();
+        }
+    }
+
+    /** Apply one pack's keyed results; rows the model skipped fall back per-chunk. */
+    async function applyPackResults(
+        pack: readonly SkippedRow[],
+        byKey: ReadonlyMap<string, { canonical: string[]; newSkills: string[] }>,
+    ): Promise<void> {
+        for (const row of pack) {
+            const split = byKey.get(row.id);
+            if (!split) { await fallBackPerChunk(row); continue; }
+            try {
+                await writeSkills(row.id, split.canonical);
+                remember(row.content_hash, split.canonical);
+                newSkillsQueued += split.newSkills.length;
+                enriched += 1;
+            } catch (err) {
+                recordFailure(err);
+            } finally {
+                markDone();
+            }
+        }
+    }
+
+    /**
+     * Pack phase: group the LLM residue into packs and resolve each with ONE
+     * canonical model call. Deadline-aware like the row workers — packs not
+     * dispatched by the wall stay `pending` and resume next sync.
+     */
+    async function enrichResidueInPacks(): Promise<void> {
+        const vocab = opts.canonicalVocab;
+        if (!vocab) return;
+        for (const group of groupIntoPacks(llmResidue, pack.packSize, pack.maxChars)) {
+            if (opts.deadlineMs !== undefined && Date.now() >= opts.deadlineMs) {
+                stoppedEarly = true;
+                return;
+            }
+            try {
+                const byKey = await (enricher as IChunkEnricher).enrichPackCanonical!(
+                    vocab,
+                    group.map((r) => ({ key: r.id, filePath: r.file_path, content: r.content, heading: r.heading ?? undefined })),
+                );
+                await applyPackResults(group, byKey);
+            } catch {
+                // Whole-pack transport error: fall every row back to per-chunk
+                // (mirrors the inline ENRICH_PACK fail-safe — never zero-skill).
+                for (const row of group) await fallBackPerChunk(row);
+            }
         }
     }
 
@@ -254,6 +388,12 @@ export async function reenrichSkippedChunks(
     }
     const workers = Math.max(1, Math.min(opts.concurrency ?? 10, rows.length));
     await Promise.all(Array.from({ length: workers }, () => worker()));
+
+    // Pack phase: resolve the deferred canonical residue, many chunks per call.
+    // Its own per-pack deadline check makes a wall hit leave the rest `pending`.
+    if (llmResidue.length > 0) {
+        await enrichResidueInPacks();
+    }
 
     // WS5: persist the freshly-enriched (content_hash -> skills) so the next run
     // (incl. a force-reindex) copies them instead of re-invoking the LLM.

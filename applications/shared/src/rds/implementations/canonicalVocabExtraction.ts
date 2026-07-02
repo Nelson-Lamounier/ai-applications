@@ -11,9 +11,16 @@
  * Pure builders/parser here (unit-tested without a model); the enricher wires the
  * Bedrock call + the NEW: capture.
  */
-import { buildExtractionUserMessage, ENRICH_TOOL_SCHEMA } from './extractionBody.js';
+import {
+    buildExtractionUserMessage,
+    buildPackUserMessage,
+    ENRICH_TOOL_SCHEMA,
+    ENRICH_PACK_TOOL_SCHEMA,
+    parsePackSkills,
+    type PackBodyItem,
+} from './extractionBody.js';
 
-export const ENRICH_CANONICAL_SYSTEM_PROMPT = [
+const ENRICH_CANONICAL_RULES = [
     'You are a skill-evidence extractor for a resume-generation system.',
     'Identify the domain capabilities this chunk EVIDENCES the user has practised.',
     '',
@@ -26,8 +33,14 @@ export const ENRICH_CANONICAL_SYSTEM_PROMPT = [
     '    real capability onto a wrong term — surfacing the gap is correct.',
     '  - Judge ONLY this chunk\'s content; do not infer from path or repo name.',
     '  - Lowercased. Deduplicate. Empty array is valid when no signal is present.',
-    '  - You MUST respond by calling the record_extraction tool.',
 ].join('\n');
+
+export const ENRICH_CANONICAL_SYSTEM_PROMPT =
+    `${ENRICH_CANONICAL_RULES}\n  - You MUST respond by calling the record_extraction tool.`;
+
+/** Pack twin of the canonical prompt — same rules, keyed tool. */
+export const ENRICH_CANONICAL_PACK_SYSTEM_PROMPT =
+    `${ENRICH_CANONICAL_RULES}\n  - You MUST respond by calling the record_extractions tool, one entry per chunk.`;
 
 /** Anthropic Messages body for controlled-vocabulary extraction (vocab in the cached-eligible prefix). */
 export function buildCanonicalExtractionBody(
@@ -48,11 +61,54 @@ export function buildCanonicalExtractionBody(
     };
 }
 
+/**
+ * Anthropic Messages body for a PACK of chunks under the controlled vocabulary
+ * (feature 004 applied to the canonical/deferred lane). The vocabulary + rules
+ * are paid ONCE per pack instead of once per chunk — with production defaulting
+ * DEFER_ENRICHMENT=1 + ENRICH_CANONICAL=1, this is the pass where the per-chunk
+ * prompt overhead actually bills, so this is where packing must live.
+ * `max_tokens` scales with pack size, mirroring buildPackExtractionBody.
+ */
+export function buildCanonicalPackExtractionBody(
+    vocabulary: readonly string[],
+    items: readonly PackBodyItem[],
+): Record<string, unknown> {
+    const system = `${ENRICH_CANONICAL_PACK_SYSTEM_PROMPT}\n\nCONTROLLED VOCABULARY (${vocabulary.length} terms — choose only from these):\n${vocabulary.join('\n')}`;
+    return {
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens:        Math.min(4000, 128 + items.length * 160),
+        temperature:       0,
+        system,
+        tools:             [ENRICH_PACK_TOOL_SCHEMA],
+        tool_choice:       { type: 'tool', name: 'record_extractions' },
+        messages:          [{ role: 'user', content: buildPackUserMessage(items) }],
+    };
+}
+
 export interface CanonicalSplit {
     /** In-vocabulary canonical skills — written to the chunk (the overlap lane). */
     readonly canonical: string[];
     /** Out-of-vocabulary capabilities the model surfaced — the vocabulary growth queue. */
     readonly newSkills: string[];
+}
+
+/**
+ * Pack twin of {@link parseCanonicalSkills}: key -> CanonicalSplit from a
+ * record_extractions tool_use. Missing keys are simply absent (caller falls
+ * those chunks back to per-chunk). Pure + deterministic — reuses the pack
+ * key/shape parser and the SAME canonical/alias resolution per entry.
+ */
+export function parseCanonicalPackSkills(
+    content: ReadonlyArray<{ type: string; name?: string; input?: { extractions?: unknown } }>,
+    vocabulary: ReadonlySet<string>,
+    aliasToCanonical?: ReadonlyMap<string, string>,
+): Map<string, CanonicalSplit> {
+    const rawByKey = parsePackSkills(content);
+    const out = new Map<string, CanonicalSplit>();
+    for (const [key, raw] of rawByKey) {
+        out.set(key, parseCanonicalSkills(raw, vocabulary, aliasToCanonical));
+    }
+    return out;
 }
 
 /**

@@ -23,13 +23,14 @@ import {
     SkillOntologyRepository,
     SkillEmbeddingResolver,
     PhraseSkillResolver,
+    TechSkillMapRepository,
     TitanEmbeddingProvider,
     bootstrapK8sObservability,
     pushFinalMetrics,
 } from '@bedrock/shared';
 import { Pool } from 'pg';
 
-import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
+import { packOptionsFromEnv, reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
 
 const obs = bootstrapK8sObservability({ serviceName: 're-enrich' });
 const log = obs.logger;
@@ -40,8 +41,34 @@ function requireEnv(name: string): string {
     return v;
 }
 
+/**
+ * Env-gated enrichment inputs, mirroring the in-job deferred pass:
+ * ENRICH_CANONICAL=1 -> controlled vocabulary; ENRICH_TIER1=1 -> deterministic
+ * tech->skill map applied before any LLM call. Both fail-open to undefined.
+ */
+async function loadEnrichmentInputs(pgPool: Pool): Promise<{
+    canonicalVocab?: readonly string[];
+    tier1Map?: ReadonlyMap<string, readonly string[]>;
+}> {
+    const canonicalVocab = process.env['ENRICH_CANONICAL'] === '1'
+        ? await new SkillOntologyRepository(pgPool).loadCanonicalNames().catch(() => undefined)
+        : undefined;
+    const tier1Map = process.env['ENRICH_TIER1'] === '1'
+        ? await new TechSkillMapRepository(pgPool).loadTechSkillMap().catch(() => undefined)
+        : undefined;
+    return { canonicalVocab, tier1Map };
+}
+
 async function main(): Promise<void> {
     const userId = requireEnv('USER_ID');
+    // Tier gate (belt-and-braces): LLM enrichment is a premium entitlement.
+    // The dispatcher (admin-api reenrich sweep) only targets premium/admin
+    // users, but a mis-dispatched Job must still never bill Bedrock for a
+    // free-tier user — same env contract as the ingestion worker.
+    if (process.env['ENRICHMENT_DISABLED'] === '1') {
+        log.info({ userId }, 're_enrich.skipped_tier — ENRICHMENT_DISABLED=1 (LLM enrichment is premium-only)');
+        return;
+    }
     const repoFullName = process.env['REPO_FULL_NAME'] || undefined;
     const limit = process.env['REENRICH_LIMIT']
         ? Number.parseInt(process.env['REENRICH_LIMIT'], 10)
@@ -81,18 +108,18 @@ async function main(): Promise<void> {
             repoName: repoFullName ?? 're-enrich',
         }, skillAliasToCanonical, (p) => phraseResolver.resolve(p));
 
-        // Controlled-vocab re-enrich (the vocabulary fix): rewrite the corpus to
-        // canonical skill_ontology terms so d.skills && query.skills overlaps.
-        const canonicalVocab = process.env['ENRICH_CANONICAL'] === '1'
-            ? await new SkillOntologyRepository(pgPool).loadCanonicalNames().catch(() => undefined)
-            : undefined;
+        const { canonicalVocab, tier1Map } = await loadEnrichmentInputs(pgPool);
 
         const result = await reenrichSkippedChunks(pgPool, enricher, {
             userId,
             repoFullName,
             limit,
             canonicalVocab,
+            tier1Map,
             dedupCache: process.env['ENRICH_DEDUP'] !== '0',   // WS5 content-hash dedup (on by default)
+            // Canonical packing (feature 004, deferred lane): N chunks per call so
+            // the system prompt + vocabulary bill once per pack, not per chunk.
+            ...packOptionsFromEnv(),
             reenrichAll: process.env['REENRICH_ALL'] === '1',
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {

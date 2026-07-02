@@ -108,8 +108,11 @@ export const ENRICH_PACK_TOOL_SCHEMA = {
 
 export interface PackBodyItem { key: string; filePath: string; content: string; heading?: string }
 
-/** User message: a shared instruction + one labelled block per chunk, keyed by id. */
-function buildPackUserMessage(items: readonly PackBodyItem[]): string {
+/** User message: a shared instruction + one labelled block per chunk, keyed by id.
+ *  Exported so the canonical-vocabulary pack body (canonicalVocabExtraction.ts)
+ *  reuses the exact chunk framing — a canonical pack differs ONLY in its system
+ *  prompt, never in how chunks are labelled. */
+export function buildPackUserMessage(items: readonly PackBodyItem[]): string {
     const blocks = items.map((it) => [
         `=== CHUNK ${it.key} ===`,
         `File: ${it.filePath}`,

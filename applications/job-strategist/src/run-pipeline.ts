@@ -423,12 +423,21 @@ export async function main(): Promise<void> {
         // raw PII reaches the embedding model or the cache table. Any cache
         // failure degrades to a normal (uncached) run — never a hard-fail.
         // A hit reproduces the exact terminal run-state of a successful run.
-        const cacheScope = `jobstrat:${env.userId}:${env.targetRole}:${env.targetCompany}`;
+        // Scope on the user ONLY. targetRole/targetCompany are free-text user
+        // inputs ("Sr" vs "Senior", trailing spaces), so keying the scope on
+        // them partitioned near-identical applications into disjoint cache rows
+        // (live data: 1 row, 0 hits ever). They still take part in matching,
+        // but semantically — prepended to the query text below, where the
+        // cosine threshold tolerates phrasing variance instead of requiring
+        // byte equality.
+        const cacheScope = `jobstrat:${env.userId}`;
         // Fail-open: any throw from cacheTagFor degrades to a model-only tag so
         // the cache still partitions by model and the run never hard-fails.
         let cacheTag = `:${process.env['STRATEGIST_MODEL'] ?? 'default'}`;
         try { cacheTag = await cacheTagFor(pool, env.userId); } catch { /* fail-open: model-only tag */ }
-        const jdForCache = ctx.jobDescription; // already sanitised once at entry
+        // JD already sanitised once at entry. Role/company lead the text so two
+        // runs of the same JD against different roles stay distinguishable.
+        const jdForCache = `${env.targetRole} @ ${env.targetCompany}\n${ctx.jobDescription}`;
         let cached: { hit: boolean; response?: unknown } = { hit: false };
         try {
             cached = (await semanticCache.get({ scope: cacheScope, kbTag: cacheTag, queryText: jdForCache })) ?? { hit: false };

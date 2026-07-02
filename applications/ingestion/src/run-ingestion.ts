@@ -68,7 +68,7 @@ import { classifyRepo } from './util/classifyRepo.js';
 import { renderLifecycleChunks } from './util/lifecycle-chunks.js';
 import { scoreProfile } from './util/scoreProfile.js';
 import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
-import { reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
+import { packOptionsFromEnv, reenrichSkippedChunks } from './util/reenrichSkippedChunks.js';
 import { patchDeterministicProfileFacts } from './util/patchProfileFacts.js';
 import { applyPostSyncProjectAction } from './util/applyPostSyncProjectAction.js';
 import { friendlyIngestionError } from './friendly-error.js';
@@ -238,6 +238,11 @@ async function runDeferredEnrichment(
             // WS5 content-hash dedup: copy skills for byte-identical chunks instead
             // of re-invoking the LLM. On by default; ENRICH_DEDUP=0 disables.
             dedupCache: process.env['ENRICH_DEDUP'] !== '0',
+            // Canonical packing (feature 004, deferred lane): ENRICH_PACK=1 resolves
+            // the canonical residue N chunks per model call, so the system prompt +
+            // controlled vocabulary — the bulk of live enrichment spend — bill once
+            // per pack instead of once per chunk.
+            ...packOptionsFromEnv(),
             deadlineMs: enrichmentDeadlineMs(),
             onProgress: (done, total) => {
                 if (done % 100 === 0 || done === total) {
