@@ -19,6 +19,7 @@ import { executeWriterAgent }   from './agents/writer-agent.js';
 import { executeQaAgent }       from './agents/qa-agent.js';
 import { lintArticle, checkLinkLiveness, type Finding } from './lint/article-lint-rules.js';
 import { BedrockEvidenceAdjudicator, type EvidenceAdjudicationResult } from './agents/evidence-adjudicator.js';
+import { selectArchetype }      from './prompts/archetypes.js';
 import { parseEnv }             from './env.js';
 import { getPool, closePool }   from './lib/pg.js';
 import {
@@ -283,6 +284,34 @@ async function adjudicateArticleEvidence(
     }
 }
 
+/**
+ * Anti-fabrication gate (flag-gated). When ARTICLE_ARCHETYPE_ASSEMBLY=1 and the
+ * research carried an evidence inventory, refuse to generate if no archetype
+ * meets its evidence minimums — a thin-evidence topic routes to human review
+ * (failed run + reason) rather than being written from general knowledge.
+ * No-op when the flag is off or the inventory is absent (legacy path).
+ */
+function gateArchetypeEligibility(
+    env: ReturnType<typeof parseEnv>,
+    researchData: ResearchData,
+): void {
+    if (process.env['ARTICLE_ARCHETYPE_ASSEMBLY'] !== '1') return;
+    const inv = researchData.evidenceInventory;
+    if (!inv) return;
+    const sel = selectArchetype(inv);
+    if (sel.eligible) {
+        emitEmfMetric('ArticlePipeline', { Stage: 'archetype', Archetype: sel.archetype.id }, [
+            { name: 'ArchetypeSelected', value: 1, unit: 'Count' },
+        ]);
+        log.info({ pipelineRunId: env.pipelineRunId, slug: env.slug, archetype: sel.archetype.id }, 'archetype_selected');
+        return;
+    }
+    emitEmfMetric('ArticlePipeline', { Stage: 'archetype', Status: 'INELIGIBLE' }, [
+        { name: 'ArchetypeIneligible', value: 1, unit: 'Count' },
+    ]);
+    throw new Error(`archetype selection ineligible — ${sel.fallbackReason}`);
+}
+
 async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
@@ -322,6 +351,10 @@ async function main(): Promise<void> {
                     || [brief.problem, brief.angle].filter(Boolean).join(' — '),
               }
             : research.data;
+
+        // Anti-fabrication gate — fails the run (to human review) when no
+        // archetype meets its evidence minimums. No-op unless the flag is on.
+        gateArchetypeEligibility(env, researchData);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'writing');
         const writer = await timed('writing', () => executeWriterAgent(ctx, researchData));

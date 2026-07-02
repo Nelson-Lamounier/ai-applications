@@ -8,14 +8,19 @@
  * must not discard an already-paid-for generation.
  */
 
-import type { parseWriterResponse as ParseWriterResponseFn } from './writer-agent.js';
+import type {
+    parseWriterResponse as ParseWriterResponseFn,
+    buildWriterSystemPrompt as BuildWriterSystemPromptFn,
+} from './writer-agent.js';
+import type { EvidenceInventory, ResearchResult } from '@bedrock/shared';
 
 process.env['WRITER_MODEL'] = 'eu.anthropic.claude-sonnet-4-6';
 
 let parseWriterResponse: typeof ParseWriterResponseFn;
+let buildWriterSystemPrompt: typeof BuildWriterSystemPromptFn;
 
 beforeAll(async () => {
-    ({ parseWriterResponse } = await import('./writer-agent.js'));
+    ({ parseWriterResponse, buildWriterSystemPrompt } = await import('./writer-agent.js'));
 });
 
 const VALID = JSON.stringify({
@@ -67,5 +72,66 @@ describe('parseWriterResponse safety-net', () => {
         const noContent = JSON.parse(VALID);
         noContent.content = '';
         expect(() => parseWriterResponse(JSON.stringify(noContent))).toThrow(/content/i);
+    });
+});
+
+// ── Evidence-driven archetype assembly (Phase 2, flag-gated) ─────────────────
+
+const WAR_STORY_INV: EvidenceInventory = {
+    failureNarratives: 5, metrics: 3, comparisons: 0, stepSequences: 0,
+    decisionRecords: 3, deepLinks: 3, diagnosticArtifacts: 4,
+};
+
+function research(inv?: EvidenceInventory): ResearchResult {
+    return {
+        suggestedTitle: 'EKS platform',
+        evidenceInventory: inv,
+        citableLinks: [{ url: 'https://docs.aws.amazon.com/x', supportsClaim: 'hop limit' }],
+        publicRepos: ['cdk-monitoring'],
+        publishIdentifiers: [],
+        availableMetrics: [{ value: '11 minutes', measures: 'deploy time saved' }],
+    } as unknown as ResearchResult;
+}
+
+function joinText(blocks: ReturnType<typeof buildWriterSystemPrompt>): string {
+    return blocks.map((b) => (b as { text?: string }).text ?? '').join('\n');
+}
+
+describe('buildWriterSystemPrompt (archetype assembly)', () => {
+    afterEach(() => {
+        delete process.env['ARTICLE_ARCHETYPE_ASSEMBLY'];
+    });
+
+    it('uses the static blog persona when the flag is off', () => {
+        delete process.env['ARTICLE_ARCHETYPE_ASSEMBLY'];
+        const blocks = buildWriterSystemPrompt(research(WAR_STORY_INV));
+        expect(joinText(blocks)).not.toContain('ARCHETYPE:');
+    });
+
+    it('assembles core + selected archetype + brief when flag on and evidence eligible', () => {
+        process.env['ARTICLE_ARCHETYPE_ASSEMBLY'] = '1';
+        const blocks = buildWriterSystemPrompt(research(WAR_STORY_INV));
+        const text = joinText(blocks);
+        expect(text).toContain('ARCHETYPE: Production failure war story');
+        expect(text).toContain("THIS ARTICLE'S CONSTRAINTS");
+        expect(text).toContain('11 minutes — deploy time saved');
+        // A cachePoint separates the cached core from the per-article suffix.
+        expect(blocks.some((b) => 'cachePoint' in (b as object))).toBe(true);
+    });
+
+    it('falls back to the static persona when the inventory is absent', () => {
+        process.env['ARTICLE_ARCHETYPE_ASSEMBLY'] = '1';
+        const blocks = buildWriterSystemPrompt(research(undefined));
+        expect(joinText(blocks)).not.toContain('ARCHETYPE:');
+    });
+
+    it('falls back to the static persona when evidence is ineligible (gate is defensive)', () => {
+        process.env['ARTICLE_ARCHETYPE_ASSEMBLY'] = '1';
+        const thin: EvidenceInventory = {
+            failureNarratives: 1, metrics: 1, comparisons: 0, stepSequences: 0,
+            decisionRecords: 0, deepLinks: 1, diagnosticArtifacts: 0,
+        };
+        const blocks = buildWriterSystemPrompt(research(thin));
+        expect(joinText(blocks)).not.toContain('ARCHETYPE:');
     });
 });

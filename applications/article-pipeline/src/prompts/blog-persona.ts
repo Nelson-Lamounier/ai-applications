@@ -44,7 +44,7 @@ import type {
  * Establishes Claude's identity as both architect and content director,
  * and maps the Producer-Consumer relationship between repos.
  */
-const PERSONA_CONTEXT = `[BRAND MISSION]
+export const PERSONA_CONTEXT = `[BRAND MISSION]
 Nelson Lamounier is a DevOps and Cloud Engineer who builds production-grade
 AWS infrastructure from scratch — not tutorial clones, not managed-service
 wrappers — and documents every decision, failure, and resolution to help
@@ -361,7 +361,7 @@ block or marked verified in the KB is a factual error.
  * and content structure that the portfolio's Next.js site expects.
  * Cached because this schema is identical for every article.
  */
-const NEXTJS_MDX_SCHEMA = `## Next.js MDX Schema
+export const NEXTJS_MDX_SCHEMA = `## Next.js MDX Schema
 
 ### Required Frontmatter Fields
 The \`content\` field MUST start with this exact YAML frontmatter structure:
@@ -592,7 +592,7 @@ credibility to the article's technical claims:
  * Combines the JSON output schema, reasoning instructions for
  * Adaptive Thinking, and hard constraints (anti-hallucination).
  */
-const OUTPUT_AND_GUIDELINES = `## Output Requirements
+export const OUTPUT_AND_GUIDELINES = `## Output Requirements
 
 You MUST return a valid JSON object with exactly this structure:
 

@@ -89,6 +89,9 @@ export type {
     KbPassage,
     OutlineSection,
     ResearchResult,
+    EvidenceInventory,
+    CitableLink,
+    AvailableMetric,
 
     // SEO
     SuggestedReference,
