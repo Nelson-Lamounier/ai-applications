@@ -124,6 +124,19 @@ jest.mock('../agents/qa-agent.js', () => ({
         .mockResolvedValue(fakeAgentResult(mockQaData)),
 }));
 
+// The evidence adjudicator makes a Bedrock call for KB-dependent lint findings.
+// The mock article's title trips title-coverage, so stub it to return a defect
+// verdict (no network) — the run folds it into metadata.evidence.
+jest.mock('../agents/evidence-adjudicator.js', () => ({
+    EVIDENCE_TRIGGER_RULES: new Set(['enumerated-generalisation', 'dangling-reference', 'title-coverage']),
+    BedrockEvidenceAdjudicator: jest.fn().mockImplementation(() => ({
+        adjudicate: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            verdicts: [{ rule: 'title-coverage', finding: 'golden', decision: 'DEFECT', reason: 'absent from body' }],
+            defects: 1,
+        }),
+    })),
+}));
+
 // ─── Grounding mock handles ──────────────────────────────────────────────────
 // groundingVerifyMock is the spy injected as the `verify` method on every
 // BedrockGroundingVerifier instance created by the module under test.
@@ -286,6 +299,14 @@ describe('run-pipeline — deterministic structural lint post-QA', () => {
         expect(typeof lint.errors).toBe('number');
         expect(typeof lint.warnings).toBe('number');
         expect(Array.isArray(lint.findings)).toBe(true);
+    });
+
+    it('folds the evidence adjudication verdict into pipeline_runs.metadata.evidence', async () => {
+        await metaLatch;
+        expect(sharedMetadataArg).toHaveProperty('evidence');
+        const evidence = sharedMetadataArg['evidence'] as { defects: number; verdicts: unknown[] };
+        expect(evidence.defects).toBe(1);
+        expect(Array.isArray(evidence.verdicts)).toBe(true);
     });
 
     it('persists exactly the scrubbed content — lint never mutates the body', async () => {

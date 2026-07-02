@@ -18,6 +18,7 @@ import { executeResearchAgent } from './agents/research-agent.js';
 import { executeWriterAgent }   from './agents/writer-agent.js';
 import { executeQaAgent }       from './agents/qa-agent.js';
 import { lintArticle, checkLinkLiveness, type Finding } from './lint/article-lint-rules.js';
+import { BedrockEvidenceAdjudicator, type EvidenceAdjudicationResult } from './agents/evidence-adjudicator.js';
 import { parseEnv }             from './env.js';
 import { getPool, closePool }   from './lib/pg.js';
 import {
@@ -28,6 +29,9 @@ import {
 
 const piiScrubber = new PiiScrubber();
 const groundingVerifier = new BedrockGroundingVerifier({ mode: 'flag' });
+// Decides the KB-dependent lint findings (enumerated generalisations, dangling
+// caveats, title claims) against the retrieved KB. Fail-safe: DEFECT on doubt.
+const evidenceAdjudicator = new BedrockEvidenceAdjudicator();
 const obs = bootstrapK8sObservability({ serviceName: 'article-pipeline' });
 const log = obs.logger;
 
@@ -70,6 +74,7 @@ function buildRunMetadata(
     qa: QaValidationResult,
     groundingMeta: object | undefined,
     lintMeta: object | undefined,
+    evidenceMeta: object | undefined,
 ): Record<string, unknown> {
     const issues = Object.entries(qa.dimensions).flatMap(([dimension, dim]) =>
         dim.issues.map((issue) => ({ dimension, ...issue })),
@@ -91,6 +96,9 @@ function buildRunMetadata(
     }
     if (lintMeta !== undefined) {
         meta['lint'] = lintMeta;
+    }
+    if (evidenceMeta !== undefined) {
+        meta['evidence'] = evidenceMeta;
     }
     return meta;
 }
@@ -195,6 +203,45 @@ async function lintArticleStructure(
     }
 }
 
+/**
+ * Evidence adjudication (flag/record mode, fail-open wrapper). Sends the
+ * KB-dependent lint findings to Sonnet to decide DEFECT/CLEARED against the
+ * retrieved KB. The adjudicator self-skips (no Bedrock call) when no finding
+ * routes to it, so this is free for a clean draft. Records the verdicts to
+ * pipeline_runs.metadata.evidence; never blocks the run.
+ */
+async function adjudicateArticleEvidence(
+    pool: Pool,
+    env: ReturnType<typeof parseEnv>,
+    findings: readonly Finding[],
+    researchData: ResearchData,
+    scrubbedContent: string,
+): Promise<Pick<EvidenceAdjudicationResult, 'verdicts' | 'defects'> | undefined> {
+    try {
+        const res = await evidenceAdjudicator.adjudicate({
+            findings,
+            contextChunks: (researchData.kbPassages ?? []).map((p) => p.text),
+            draft:         scrubbedContent,
+        }, env.userId ? { pool, userId: env.userId } : undefined);
+        if (res.verdicts.length === 0) return undefined;
+        if (res.defects > 0) {
+            log.warn({
+                pipelineRunId:   env.pipelineRunId,
+                slug:            env.slug,
+                evidenceDefects: res.verdicts.filter((v) => v.decision === 'DEFECT'),
+            }, 'article_evidence_defects');
+        }
+        return { verdicts: res.verdicts, defects: res.defects };
+    } catch (e) {
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            error:         (e as Error).message,
+        }, 'Evidence adjudicator failed — proceeding');
+        return undefined;
+    }
+}
+
 async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
@@ -253,6 +300,10 @@ async function main(): Promise<void> {
         const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
         const lintMeta = await lintArticleStructure(env, writer.data.metadata.title, scrubbedContent);
         const groundingMeta = await verifyArticleGrounding(pool, env, research.data, scrubbedContent);
+        // Evidence adjudication decides the KB-dependent lint findings against the KB.
+        const evidenceMeta = await adjudicateArticleEvidence(
+            pool, env, lintMeta?.findings ?? [], research.data, scrubbedContent,
+        );
 
         // Final persist — write the rendered MDX back to platform RDS.
         // Use scrubbedContent computed above; grounding flag mode never alters it.
@@ -272,7 +323,7 @@ async function main(): Promise<void> {
         await updatePipelineRunMetadata(
             pool,
             env.pipelineRunId,
-            buildRunMetadata(qa.data, groundingMeta, lintMeta),
+            buildRunMetadata(qa.data, groundingMeta, lintMeta, evidenceMeta),
         );
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
