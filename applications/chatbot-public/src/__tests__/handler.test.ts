@@ -17,6 +17,7 @@ jest.mock('@bedrock/shared', () => ({
     CHATBOT_SYSTEM_PROMPT: 'SYSTEM',
     buildChatContext:      jest.fn(() => '<retrieved_context/>'),
     recordZeroResultRetrieval: jest.fn(),
+    resolvePortfolioOwnerId: jest.fn(async (_pool: unknown, fallback: string) => fallback),
 }));
 
 jest.mock('../retrieval.js', () => ({

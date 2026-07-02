@@ -609,3 +609,4 @@ export { buildCycloneDxBom, technologyEvidenceToComponents, preferSpecificPurls 
 export type { SbomComponent, CycloneDxBom, BomMeta, EvidenceComponentInput } from './sbom/cyclonedx.js';
 export { buildCroissant } from './rag/croissant.js';
 export type { CroissantDataset, CroissantInput } from './rag/croissant.js';
+export { resolvePortfolioOwnerId } from './rds/index.js';
