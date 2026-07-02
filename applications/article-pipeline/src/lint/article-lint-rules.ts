@@ -485,6 +485,43 @@ export function checkEnumeratedGeneralisations(source: string): Finding[] {
 }
 
 // ---------------------------------------------------------------------------
+// Rule 10 — Heading JSX-expression / anchor IDs (render-fatal)
+// ---------------------------------------------------------------------------
+
+/**
+ * A heading containing a raw `{` — most often an explicit id like
+ * `## Title {#anchor}` — is valid Markdown but MDX v2 reads `{...}` as a JSX
+ * expression and fails to compile ("Could not parse expression with acorn"),
+ * which is a hard 500 on the whole rendered page. Heading ids are generated at
+ * render (rehype-slug), so the annotation is redundant as well as fatal.
+ *
+ * Flagged as `error` so it is caught at review, not at publish. Code fences are
+ * skipped (a `#` line inside a code block is not a heading).
+ */
+export function checkHeadingExpressions(source: string): Finding[] {
+  const findings: Finding[] = [];
+  let inFence = false;
+  source.split('\n').forEach((line, i) => {
+    if (line.trimStart().startsWith('```')) {
+      inFence = !inFence;
+      return;
+    }
+    if (inFence) return;
+    if (!/^#{1,6}[ \t]/.test(line) || !line.includes('{')) return;
+    findings.push({
+      rule: 'heading-jsx-expression',
+      severity: 'error',
+      message:
+        `Heading contains a raw "{" which MDX parses as a JSX expression and ` +
+        `fails to render (whole-page 500): "${line.trim().slice(0, 80)}". ` +
+        `Remove the {#anchor}/{…} — heading ids are generated at render.`,
+      line: i + 1,
+    });
+  });
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -501,5 +538,6 @@ export function lintArticle(source: string, fm: Frontmatter): Finding[] {
     ...checkLinkShape(source),
     ...checkIdentifierLeaks(source, allowlist),
     ...checkEnumeratedGeneralisations(source),
+    ...checkHeadingExpressions(source),
   ];
 }
