@@ -71,11 +71,22 @@ const mockResearchData = {
     seoResearch:            undefined,
 };
 
+// Full QaValidationResult shape — buildRunMetadata iterates `dimensions`, so a
+// legacy `{ overallScore, issues }` mock throws and aborts main() before persist.
+const cleanDim = { score: 88, issues: [] };
 const mockQaData = {
     overallScore:   85,
-    recommendation: 'PASS',
-    issues:         [],
-    suggestions:    [],
+    recommendation: 'publish',
+    dimensions: {
+        technicalAccuracy:    cleanDim,
+        seoCompliance:        cleanDim,
+        mdxStructure:         cleanDim,
+        metadataQuality:      cleanDim,
+        contentQuality:       cleanDim,
+        specificityAndResult: cleanDim,
+    },
+    summary:            'Solid draft, ready for review.',
+    confidenceOverride: 88,
 };
 
 const fakeAgentResult = <T>(data: T) => ({

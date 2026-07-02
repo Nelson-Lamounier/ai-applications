@@ -11,11 +11,13 @@
  */
 import type { PipelineContext, QaValidationResult } from '@bedrock/shared';
 import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
+import type { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent } from './agents/research-agent.js';
 import { executeWriterAgent }   from './agents/writer-agent.js';
 import { executeQaAgent }       from './agents/qa-agent.js';
+import { selectArchetype }      from './prompts/archetypes.js';
 import { parseEnv }             from './env.js';
 import { getPool, closePool }   from './lib/pg.js';
 import {
@@ -89,6 +91,71 @@ function buildRunMetadata(
     return meta;
 }
 
+type ResearchData = Awaited<ReturnType<typeof executeResearchAgent>>['data'];
+
+/**
+ * Grounding check (flag mode), extracted from main() to keep its cyclomatic
+ * complexity in budget. Always-on, never blocks persist; fail-open.
+ */
+async function verifyArticleGrounding(
+    pool: Pool,
+    env: ReturnType<typeof parseEnv>,
+    researchData: ResearchData,
+    scrubbedContent: string,
+): Promise<Pick<Awaited<ReturnType<typeof groundingVerifier.verify>>, 'status' | 'reason' | 'ungroundedClaims'> | undefined> {
+    try {
+        const g = await groundingVerifier.verify({
+            query:        `${env.slug} ${researchData.authorDirection ?? ''}`.trim().slice(0, 500),
+            contextChunks: (researchData.kbPassages ?? []).map((p) => p.text),
+            answer:       scrubbedContent,
+        }, env.userId ? { pool, userId: env.userId } : undefined);
+        emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
+            { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
+            { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },
+            { name: 'UngroundedClaimCount',  value: g.ungroundedClaims.length,             unit: 'Count' },
+        ]);
+        return { status: g.status, reason: g.reason, ungroundedClaims: [...g.ungroundedClaims] };
+    } catch (e) {
+        emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: 'ERROR' }, [
+            { name: 'GroundingError', value: 1, unit: 'Count' },
+        ]);
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            error:         (e as Error).message,
+        }, 'Grounding verifier failed — proceeding');
+        return undefined;
+    }
+}
+
+/**
+ * Anti-fabrication gate (flag-gated). When ARTICLE_ARCHETYPE_ASSEMBLY=1 and the
+ * research carried an evidence inventory, refuse to generate if no archetype
+ * meets its evidence minimums — a thin-evidence topic routes to human review
+ * (failed run + reason) rather than being written from general knowledge.
+ * No-op when the flag is off or the inventory is absent (legacy path).
+ */
+function gateArchetypeEligibility(
+    env: ReturnType<typeof parseEnv>,
+    researchData: ResearchData,
+): void {
+    if (process.env['ARTICLE_ARCHETYPE_ASSEMBLY'] !== '1') return;
+    const inv = researchData.evidenceInventory;
+    if (!inv) return;
+    const sel = selectArchetype(inv);
+    if (sel.eligible) {
+        emitEmfMetric('ArticlePipeline', { Stage: 'archetype', Archetype: sel.archetype.id }, [
+            { name: 'ArchetypeSelected', value: 1, unit: 'Count' },
+        ]);
+        log.info({ pipelineRunId: env.pipelineRunId, slug: env.slug, archetype: sel.archetype.id }, 'archetype_selected');
+        return;
+    }
+    emitEmfMetric('ArticlePipeline', { Stage: 'archetype', Status: 'INELIGIBLE' }, [
+        { name: 'ArchetypeIneligible', value: 1, unit: 'Count' },
+    ]);
+    throw new Error(`archetype selection ineligible — ${sel.fallbackReason}`);
+}
+
 async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
@@ -129,6 +196,10 @@ async function main(): Promise<void> {
               }
             : research.data;
 
+        // Anti-fabrication gate (flag-gated): refuse thin-evidence topics before
+        // generation, routing them to human review instead of a fabricated draft.
+        gateArchetypeEligibility(env, researchData);
+
         await updatePipelineRun(pool, env.pipelineRunId, 'writing');
         const writer = await timed('writing', () => executeWriterAgent(ctx, researchData));
 
@@ -140,33 +211,10 @@ async function main(): Promise<void> {
             researchData.mode,
         ));
 
-        // Grounding check (flag mode) — always-on, never blocks persist.
-        // Runs post-QA, pre-persist. Fail-open: any verifier error is logged and
-        // ignored so the article always proceeds to 'review'.
+        // Grounding check (flag mode) — always-on, never blocks persist. Runs
+        // post-QA, pre-persist; fail-open (see verifyArticleGrounding).
         const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
-        let groundingMeta: Pick<Awaited<ReturnType<typeof groundingVerifier.verify>>, 'status' | 'reason' | 'ungroundedClaims'> | undefined;
-        try {
-            const g = await groundingVerifier.verify({
-                query:        `${env.slug} ${research.data.authorDirection ?? ''}`.trim().slice(0, 500),
-                contextChunks: (research.data.kbPassages ?? []).map((p) => p.text),
-                answer:       scrubbedContent,
-            }, env.userId ? { pool, userId: env.userId } : undefined);
-            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
-                { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
-                { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },
-                { name: 'UngroundedClaimCount',  value: g.ungroundedClaims.length,             unit: 'Count' },
-            ]);
-            groundingMeta = { status: g.status, reason: g.reason, ungroundedClaims: [...g.ungroundedClaims] };
-        } catch (e) {
-            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: 'ERROR' }, [
-                { name: 'GroundingError', value: 1, unit: 'Count' },
-            ]);
-            log.warn({
-                pipelineRunId: env.pipelineRunId,
-                slug:          env.slug,
-                error:         (e as Error).message,
-            }, 'Grounding verifier failed — proceeding');
-        }
+        const groundingMeta = await verifyArticleGrounding(pool, env, research.data, scrubbedContent);
 
         // Final persist — write the rendered MDX back to platform RDS.
         // Use scrubbedContent computed above; grounding flag mode never alters it.

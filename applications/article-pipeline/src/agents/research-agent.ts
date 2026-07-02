@@ -500,6 +500,50 @@ const RESEARCH_TOOL = {
                 required: ['primaryKeyword', 'secondaryKeywords', 'suggestedReferences'],
                 additionalProperties: false,
             },
+            // ── Evidence-driven archetype selection (Phase 2) ──────────────
+            evidenceInventory: {
+                type: 'object',
+                properties: {
+                    failureNarratives:   { type: 'integer' },
+                    metrics:             { type: 'integer' },
+                    comparisons:         { type: 'integer' },
+                    stepSequences:       { type: 'integer' },
+                    decisionRecords:     { type: 'integer' },
+                    deepLinks:           { type: 'integer' },
+                    diagnosticArtifacts: { type: 'integer' },
+                },
+                required: [
+                    'failureNarratives', 'metrics', 'comparisons', 'stepSequences',
+                    'decisionRecords', 'deepLinks', 'diagnosticArtifacts',
+                ],
+                additionalProperties: false,
+            },
+            citableLinks: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        url:           { type: 'string' },
+                        supportsClaim: { type: 'string' },
+                    },
+                    required: ['url', 'supportsClaim'],
+                    additionalProperties: false,
+                },
+            },
+            publicRepos:        STR_ARRAY,
+            publishIdentifiers: STR_ARRAY,
+            availableMetrics: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        value:    { type: 'string' },
+                        measures: { type: 'string' },
+                    },
+                    required: ['value', 'measures'],
+                    additionalProperties: false,
+                },
+            },
         },
         required: ['outline', 'technicalFacts', 'suggestedTitle', 'suggestedTags'],
         additionalProperties: false,
@@ -525,6 +569,26 @@ const ResearchModelSchema = z.object({
             relevance: z.string(),
         }).strict()),
     }).strict().optional(),
+    // ── Evidence-driven archetype selection (Phase 2), all optional ──────────
+    evidenceInventory: z.object({
+        failureNarratives:   z.number(),
+        metrics:             z.number(),
+        comparisons:         z.number(),
+        stepSequences:       z.number(),
+        decisionRecords:     z.number(),
+        deepLinks:           z.number(),
+        diagnosticArtifacts: z.number(),
+    }).strict().optional(),
+    citableLinks: z.array(z.object({
+        url:           z.string(),
+        supportsClaim: z.string(),
+    }).strict()).optional(),
+    publicRepos:        z.array(z.string()).optional(),
+    publishIdentifiers: z.array(z.string()).optional(),
+    availableMetrics: z.array(z.object({
+        value:    z.string(),
+        measures: z.string(),
+    }).strict()).optional(),
 }).strict();
 
 /** The subset of {@link ResearchResult} the model actually produces. */
@@ -534,6 +598,11 @@ export interface ResearchModelOutput {
     suggestedTitle: string;
     suggestedTags: string[];
     seoResearch?: SeoResearch;
+    evidenceInventory?: ResearchResult['evidenceInventory'];
+    citableLinks?: ResearchResult['citableLinks'];
+    publicRepos?: ResearchResult['publicRepos'];
+    publishIdentifiers?: ResearchResult['publishIdentifiers'];
+    availableMetrics?: ResearchResult['availableMetrics'];
 }
 
 /**
@@ -566,6 +635,11 @@ export function validateArticleResearch(raw: unknown): ResearchModelOutput {
         suggestedTitle: d.suggestedTitle,
         suggestedTags: d.suggestedTags,
         seoResearch,
+        evidenceInventory:  d.evidenceInventory,
+        citableLinks:       d.citableLinks,
+        publicRepos:        d.publicRepos,
+        publishIdentifiers: d.publishIdentifiers,
+        availableMetrics:   d.availableMetrics,
     };
 }
 
@@ -657,6 +731,11 @@ export async function executeResearchAgent(
                 authorDirection,
                 previousVersionContent,
                 seoResearch: model.seoResearch,
+                evidenceInventory:  model.evidenceInventory,
+                citableLinks:       model.citableLinks,
+                publicRepos:        model.publicRepos,
+                publishIdentifiers: model.publishIdentifiers,
+                availableMetrics:   model.availableMetrics,
             };
         },
         pipelineContext: ctx,

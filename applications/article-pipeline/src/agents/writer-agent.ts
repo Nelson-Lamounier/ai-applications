@@ -13,8 +13,12 @@
  */
 
 import { z } from 'zod';
+import type { SystemContentBlock } from '@aws-sdk/client-bedrock-runtime';
 import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { BLOG_PERSONA_SYSTEM_PROMPT } from '../prompts/blog-persona.js';
+import { WRITER_CORE_BLOCKS } from '../prompts/writer-core-prompt.js';
+import { selectArchetype } from '../prompts/archetypes.js';
+import { assembleDynamicBlock, type ResearchBrief } from '../prompts/prompt-assembler.js';
 import type {
     AgentConfig,
     AgentResult,
@@ -62,6 +66,50 @@ const WRITER_MAX_TOKENS = Number.parseInt(process.env.MAX_TOKENS ?? '65536', 10)
 
 /** Default thinking budget (overridden by Research Agent complexity tier) */
 const DEFAULT_THINKING_BUDGET = Number.parseInt(process.env.THINKING_BUDGET_TOKENS ?? '16000', 10);
+
+// =============================================================================
+// SYSTEM PROMPT ASSEMBLY (evidence-driven archetype, flag-gated)
+// =============================================================================
+
+/** Dark-launch flag for evidence-driven archetype assembly. */
+function archetypeAssemblyEnabled(): boolean {
+    return process.env['ARTICLE_ARCHETYPE_ASSEMBLY'] === '1';
+}
+
+/** Map the research result's brief fields into the assembler's ResearchBrief. */
+function briefFromResearch(research: ResearchResult): ResearchBrief | null {
+    const inv = research.evidenceInventory;
+    if (!inv) return null;
+    return {
+        slug:               '',
+        topic:              research.suggestedTitle,
+        evidenceInventory:  inv,
+        citableLinks:       (research.citableLinks ?? []).map((l) => ({ url: l.url, supportsClaim: l.supportsClaim })),
+        publicRepos:        [...(research.publicRepos ?? [])],
+        publishIdentifiers: [...(research.publishIdentifiers ?? [])],
+        availableMetrics:   (research.availableMetrics ?? []).map((m) => ({ value: m.value, measures: m.measures })),
+    };
+}
+
+/**
+ * Choose the Writer system prompt. When the archetype flag is on and the
+ * research carries an evidence inventory, assemble the universal core (cached)
+ * + the selected archetype + brief (uncached). Falls back to the static blog
+ * persona when the flag is off, the inventory is absent, or — defensively —
+ * the evidence is ineligible (run-pipeline gates ineligibility before this).
+ */
+export function buildWriterSystemPrompt(research: ResearchResult): SystemContentBlock[] {
+    if (!archetypeAssemblyEnabled()) return BLOG_PERSONA_SYSTEM_PROMPT;
+    const brief = briefFromResearch(research);
+    if (!brief) return BLOG_PERSONA_SYSTEM_PROMPT;
+    const selection = selectArchetype(brief.evidenceInventory);
+    if (!selection.eligible) return BLOG_PERSONA_SYSTEM_PROMPT;
+    return [
+        ...WRITER_CORE_BLOCKS,
+        { cachePoint: { type: 'default' } } as SystemContentBlock,
+        { text: assembleDynamicBlock(selection, brief) },
+    ];
+}
 
 // =============================================================================
 // USER MESSAGE BUILDER
@@ -361,7 +409,7 @@ class WriterAgent extends BaseAgent<WriterAgentInput, WriterResult, PipelineCont
             modelId: EFFECTIVE_MODEL_ID,
             maxTokens: WRITER_MAX_TOKENS,
             thinkingBudget,
-            systemPrompt: BLOG_PERSONA_SYSTEM_PROMPT,
+            systemPrompt: buildWriterSystemPrompt(input.research),
         };
     }
 

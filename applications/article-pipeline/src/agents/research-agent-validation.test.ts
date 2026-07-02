@@ -55,4 +55,37 @@ describe('validateArticleResearch', () => {
         expect(() => validateArticleResearch({ ...VALID, seoResearch: { primaryKeyword: 123 } }))
             .toThrow(/schema validation/i);
     });
+
+    // ── Evidence-driven archetype fields (Phase 2, all optional) ─────────────
+
+    it('passes through the evidence inventory + brief fields when present', () => {
+        const withEvidence = {
+            ...VALID,
+            evidenceInventory: {
+                failureNarratives: 3, metrics: 4, comparisons: 0, stepSequences: 1,
+                decisionRecords: 2, deepLinks: 3, diagnosticArtifacts: 2,
+            },
+            citableLinks: [{ url: 'https://docs.aws.amazon.com/x', supportsClaim: 'hop limit' }],
+            publicRepos: ['cdk-monitoring'],
+            publishIdentifiers: [],
+            availableMetrics: [{ value: '11 minutes', measures: 'deploy time saved' }],
+        };
+        const r = validateArticleResearch(withEvidence);
+        expect(r.evidenceInventory?.failureNarratives).toBe(3);
+        expect(r.citableLinks?.[0].supportsClaim).toBe('hop limit');
+        expect(r.availableMetrics?.[0].value).toBe('11 minutes');
+        expect(r.publicRepos).toEqual(['cdk-monitoring']);
+    });
+
+    it('leaves the evidence fields undefined when the model omits them (legacy path)', () => {
+        const r = validateArticleResearch(VALID);
+        expect(r.evidenceInventory).toBeUndefined();
+        expect(r.citableLinks).toBeUndefined();
+        expect(r.availableMetrics).toBeUndefined();
+    });
+
+    it('throws when evidenceInventory is present but malformed', () => {
+        expect(() => validateArticleResearch({ ...VALID, evidenceInventory: { failureNarratives: 'lots' } }))
+            .toThrow(/schema validation/i);
+    });
 });
