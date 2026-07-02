@@ -11,11 +11,13 @@
  */
 import type { PipelineContext, QaValidationResult } from '@bedrock/shared';
 import { bootstrapK8sObservability, pushFinalMetrics, PiiScrubber, BedrockGroundingVerifier, emitEmfMetric, recordInvocationToRds } from '@bedrock/shared';
+import type { Pool } from 'pg';
 import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent } from './agents/research-agent.js';
 import { executeWriterAgent }   from './agents/writer-agent.js';
 import { executeQaAgent }       from './agents/qa-agent.js';
+import { lintArticle, checkLinkLiveness, type Finding } from './lint/article-lint-rules.js';
 import { parseEnv }             from './env.js';
 import { getPool, closePool }   from './lib/pg.js';
 import {
@@ -67,6 +69,7 @@ async function timed<T>(step: string, fn: () => Promise<T>): Promise<T> {
 function buildRunMetadata(
     qa: QaValidationResult,
     groundingMeta: object | undefined,
+    lintMeta: object | undefined,
 ): Record<string, unknown> {
     const issues = Object.entries(qa.dimensions).flatMap(([dimension, dim]) =>
         dim.issues.map((issue) => ({ dimension, ...issue })),
@@ -86,7 +89,110 @@ function buildRunMetadata(
     if (groundingMeta !== undefined) {
         meta['grounding'] = groundingMeta;
     }
+    if (lintMeta !== undefined) {
+        meta['lint'] = lintMeta;
+    }
     return meta;
+}
+
+type ResearchData = Awaited<ReturnType<typeof executeResearchAgent>>['data'];
+
+/**
+ * Grounding check (flag mode), extracted from main() to keep its cyclomatic
+ * complexity in budget. Always-on, never blocks persist; fail-open — any
+ * verifier error is logged and swallowed so the article still reaches 'review'.
+ */
+async function verifyArticleGrounding(
+    pool: Pool,
+    env: ReturnType<typeof parseEnv>,
+    researchData: ResearchData,
+    scrubbedContent: string,
+): Promise<Pick<Awaited<ReturnType<typeof groundingVerifier.verify>>, 'status' | 'reason' | 'ungroundedClaims'> | undefined> {
+    try {
+        const g = await groundingVerifier.verify({
+            query:        `${env.slug} ${researchData.authorDirection ?? ''}`.trim().slice(0, 500),
+            contextChunks: (researchData.kbPassages ?? []).map((p) => p.text),
+            answer:       scrubbedContent,
+        }, env.userId ? { pool, userId: env.userId } : undefined);
+        emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
+            { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
+            { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },
+            { name: 'UngroundedClaimCount',  value: g.ungroundedClaims.length,             unit: 'Count' },
+        ]);
+        return { status: g.status, reason: g.reason, ungroundedClaims: [...g.ungroundedClaims] };
+    } catch (e) {
+        emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: 'ERROR' }, [
+            { name: 'GroundingError', value: 1, unit: 'Count' },
+        ]);
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            error:         (e as Error).message,
+        }, 'Grounding verifier failed — proceeding');
+        return undefined;
+    }
+}
+
+/**
+ * Read the per-article operational-identifier allowlist. Sourced from the
+ * article brief when present; defaults to the dev cluster name so the
+ * author's intended transparency (a dev-only cluster) does not flag.
+ */
+function readPublishIdentifiers(env: ReturnType<typeof parseEnv>): string[] {
+    const brief = env.articleBrief as Record<string, unknown> | undefined;
+    const fromBrief = brief?.['publishIdentifiers'];
+    if (Array.isArray(fromBrief)) {
+        return fromBrief.filter((x): x is string => typeof x === 'string');
+    }
+    return ['k8s-eks-development'];
+}
+
+/**
+ * Deterministic structural lint (flag/record mode, fail-open). Runs the
+ * mechanical checks (title-body coverage, cross-section duplication, slop
+ * constructions, em-dash density, dangling references, manual TOC, link shape,
+ * identifier leaks, enumerated generalisations) on the scrubbed body. Records
+ * findings to pipeline_runs.metadata + EMF metrics; never blocks the run. The
+ * async liveness check runs only when ARTICLE_LINK_LIVENESS=1 (network I/O).
+ * Positioned before grounding so its findings can drive the verifier (Phase 2).
+ */
+async function lintArticleStructure(
+    env: ReturnType<typeof parseEnv>,
+    title: string,
+    scrubbedContent: string,
+): Promise<{ errors: number; warnings: number; findings: Finding[] } | undefined> {
+    try {
+        const fm = { title, publishIdentifiers: readPublishIdentifiers(env) };
+        const findings = lintArticle(scrubbedContent, fm);
+        if (process.env['ARTICLE_LINK_LIVENESS'] === '1') {
+            findings.push(...await checkLinkLiveness(scrubbedContent));
+        }
+        const errors = findings.filter((f) => f.severity === 'error').length;
+        const warnings = findings.length - errors;
+        emitEmfMetric('ArticlePipeline', { Stage: 'structural-lint' }, [
+            { name: 'LintChecked',  value: 1,        unit: 'Count' },
+            { name: 'LintErrors',   value: errors,   unit: 'Count' },
+            { name: 'LintWarnings', value: warnings, unit: 'Count' },
+        ]);
+        if (errors > 0) {
+            log.warn({
+                pipelineRunId: env.pipelineRunId,
+                slug:          env.slug,
+                lintErrors:    findings.filter((f) => f.severity === 'error'),
+            }, 'article_structural_lint_errors');
+        }
+        return { errors, warnings, findings };
+    } catch (e) {
+        emitEmfMetric('ArticlePipeline', { Stage: 'structural-lint', Status: 'ERROR' }, [
+            { name: 'LintError', value: 1, unit: 'Count' },
+        ]);
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            error:         (e as Error).message,
+        }, 'Structural linter failed — proceeding');
+        return undefined;
+    }
 }
 
 async function main(): Promise<void> {
@@ -140,33 +246,13 @@ async function main(): Promise<void> {
             researchData.mode,
         ));
 
-        // Grounding check (flag mode) — always-on, never blocks persist.
-        // Runs post-QA, pre-persist. Fail-open: any verifier error is logged and
-        // ignored so the article always proceeds to 'review'.
+        // Post-QA verifiers (flag/record mode, both fail-open) — run pre-persist,
+        // neither blocks nor mutates content. Structural lint runs first so its
+        // findings can drive the grounding verifier (Phase 2). scrubbedContent is
+        // what both see and what gets persisted.
         const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
-        let groundingMeta: Pick<Awaited<ReturnType<typeof groundingVerifier.verify>>, 'status' | 'reason' | 'ungroundedClaims'> | undefined;
-        try {
-            const g = await groundingVerifier.verify({
-                query:        `${env.slug} ${research.data.authorDirection ?? ''}`.trim().slice(0, 500),
-                contextChunks: (research.data.kbPassages ?? []).map((p) => p.text),
-                answer:       scrubbedContent,
-            }, env.userId ? { pool, userId: env.userId } : undefined);
-            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: g.status }, [
-                { name: 'GroundingChecked',      value: 1,                                     unit: 'Count' },
-                { name: 'GroundingFailed',       value: g.status === 'NOT_GROUNDED' ? 1 : 0,  unit: 'Count' },
-                { name: 'UngroundedClaimCount',  value: g.ungroundedClaims.length,             unit: 'Count' },
-            ]);
-            groundingMeta = { status: g.status, reason: g.reason, ungroundedClaims: [...g.ungroundedClaims] };
-        } catch (e) {
-            emitEmfMetric('ArticlePipeline', { Stage: 'grounding', Status: 'ERROR' }, [
-                { name: 'GroundingError', value: 1, unit: 'Count' },
-            ]);
-            log.warn({
-                pipelineRunId: env.pipelineRunId,
-                slug:          env.slug,
-                error:         (e as Error).message,
-            }, 'Grounding verifier failed — proceeding');
-        }
+        const lintMeta = await lintArticleStructure(env, writer.data.metadata.title, scrubbedContent);
+        const groundingMeta = await verifyArticleGrounding(pool, env, research.data, scrubbedContent);
 
         // Final persist — write the rendered MDX back to platform RDS.
         // Use scrubbedContent computed above; grounding flag mode never alters it.
@@ -186,7 +272,7 @@ async function main(): Promise<void> {
         await updatePipelineRunMetadata(
             pool,
             env.pipelineRunId,
-            buildRunMetadata(qa.data, groundingMeta),
+            buildRunMetadata(qa.data, groundingMeta, lintMeta),
         );
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
