@@ -1,8 +1,11 @@
 /** @format */
 import {
     buildCanonicalExtractionBody,
+    buildCanonicalPackExtractionBody,
     parseCanonicalSkills,
+    parseCanonicalPackSkills,
     ENRICH_CANONICAL_SYSTEM_PROMPT,
+    ENRICH_CANONICAL_PACK_SYSTEM_PROMPT,
 } from './canonicalVocabExtraction.js';
 
 describe('buildCanonicalExtractionBody', () => {
@@ -14,6 +17,63 @@ describe('buildCanonicalExtractionBody', () => {
         expect(system).toContain('kubernetes');
         expect(system).toContain('terraform');
         expect(body.tool_choice).toEqual({ type: 'tool', name: 'record_extraction' });
+    });
+});
+
+describe('buildCanonicalPackExtractionBody', () => {
+    const items = [
+        { key: 'id-1', filePath: 'a.ts', content: 'uses kubernetes' },
+        { key: 'id-2', filePath: 'b.md', content: 'terraform modules', heading: 'Infra' },
+    ];
+
+    it('pays the vocabulary once in the system prefix + forces the keyed pack tool', () => {
+        const body = buildCanonicalPackExtractionBody(['kubernetes', 'terraform'], items) as Record<string, unknown>;
+        const system = body.system as string;
+        expect(system).toContain(ENRICH_CANONICAL_PACK_SYSTEM_PROMPT);
+        expect(system).toContain('CONTROLLED VOCABULARY (2 terms');
+        expect(body.tool_choice).toEqual({ type: 'tool', name: 'record_extractions' });
+    });
+
+    it('labels every chunk by its stable key and scales max_tokens with pack size', () => {
+        const body = buildCanonicalPackExtractionBody(['kubernetes'], items) as Record<string, unknown>;
+        const user = (body.messages as Array<{ content: string }>)[0].content;
+        expect(user).toContain('=== CHUNK id-1 ===');
+        expect(user).toContain('=== CHUNK id-2 ===');
+        expect(body.max_tokens).toBe(128 + 2 * 160);
+    });
+});
+
+describe('parseCanonicalPackSkills', () => {
+    const vocab = new Set(['kubernetes', 'dynamodb']);
+
+    it('splits each keyed entry through the SAME canonical/alias resolution', () => {
+        const aliases = new Map([['aws dynamodb', 'dynamodb']]);
+        const content = [{
+            type: 'tool_use',
+            name: 'record_extractions',
+            input: { extractions: [
+                { key: 'id-1', skills: ['kubernetes', 'NEW: webassembly'] },
+                { key: 'id-2', skills: ['aws dynamodb'] },
+            ] },
+        }];
+        const out = parseCanonicalPackSkills(content, vocab, aliases);
+        expect(out.get('id-1')).toEqual({ canonical: ['kubernetes'], newSkills: ['webassembly'] });
+        expect(out.get('id-2')).toEqual({ canonical: ['dynamodb'], newSkills: [] });
+    });
+
+    it('omits keys the model skipped (caller falls those back per-chunk)', () => {
+        const content = [{
+            type: 'tool_use',
+            name: 'record_extractions',
+            input: { extractions: [{ key: 'id-1', skills: ['kubernetes'] }] },
+        }];
+        const out = parseCanonicalPackSkills(content, vocab);
+        expect(out.has('id-2')).toBe(false);
+        expect(out.size).toBe(1);
+    });
+
+    it('returns an empty map when no tool_use is present', () => {
+        expect(parseCanonicalPackSkills([{ type: 'text' }], vocab).size).toBe(0);
     });
 });
 

@@ -56,6 +56,15 @@ export interface IChunkEnricher {
      */
     enrichPack?(items: readonly PackBodyItem[]): Promise<Map<string, ChunkEnrichment>>;
     /**
+     * Controlled-vocabulary PACK extraction — the canonical twin of enrichPack
+     * for the deferred lane (where production enrichment actually runs, under
+     * DEFER_ENRICHMENT=1 + ENRICH_CANONICAL=1). One model call per pack; the
+     * vocabulary + rules bill once per pack instead of once per chunk. Returns
+     * key -> { canonical, newSkills }; missing keys are omitted (caller falls
+     * those chunks back to per-chunk). Optional; may throw on transport error.
+     */
+    enrichPackCanonical?(vocabulary: readonly string[], items: readonly PackBodyItem[]): Promise<Map<string, { canonical: string[]; newSkills: string[] }>>;
+    /**
      * Controlled-vocabulary extraction (the vocabulary fix): emit ONLY skills from
      * `vocabulary` (the shared skill_ontology) — canonical by construction, so the
      * `d.skills && query.skills` overlap lane fires. Returns the canonical skills +
