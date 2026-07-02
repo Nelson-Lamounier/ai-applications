@@ -38,6 +38,7 @@ import type { DocumentType as __DocumentType } from '@smithy/types';
 import { estimateInvocationCost } from './metrics.js';
 import type { TokenUsage } from './metrics.js';
 import { recordBedrockUsage } from './observability/bedrock.js';
+import { recordGenAiInvocationSpan } from './observability/genai.js';
 import { currentTraceContext } from './observability/workflow-trace.js';
 import type { AgentConfig, AgentResult, AgentInvocationLog } from './types.js';
 import type { BasePipelineContext } from './base-agent.js';
@@ -317,8 +318,9 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
     // can opt every agent into cost recording by setting these once at start
     // (avoids threading them through every execute*Agent wrapper).
     const invocationSink = options.onInvocationComplete ?? pipelineContext.onInvocationComplete;
+    const pipelineName   = config.pipeline ?? pipelineContext.pipelineId;
     const userId         = options.userId ?? pipelineContext.userId;
-    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, pipeline, promptId, tool } = config;
+    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, promptId, tool } = config;
 
     // Anthropic forbids forced tool_use with extended thinking. Catch the
     // misconfiguration here rather than as an opaque Bedrock 400.
@@ -467,6 +469,24 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             `cumulativeCost=$${pipelineContext.cumulativeCostUsd.toFixed(6)}`,
         );
 
+        // OTel GenAI semconv span (no-op tracer on Lambdas). Post-hoc with
+        // explicit timestamps so the runner's error handling stays the owner
+        // of the call lifecycle. Prompt hash answers "prompt or data drift?".
+        recordGenAiInvocationSpan({
+            agentName,
+            modelId,
+            pipeline:             pipelineName,
+            startTimeMs:          startTime,
+            endTimeMs:            startTime + durationMs,
+            inputTokens:          tokenUsage.inputTokens,
+            outputTokens:         tokenUsage.outputTokens,
+            cacheReadInputTokens: tokenUsage.cacheReadInputTokens,
+            costUsd,
+            stopReason:           response.stopReason,
+            systemPromptHash:     sha256(JSON.stringify(systemPrompt)),
+            promptVersion:        process.env['PROMPT_VERSION'],
+        });
+
         // Build and dispatch the invocation log (non-blocking — errors are swallowed)
         if (invocationSink) {
             const systemPromptHash = sha256(JSON.stringify(systemPrompt));
@@ -479,7 +499,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             const totalCostCents  = Math.round(costUsd * 100);
 
             const log: AgentInvocationLog = {
-                pipeline:           pipeline ?? pipelineContext.pipelineId,
+                pipeline:           pipelineName,
                 agent:              agentName,
                 modelId,
                 promptVersion:      process.env['PROMPT_VERSION'],

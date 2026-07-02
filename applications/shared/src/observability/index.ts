@@ -8,6 +8,7 @@ export { pushFinalMetrics } from './pushgateway';
 export { jobLogger, type JobLogger } from './logger';
 export { activeTraceContext, withSpan, captureAwsClient } from './lambda';
 export { currentTraceContext, withWorkflowTrace, type WorkflowTrace } from './workflow-trace';
+export { recordGenAiInvocationSpan, type GenAiInvocationSpan } from './genai';
 export {
     recordBedrockUsage,
     setBedrockMetricsRegistry,
