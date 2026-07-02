@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import { guardResume, validateResume } from './resume-guard.js';
+import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const mockRun = runAgent as jest.Mock;
@@ -87,5 +87,61 @@ describe('guardResume', () => {
         expect(res.violations).toEqual([]);
         expect(mockRun).not.toHaveBeenCalled();
         expect(res.resume.summary).toBe('Support engineer who ships production AI, the biggest win. 5 years across support and operations.');
+    });
+});
+
+describe('enforceScopedClaims', () => {
+    it('strips the unqualified prompt-cache metric from a skills entry, keeping the skill', () => {
+        const r = base({ skills: [{ category: 'Support & Troubleshooting', skills: ['prompt caching (~90% cost reduction)', 'RAG'] }] });
+        const { resume, violations } = enforceScopedClaims(r);
+        expect(resume.skills[0].skills).toEqual(['prompt caching', 'RAG']);
+        expect(violations.map((v) => v.code)).toContain('scoped_claim_unqualified');
+    });
+
+    it('keeps a properly scoped skills entry untouched', () => {
+        const r = base({ skills: [{ category: 'Support & Troubleshooting', skills: ['prompt caching (~90% cost reduction on the Writer Lambda)'] }] });
+        const { resume, violations } = enforceScopedClaims(r);
+        expect(resume.skills[0].skills[0]).toContain('Writer Lambda');
+        expect(violations).toEqual([]);
+    });
+
+    it('qualifies (not strips) the metric in an experience highlight', () => {
+        const r = base({ experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: ['Applied prompt caching for a ~90% cost reduction on inference.'] }] });
+        const { resume, violations } = enforceScopedClaims(r);
+        expect(resume.experience[0].highlights[0]).toContain('(Writer Lambda)');
+        expect(violations.map((v) => v.code)).toContain('scoped_claim_unqualified');
+    });
+
+    it('strips an unqualified metric sentence from the summary', () => {
+        const r = base({ summary: 'Ships production AI systems. Achieved ~90% cost reduction via prompt caching.' });
+        const { resume } = enforceScopedClaims(r);
+        expect(resume.summary).toBe('Ships production AI systems.');
+    });
+
+    it('no scoped metric anywhere → no violations, resume unchanged', () => {
+        const r = base();
+        const { resume, violations } = enforceScopedClaims(r);
+        expect(violations).toEqual([]);
+        expect(resume).toStrictEqual(r);
+    });
+});
+
+describe('dropKeyAchievementsSection', () => {
+    it('drops an emitted keyAchievements section and scrubs sectionOrder', () => {
+        const r = base({
+            keyAchievements: [{ achievement: 'Cut costs 40%' }],
+            sectionOrder: ['summary', 'keyAchievements', 'experience', 'skills'],
+        } as never);
+        const { resume, violations } = dropKeyAchievementsSection(r);
+        expect((resume as { keyAchievements: unknown[] }).keyAchievements).toEqual([]);
+        expect((resume as { sectionOrder: string[] }).sectionOrder).not.toContain('keyAchievements');
+        expect(violations.map((v) => v.code)).toEqual(['key_achievements_emitted']);
+    });
+
+    it('empty keyAchievements → untouched, no violation', () => {
+        const r = base();
+        const { resume, violations } = dropKeyAchievementsSection(r);
+        expect(resume).toBe(r);
+        expect(violations).toEqual([]);
     });
 });

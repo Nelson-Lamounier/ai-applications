@@ -843,7 +843,21 @@ export async function main(): Promise<void> {
                         tailoredResume: surfaced,
                     }).catch(() => null);
                     const reResumeId = rePersisted?.resumeId ?? persisted.resumeId;
-                    finalAts = await renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced }).catch(() => atsCheck);
+                    // Re-check the SURFACED resume. A silent fallback to the
+                    // pre-rewrite verdict shipped stale "missing keyword" issues
+                    // for a resume that had already fixed them — so retry once,
+                    // and if the re-check still fails, mark the verdict stale
+                    // instead of presenting it as current.
+                    finalAts = await renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced })
+                        .catch(async () => {
+                            log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed — retrying once');
+                            return renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced });
+                        })
+                        .catch(() => {
+                            log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed_twice — stamping stale verdict');
+                            strategistRuns.inc({ operation: 'analyse', outcome: 'ats_recheck_stale' });
+                            return { ...atsCheck, staleForFinalResume: true };
+                        });
                 }
             } else {
                 atsFeedback.inc({ outcome: 'skipped' });
