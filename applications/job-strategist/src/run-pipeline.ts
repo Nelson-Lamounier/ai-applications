@@ -32,6 +32,7 @@ import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import { guardResume } from './agents/resume-guard.js';
+import { annotateGapCauses } from './lib/gap-cause.js';
 import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -176,6 +177,12 @@ const atsFeedback = new Counter({
     name:       'job_strategist_ats_feedback_total',
     help:       'ATS feedback loop outcomes: fired (re-write ran), passed (no attainable missing), skipped (re-write not run).',
     labelNames: ['outcome'] as const,
+    registers:  [obs.registry],
+});
+const gapCauseMetric = new Counter({
+    name:       'job_strategist_gap_cause_total',
+    help:       'Research gap causes: kb_present_not_retrieved (retrieval tuning lead) vs kb_no_evidence (document-or-build signal).',
+    labelNames: ['cause'] as const,
     registers:  [obs.registry],
 });
 // Prose linting runs in 'flag' mode only — telemetry on AI-tell language in the
@@ -874,6 +881,15 @@ export async function main(): Promise<void> {
             pool, env.userId, finalAnalysis, env.pipelineRunId,
         );
 
+        // ── Gap-cause classification (advisory, fail-open) ────────────────
+        // Split every research gap into kb_present_not_retrieved (evidence
+        // exists, retrieval missed it → retrieval bug lead) vs kb_no_evidence
+        // (nothing in the KB → user-facing "document this" signal). Persisted
+        // on the gap entries; aggregated as a Prometheus counter for Grafana.
+        const gapsWithCauses = await annotateGapCauses(
+            pool, env.userId, researchData.gaps, (cause) => gapCauseMetric.inc({ cause }),
+        ).catch(() => researchData.gaps);
+
         // Stash both outputs on pipeline_runs.metadata so the admin-api detail
         // endpoint can serve research fields (fitSummary, matches, gaps, etc.)
         // and a downstream coach K8s Job can re-hydrate without re-running.
@@ -884,7 +900,7 @@ export async function main(): Promise<void> {
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
             analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
-            research:     researchData,
+            research:     { ...researchData, gaps: gapsWithCauses },
             jdExtraction,
             // LLM-agent cost (extraction + research + analysis + grounding); excludes embeddings/rerank.
             tokens:  ctx.cumulativeTokens,

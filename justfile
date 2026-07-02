@@ -380,3 +380,30 @@ smoke-e2e *ARGS:
 [group('smoke')]
 smoke-tunnel:
     kubectl port-forward svc/pgbouncer 15432:5432 -n platform
+
+# Run the RAG retrieval golden-set eval against dev RDS (real Titan embed +
+# pgvector retrieval + Haiku LLM-as-judge — spends Bedrock tokens).
+# Manages the pgbouncer port-forward automatically and reads PG credentials
+# from the platform-rds-credentials k8s secret. Persists to rag_eval_runs /
+# rag_eval_results (RAG_EVAL_PERSIST=1) so Grafana trend panels update.
+#
+# Usage:
+#   USER_ID=<uuid> just rag-eval
+#   USER_ID=<uuid> just rag-eval RAG_EVAL_HYBRID=0     # pure-vector A/B leg
+#   USER_ID=<uuid> just rag-eval RAG_EVAL_PERSIST=0    # dry run, no RDS write
+[group('strategist')]
+rag-eval *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${USER_ID:?USER_ID (uuid with ingested repos) is required}"
+    for arg in {{ARGS}}; do export "$arg"; done
+    PG_PASSWORD=$(kubectl get secret -n admin-api platform-rds-credentials -o jsonpath='{.data.PG_PASSWORD}' | base64 -d)
+    kubectl port-forward svc/pgbouncer 15432:5432 -n platform >/dev/null 2>&1 &
+    PF_PID=$!
+    trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
+    for _ in $(seq 1 20); do nc -z 127.0.0.1 15432 2>/dev/null && break; sleep 0.5; done
+    RUN_RAG_EVAL=1 \
+    RAG_EVAL_PERSIST="${RAG_EVAL_PERSIST:-1}" \
+    RDS_HOST=127.0.0.1 RDS_PORT=15432 RDS_DB_NAME=tucaken RDS_USER=postgres RDS_PASSWORD="$PG_PASSWORD" \
+    AWS_REGION="${AWS_REGION:-eu-west-1}" \
+    npx tsx applications/job-strategist/src/evals/rag/run-rag-eval.ts
