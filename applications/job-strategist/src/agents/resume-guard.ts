@@ -170,7 +170,7 @@ function nameVariants(name: string): string[] {
         if (ch === ')' && depth > 0) { depth -= 1; inner.push(buf); outer += ' '; continue; }
         if (depth > 0) buf += ch; else outer += ch;
     }
-    const collapsed = outer.toLowerCase().split(/\s+/).join(' ');
+    const collapsed = outer.toLowerCase().replaceAll(/\s+/g, ' ');
     return [...collapsed.split(' via '), ...inner]
         .map((v) => v.trim().toLowerCase())
         .filter((v) => v.length >= 3);
@@ -554,7 +554,7 @@ export interface ScopedClaim {
 export const SCOPED_CLAIMS: readonly ScopedClaim[] = [
     {
         context:       /cach|prompt/i,
-        metricCore:    /~?\s*90\s*%/,
+        metricCore:    /~?\s{0,5}90\s{0,5}%/,
         qualifier:     /writer\s+lambda/i,
         qualifierText: '(Writer Lambda)',
         label:         'prompt-cache cost reduction',
@@ -583,7 +583,7 @@ function qualifyClaim(text: string, claim: ScopedClaim): string {
  * carrying it, then (if it survives outside parentheses) drop the sentence.
  */
 function stripClaimFromProse(text: string, claim: ScopedClaim): string {
-    const withoutParen = text.replace(/\s{0,10}\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
+    const withoutParen = text.replace(/ ?\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
     if (!isUnqualified(withoutParen, claim)) return withoutParen.trim();
     return withoutParen
         .split(/(?<=[.!?])\s+/)

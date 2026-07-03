@@ -123,7 +123,7 @@ function hardTrimSkills(resume: StructuredResumeData): StructuredResumeData {
         skills: (g.skills ?? [])
             // A "skill" longer than the cap is a sentence, not a name — drop the
             // parenthetical first; if it is still prose, drop the item.
-            .map((s) => (words(s) > LENGTH_BUDGET.perSkillItemWords ? s.replace(/\s*\([^)]*\)/g, '').trim() : s))
+            .map((s) => (words(s) > LENGTH_BUDGET.perSkillItemWords ? s.replace(/ ?\([^)]*\)/g, '').trim() : s))
             .filter((s) => s.length > 0 && words(s) <= LENGTH_BUDGET.perSkillItemWords * 2)
             .slice(0, LENGTH_BUDGET.maxSkillItemsPerCategory),
     }));

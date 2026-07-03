@@ -14,8 +14,8 @@ const PRICING: Record<string, { inputCentsPerK: number; outputCentsPerK: number 
   // ENRICHMENT_MODEL_ID is unset. Same rates; without this it would fall back
   // to DEFAULT_PRICING (Sonnet) and over-bill Haiku ~3.75x.
   'anthropic.claude-haiku-4-5-20251001-v1:0': {
-    inputCentsPerK:  0.080,
-    outputCentsPerK: 0.400,
+    inputCentsPerK:  0.08,
+    outputCentsPerK: 0.4,
   },
   // Bare Sonnet id — the ModelId CloudWatch actually reports for Converse
   // calls (e.g. self-healing, chatbots, case-study, article-pipeline) is
