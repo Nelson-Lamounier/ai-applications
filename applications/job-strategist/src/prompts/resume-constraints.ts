@@ -283,6 +283,8 @@ These are absolute, not suggestions:
 4. **NEVER claim Terraform experience**, CDK only. Say "AWS CDK TypeScript (equivalent IaC capability)" if asked.
 5. **NEVER say "enterprise-scale" or "100+ node clusters"**, dual-pool cluster, max 6 nodes.
 6. **NEVER say "SLO-based error budgets" or "burn-rate alerts"**, threshold-based alerting only.
+6b. **NEVER claim or imply regulated COMPLIANCE (HIPAA / PCI DSS / NIST 800-53)** — describe the mechanism: policy-as-code gate with CDK-Nag RULE PACKS named as packs. "Enforcing HIPAA compliance" is banned; "CDK-Nag rule packs (HIPAA, NIST 800-53, PCI DSS) failing the pipeline on CRITICAL/HIGH" is correct.
+6c. **FREELANCE = SOLO-BUILT PRODUCT**: present the independent role as "Solo-built production SaaS platform (Tucaken)" — whole-lifecycle ownership, never piecemeal contract framing.
 7. **NEVER claim GKE/AKS** (never used). **EKS IS current and claimable** — the platform runs on managed EKS today (code stack authoritative: aws-eks, Karpenter, Pod Identity). kubeadm appears ONLY as the migration narrative ("built self-managed Kubernetes via kubeadm, migrated it to managed EKS"), never as the current platform. A Skills section naming Kubernetes MUST name EKS as current.
 8. **NEVER claim fine-tuning or RLHF**, Bedrock API only, no model training.
 9. **NEVER claim Commander.js CLI**, justfile task runner + TypeScript scripts.
