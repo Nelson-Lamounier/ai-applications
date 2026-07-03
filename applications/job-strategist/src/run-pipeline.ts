@@ -780,6 +780,7 @@ export async function main(): Promise<void> {
                 leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
                 verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
                 archetypeSkillLead,
+                companyProblem:    jdExtraction.companyProblem,
             });
             finalResume = guarded.resume;
             for (const v of guarded.violations) resumeViolationsMetric.inc({ code: v.code });
