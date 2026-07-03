@@ -20,6 +20,7 @@ import type {
 } from '@bedrock/shared';
 import {
     bootstrapK8sObservability, pushFinalMetrics,
+    setDefaultAgentInvocationSink, recordInvocationToRds,
     RdsStagePrepOntologyRepository, toRoleFamily, toCompSeniority,
     loadStagePrepConstraints, buildStagePrepConstraintBlock,
     RdsProjectEvidenceRepository, joinSkillCandidates,
@@ -424,6 +425,13 @@ function buildFinalInputs(
 async function main(): Promise<void> {
     const env  = parseCoachEnv();
     const pool = getPool(env.pg);
+    // Process-wide invocation sink: coach helper agents build local contexts
+    // without onInvocationComplete — register once so every Bedrock call in
+    // this Job records to prompt_invocations with user attribution.
+    setDefaultAgentInvocationSink(
+        recordInvocationToRds(pool, 'job-strategist', {}),
+        env.userId,
+    );
     const start = process.hrtime.bigint();
     let outcome: 'success' | 'failed' = 'failed';
 

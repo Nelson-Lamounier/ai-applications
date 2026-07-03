@@ -18,6 +18,7 @@
 // ─── Agent Runner ────────────────────────────────────────────────────────────
 export {
     runAgent,
+    setDefaultAgentInvocationSink,
     parseJsonResponse,
     AgentExecutionError,
 } from './agent-runner.js';

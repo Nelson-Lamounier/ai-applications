@@ -15,7 +15,7 @@
  */
 import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
+import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import type { JdSignal } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
@@ -422,6 +422,14 @@ export async function main(): Promise<void> {
         userId:            env.userId,
         onInvocationComplete: recordInvocationToRds(pool, 'job-strategist', { applicationId: env.applicationId }),
     };
+    // Process-wide fallback: helper agents (guards, years-gap, surface-keywords,
+    // condense) and the matcher build their own contexts without the sink —
+    // register it once so EVERY Bedrock invocation in this Job records to
+    // prompt_invocations with user attribution.
+    setDefaultAgentInvocationSink(
+        recordInvocationToRds(pool, 'job-strategist', { applicationId: env.applicationId }),
+        env.userId,
+    );
 
     try {
         await updatePipelineRun(pool, env.pipelineRunId, 'researching');
