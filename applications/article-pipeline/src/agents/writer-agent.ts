@@ -43,6 +43,12 @@ import type {
 export interface WriterAgentInput {
     /** Research Agent's structured output */
     readonly research: ResearchResult;
+    /**
+     * QA feedback from a prior failed attempt, injected on retry so the Writer
+     * fixes the specific issues rather than regenerating blind. Empty on the
+     * first attempt.
+     */
+    readonly revisionNotes?: readonly string[];
 }
 
 // =============================================================================
@@ -125,15 +131,33 @@ export function buildWriterSystemPrompt(research: ResearchResult): SystemContent
  * @param retryAttempt - Current retry attempt (0-based)
  * @returns Formatted user message
  */
-function buildContextSection(research: ResearchResult, retryAttempt: number, version: number): string[] {
+/** Retry banner + the concrete QA issues to fix, injected on a retry attempt. */
+function buildRetryNote(retryAttempt: number, revisionNotes: readonly string[]): string[] {
+    if (retryAttempt === 0) return [];
+    const feedback = revisionNotes.length > 0
+        ? [
+              `>`,
+              `> ## QA Feedback To Fix (from the previous attempt)`,
+              `> Resolve each of these specific issues. Do not reintroduce them.`,
+              ...revisionNotes.map((note) => `> - ${note}`),
+          ]
+        : [];
     return [
-        ...(retryAttempt > 0
-            ? [
-                  ``,
-                  `> ⚠️ This is retry attempt ${retryAttempt}. The previous version did not pass QA.`,
-                  `> Pay extra attention to technical accuracy and code correctness.`
-              ]
-            : []),
+        ``,
+        `> ⚠️ This is retry attempt ${retryAttempt}. The previous version did not pass QA.`,
+        `> Pay extra attention to technical accuracy and code correctness.`,
+        ...feedback,
+    ];
+}
+
+function buildContextSection(
+    research: ResearchResult,
+    retryAttempt: number,
+    version: number,
+    revisionNotes: readonly string[] = [],
+): string[] {
+    return [
+        ...buildRetryNote(retryAttempt, revisionNotes),
         ...(research.authorDirection
             ? [
                   ``,
@@ -251,6 +275,7 @@ function buildWriterMessage(
     research: ResearchResult,
     retryAttempt: number,
     version: number,
+    revisionNotes: readonly string[] = [],
 ): string {
     const parts: string[] = [
         `## Content Generation Request`,
@@ -258,7 +283,7 @@ function buildWriterMessage(
         `- Complexity: ${research.complexity.tier} — ${research.complexity.reason}`,
         `- Suggested Title: ${research.suggestedTitle}`,
         `- Suggested Tags: ${research.suggestedTags.join(', ')}`,
-        ...buildContextSection(research, retryAttempt, version),
+        ...buildContextSection(research, retryAttempt, version, revisionNotes),
         ...buildOutlineAndFactsSection(research),
         ...buildSeoSection(research),
         ``,
@@ -421,7 +446,7 @@ class WriterAgent extends BaseAgent<WriterAgentInput, WriterResult, PipelineCont
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: WriterAgentInput, ctx: PipelineContext): string {
-        return buildWriterMessage(input.research, ctx.retryAttempt, ctx.version);
+        return buildWriterMessage(input.research, ctx.retryAttempt, ctx.version, input.revisionNotes);
     }
 
     /**
@@ -486,11 +511,13 @@ export { writerAgent, WriterAgent };
  *
  * @param ctx - Pipeline context
  * @param research - Research result from the first agent
+ * @param revisionNotes - QA feedback from a prior failed attempt (retry only)
  * @returns Writer result with MDX content, metadata, and shot list
  */
 export async function executeWriterAgent(
     ctx: PipelineContext,
     research: ResearchResult,
+    revisionNotes?: readonly string[],
 ): Promise<AgentResult<WriterResult>> {
-    return writerAgent.execute({ research }, ctx);
+    return writerAgent.execute({ research, revisionNotes }, ctx);
 }

@@ -17,6 +17,7 @@ import {
   checkIdentifierLeaks,
   checkEnumeratedGeneralisations,
   checkHeadingExpressions,
+  checkReadability,
 } from './article-lint-rules.js';
 
 describe('title-coverage (the Golden Path bug)', () => {
@@ -82,6 +83,31 @@ describe('em-dash density', () => {
       'bootstrap repo — the GitOps source — owns the rest of it entirely.';
     const src = `## A\n${para}\n\n${para}\n\n${para}`;
     expect(checkEmDashDensity(src)).toHaveLength(1);
+  });
+});
+
+describe('readability (Flesch)', () => {
+  it('warns on jargon-dense prose below the floor', () => {
+    const dense =
+      'The deterministic provenance reconciliation subsystem instruments ' +
+      'probabilistic hallucination remediation through hierarchical ' +
+      'observability orchestration. Instrumentation asymmetry necessitates ' +
+      'comprehensive verification methodologies across heterogeneous ' +
+      'infrastructure abstractions continuously. Orchestration architecture ' +
+      'demonstrates considerable computational sophistication throughout ' +
+      'distributed remediation pipelines everywhere.';
+    expect(checkReadability(dense)).toHaveLength(1);
+  });
+
+  it('passes plain prose', () => {
+    const plain =
+      'The guard runs after the model. It checks each claim. If a number is ' +
+      'not in the source, it strips it out. The code is small and easy to read.';
+    expect(checkReadability(plain)).toHaveLength(0);
+  });
+
+  it('skips short fragments', () => {
+    expect(checkReadability('Too short to score.')).toHaveLength(0);
   });
 });
 

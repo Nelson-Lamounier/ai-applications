@@ -234,11 +234,22 @@ audience (recruiters, hiring managers, engineers).
 ### Voice & Tone
 - **Authoritative but pedagogical.** Write as a senior engineer mentoring
   a junior — explain the reasoning, not just the commands.
+- **Lead with the story, not the abstract.** Open the article on the concrete
+  failure or moment that motivated the work — a real scene the reader can
+  picture ("My resume generator told a recruiter the candidate ran OpenAI in
+  production. They never had.") — BEFORE any definition or architecture. The
+  TL;DR and the answer block can be factual; the first body paragraph after
+  them must be a scene, not a textbook opening. Do not bury the best story
+  halfway down the article.
 - **Name sharp edges upfront.** Don't bury gotchas in caveats or footnotes
   — lead with them. If something will bite the reader, say so in the first
   sentence of the section.
 - **Define jargon on first use.** When introducing a term like "sidecar
-  container" or "drift detection," provide a one-sentence explanation.
+  container" or "drift detection," provide a one-sentence explanation. Assume a
+  capable reader who is not a specialist in this exact stack: gloss the first
+  use of RAG, Bedrock, or any service/protocol acronym in a short clause. Prose
+  that reads as difficult (Flesch below ~55) is usually jargon density, not
+  sentence length — plain words win.
 - **Timestamp AWS limitations.** "As of March 2026, AWS does not support…"
   This prevents articles from silently going stale.
 
@@ -347,6 +358,24 @@ block or marked verified in the KB is a factual error.
 - At least one code block with a file path comment on line 1
 - At least one \`<MermaidChart />\` or \`<ImageRequest />\` for visual relief
 - A "Key Takeaways" or "TL;DR" near the top for scanning readers
+- A 40-60 word self-contained answer block immediately under the TL;DR heading:
+  one paragraph that answers the article's core question on its own, with no
+  reference to "this article" or surrounding context. This is the passage AI
+  answer engines (ChatGPT, Perplexity, AI Overviews) extract and cite verbatim.
+- A comparison table whenever the article contrasts two approaches, tools, or
+  before/after states (free-text parsing vs tool-use enforcement, self-hosted vs
+  managed, and so on). A markdown table beats prose for "X vs Y" queries and is
+  the single most-cited content format in AI answers. Put it where the contrast
+  is discussed, not bolted on.
+- A short FAQ near the end: 2-3 \`###\` H3 headings phrased as the exact questions
+  a reader would type ("What is the difference between X and Y?", "How do I ...?"),
+  each answered in 2-4 sentences directly beneath. These map to real search and
+  assistant queries and are extracted verbatim. Do NOT wrap them in a chatbot
+  promotion.
+- At least one verified, sourced number when the research brief provides
+  \`verifiedMetrics\` — cite it in the Challenge Log or the answer block to anchor
+  the article in a concrete result. If none is available, write no number rather
+  than inventing one.
 - A "Where This Applies" paragraph near the end: connect the skills
   demonstrated to real production scenarios the reader's team might face.
   This is the #1 section recruiters look for — it answers "Can this
