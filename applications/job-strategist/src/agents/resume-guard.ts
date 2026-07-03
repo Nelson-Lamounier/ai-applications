@@ -9,6 +9,10 @@ export interface ResumeGuardCtx {
     leadIdentity: string;
     verifiedEducation: string[];
     archetypeSkillLead: string;
+    /** The JD's company problem — the summary's mandatory bridge target. */
+    companyProblem?: string;
+    /** Documented project pitches — the opening beat a project description must use. */
+    projectPitches?: ReadonlyArray<{ name: string; pitch: string }>;
 }
 
 const GAP_RE = /falls?\s+short|\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)|do(?:es)?\s*not\s+yet\s+have/i;
@@ -44,6 +48,48 @@ function findMisplacedSelectedWork(resume: StructuredResumeData): string | null 
         }
     }
     return null;
+}
+
+/** Numbers (integers with optional +) appearing in a prose string. */
+function numbersIn(text: string): Set<string> {
+    return new Set((text.match(/\d+(?:[.,]\d+)?\+?/g) ?? []).map((n) => n.replace(/[,+]/g, '')));
+}
+
+/** Distinct numbers the summary shares with experience bullets. */
+export function summarySharedNumbers(resume: StructuredResumeData): string[] {
+    const summaryNums = numbersIn(resume.summary ?? '');
+    if (summaryNums.size === 0) return [];
+    const bulletNums = numbersIn((resume.experience ?? []).flatMap((e) => e.highlights ?? []).join(' '));
+    return [...summaryNums].filter((n) => bulletNums.has(n));
+}
+
+/**
+ * The summary POSITIONS, bullets PROVE — a summary that restates bullet
+ * headline numbers is an inventory, not a positioning statement (the
+ * Accenture run's summary repeated 16-CDK-stack + 30 Checkov rules from
+ * bullets 2 and 4). One shared number is allowed: the closing metric.
+ */
+function checkSummaryInventory(out: ResumeViolation[], resume: StructuredResumeData): void {
+    const sharedNumbers = summarySharedNumbers(resume);
+    if (sharedNumbers.length > 1) {
+        out.push({ code: 'summary_restates_bullets', detail: `Summary repeats ${sharedNumbers.length} numbers already used in experience bullets (${sharedNumbers.join(', ')}) — max one (the closing metric); replace restated facts with the problem bridge and a distinctive angle.` });
+    }
+}
+
+/**
+ * Projects share the summary's contract: they POSITION (pitch + differentiator
+ * + one fresh metric); bullets PROVE. A description sharing more than one
+ * number with the experience bullets is a restated inventory (the Accenture
+ * run's AI-Platform description repeated 16-CDK-stack and 25 ArgoCD apps).
+ */
+function checkProjectInventory(out: ResumeViolation[], resume: StructuredResumeData): void {
+    const bulletNums = numbersIn((resume.experience ?? []).flatMap((e) => e.highlights ?? []).join(' '));
+    for (const p of resume.projects ?? []) {
+        const shared = [...numbersIn(p.description ?? '')].filter((n) => bulletNums.has(n));
+        if (shared.length > 1) {
+            out.push({ code: 'project_restates_bullets', detail: `Project "${p.name}" repeats ${shared.length} numbers already used in experience bullets (${shared.join(', ')}) — open with the documented pitch, add one JD-relevant differentiator, one fresh metric.` });
+        }
+    }
 }
 
 export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
@@ -84,6 +130,9 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
             out.push({ code: 'skills_lead_mismatch', detail: `First skill group "${resume.skills[0]?.category}" is not the archetype lead "${ctx.archetypeSkillLead}".` });
         }
     }
+
+    checkSummaryInventory(out, resume);
+    checkProjectInventory(out, resume);
 
     const misplaced = findMisplacedSelectedWork(resume);
     if (misplaced) {
@@ -284,6 +333,10 @@ export async function rewriteResume(
         'You repair a tailored resume, fixing ONLY the listed issues by REORDERING and REWORDING for prominence. Call emit_resume with the full resume JSON.',
         `NEVER fabricate, NEVER change a number or date, NEVER rename a degree — the verified degree names are: ${ctx.verifiedEducation.join('; ')}.`,
         `Make the summary's FIRST sentence lead with this identity differentiator: "${ctx.leadIdentity}" — never an infrastructure-first opener; never name or concede any experience gap.`,
+        ctx.projectPitches?.length
+            ? `For project_restates_bullets: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${ctx.projectPitches.map((p) => `"${p.name}: ${p.pitch.slice(0, 200)}"`).join(' | ')}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
+            : 'For project_restates_bullets: rewrite the flagged project description as pitch (what it is, who it is for, the problem it solves) + one JD-relevant differentiator + one fresh metric. Remove numbers duplicated from experience bullets and all stack enumerations.',
+        ctx.companyProblem ? `For summary_restates_bullets: rewrite the summary as POSITIONING, not inventory — S1 capability + years framing, S2 ONE sentence bridging to this problem (paraphrased): "${ctx.companyProblem.slice(0, 400)}", S3 a distinctive angle NOT already an experience bullet, S4 keep the closing metric sentence. Remove every number that duplicates an experience bullet except the closing metric.` : 'For summary_restates_bullets: rewrite the summary as positioning — remove numbers duplicated from experience bullets (keep only the closing metric) and replace restated facts with a distinctive, non-bullet angle.',
         'For headline_is_title: rewrite profile.title as a DESCRIPTIVE domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect, Consultant…) — e.g. "Cloud & AI Operations · Python Automation & Incident Response". Never claim a role the candidate does not hold.',
         'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
         `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,

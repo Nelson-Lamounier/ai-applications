@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection } from './resume-guard.js';
+import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection, summarySharedNumbers } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const mockRun = runAgent as jest.Mock;
@@ -143,5 +143,60 @@ describe('dropKeyAchievementsSection', () => {
         const { resume, violations } = dropKeyAchievementsSection(r);
         expect(resume).toBe(r);
         expect(violations).toEqual([]);
+    });
+});
+
+describe('summary_restates_bullets', () => {
+    it('flags a summary repeating two bullet numbers (inventory summary)', () => {
+        const r = base({
+            summary: 'Ships production AI systems. Built 16-stack monorepo with 30 custom rules. Closing metric: 25 ArgoCD apps.',
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Engineered 16-CDK-stack IaC monorepo across four accounts.',
+                'Wrote 30 custom Checkov Python rules with a severity gate.',
+                'Manages 25 ArgoCD applications.',
+            ] }],
+        });
+        expect(codes(r)).toContain('summary_restates_bullets');
+    });
+
+    it('allows exactly one shared number (the closing metric)', () => {
+        const r = base({
+            summary: 'Ships production AI and applies root-cause methodology to support escalations. Positioning prose without bullet facts. Closing metric: 25 ArgoCD apps.',
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Manages 25 ArgoCD applications with self-healing GitOps.',
+            ] }],
+        });
+        expect(codes(r)).not.toContain('summary_restates_bullets');
+    });
+
+    it('summarySharedNumbers strips separators and plus suffixes', () => {
+        const r = base({
+            summary: 'Ships systems with 265+ assertions. 5 years across support and operations.',
+            experience: [{ company: 'F', title: 'E', period: 'p', highlights: ['Maintains 265 CDK test assertions.'] }],
+        });
+        expect(summarySharedNumbers(r)).toEqual(['265']);
+    });
+});
+
+describe('project_restates_bullets', () => {
+    it('flags a project description repeating two bullet numbers', () => {
+        const r = base({
+            projects: [{ name: 'AI Platform', github: '', description: '16-CDK-stack monorepo with ArgoCD GitOps managing 25 applications and Blue/Green rollouts.' }],
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Engineered 16-CDK-stack IaC monorepo across four accounts.',
+                'Manages 25 ArgoCD applications with self-healing GitOps.',
+            ] }],
+        } as never);
+        expect(codes(r)).toContain('project_restates_bullets');
+    });
+
+    it('allows a pitch-led description with one fresh metric and one shared number', () => {
+        const r = base({
+            projects: [{ name: 'AI Platform', github: '', description: 'SaaS for engineers seeking honest, code-grounded resumes. Differentiates via anti-fabrication guards; 38 KB passages ground each run across 25 applications.' }],
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Manages 25 ArgoCD applications with self-healing GitOps.',
+            ] }],
+        } as never);
+        expect(codes(r)).not.toContain('project_restates_bullets');
     });
 });
