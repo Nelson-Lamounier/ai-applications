@@ -13,14 +13,13 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
-import type { JdSignal } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
-import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription } from './agents/research-agent.js';
+import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
@@ -68,7 +67,6 @@ import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
 import { runFreeTier }             from './free/run-free.js';
 import { gatherFreeEvidence }      from './free/gather-evidence.js';
 import { bedrockFreeResumeWriter } from './agents/free-resume-writer.js';
-import { querySingleRds }          from './agents/research-agent.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -162,6 +160,13 @@ function buildCoverLetterNarrative(
 }
 
 /** Verified certification facts for the guard (name + date string). */
+/** Reconcile outcome label without a nested ternary. */
+function degreeOutcome(r: { verified?: unknown; partial?: unknown }): string {
+    if (r.verified) return 'verified';
+    if (r.partial) return 'partial';
+    return 'gap';
+}
+
 /** Career-history employers + their verified highlight facts — the guard's attribution boundary. */
 function toVerifiedEmployers(entries: ReadonlyArray<{ company: string; highlights?: readonly string[] }> | undefined): Array<{ name: string; facts: string }> {
     return (entries ?? []).map((c) => ({ name: c.company, facts: (c.highlights ?? []).join(' ') }));
@@ -683,7 +688,7 @@ export async function main(): Promise<void> {
             log.info({
                 pipelineRunId: env.pipelineRunId,
                 requirement: degreeResult.requirementSkill,
-                outcome: degreeResult.verified ? 'verified' : degreeResult.partial ? 'partial' : 'gap',
+                outcome: degreeOutcome(degreeResult),
             }, 'education_degree_reconciled');
         }
 
@@ -949,7 +954,7 @@ export async function main(): Promise<void> {
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
                 const refined = await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume);
-                let surfaced = refined !== baseResume ? stripUngroundedNumbers(refined, allowed) : baseResume;
+                let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
                 if (surfaced !== baseResume) {
                     // The keyword rewrite is the last stage that can GROW the
                     // resume (it inflated the 2026-07-02 Google run by pulling

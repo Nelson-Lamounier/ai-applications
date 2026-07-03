@@ -22,7 +22,9 @@ export interface ResumeGuardCtx {
     verifiedEmployers?: ReadonlyArray<VerifiedEmployer>;
 }
 
-const GAP_RE = /falls?\s+short|\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)|do(?:es)?\s*not\s+yet\s+have/i;
+const GAP_PHRASE_RE = /falls?\s+short|do(?:es)?\s*not\s+yet\s+have/i;
+const GAP_YEARS_RE = /\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)/i;
+const namesGap = (text: string): boolean => GAP_PHRASE_RE.test(text) || GAP_YEARS_RE.test(text);
 
 /**
  * Generic stop-words that appear in many identities and are not differentiating
@@ -159,9 +161,17 @@ function checkProblemBridge(out: ResumeViolation[], resume: StructuredResumeData
 
 /** Prose name variants for an entity ("Amazon Web Services (AWS)" → both forms; "Meta via Accenture" → each employer). */
 function nameVariants(name: string): string[] {
-    const inner = [...name.matchAll(/\(([^)]+)\)/g)].map((m) => m[1]);
-    const outer = name.replace(/\([^)]*\)/g, ' ');
-    return [...outer.split(/\s+via\s+/i), ...inner]
+    const inner: string[] = [];
+    let outer = '';
+    let depth = 0;
+    let buf = '';
+    for (const ch of name) {
+        if (ch === '(') { depth += 1; buf = ''; continue; }
+        if (ch === ')' && depth > 0) { depth -= 1; inner.push(buf); outer += ' '; continue; }
+        if (depth > 0) buf += ch; else outer += ch;
+    }
+    const collapsed = outer.toLowerCase().split(/\s+/).join(' ');
+    return [...collapsed.split(' via '), ...inner]
         .map((v) => v.trim().toLowerCase())
         .filter((v) => v.length >= 3);
 }
@@ -172,7 +182,7 @@ function escapeRe(s: string): string {
 
 /** Whole-word presence of any variant in the sentence. */
 function anyVariantIn(sentence: string, variants: string[]): boolean {
-    return variants.some((v) => new RegExp(`\\b${escapeRe(v)}\\b`, 'i').test(sentence));
+    return variants.some((v) => new RegExp(String.raw`\b${escapeRe(v)}\b`, 'i').test(sentence));
 }
 
 /**
@@ -280,7 +290,7 @@ export function enforceCertYears(resume: StructuredResumeData, verified: Readonl
             return c;
         });
         const namePattern = v.name.slice(0, 25).replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-        const proseRe = new RegExp(`(${namePattern}[^()]{0,30}\\()(20\\d{2})(\\))`, 'i');
+        const proseRe = new RegExp(String.raw`(${namePattern}[^()]{0,30}\()(20\d{2})(\))`, 'i');
         const summary = (out.summary ?? '').replace(proseRe, (m, pre, y, post) => {
             if (y !== year) { changed = true; return `${pre}${year}${post}`; }
             return m;
@@ -347,7 +357,7 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
         out.push({ code: 'summary_wrong_cluster', detail: 'Summary opener does not lead with the archetype lead-identity differentiator.' });
     }
 
-    if (GAP_RE.test(summary)) {
+    if (namesGap(summary)) {
         out.push({ code: 'summary_names_gap', detail: 'Summary names/concedes the experience gap.' });
     }
 
@@ -501,7 +511,7 @@ export interface ScopedClaim {
 
 export const SCOPED_CLAIMS: readonly ScopedClaim[] = [
     {
-        context:       /cach\w*|prompt/i,
+        context:       /cach|prompt/i,
         metricCore:    /~?\s*90\s*%/,
         qualifier:     /writer\s+lambda/i,
         qualifierText: '(Writer Lambda)',
@@ -531,7 +541,7 @@ function qualifyClaim(text: string, claim: ScopedClaim): string {
  * carrying it, then (if it survives outside parentheses) drop the sentence.
  */
 function stripClaimFromProse(text: string, claim: ScopedClaim): string {
-    const withoutParen = text.replace(/\s*\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
+    const withoutParen = text.replace(/\s{0,10}\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
     if (!isUnqualified(withoutParen, claim)) return withoutParen.trim();
     return withoutParen
         .split(/(?<=[.!?])\s+/)
@@ -657,6 +667,16 @@ const CTX: BasePipelineContext = {
     cumulativeCostUsd: 0,
 };
 
+/** One-line pitch roster for the repair prompt (extracted: no nested template literals). */
+function formatPitches(pitches: ReadonlyArray<{ name: string; pitch: string }>): string {
+    return pitches.map((p) => '"' + p.name + ': ' + p.pitch.slice(0, 200) + '"').join(' | ');
+}
+
+/** One-line employer-facts roster for the repair prompt. */
+function formatEmployerFacts(employers: ReadonlyArray<VerifiedEmployer>): string {
+    return employers.map((e) => '[' + e.name + ': ' + e.facts.slice(0, 220) + ']').join(' ');
+}
+
 /** Haiku rewrite that fixes ONLY the flagged issues. FAIL-OPEN: returns the input on error. */
 export async function rewriteResume(
     resume: StructuredResumeData,
@@ -668,7 +688,7 @@ export async function rewriteResume(
         `NEVER fabricate, NEVER change a number or date, NEVER rename a degree — the verified degree names are: ${ctx.verifiedEducation.join('; ')}.`,
         `Make the summary's FIRST sentence lead with this identity differentiator: "${ctx.leadIdentity}" — never an infrastructure-first opener; never name or concede any experience gap.`,
         ctx.projectPitches?.length
-            ? `For project_restates_bullets: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${ctx.projectPitches.map((p) => `"${p.name}: ${p.pitch.slice(0, 200)}"`).join(' | ')}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
+            ? `For project_restates_bullets: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${formatPitches(ctx.projectPitches)}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
             : 'For project_restates_bullets: rewrite the flagged project description as pitch (what it is, who it is for, the problem it solves) + one JD-relevant differentiator + one fresh metric. Remove numbers duplicated from experience bullets and all stack enumerations.',
         ctx.companyProblem ? `For summary_restates_bullets: rewrite the summary at ALTITUDE — S1 identity anchor + capability ("<Role-family> engineer who builds…"), S2 ONE sentence bridging to this problem (paraphrased): "${ctx.companyProblem.slice(0, 400)}", S3 the concrete paid-experience anchor, S4 qualitative rigor close ("every change gated by automated tests and policy-as-code"). Remove EVERY number that also appears in an experience bullet — counts belong to bullets.` : 'For summary_restates_bullets: rewrite the summary at altitude — identity anchor, problem bridge, concrete paid-experience anchor, qualitative rigor close; remove every number that also appears in an experience bullet.',
         'For headline_is_title: rewrite profile.title as a DESCRIPTIVE domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect, Consultant…) — e.g. "Cloud & AI Operations · Python Automation & Incident Response". Never claim a role the candidate does not hold.',
@@ -680,7 +700,7 @@ export async function rewriteResume(
         'For summary_echoes_bullets: DELETE the echoing sentence(s) and replace with (a) one sentence bridging to the company problem and (b) one distinctive angle that is NOT an experience bullet. The summary positions; bullets prove.',
         'For summary_missing_problem_bridge: add ONE sentence connecting the candidate\'s proven approach to the company problem (paraphrased, first sentence or second).',
         ctx.verifiedEmployers?.length
-            ? `For summary_employer_project_conflation: SPLIT the flagged sentence — the employer sentence may carry ONLY that employer's verified facts: ${ctx.verifiedEmployers.map((e) => `[${e.name}: ${e.facts.slice(0, 220)}]`).join(' ')}. The project sentence is SEPARATE and opens with the solo framing ("Solo-building Tucaken, …"). Never join employer and project claims with a semicolon or comma chain.`
+            ? `For summary_employer_project_conflation: SPLIT the flagged sentence — the employer sentence may carry ONLY that employer's verified facts: ${formatEmployerFacts(ctx.verifiedEmployers)}. The project sentence is SEPARATE and opens with the solo framing ("Solo-building Tucaken, …"). Never join employer and project claims with a semicolon or comma chain.`
             : 'For summary_employer_project_conflation: split the flagged sentence so the employer anchor and the solo-project bridge are separate sentences; each claim stays with the entity it belongs to.',
         'For summary_identity_echoes_problem: rewrite the FIRST sentence using ONLY the candidate\'s own capability vocabulary — remove every phrase borrowed from the company problem (no "so <their> teams ship…", no bottleneck framing). The candidate is a solo builder: never claim outcomes delivered for internal teams.',
         `For summary_problem_bridge_unattributed: rewrite the bridge sentence so it is explicitly the company's/role's problem — start it with "${ctx.targetCompany ?? 'The company'} needs" or "This role exists to" — paraphrasing ONLY what the JD states (no invented specifics such as failure modes the JD never mentions), and never a literal "The problem:" label.`,
