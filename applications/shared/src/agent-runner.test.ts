@@ -43,7 +43,7 @@ jest.mock('./observability/workflow-trace.js', () => ({
 }));
 
 // Import AFTER mocks are set up
-import { runAgent, parseJsonResponse, AgentExecutionError } from './agent-runner';
+import { setDefaultAgentInvocationSink, runAgent, parseJsonResponse, AgentExecutionError } from './agent-runner';
 
 // =============================================================================
 // TEST CONSTANTS
@@ -826,5 +826,46 @@ describe('runAgent — cost recording via pipeline context', () => {
         expect(sink).toHaveBeenCalledTimes(1);
         const [log] = sink.mock.calls[0] as unknown as [{ outputTokens?: number }];
         expect(log.outputTokens).toBe(200);
+    });
+});
+
+describe('runAgent — default invocation sink fallback', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        setDefaultAgentInvocationSink(undefined);
+    });
+    afterEach(() => {
+        setDefaultAgentInvocationSink(undefined);
+    });
+
+    it('records via the process-wide default sink when neither options nor context provide one', async () => {
+        const config = buildConfig(VALID_MAX_TOKENS, VALID_THINKING_BUDGET);
+        const ctx = buildPipelineContext(); // no onInvocationComplete, no userId
+        const seen: Array<{ agent: string; userId?: string }> = [];
+        setDefaultAgentInvocationSink(
+            (log) => { seen.push({ agent: log.agent, userId: log.userId }); return Promise.resolve(); },
+            'user-123',
+        );
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse(JSON.stringify({ ok: true })));
+
+        await runAgent({ config, userMessage: TEST_USER_MESSAGE, parseResponse: (t: string) => JSON.parse(t), pipelineContext: ctx });
+
+        expect(seen).toHaveLength(1);
+        expect(seen[0].agent).toBe(config.agentName);
+        expect(seen[0].userId).toBe('user-123');
+    });
+
+    it('a context-provided sink still wins over the default', async () => {
+        const config = buildConfig(VALID_MAX_TOKENS, VALID_THINKING_BUDGET);
+        const fallback = jest.fn(() => Promise.resolve());
+        const ctxSink = jest.fn(() => Promise.resolve());
+        setDefaultAgentInvocationSink(fallback as never);
+        const ctx = { ...buildPipelineContext(), onInvocationComplete: ctxSink as never };
+        mockSend.mockResolvedValueOnce(buildMockBedrockResponse(JSON.stringify({ ok: true })));
+
+        await runAgent({ config, userMessage: TEST_USER_MESSAGE, parseResponse: (t: string) => JSON.parse(t), pipelineContext: ctx });
+
+        expect(ctxSink).toHaveBeenCalledTimes(1);
+        expect(fallback).not.toHaveBeenCalled();
     });
 });
