@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection, summarySharedNumbers } from './resume-guard.js';
+import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection, summarySharedNumbers, enforceProhibitedClaims, revalidateResumeContent } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const mockRun = runAgent as jest.Mock;
@@ -198,5 +198,73 @@ describe('project_restates_bullets', () => {
             ] }],
         } as never);
         expect(codes(r)).not.toContain('project_restates_bullets');
+    });
+});
+
+describe('enforceProhibitedClaims', () => {
+    it('removes a flat Terraform mention from a skills item, keeps bridged ones', () => {
+        const r = base({ skills: [{ category: 'Support & Troubleshooting', skills: ['IaC (CDK, Terraform, Bicep)', 'AWS CDK, transferable to Terraform'] }] });
+        const { resume, violations } = enforceProhibitedClaims(r);
+        expect(resume.skills[0].skills[0]).not.toMatch(/terraform/i);
+        expect(resume.skills[0].skills[1]).toMatch(/transferable to Terraform/);
+        expect(violations.map((v) => v.code)).toContain('prohibited_claim_fixed');
+    });
+
+    it('substitutes never-claimables in prose (service mesh, on-call)', () => {
+        const r = base({ summary: 'Runs a service mesh with on-call rotations. Ships production AI systems.' });
+        const { resume } = enforceProhibitedClaims(r);
+        expect(resume.summary).toContain('Traefik v3 ingress');
+        expect(resume.summary).toContain('solo-operated');
+        expect(resume.summary).not.toMatch(/service mesh|on-call/i);
+    });
+
+    it('reports an unbridged prose mention for the bounded repair', () => {
+        const r = base({ summary: 'IaC discipline spans CDK and Terraform pipelines. Ships production AI systems.' });
+        const { violations } = enforceProhibitedClaims(r);
+        expect(violations.map((v) => v.code)).toContain('unbridged_transferable_claim');
+    });
+
+    it('bridged prose mention passes clean', () => {
+        const r = base({ summary: 'Deep AWS CDK practice, transferable to Terraform workflows. Ships production AI systems.' });
+        const { violations } = enforceProhibitedClaims(r);
+        expect(violations).toEqual([]);
+    });
+});
+
+describe('revalidateResumeContent', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('clean resume → returned unchanged, no repair call', async () => {
+        const r = base();
+        const { resume, violations } = await revalidateResumeContent(r, ctx);
+        expect(resume).toStrictEqual(r);
+        expect(violations).toEqual([]);
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('reintroduced inventory triggers ONE bounded repair and re-asserts deterministics', async () => {
+        const fixed = base();
+        mockRun.mockResolvedValue({ data: fixed });
+        const dirty = base({
+            summary: 'Built 16-stack monorepo with 30 rules. Closing metric: 25 apps.',
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Engineered 16-CDK-stack monorepo.', 'Wrote 30 custom rules.', 'Manages 25 apps.',
+            ] }],
+        });
+        const { resume, violations } = await revalidateResumeContent(dirty, ctx);
+        expect(mockRun).toHaveBeenCalledTimes(1);
+        expect(resume).toStrictEqual(fixed);
+        expect(violations.map((v) => v.code)).toContain('summary_restates_bullets');
+        expect(violations.map((v) => v.code)).not.toContain('content_revalidation_residual');
+    });
+
+    it('repair failure (fail-open) → residual reported, resume still deterministic-clean', async () => {
+        mockRun.mockRejectedValue(new Error('down'));
+        const dirty = base({
+            summary: 'Built 16-stack monorepo with 30 rules. Ships systems.',
+            experience: [{ company: 'F', title: 'E', period: 'p', highlights: ['16-CDK-stack build.', '30 rules written.'] }],
+        });
+        const { violations } = await revalidateResumeContent(dirty, ctx);
+        expect(violations.map((v) => v.code)).toContain('content_revalidation_residual');
     });
 });
