@@ -23,6 +23,10 @@ import type { ResumeViolation } from '../agents/resume-guard.js';
 export const LENGTH_BUDGET = {
     /** ~2 rendered A4 pages at the ATS template's density. */
     totalWords:               880,
+    /** Below this the second page is visibly half-empty — expand with
+     *  grounded, JD-relevant content (never padding). */
+    minTotalWords:            700,
+    minBulletsPerRole:        2,
     summaryWords:             100,
     experienceWords:          370,
     skillsWords:              150,
@@ -44,6 +48,10 @@ export interface ResumeMeasure {
     readonly total: number;
     /** Section names over their budget (empty = within budget). */
     readonly overBudget: string[];
+    /** True when the resume leaves the second page visibly half-empty. */
+    readonly underFilled: boolean;
+    /** Roles carrying fewer than the minimum bullets (single-bullet roles read as filler). */
+    readonly thinRoles: string[];
 }
 
 export function measureResume(resume: StructuredResumeData): ResumeMeasure {
@@ -57,13 +65,29 @@ export function measureResume(resume: StructuredResumeData): ResumeMeasure {
     const projects = (resume.projects ?? [])
         .reduce((n, p) => n + words(p.description ?? ''), 0);
     const total = summary + experience + skills + projects;
-    const overBudget: string[] = [];
-    if (summary > LENGTH_BUDGET.summaryWords) overBudget.push('summary');
-    if (experience > LENGTH_BUDGET.experienceWords) overBudget.push('experience');
-    if (skills > LENGTH_BUDGET.skillsWords) overBudget.push('skills');
-    if (projects > LENGTH_BUDGET.projectsWords) overBudget.push('projects');
-    if (total > LENGTH_BUDGET.totalWords) overBudget.push('total');
-    return { summary, experience, skills, projects, total, overBudget };
+    return {
+        summary, experience, skills, projects, total,
+        overBudget: overBudgetSections({ summary, experience, skills, projects, total }),
+        underFilled: total < LENGTH_BUDGET.minTotalWords,
+        thinRoles: thinRolesOf(resume),
+    };
+}
+
+function overBudgetSections(m: { summary: number; experience: number; skills: number; projects: number; total: number }): string[] {
+    const over: string[] = [];
+    if (m.summary > LENGTH_BUDGET.summaryWords) over.push('summary');
+    if (m.experience > LENGTH_BUDGET.experienceWords) over.push('experience');
+    if (m.skills > LENGTH_BUDGET.skillsWords) over.push('skills');
+    if (m.projects > LENGTH_BUDGET.projectsWords) over.push('projects');
+    if (m.total > LENGTH_BUDGET.totalWords) over.push('total');
+    return over;
+}
+
+/** Roles with SOME bullets but fewer than the minimum (single-bullet roles read as filler). */
+function thinRolesOf(resume: StructuredResumeData): string[] {
+    return (resume.experience ?? [])
+        .filter((e) => (e.highlights ?? []).length > 0 && (e.highlights ?? []).length < LENGTH_BUDGET.minBulletsPerRole)
+        .map((e) => e.title);
 }
 
 // =============================================================================
@@ -205,19 +229,71 @@ export async function condenseResume(
     }
 }
 
+/** Optional grounding for the expand direction (never expand without it). */
+export interface LengthBudgetOpts {
+    /** Verbatim career facts + project evidence + verified citations — the ONLY
+     *  material the expand pass may draw on. */
+    readonly groundingFacts?: string;
+}
+
 /**
- * Full enforcement pass: measure → condense (once) → hard trim → measure.
- * Never throws; `onViolation` reports each enforcement step for metrics.
+ * EXPAND (fail-open): the mirror of condense. Fires when the resume leaves
+ * the second page half-empty (the A/B run shipped 425/880 words with a
+ * single-bullet role) — grow with GROUNDED, JD-relevant content only:
+ * a second bullet for thin roles, up to 5 bullets for the primary role,
+ * fuller pitch-led project beats. Never padding, never invented numbers —
+ * the caller strips ungrounded numbers afterwards.
  */
-export async function applyLengthBudget(
+export async function expandResume(
     resume: StructuredResumeData,
+    measure: ResumeMeasure,
+    jd: JdPriorityContext,
+    groundingFacts: string,
+): Promise<StructuredResumeData> {
+    const system = [
+        'You EXPAND an under-filled tailored resume. Call emit_resume with the full resume JSON.',
+        'GROUNDING IS ABSOLUTE: every added claim must come from the grounding facts provided — NEVER invent a fact, number, technology, or outcome. Do not touch education or certifications. Keep every existing fact.',
+        `PRIORITISE BY THE JD — add only content answering a required skill, responsibility, or the company problem: ${jd.requiredSkills.join(', ') || 'n/a'} | ${jd.companyProblem || 'n/a'}.`,
+        'TARGETS:',
+        `- grand total ${LENGTH_BUDGET.minTotalWords}-${LENGTH_BUDGET.totalWords} words (currently ${measure.total}) — the resume must FILL two pages with relevant evidence, never overflow them.`,
+        measure.thinRoles.length > 0 ? `- EVERY role needs >= ${LENGTH_BUDGET.minBulletsPerRole} bullets when the grounding facts support them (thin roles: ${measure.thinRoles.join('; ')}). A single-bullet role reads as filler.` : '- keep role bullet counts balanced.',
+        `- the primary (most JD-relevant) role may grow to ${LENGTH_BUDGET.maxBulletsPerRole} bullets; every bullet <= ${LENGTH_BUDGET.perBulletWords} words, one impact clause.`,
+        `- projects may grow toward ${LENGTH_BUDGET.perProjectWords} words each: pitch-led, one differentiator, one fresh metric — never stack dumps.`,
+        'Style stays dry and verb-first. No repetition of existing bullets in new ones.',
+    ].join('\n');
+    const config: AgentConfig = {
+        agentName: 'resume-expand', modelId: MODEL_ID, maxTokens: 8000, thinkingBudget: 0,
+        systemPrompt: [{ text: system }], pipeline: 'job-strategist',
+        tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
+    };
+    try {
+        const result = await runAgent<StructuredResumeData>({
+            config, userMessage: `<grounding_facts>${groundingFacts}</grounding_facts>\n<resume>${JSON.stringify(resume)}</resume>`, pipelineContext: CTX,
+            parseResponse: (raw) => {
+                const parsed = ResumeRewriteSchema.safeParse(JSON.parse(raw));
+                if (!parsed.success) throw new Error(`resume-expand: ${parsed.error.message}`);
+                return parsed.data as unknown as StructuredResumeData;
+            },
+        });
+        return result.data;
+    } catch (e) {
+        log('WARN', 'resume expand failed — keeping original', { error: e instanceof Error ? e.message : String(e) });
+        return resume;
+    }
+}
+
+/**
+ * Full enforcement pass, both directions: over budget → condense (once) +
+ * hard trim; under-filled (and grounding available) → expand (once) + trim
+ * any overshoot. Never throws; `onViolation` reports each step.
+ */
+async function shrinkToBudget(
+    resume: StructuredResumeData,
+    before: ResumeMeasure,
     jd: JdPriorityContext,
     onViolation?: (v: ResumeViolation) => void,
 ): Promise<StructuredResumeData> {
-    const before = measureResume(resume);
-    if (before.overBudget.length === 0) return resume;
     onViolation?.({ code: 'length_over_budget', detail: `Sections over budget: ${before.overBudget.join(', ')} (total ${before.total}/${LENGTH_BUDGET.totalWords} words).` });
-
     const condensed = await condenseResume(resume, before, jd);
     let out = condensed;
     let m = measureResume(out);
@@ -230,4 +306,35 @@ export async function applyLengthBudget(
         onViolation?.({ code: 'length_hard_trimmed', detail: `Hard trim applied; final ${m.total} words (over: ${m.overBudget.join(', ') || 'none'}).` });
     }
     return out;
+}
+
+async function growToFill(
+    resume: StructuredResumeData,
+    before: ResumeMeasure,
+    jd: JdPriorityContext,
+    groundingFacts: string,
+    onViolation?: (v: ResumeViolation) => void,
+): Promise<StructuredResumeData> {
+    const thin = before.thinRoles.length > 0 ? `; thin roles: ${before.thinRoles.join('; ')}` : '';
+    onViolation?.({ code: 'length_under_filled', detail: `Resume under-fills two pages (total ${before.total}/${LENGTH_BUDGET.minTotalWords} min${thin}).` });
+    const expanded = await expandResume(resume, before, jd, groundingFacts);
+    if (expanded === resume) return resume;
+    let out = expanded;
+    if (measureResume(out).overBudget.length > 0) out = hardTrim(out);
+    onViolation?.({ code: 'length_expanded', detail: `Expand pass: ${before.total} -> ${measureResume(out).total} words.` });
+    return out;
+}
+
+export async function applyLengthBudget(
+    resume: StructuredResumeData,
+    jd: JdPriorityContext,
+    onViolation?: (v: ResumeViolation) => void,
+    opts: LengthBudgetOpts = {},
+): Promise<StructuredResumeData> {
+    const before = measureResume(resume);
+    if (before.overBudget.length > 0) return shrinkToBudget(resume, before, jd, onViolation);
+    if ((before.underFilled || before.thinRoles.length > 0) && opts.groundingFacts) {
+        return growToFill(resume, before, jd, opts.groundingFacts, onViolation);
+    }
+    return resume;
 }

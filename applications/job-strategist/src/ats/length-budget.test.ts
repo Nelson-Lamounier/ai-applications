@@ -124,3 +124,31 @@ describe('applyLengthBudget', () => {
         expect(m.projects).toBeLessThanOrEqual(LENGTH_BUDGET.projectsWords + 2);
     });
 });
+
+describe('applyLengthBudget — expand direction', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+    const jdX = { requiredSkills: ['CI/CD'], companyProblem: 'repeatable delivery', responsibilities: ['ship'] };
+
+    it('under-filled resume with grounding → expand fires once', async () => {
+        const grown = base({ summary: sentence(90) + ' ' + sentence(90), projects: [{ name: 'P', description: sentence(70), github: '' }] } as never);
+        mockRun.mockResolvedValue({ data: grown });
+        const thin = base();  // ~30 words total
+        const seen: string[] = [];
+        const out = await applyLengthBudget(thin, jdX, (v) => seen.push(v.code), { groundingFacts: 'facts' });
+        expect(seen).toEqual(expect.arrayContaining(['length_under_filled', 'length_expanded']));
+        expect(measureResume(out).total).toBeGreaterThan(measureResume(thin).total);
+    });
+
+    it('under-filled WITHOUT grounding → untouched (never expand ungrounded)', async () => {
+        const thin = base();
+        const out = await applyLengthBudget(thin, jdX);
+        expect(out).toBe(thin);
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('thin roles are reported in the measure', () => {
+        const m = measureResume(base());
+        expect(m.underFilled).toBe(true);
+        expect(m.thinRoles).toEqual(['Cloud & DevOps Engineer']);
+    });
+});

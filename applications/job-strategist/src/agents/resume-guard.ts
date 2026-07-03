@@ -143,6 +143,99 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
 }
 
 // =============================================================================
+// PROHIBITED / BRIDGE-REQUIRED CLAIMS (deterministic)
+// =============================================================================
+
+/**
+ * Hard factual prohibitions, mirrored from the persona's ABSOLUTE RULES —
+ * enforced in code because the prompt version was violated in production
+ * (the A/B run's summary claimed "Terraform" flat; the transfer graph made
+ * it attainable-transferable, but the mandatory bridge framing was dropped).
+ *
+ * Two classes:
+ * - `replacement`: never claimable — deterministically substituted.
+ * - `bridge`: claimable ONLY with transfer framing in the same sentence
+ *   (e.g. "CDK, transferable to Terraform"); flat mentions are removed
+ *   from skill lists and repaired in prose.
+ */
+export interface ProhibitedClaim {
+    readonly term: RegExp;
+    readonly label: string;
+    /** Deterministic substitution (never-claimable class). */
+    readonly replacement?: string;
+    /** Same-sentence markers that make the mention honest (bridge class). */
+    readonly bridge?: RegExp;
+}
+
+export const PROHIBITED_CLAIMS: readonly ProhibitedClaim[] = [
+    { term: /\bservice\s+mesh\b/gi, label: 'service mesh', replacement: 'Traefik v3 ingress and cross-namespace routing' },
+    { term: /\bterraform\b/gi,       label: 'Terraform',    bridge: /transferable|equivalent|similar to|analogous|via (aws )?cdk/i },
+    { term: /\bgke\b/gi,             label: 'GKE',          bridge: /transferable|equivalent|similar to|analogous|via (aws )?eks/i },
+    { term: /\baks\b/gi,             label: 'AKS',          bridge: /transferable|equivalent|similar to|analogous|via (aws )?eks/i },
+    { term: /\bfine[- ]tuning\b|\bRLHF\b/gi, label: 'fine-tuning/RLHF', replacement: 'Bedrock API integration' },
+    { term: /\bon[- ]call\b/gi,      label: 'on-call',      replacement: 'solo-operated' },
+    { term: /\benterprise[- ]scale\b/gi, label: 'enterprise-scale', replacement: 'production' },
+];
+
+const SENTENCE_SPLIT = /(?<=[.!?])\s+/;
+
+function sentenceHonest(sentence: string, claim: ProhibitedClaim): boolean {
+    if (claim.replacement !== undefined) return false;
+    return claim.bridge ? claim.bridge.test(sentence) : true;
+}
+
+/** Fix one prose string: substitute never-claimables; report unbridged mentions. */
+function fixProse(text: string, claim: ProhibitedClaim, unbridged: string[]): string {
+    if (claim.replacement !== undefined) {
+        claim.term.lastIndex = 0;
+        return text.replace(claim.term, claim.replacement);
+    }
+    for (const sentence of text.split(SENTENCE_SPLIT)) {
+        claim.term.lastIndex = 0;
+        if (claim.term.test(sentence) && !sentenceHonest(sentence, claim)) unbridged.push(claim.label);
+    }
+    return text;
+}
+
+/** Skill-list items: a flat prohibited/bridge-less term is removed from the item. */
+function fixSkillItem(item: string, claim: ProhibitedClaim): string {
+    claim.term.lastIndex = 0;
+    if (!claim.term.test(item)) return item;
+    if (claim.replacement !== undefined) { claim.term.lastIndex = 0; return item.replace(claim.term, claim.replacement); }
+    if (claim.bridge?.test(item)) return item;
+    claim.term.lastIndex = 0;
+    return item.replace(claim.term, '').replaceAll(/,\s*,/g, ',').replaceAll(/\(\s*,|,\s*\)/g, (m) => m.includes('(') ? '(' : ')').replaceAll(/\s{2,}/g, ' ').trim().replace(/^,|,$/g, '').trim();
+}
+
+/**
+ * Deterministic prohibited-claims pass over every prose surface. Skill lists
+ * are fixed in place; prose sentences with unbridged bridge-class terms are
+ * reported for the bounded repair (deleting mid-sentence words mangles prose).
+ */
+export function enforceProhibitedClaims(resume: StructuredResumeData): { resume: StructuredResumeData; violations: ResumeViolation[] } {
+    const unbridged: string[] = [];
+    let out = resume;
+    for (const claim of PROHIBITED_CLAIMS) {
+        out = {
+            ...out,
+            summary: typeof out.summary === 'string' ? fixProse(out.summary, claim, unbridged) : out.summary,
+            experience: (out.experience ?? []).map((e) => ({ ...e, highlights: (e.highlights ?? []).map((h) => fixProse(h, claim, unbridged)) })),
+            projects: (out.projects ?? []).map((pr) => ({ ...pr, description: typeof pr.description === 'string' ? fixProse(pr.description, claim, unbridged) : pr.description })),
+            skills: (out.skills ?? []).map((g) => ({ ...g, skills: (g.skills ?? []).map((it) => fixSkillItem(it, claim)).filter((it) => it.length > 0) })),
+        };
+    }
+    const violations: ResumeViolation[] = [];
+    if (JSON.stringify(out) !== JSON.stringify(resume)) {
+        violations.push({ code: 'prohibited_claim_fixed', detail: 'Never-claimable terms substituted / flat bridge-class terms removed from skill lists.' });
+    }
+    const distinct = [...new Set(unbridged)];
+    if (distinct.length > 0) {
+        violations.push({ code: 'unbridged_transferable_claim', detail: `Flat mention of ${distinct.join(', ')} without transfer framing — restate with the honest bridge (e.g. "CDK, transferable to Terraform") or remove.` });
+    }
+    return { resume: out, violations };
+}
+
+// =============================================================================
 // SCOPED-CLAIM ENFORCEMENT (deterministic)
 // =============================================================================
 
@@ -341,6 +434,7 @@ export async function rewriteResume(
         'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
         `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,
         'Within each experience role, lead with the strongest number-led bullet.',
+        'For unbridged_transferable_claim: restate each flagged term with its honest transfer framing in the same clause (e.g. "AWS CDK, transferable to Terraform") — or remove the term. Never leave a flat claim of a tool the candidate has not used.',
         'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
         'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
     ].join('\n');
@@ -371,6 +465,46 @@ export async function rewriteResume(
         log('WARN', 'resume rewrite failed — keeping original', { error: e instanceof Error ? e.message : String(e) });
         return resume;
     }
+}
+
+/**
+ * FINAL content re-validation — runs after the LAST mutating pass (migration
+ * reframe, condense/expand, surface-keywords), because those passes were
+ * observed reintroducing violations the early guard had already repaired
+ * (the A/B run's project regained 5 bullet-shared numbers, and an unbridged
+ * "Terraform" appeared in the summary). Deterministic checks + ONE bounded
+ * repair; anything still violating after that is reported, never looped.
+ */
+export async function revalidateResumeContent(
+    resume: StructuredResumeData,
+    ctx: ResumeGuardCtx,
+): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
+    const prohibited = enforceProhibitedClaims(resume);
+    const scoped = enforceScopedClaims(prohibited.resume);
+    let out = scoped.resume;
+    const violations: ResumeViolation[] = [...prohibited.violations, ...scoped.violations];
+
+    const inventory: ResumeViolation[] = [];
+    checkSummaryInventory(inventory, out);
+    checkProjectInventory(inventory, out);
+    const needsRepair = [
+        ...inventory,
+        ...violations.filter((v) => v.code === 'unbridged_transferable_claim'),
+    ];
+    if (needsRepair.length > 0) {
+        violations.push(...inventory);
+        out = await rewriteResume(out, needsRepair, ctx);
+        // Deterministic passes are idempotent — re-assert after the repair.
+        out = enforceProhibitedClaims(out).resume;
+        out = enforceScopedClaims(out).resume;
+        const residual: ResumeViolation[] = [];
+        checkSummaryInventory(residual, out);
+        checkProjectInventory(residual, out);
+        if (residual.length > 0) {
+            violations.push({ code: 'content_revalidation_residual', detail: `After one bounded repair, still violating: ${residual.map((r) => r.code).join(', ')}.` });
+        }
+    }
+    return { resume: stripEmDashes(out), violations };
 }
 
 /** Validate → rewrite on violation → deterministic scoped-claim + section passes → return. Never throws. */

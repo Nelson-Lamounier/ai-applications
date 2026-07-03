@@ -32,7 +32,7 @@ import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
-import { guardResume } from './agents/resume-guard.js';
+import { guardResume, revalidateResumeContent } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { applyLengthBudget } from './ats/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
@@ -814,16 +814,24 @@ export async function main(): Promise<void> {
         // are rewritten in-place by Haiku and counted for observability — never throws.
         const archetypeId = analysis.data.archetypeSelection?.archetypeId ?? 0;
         const archetypeSkillLead = archetypeId === 7 ? 'Support & Troubleshooting' : '';
+        const resumeGuardCtx = {
+            targetRole:        researchData.targetRole,
+            leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
+            verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
+            archetypeSkillLead,
+            companyProblem:    jdExtraction.companyProblem,
+            projectPitches:    projectLaneIndex.projectPitches,
+        };
+        // Grounding for the expand direction + the allowed-number set that
+        // bounds ANY pass that can add content (expand, surface-keywords).
+        const budgetGroundingFacts = [
+            experienceFactsBlock,
+            projectEvidenceBlock,
+            researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
+        ].filter(Boolean).join('\n\n');
         let finalResume = tailoredResumeData;
         if (tailoredResumeData) {
-            const guarded = await guardResume(tailoredResumeData, {
-                targetRole:        researchData.targetRole,
-                leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
-                verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
-                archetypeSkillLead,
-                companyProblem:    jdExtraction.companyProblem,
-                projectPitches:    projectLaneIndex.projectPitches,
-            });
+            const guarded = await guardResume(tailoredResumeData, resumeGuardCtx);
             finalResume = guarded.resume;
             for (const v of guarded.violations) resumeViolationsMetric.inc({ code: v.code });
         }
@@ -855,7 +863,17 @@ export async function main(): Promise<void> {
             // the rest. Enforce here (before persist/ATS) and again after the
             // keyword-surfacing rewrite — the last stage that can grow it.
             const preBudget = finalResume;
-            finalResume = await applyLengthBudget(preBudget, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code })).catch(() => preBudget);
+            const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
+            const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code }), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
+            // Expansion may only add grounded numbers; strip anything else.
+            const numberSafe = stripUngroundedNumbers(budgeted, allowedNumbers);
+            // FINAL content re-validation: reframe/condense/expand can
+            // reintroduce violations the early guard already repaired (the
+            // A/B run regained 5 bullet-shared project numbers and a flat
+            // "Terraform" claim). One bounded repair, then report residuals.
+            const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
+            for (const v of revalidated.violations) resumeViolationsMetric.inc({ code: v.code });
+            finalResume = revalidated.resume;
         }
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
@@ -923,8 +941,14 @@ export async function main(): Promise<void> {
                     // The keyword rewrite is the last stage that can GROW the
                     // resume (it inflated the 2026-07-02 Google run by pulling
                     // grounding-facts prose into projects) — re-enforce the
-                    // length budget before persisting and re-checking.
-                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code })).catch(() => surfaced);
+                    // length budget, then FINAL-revalidate content (surface
+                    // rewrites were observed reintroducing inventory numbers
+                    // and unbridged claims) before persisting and re-checking.
+                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code }), { groundingFacts }).catch(() => surfaced);
+                    surfaced = stripUngroundedNumbers(surfaced, allowed);
+                    const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
+                    for (const v of reval.violations) resumeViolationsMetric.inc({ code: v.code });
+                    surfaced = reval.resume;
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
                         applicationId:  env.applicationId,
