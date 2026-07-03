@@ -34,6 +34,7 @@ import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import { guardResume } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { applyLengthBudget } from './ats/length-budget.js';
+import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
 import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -60,7 +61,7 @@ import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
-import { attachSourceLanes } from './ats/evidence-lane.js';
+import { attachSourceLanes, mergeRepoLane } from './ats/evidence-lane.js';
 import { applyDegreeReconcile } from './ats/education-reconcile.js';
 import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
 import { runFreeTier }             from './free/run-free.js';
@@ -664,17 +665,28 @@ export async function main(): Promise<void> {
         // soft skill (e.g. "complex technical communication") resolves to no code canonical
         // → keeps its honest career grounding. GAP entries untouched. Pure + deterministic
         // (no I/O), so it is called directly — it never reaches out and cannot block.
-        const ledgerWithCode = attachCodeEvidence(baseLedger, { canonicalToFiles: canonicalToCodeFiles, aliasToCanonical });
-
         // Tag each row's source lane(s) — repo (standalone code) / project (a
-        // documented project or its repos) / career (résumé). Deterministic +
-        // fail-open: an empty lane index simply yields no sourceLanes. Career
-        // terms are the exact company + job-title strings from the résumé.
+        // documented project or its repos) / career (résumé). Runs on the
+        // PRE-strip ledger so lanes classify the matcher's ORIGINAL citations:
+        // attachCodeEvidence strips display files from conceptual skills, and
+        // classifying afterwards left almost every entry lane-less (a live run
+        // tallied 3 repo / 0 project / 0 career over 34 entries). Deterministic
+        // + fail-open: an empty lane index simply yields no sourceLanes.
         const careerTerms = careerEntries.flatMap((e) => [e.company, e.title]).filter(Boolean);
-        const skillEvidenceLedger = attachSourceLanes(ledgerWithCode, {
+        const lanedBase = attachSourceLanes(baseLedger, {
             projectNames: projectLaneIndex.projectNames,
             careerTerms,
         });
+        const ledgerWithCode = attachCodeEvidence(lanedBase, { canonicalToFiles: canonicalToCodeFiles, aliasToCanonical });
+        // Entries that only GAINED files in the code pass earn the repo lane.
+        const lanedLedger = mergeRepoLane(ledgerWithCode);
+
+        // Join the run's own retrieved KB passages onto each entry — the
+        // "how was this verified" audit trail (source + cosine/rerank +
+        // snippet) the evidence panel renders. Deterministic; gap entries
+        // untouched; entries with no matching passage stay unannotated.
+        const kbPassages = parseKbPassages(guardedResearch.data.kbContext, KB_CONTEXT_SEPARATOR);
+        const skillEvidenceLedger = attachPassageProvenance(lanedLedger, kbPassages);
 
         const researchData: StrategistResearchResult = {
             ...jdExtraction,

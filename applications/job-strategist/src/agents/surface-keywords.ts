@@ -17,6 +17,7 @@
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData, SkillEvidenceEntry } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.js';
+import { citableFiles } from '../ats/tool-evidence-retrieval.js';
 
 const MODEL_ID = process.env['SURFACE_KEYWORDS_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
@@ -31,12 +32,18 @@ const CTX: BasePipelineContext = {
     cumulativeCostUsd: 0,
 };
 
-/** The honest evidence payload handed to the model — only real, provided fields. */
+/**
+ * The honest evidence payload handed to the model — only real, provided
+ * fields. Defence-in-depth on evidenceFiles: the ledger is sanitised at
+ * build time, but this prompt TRUSTS whatever reaches it, so non-citable
+ * paths (lockfiles, build output) are filtered again at the boundary and
+ * the list is capped — a wrong file here becomes fabricated grounding.
+ */
 function evidencePayload(missing: ReadonlyArray<SkillEvidenceEntry>) {
     return missing.map((e) => ({
         tool: e.tool,
         evidence: e.evidence,
-        evidenceFiles: e.evidenceFiles,
+        evidenceFiles: citableFiles(e.evidenceFiles).slice(0, 3),
         transferableBridge: e.transferableBridge,
     }));
 }
