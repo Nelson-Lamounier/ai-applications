@@ -813,6 +813,18 @@ export { strategistAgent, StrategistAgent };
  * @param research - Research Agent's structured output
  * @returns Full XML analysis with metadata extraction
  */
+/**
+ * Tenure framing is conditional: with no years bar in the JD the framing may
+ * shape the SUMMARY only — the cover letter must not mention tenure at all.
+ */
+function framingDirective(yearsGap: { framingLine: string; requiredYears: number | null } | null | undefined): string | undefined {
+    if (!yearsGap) return undefined;
+    if (yearsGap.requiredYears == null) {
+        return `${yearsGap.framingLine} [NO YEARS BAR IN THIS JD: summary only — the cover letter must NOT mention years or tenure]`;
+    }
+    return yearsGap.framingLine;
+}
+
 export async function executeStrategistAgent(
     ctx: StrategistPipelineContext,
     research: StrategistResearchResult,
@@ -824,5 +836,5 @@ export async function executeStrategistAgent(
     codeStackContext = '',
     achievementEvidence = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine, codeStackContext, achievementEvidence }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence }, ctx);
 }

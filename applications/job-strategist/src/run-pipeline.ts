@@ -31,6 +31,7 @@ import { loadEducation, formatEducation, loadCertifications, formatCertification
 import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js';
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
+import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
 import { guardResume } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { applyLengthBudget } from './ats/length-budget.js';
@@ -124,6 +125,40 @@ async function buildQueryRetrievalPrefilter(
         [...ti.tools, ...ti.languages, ...ti.frameworks, ...ti.infrastructure, ...jdExtraction.retrievalKeywords],
         techGroups, aliasToCanonical,
     );
+}
+
+/**
+ * Cover-letter narrative context: the JD's values rubric, the documented
+ * project pitches, and the resume's numbers (overlap = the letter restating
+ * the resume). Extracted from main() to keep its complexity bounded.
+ */
+type YearsGapLite = { framingLine: string; requiredYears: number | null } | null;
+
+/** True when the JD sets an explicit years-of-experience requirement. */
+function jdHasYearsBar(yearsGap: YearsGapLite): boolean {
+    return yearsGap?.requiredYears != null;
+}
+
+/** The tenure framing the LETTER may use — empty when the JD sets no years bar. */
+function tenureFramingFor(yearsGap: YearsGapLite): string {
+    if (!jdHasYearsBar(yearsGap) || !yearsGap) return '';
+    return yearsGap.framingLine;
+}
+
+function buildCoverLetterNarrative(
+    jdExtraction: JdSignal,
+    projectPitches: ReadonlyArray<{ name: string; pitch: string }>,
+    tailoredResumeData: unknown,
+    hasYearsBar: boolean,
+): CoverLetterNarrativeOpts {
+    const valuesSignals = [
+        ...(jdExtraction.implicitRequirements ?? []),
+        ...(jdExtraction.softRequirements ?? []).map((sr) => sr.skill),
+    ];
+    const resumeNumbers = new Set(
+        (JSON.stringify(tailoredResumeData ?? {}).match(/\d+(?:[.,]\d+)?\+?/g) ?? []).map((n) => n.replace(/[,+]/g, '')),
+    );
+    return { hasYearsBar, valuesSignals, projectPitches, companyProblem: jdExtraction.companyProblem, resumeNumbers };
 }
 
 /** S3 client for canonical resume PDF storage. */
@@ -759,11 +794,17 @@ export async function main(): Promise<void> {
         // Validates the AI-authored cover letter against code-enforced rules
         // (e.g. leadIdentity coherence, years-gap framing). Violations are
         // rewritten in-place and counted for observability — never throws.
+        // Tenure framing is CONDITIONAL: when the JD sets no years bar (the
+        // Accenture JD explicitly de-emphasised years yet the letter led with
+        // "five years"), the letter must not mention tenure at all.
+        const hasYearsBar = jdHasYearsBar(yearsGap);
+        const letterFraming = tenureFramingFor(yearsGap);
         const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
             analysis.data.coverLetter,
             researchData.targetRole,
             analysis.data.archetypeSelection?.leadIdentity ?? '',
-            yearsGap?.framingLine ?? '',
+            letterFraming,
+            buildCoverLetterNarrative(jdExtraction, projectLaneIndex.projectPitches, tailoredResumeData, hasYearsBar),
         );
         for (const v of coverViolations) coverLetterViolations.inc({ code: v.code });
 
