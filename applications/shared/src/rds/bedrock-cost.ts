@@ -59,6 +59,10 @@ export interface CostRecord {
   systemPromptHash?: string;
   latencyMs?:        number;
   traceId?:          string;
+  // Prompt-content identity (markdown frontmatter via the #402 loader) —
+  // answers "which prompt version produced this output" in the ledger.
+  promptId?:      string;
+  promptVersion?: string;
 }
 
 export function computeCostCents(
@@ -111,6 +115,10 @@ async function getOrCreateBudget(
   };
 }
 
+function orNull<T>(value: T | undefined): T | null {
+  return value ?? null;
+}
+
 export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise<void> {
   const { inputCostCents, outputCostCents, totalCostCents } = computeCostCents(
     record.modelId, record.inputTokens, record.outputTokens,
@@ -124,8 +132,8 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
        (pipeline, agent, model_id, system_prompt_hash, input_cost_cents, output_cost_cents,
        total_cost_cents, latency_ms, user_id, import_id, repo_name,
         application_id, project_id, sync_kind, trace_id,
-        system_prompt_tokens, user_message_tokens, output_tokens)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, $15, 0, $16, $17)`,
+        system_prompt_tokens, user_message_tokens, output_tokens, prompt_id, prompt_version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, $15, 0, $16, $17, $18, $19)`,
     [
       record.pipeline,                            // $1  pipeline
       record.agent ?? '__direct_invoke__',        // $2  agent
@@ -144,6 +152,8 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
       record.traceId ?? null,                     // $15 trace_id
       record.inputTokens,                         // $16 user_message_tokens
       record.outputTokens,                        // $17 output_tokens
+      orNull(record.promptId),                   // $18 prompt_id
+      orNull(record.promptVersion),               // $19 prompt_version
     ],
   );
 
@@ -200,6 +210,8 @@ export function recordInvocationToRds(
       agent:            log.agent,
       systemPromptHash: log.systemPromptHash,
       latencyMs:        log.latencyMs,
+      promptId:         log.promptId,
+      promptVersion:    log.promptVersion,
       applicationId:    context?.applicationId,
       projectId:        context?.projectId,
       syncKind:         context?.syncKind,

@@ -257,7 +257,9 @@ describe('revalidateResumeContent', () => {
         mockRun.mockResolvedValue({ data: fixed });
         const dirty = base({
             summary: 'Built 16-stack monorepo with 30 rules. Closing metric: 25 apps.',
-            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+            // Same title as the mocked repaired resume — the roster invariant
+            // matches by title, so the repair's roster counts as intact.
+            experience: [{ company: 'F', title: 'Technical Customer Service Associate', period: '2022 - Present', highlights: [
                 'Engineered 16-CDK-stack monorepo.', 'Wrote 30 custom rules.', 'Manages 25 apps.',
             ] }],
         });

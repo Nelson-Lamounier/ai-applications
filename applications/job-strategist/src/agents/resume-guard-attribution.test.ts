@@ -14,6 +14,7 @@ jest.mock('@bedrock/shared', () => ({
 }));
 import {
     validateResume,
+    preserveExperienceRoster,
     summaryConflationSentences,
     identityProblemPhrases,
     unattributedBridgeSentence,
@@ -129,5 +130,37 @@ describe('summary_problem_bridge_unattributed', () => {
     it('ignores summaries whose later sentences never draw on the problem (bridge-missing is a separate code)', () => {
         const noBridge = 'Solo DevOps builder shipping production platforms. I automate everything twice.';
         expect(unattributedBridgeSentence(base(noBridge), ctx)).toBeNull();
+    });
+});
+
+describe('preserveExperienceRoster', () => {
+    const roles = [
+        { company: 'Amazon Web Services (AWS)', title: 'Technical Customer Service Associate', period: '2022 - Present', highlights: ['a'] },
+        { company: 'Solo-built production SaaS platform (Tucaken)', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: ['b'] },
+        { company: 'Meta via Accenture', title: 'Quality Assurance Analyst', period: '2021 - 2022', highlights: ['c'] },
+    ];
+    const withRoles = (experience: typeof roles) => ({ ...base('s'), experience }) as StructuredResumeData;
+
+    it('reinserts a dropped role at its original index (run 8830a239 regression: Meta vanished)', () => {
+        const seen: string[] = [];
+        const out = preserveExperienceRoster(
+            withRoles(roles),
+            withRoles([roles[0], roles[1]] as typeof roles),
+            (v) => seen.push(v.code),
+        );
+        expect(out.experience.map((e) => e.company)).toEqual(roles.map((r) => r.company));
+        expect(seen).toEqual(['experience_role_dropped']);
+    });
+
+    it('tolerates a company relabel (solo framing) — no duplicate reinsertion', () => {
+        const relabelled = [roles[0], { ...roles[1], company: 'Tucaken (SaaS Platform)' }, roles[2]] as typeof roles;
+        const out = preserveExperienceRoster(withRoles(roles), withRoles(relabelled));
+        expect(out.experience).toHaveLength(3);
+        expect(out.experience[1].company).toBe('Tucaken (SaaS Platform)');
+    });
+
+    it('no-op when the roster is intact', () => {
+        const after = withRoles(roles);
+        expect(preserveExperienceRoster(withRoles(roles), after)).toBe(after);
     });
 });
