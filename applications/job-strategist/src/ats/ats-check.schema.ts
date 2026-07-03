@@ -30,6 +30,8 @@ export const AtsCheckResultSchema = z.object({
     // the persisted resume text. Consumers must not present stale issues as
     // current findings.
     staleForFinalResume:      z.boolean().optional(),
+    // Rendered PDF page count — ground truth for the 2-page maximum.
+    pageCount:                z.number().optional(),
 });
 
 export type AtsCheckResult = z.infer<typeof AtsCheckResultSchema>;

@@ -97,6 +97,11 @@ export async function surfaceKeywords(
         '   reframe with real evidence or simply omit the offending phrase.',
         '6. PRESERVE every company, title, and period exactly, and the profile identity. Leave education and',
         '   certifications unchanged. Only touch skills/projects when a keyword or red-flag fix requires it.',
+        '7. NEVER GROW THE RESUME — total length must be the SAME or FEWER words than the input. For every',
+        '   keyword you weave in, tighten or cut lower-value wording in the same section. Hard caps: each',
+        '   bullet <= 32 words; a skill entry is a NAME (<= 6 words), never a sentence; a project description',
+        '   <= 80 words. Do NOT copy grounding-facts prose into the resume — grounding facts justify claims,',
+        '   they are not resume content.',
         '',
         'Output plain text only: no markdown, no em-dashes (the pipeline normalizes em-dashes anyway).',
     ].join('\n');
