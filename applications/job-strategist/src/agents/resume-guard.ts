@@ -176,6 +176,43 @@ export function enforceCertYears(resume: StructuredResumeData, verified: Readonl
     return { resume: out, violations: [{ code: 'cert_year_corrected', detail: 'Certification year did not match the verified career-history date — corrected deterministically.' }] };
 }
 
+const COMPLIANCE_FRAMEWORK_RE = /\b(hipaa|pci[\s-]?dss|nist[\s-]?800-53)\b/i;
+const COMPLIANCE_CLAIM_RE = /\bcomplian(?:ce|t)\b|\benforcing\b/i;
+const RULE_PACK_RE = /rule\s*packs?|policy-as-code/i;
+
+/**
+ * Naming a framework next to "compliance"/"enforcing" without rule-pack
+ * framing implies regulated compliance the candidate does not have — an
+ * interviewer probes PCI scope and the whole resume loses credibility.
+ */
+function checkComplianceOverclaim(out: ResumeViolation[], resume: StructuredResumeData): void {
+    const texts = [
+        resume.summary ?? '',
+        ...(resume.experience ?? []).flatMap((e) => e.highlights ?? []),
+        ...(resume.projects ?? []).map((p) => p.description ?? ''),
+    ];
+    for (const text of texts) {
+        for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+            if (COMPLIANCE_FRAMEWORK_RE.test(sentence) && COMPLIANCE_CLAIM_RE.test(sentence) && !RULE_PACK_RE.test(sentence)) {
+                out.push({ code: 'compliance_overclaim', detail: `"${sentence.slice(0, 110)}…" implies regulated compliance — reframe as the mechanism: policy-as-code gate with CDK-Nag RULE PACKS (named as packs), failing the pipeline on CRITICAL/HIGH.` });
+                return;
+            }
+        }
+    }
+}
+
+/** A bullet carrying 3+ distinct numbers is an inventory, not evidence. */
+function checkMetricStuffedBullets(out: ResumeViolation[], resume: StructuredResumeData): void {
+    for (const e of resume.experience ?? []) {
+        for (const h of e.highlights ?? []) {
+            if (numbersIn(h).size >= 3) {
+                out.push({ code: 'bullet_metric_stuffed', detail: `Bullet carries ${numbersIn(h).size} numbers ("${h.slice(0, 90)}…") — keep the strongest IMPACT metric (or one before/after pair) and cut the inventory counts; when everything is quantified nothing stands out.` });
+                return;
+            }
+        }
+    }
+}
+
 export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
     const out: ResumeViolation[] = [];
     const title = resume.profile.title.trim();
@@ -219,6 +256,8 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
     checkProjectInventory(out, resume);
     checkSummaryEcho(out, resume);
     checkProblemBridge(out, resume, ctx.companyProblem);
+    checkComplianceOverclaim(out, resume);
+    checkMetricStuffedBullets(out, resume);
 
     const misplaced = findMisplacedSelectedWork(resume);
     if (misplaced) {
@@ -520,6 +559,8 @@ export async function rewriteResume(
         'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
         `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,
         'Within each experience role, lead with the strongest number-led bullet.',
+        'For compliance_overclaim: reframe as the MECHANISM — "policy-as-code gate (Checkov custom rules + CDK-Nag rule packs: HIPAA, NIST 800-53, PCI DSS) failing the pipeline on CRITICAL/HIGH misconfigurations". Frameworks named ONLY as rule packs, never as achieved compliance.',
+        'For bullet_metric_stuffed: rewrite the flagged bullet(s) around ONE idea with the strongest IMPACT metric (or one before/after pair, e.g. "30 seconds vs 8 minutes"); move or drop inventory counts (N stacks, N workflows, N rules) — keep at most 3 inventory numbers across the whole experience section.',
         'For summary_echoes_bullets: DELETE the echoing sentence(s) and replace with (a) one sentence bridging to the company problem and (b) one distinctive angle that is NOT an experience bullet. The summary positions; bullets prove.',
         'For summary_missing_problem_bridge: add ONE sentence connecting the candidate\'s proven approach to the company problem (paraphrased, first sentence or second).',
         'For unbridged_transferable_claim: restate each flagged term with its honest transfer framing in the same clause (e.g. "AWS CDK, transferable to Terraform") — or remove the term. Never leave a flat claim of a tool the candidate has not used.',
@@ -578,6 +619,8 @@ export async function revalidateResumeContent(
     checkProjectInventory(inventory, out);
     checkSummaryEcho(inventory, out);
     checkProblemBridge(inventory, out, ctx.companyProblem);
+    checkComplianceOverclaim(inventory, out);
+    checkMetricStuffedBullets(inventory, out);
     const needsRepair = [
         ...inventory,
         ...violations.filter((v) => v.code === 'unbridged_transferable_claim'),
@@ -594,6 +637,8 @@ export async function revalidateResumeContent(
         checkProjectInventory(residual, out);
         checkSummaryEcho(residual, out);
         checkProblemBridge(residual, out, ctx.companyProblem);
+        checkComplianceOverclaim(residual, out);
+        checkMetricStuffedBullets(residual, out);
         if (residual.length > 0) {
             violations.push({ code: 'content_revalidation_residual', detail: `After one bounded repair, still violating: ${residual.map((r) => r.code).join(', ')}.` });
         }

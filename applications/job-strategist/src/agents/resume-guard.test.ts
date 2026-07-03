@@ -323,3 +323,33 @@ describe('summary echo + problem bridge + cert years', () => {
         expect(violations).toEqual([]);
     });
 });
+
+describe('compliance overclaim + metric-stuffed bullets', () => {
+    it('flags the run-237a9606 compliance phrasing; passes rule-pack framing', () => {
+        const bad = base({ experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+            'Built severity-gated DevSecOps pipeline with CDK-Nag compliance (HIPAA, NIST 800-53, PCI DSS), blocking violations.',
+            'Second grounded bullet keeps the role above the thin floor.',
+        ] }] });
+        expect(codes(bad)).toContain('compliance_overclaim');
+
+        const good = base({ experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+            'Built a policy-as-code gate (Checkov custom rules + CDK-Nag rule packs: HIPAA, NIST 800-53, PCI DSS) failing the pipeline on CRITICAL/HIGH misconfigurations.',
+            'Second grounded bullet keeps the role above the thin floor.',
+        ] }] });
+        expect(codes(good)).not.toContain('compliance_overclaim');
+    });
+
+    it('flags a bullet stuffed with 3+ numbers; allows a before/after pair', () => {
+        const stuffed = base({ experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+            'Provisioned 16-stack platform across 4 accounts with 265+ assertions and 22 workflows.',
+            'Second grounded bullet keeps the role above the thin floor.',
+        ] }] });
+        expect(codes(stuffed)).toContain('bullet_metric_stuffed');
+
+        const pair = base({ experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+            'Cut IAM deployment time from 8 minutes of manual work to 30 seconds by codifying the platform in CDK.',
+            'Second grounded bullet keeps the role above the thin floor.',
+        ] }] });
+        expect(codes(pair)).not.toContain('bullet_metric_stuffed');
+    });
+});
