@@ -48,7 +48,7 @@ import type {
     StrategistPipelineContext,
 } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
-import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
+import { RESEARCH_PERSONA_META, RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
 
 /** Delimiter used to join and later split deduplicated KB passages. */
@@ -743,6 +743,8 @@ const RESEARCH_CONFIG: AgentConfig = {
     maxTokens: RESEARCH_MAX_TOKENS,
     thinkingBudget: 0,
     systemPrompt: RESEARCH_PERSONA_SYSTEM_PROMPT,
+    promptId: RESEARCH_PERSONA_META.id,
+    promptVersion: RESEARCH_PERSONA_META.version,
     tool: RESEARCH_TOOL,
 };
 

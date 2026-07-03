@@ -15,7 +15,7 @@
 import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
-import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
+import { STRATEGIST_PERSONA_META, STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
 import type { YearsGap } from './years-gap.js';
 import { capHighlights } from './experience-cap.js';
 
@@ -657,6 +657,8 @@ const STRATEGIST_CONFIG: AgentConfig = {
     maxTokens: STRATEGIST_MAX_TOKENS,
     thinkingBudget: STRATEGIST_THINKING_BUDGET,
     systemPrompt: STRATEGIST_PERSONA_SYSTEM_PROMPT,
+    promptId: STRATEGIST_PERSONA_META.id,
+    promptVersion: STRATEGIST_PERSONA_META.version,
 };
 
 /**

@@ -203,6 +203,14 @@ export interface AgentConfig {
     readonly promptId?: string;
 
     /**
+     * Prompt content version — sourced from the prompt markdown frontmatter
+     * (`version:`) when the persona lives in prompts/content/*.md.
+     * Written to prompt_invocations.prompt_version; falls back to the
+     * process-wide PROMPT_VERSION env var when unset.
+     */
+    readonly promptVersion?: string;
+
+    /**
      * Forced tool_use (constrained decoding). When set, runAgent sends a
      * Converse `toolConfig` with `toolChoice: { tool: { name } }` so the
      * model is architecturally blocked from producing anything outside the

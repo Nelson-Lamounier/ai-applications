@@ -343,6 +343,11 @@ function resolveInvocationSink(
     return perCall ?? fromContext ?? defaultInvocationSink;
 }
 
+/** Config-level prompt version (markdown frontmatter) wins over the process-wide env var. */
+function resolvePromptVersion(config: AgentConfig): string | undefined {
+    return config.promptVersion ?? process.env['PROMPT_VERSION'];
+}
+
 function resolveInvocationUserId(perCall: string | undefined, fromContext: string | undefined): string | undefined {
     return perCall ?? fromContext ?? defaultInvocationUserId;
 }
@@ -355,6 +360,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
     const pipelineName   = config.pipeline ?? pipelineContext.pipelineId;
     const userId         = resolveInvocationUserId(options.userId, pipelineContext.userId);
     const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, promptId, tool } = config;
+    const promptVersion = resolvePromptVersion(config);
 
     // Anthropic forbids forced tool_use with extended thinking. Catch the
     // misconfiguration here rather than as an opaque Bedrock 400.
@@ -518,7 +524,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             costUsd,
             stopReason:           response.stopReason,
             systemPromptHash:     sha256(JSON.stringify(systemPrompt)),
-            promptVersion:        process.env['PROMPT_VERSION'],
+            promptVersion,
         });
 
         // Build and dispatch the invocation log (non-blocking — errors are swallowed)
@@ -536,7 +542,7 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
                 pipeline:           pipelineName,
                 agent:              agentName,
                 modelId,
-                promptVersion:      process.env['PROMPT_VERSION'],
+                promptVersion,
                 promptId,
                 systemPromptHash,
                 outputHash,
