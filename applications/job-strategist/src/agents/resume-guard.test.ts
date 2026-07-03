@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection, summarySharedNumbers, enforceProhibitedClaims, revalidateResumeContent } from './resume-guard.js';
+import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection, summarySharedNumbers, enforceProhibitedClaims, revalidateResumeContent, summaryEchoSentences, enforceCertYears } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const mockRun = runAgent as jest.Mock;
@@ -266,5 +266,60 @@ describe('revalidateResumeContent', () => {
         });
         const { violations } = await revalidateResumeContent(dirty, ctx);
         expect(violations.map((v) => v.code)).toContain('content_revalidation_residual');
+    });
+});
+
+describe('summary echo + problem bridge + cert years', () => {
+    const dockProblem = 'build and maintain scalable, secure, reliable engineering infrastructure enabling cross-functional teams to ship production-ready solutions consistently — closing gaps in cloud infrastructure maturity, CI/CD reliability, and DevSecOps practices ensuring repeatability at scale';
+
+    it('flags the run-237a9606 summary shape as an echo of the bullets', () => {
+        const r = base({
+            summary: 'Builds production DevOps platforms end to end: secure CI/CD pipelines, Kubernetes on EKS, multi-account IaC via AWS CDK, and three-pillar observability. AWS Certified DevOps Engineer.',
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Provisioned EKS platform across AWS accounts via AWS CDK with ArgoCD gitops and automated promotion.',
+                'Designed CI/CD pipelines across GitHub Actions workflows with OIDC zero-credential federation.',
+                'Deployed three-pillar observability stack with Prometheus, Loki, Tempo dashboards on Kubernetes.',
+            ] }],
+        });
+        expect(summaryEchoSentences(r).length).toBeGreaterThan(0);
+    });
+
+    it('a positioning summary with a problem bridge does not echo', () => {
+        const r = base({
+            summary: 'Turns fragile release processes into repeatable, secure delivery foundations that whole teams can trust. That repeatability gap is the exact problem this role exists to close. AWS Certified DevOps Engineer.',
+            experience: [{ company: 'F', title: 'E', period: 'p', highlights: [
+                'Provisioned EKS platform across AWS accounts via CDK with ArgoCD gitops.',
+            ] }],
+        });
+        expect(summaryEchoSentences(r)).toEqual([]);
+    });
+
+    it('flags a missing problem bridge; passes when bridged', () => {
+        const noBridge: string[] = [];
+        const r1 = base();
+        const v1 = validateResume(r1, { ...ctx, companyProblem: dockProblem });
+        noBridge.push(...v1.map((x) => x.code));
+        expect(noBridge).toContain('summary_missing_problem_bridge');
+
+        const r2 = base({ summary: 'Ships production AI and applies root-cause methodology to support escalations, bringing repeatability and reliability to cross-functional engineering delivery. 5 years across support and operations.' });
+        const v2 = validateResume(r2, { ...ctx, companyProblem: dockProblem });
+        expect(v2.map((x) => x.code)).not.toContain('summary_missing_problem_bridge');
+    });
+
+    it('corrects a wrong certification year in the array and the summary prose', () => {
+        const r = base({
+            summary: 'Ships production AI systems. AWS Certified DevOps Engineer – Professional (2024).',
+            certifications: [{ name: 'AWS Certified DevOps Engineer – Professional', year: '2024', issuer: 'AWS' }],
+        } as never);
+        const { resume, violations } = enforceCertYears(r, [{ name: 'AWS Certified DevOps Engineer – Professional', date: '2025' }]);
+        expect((resume.certifications[0] as { year: string }).year).toBe('2025');
+        expect(resume.summary).toContain('(2025)');
+        expect(violations.map((v) => v.code)).toEqual(['cert_year_corrected']);
+    });
+
+    it('matching year → untouched, no violation', () => {
+        const r = base({ certifications: [{ name: 'AWS Certified DevOps Engineer – Professional', year: '2025', issuer: 'AWS' }] } as never);
+        const { violations } = enforceCertYears(r, [{ name: 'AWS Certified DevOps Engineer – Professional', date: '2025' }]);
+        expect(violations).toEqual([]);
     });
 });

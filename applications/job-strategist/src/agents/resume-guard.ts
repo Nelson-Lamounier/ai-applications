@@ -13,6 +13,8 @@ export interface ResumeGuardCtx {
     companyProblem?: string;
     /** Documented project pitches — the opening beat a project description must use. */
     projectPitches?: ReadonlyArray<{ name: string; pitch: string }>;
+    /** Verified certifications (name + date string) — years are enforced, not trusted. */
+    verifiedCertifications?: ReadonlyArray<{ name: string; date: string }>;
 }
 
 const GAP_RE = /falls?\s+short|\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)|do(?:es)?\s*not\s+yet\s+have/i;
@@ -92,6 +94,88 @@ function checkProjectInventory(out: ResumeViolation[], resume: StructuredResumeD
     }
 }
 
+const ECHO_STOPWORDS = new Set([
+    'production', 'platform', 'platforms', 'systems', 'infrastructure', 'engineering', 'delivery',
+    'through', 'across', 'every', 'before', 'spanning', 'applies', 'builds', 'build', 'built',
+    'and', 'the', 'via', 'end', 'with', 'for', 'from', 'that', 'this', 'into', 'are', 'has',
+    'have', 'was', 'were', 'per', 'all', 'one', 'two', 'its', 'our', 'their', 'work', 'using',
+]);
+
+/** Content tokens (len >= 3 so tech acronyms like EKS/CDK/IaC count; non-generic). */
+function contentTokens(text: string): string[] {
+    return (text.toLowerCase().match(/[a-z][a-z0-9+-]{2,}/g) ?? []).filter((t) => !ECHO_STOPWORDS.has(t));
+}
+
+/**
+ * Summary sentences that topically ECHO the experience bullets (>= 60% of a
+ * sentence's content tokens already appear in bullets, min 4 hits). Number
+ * overlap catches restated metrics; this catches restated TOPICS — the run
+ * that motivated it summarised "secure CI/CD, Kubernetes on EKS, multi-account
+ * IaC, observability": four bullet headlines re-listed with one shared number.
+ */
+export function summaryEchoSentences(resume: StructuredResumeData): string[] {
+    const bulletTokens = new Set(contentTokens((resume.experience ?? []).flatMap((e) => e.highlights ?? []).join(' ')));
+    if (bulletTokens.size === 0) return [];
+    return (resume.summary ?? '').split(/(?<=[.!?])\s+/).filter((sentence) => {
+        const tokens = contentTokens(sentence);
+        if (tokens.length < 4) return false;
+        const hits = tokens.filter((t) => bulletTokens.has(t)).length;
+        return hits >= 4 && hits / tokens.length >= 0.6;
+    });
+}
+
+function checkSummaryEcho(out: ResumeViolation[], resume: StructuredResumeData): void {
+    const echoes = summaryEchoSentences(resume);
+    if (echoes.length > 0) {
+        out.push({ code: 'summary_echoes_bullets', detail: `Summary sentence(s) topically restate experience bullets: "${echoes[0].slice(0, 120)}…" — the summary positions (problem bridge, distinctive angle); bullets prove.` });
+    }
+}
+
+/** The summary must visibly bridge to the JD's company problem (>= 2 distinctive problem tokens present). */
+function checkProblemBridge(out: ResumeViolation[], resume: StructuredResumeData, companyProblem?: string): void {
+    if (!companyProblem) return;
+    const problemTokens = new Set(contentTokens(companyProblem));
+    if (problemTokens.size < 3) return;
+    const summaryTokens = new Set(contentTokens(resume.summary ?? ''));
+    const hits = [...problemTokens].filter((t) => summaryTokens.has(t)).length;
+    if (hits < 2) {
+        out.push({ code: 'summary_missing_problem_bridge', detail: 'Summary never bridges to the JD\'s company problem — one sentence must connect the candidate\'s approach to the problem this role exists to solve.' });
+    }
+}
+
+/**
+ * Certification years are verified facts, not model output — the strategist
+ * emitted (2024) for a 2025 certification, borrowing the year from education
+ * dates. Enforce the verified date in both the certifications array and any
+ * "Name (YYYY)" prose mention.
+ */
+export function enforceCertYears(resume: StructuredResumeData, verified: ReadonlyArray<{ name: string; date: string }>): { resume: StructuredResumeData; violations: ResumeViolation[] } {
+    if (verified.length === 0) return { resume, violations: [] };
+    let changed = false;
+    let out = resume;
+    for (const v of verified) {
+        const year = /\b(20\d{2})\b/.exec(v.date)?.[1];
+        if (!year) continue;
+        const certs = (out.certifications ?? []).map((c) => {
+            const entry = c as { name?: string; year?: string };
+            if (entry.name && entry.name.toLowerCase().includes(v.name.toLowerCase().slice(0, 20)) && entry.year !== year) {
+                changed = true;
+                return { ...c, year };
+            }
+            return c;
+        });
+        const namePattern = v.name.slice(0, 25).replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+        const proseRe = new RegExp(`(${namePattern}[^()]{0,30}\\()(20\\d{2})(\\))`, 'i');
+        const summary = (out.summary ?? '').replace(proseRe, (m, pre, y, post) => {
+            if (y !== year) { changed = true; return `${pre}${year}${post}`; }
+            return m;
+        });
+        out = { ...out, certifications: certs, summary };
+    }
+    if (!changed) return { resume, violations: [] };
+    return { resume: out, violations: [{ code: 'cert_year_corrected', detail: 'Certification year did not match the verified career-history date — corrected deterministically.' }] };
+}
+
 export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
     const out: ResumeViolation[] = [];
     const title = resume.profile.title.trim();
@@ -133,6 +217,8 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
 
     checkSummaryInventory(out, resume);
     checkProjectInventory(out, resume);
+    checkSummaryEcho(out, resume);
+    checkProblemBridge(out, resume, ctx.companyProblem);
 
     const misplaced = findMisplacedSelectedWork(resume);
     if (misplaced) {
@@ -434,6 +520,8 @@ export async function rewriteResume(
         'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
         `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,
         'Within each experience role, lead with the strongest number-led bullet.',
+        'For summary_echoes_bullets: DELETE the echoing sentence(s) and replace with (a) one sentence bridging to the company problem and (b) one distinctive angle that is NOT an experience bullet. The summary positions; bullets prove.',
+        'For summary_missing_problem_bridge: add ONE sentence connecting the candidate\'s proven approach to the company problem (paraphrased, first sentence or second).',
         'For unbridged_transferable_claim: restate each flagged term with its honest transfer framing in the same clause (e.g. "AWS CDK, transferable to Terraform") — or remove the term. Never leave a flat claim of a tool the candidate has not used.',
         'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
         'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
@@ -480,13 +568,16 @@ export async function revalidateResumeContent(
     ctx: ResumeGuardCtx,
 ): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
     const prohibited = enforceProhibitedClaims(resume);
-    const scoped = enforceScopedClaims(prohibited.resume);
+    const certs = enforceCertYears(prohibited.resume, ctx.verifiedCertifications ?? []);
+    const scoped = enforceScopedClaims(certs.resume);
     let out = scoped.resume;
-    const violations: ResumeViolation[] = [...prohibited.violations, ...scoped.violations];
+    const violations: ResumeViolation[] = [...prohibited.violations, ...certs.violations, ...scoped.violations];
 
     const inventory: ResumeViolation[] = [];
     checkSummaryInventory(inventory, out);
     checkProjectInventory(inventory, out);
+    checkSummaryEcho(inventory, out);
+    checkProblemBridge(inventory, out, ctx.companyProblem);
     const needsRepair = [
         ...inventory,
         ...violations.filter((v) => v.code === 'unbridged_transferable_claim'),
@@ -496,10 +587,13 @@ export async function revalidateResumeContent(
         out = await rewriteResume(out, needsRepair, ctx);
         // Deterministic passes are idempotent — re-assert after the repair.
         out = enforceProhibitedClaims(out).resume;
+        out = enforceCertYears(out, ctx.verifiedCertifications ?? []).resume;
         out = enforceScopedClaims(out).resume;
         const residual: ResumeViolation[] = [];
         checkSummaryInventory(residual, out);
         checkProjectInventory(residual, out);
+        checkSummaryEcho(residual, out);
+        checkProblemBridge(residual, out, ctx.companyProblem);
         if (residual.length > 0) {
             violations.push({ code: 'content_revalidation_residual', detail: `After one bounded repair, still violating: ${residual.map((r) => r.code).join(', ')}.` });
         }

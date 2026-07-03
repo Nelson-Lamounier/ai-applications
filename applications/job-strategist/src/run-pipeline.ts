@@ -161,6 +161,11 @@ function buildCoverLetterNarrative(
     return { hasYearsBar, valuesSignals, projectPitches, companyProblem: jdExtraction.companyProblem, resumeNumbers };
 }
 
+/** Verified certification facts for the guard (name + date string). */
+function toVerifiedCerts(entries: ReadonlyArray<{ name: string; date: string }> | undefined): Array<{ name: string; date: string }> {
+    return (entries ?? []).map((c) => ({ name: c.name, date: c.date }));
+}
+
 /** S3 client for canonical resume PDF storage. */
 const s3 = new S3Client({});
 
@@ -821,6 +826,7 @@ export async function main(): Promise<void> {
             archetypeSkillLead,
             companyProblem:    jdExtraction.companyProblem,
             projectPitches:    projectLaneIndex.projectPitches,
+            verifiedCertifications: toVerifiedCerts(certificationEntries),
         };
         // Grounding for the expand direction + the allowed-number set that
         // bounds ANY pass that can add content (expand, surface-keywords).
