@@ -1,6 +1,7 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
-import { TechnologyCandidateRepository } from './TechnologyCandidateRepository.js';
+import type { Pool } from 'pg';
+import { isNoiseCandidate, TechnologyCandidateRepository } from './TechnologyCandidateRepository.js';
 
 function fakePool() {
     const calls: { sql: string; params?: unknown[] }[] = [];
@@ -33,5 +34,30 @@ describe('TechnologyCandidateRepository.upsert', () => {
             userId: 'u1', repoFullName: 'o/r', filePath: 'README.md',
         });
         expect(pool.calls[0].params).toContain('unknown');
+    });
+});
+
+describe('isNoiseCandidate', () => {
+    it('drops GitHub Actions workflow steps by ecosystem', () => {
+        expect(isNoiseCandidate('actions/checkout', 'github-action')).toBe(true);
+        expect(isNoiseCandidate('actions/checkout', 'github_actions')).toBe(true);
+    });
+    it('drops local action paths, node builtins, and typings', () => {
+        expect(isNoiseCandidate('./.github/actions/configure-aws', 'unknown')).toBe(true);
+        expect(isNoiseCandidate('node:child_process', 'typescript')).toBe(true);
+        expect(isNoiseCandidate('@types/node', 'npm')).toBe(true);
+    });
+    it('keeps real package names', () => {
+        expect(isNoiseCandidate('pinecone-client', 'npm')).toBe(false);
+        expect(isNoiseCandidate('@nestjs/core', 'npm')).toBe(false);
+    });
+});
+
+describe('upsert noise filtering', () => {
+    it('never inserts a noise candidate', async () => {
+        const query = jest.fn<() => Promise<{ rows: unknown[] }>>().mockResolvedValue({ rows: [] });
+        const repo = new TechnologyCandidateRepository({ query } as unknown as Pool);
+        await repo.upsert({ rawName: 'actions/checkout', normalizedName: 'actionscheckout', ecosystem: 'github-action', userId: 'u', repoFullName: 'o/r', filePath: 'f' });
+        expect(query).not.toHaveBeenCalled();
     });
 });
