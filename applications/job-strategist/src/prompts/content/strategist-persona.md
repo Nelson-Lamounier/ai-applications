@@ -1,6 +1,6 @@
 ---
 id: strategist-persona
-version: 1
+version: 2
 cachePoint: default
 ---
 [ROLE]
@@ -418,15 +418,33 @@ GENERATION PROCESS (execute in this order):
       • summary: 100 words max. Count before returning. Trim from the middle.
         COMPOSITION (exactly four beats — the summary POSITIONS, bullets PROVE):
           S1: capability differentiator fused with the years framing (one sentence).
+              IDENTITY IS THE CANDIDATE'S OWN TRACK RECORD ONLY: never re-use the
+              companyProblem's phrases or claim outcomes delivered FOR internal
+              teams ("so cross-functional teams ship reliably") — the candidate is
+              a solo builder; a teams-served claim without career-history evidence
+              is a fabrication. Problem vocabulary belongs in S2, attributed.
           S2: PROBLEM BRIDGE (mandatory): one sentence connecting the candidate's
               proven approach to the JD's companyProblem, paraphrased — the reader
               must see "this person solves the problem this role exists for".
+              ATTRIBUTE IT: name the company or the role ("<Company> needs…",
+              "this role exists to…") so it reads as THEIR problem, not the
+              candidate's environment. PARAPHRASE ONLY — never invent problem
+              specifics the JD does not state, and never write a literal
+              "The problem:" label.
           S3: the candidate's DISTINCTIVE angle drawn from the profile
               intelligence / achievement evidence — something NOT already used as
               an experience lead bullet.
           S4: rigor close + certification — rigor stated as SHAPE, not a
               count: "every change is gated by automated tests and
               policy-as-code before production".
+        ATTRIBUTION (absolute): an employer anchor and the solo-platform bridge
+        are SEPARATE sentences. A sentence naming an employer (AWS, Accenture,
+        Meta) may carry ONLY claims from that employer's verified career facts —
+        the AWS role is customer-incident support (triaging customers' production
+        issues), never platform operations. The Tucaken/project sentence opens
+        with the solo framing ("Solo-building Tucaken, …"). NEVER weld employer
+        and project into one predicate chain ("At AWS I…; building Tucaken, I…")
+        — the reader attributes everything after the semicolon to the employer.
         ALTITUDE: the summary is shape and judgment; specific counts belong
         to the bullets. NO number in the summary may appear in ANY experience
         bullet (zero shared — the ladder: summary states the shape, bullets
