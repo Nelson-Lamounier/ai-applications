@@ -51,6 +51,69 @@ function hasForwardLookingSkillClaim(text: string): boolean {
     }
     return false;
 }
+/**
+ * Narrative-quality inputs (all optional — absent inputs skip their checks).
+ * These carry the run's JD context so violations repair against the REAL JD.
+ */
+export interface CoverLetterNarrativeOpts {
+    /** False when the JD sets no years requirement (tenure must not appear). */
+    readonly hasYearsBar?: boolean;
+    /** JD soft/implicit requirement phrases (the values rubric). */
+    readonly valuesSignals?: readonly string[];
+    /** Documented project pitches for the ownership story. */
+    readonly projectPitches?: ReadonlyArray<{ name: string; pitch: string }>;
+    /** The JD's company problem (P1's plain-language anchor). */
+    readonly companyProblem?: string;
+    /** Numbers appearing in the tailored resume (overlap = restating). */
+    readonly resumeNumbers?: ReadonlySet<string>;
+}
+
+const TENURE_RE = /\b\d+\+?\s*years?\b/i;
+/** Technical tokens a recruiter cannot parse: acronyms, camelCase identifiers, paths. */
+const TECH_TOKEN_RE = /\b[A-Z]{2,}[A-Za-z0-9]*\b|\b[A-Za-z]+[A-Z][A-Za-z]*\b|\/[a-z][\w/.-]+/g;
+/** Widely-known acronyms a recruiter DOES parse — excluded from the density count. */
+const RECRUITER_SAFE = new Set(['AWS', 'CI', 'CD', 'IT', 'AI', 'API', 'DEVOPS', 'SAAS']);
+const MAX_P1_TECH_TOKENS = 4;
+const MAX_SHARED_RESUME_NUMBERS = 1;
+
+function numbersInText(text: string): Set<string> {
+    return new Set((text.match(/\d+(?:[.,]\d+)?\+?/g) ?? []).map((n) => n.replace(/[,+]/g, '')));
+}
+
+/** Distinct un-recruiter-safe technical tokens in a paragraph. */
+function techTokens(paragraph: string): string[] {
+    const seen = new Set<string>();
+    for (const m of paragraph.match(TECH_TOKEN_RE) ?? []) {
+        if (!RECRUITER_SAFE.has(m.toUpperCase())) seen.add(m);
+    }
+    return [...seen];
+}
+
+/**
+ * Narrative checks — the letter answers a recruiter, not an engineer:
+ * P1 must pass the recruiter test, tenure is conditional on a JD years bar,
+ * and the letter must not restate the resume (number overlap is the symptom
+ * — the Accenture letter shared SEVEN numbers with its resume).
+ */
+export function validateCoverLetterNarrative(letter: CoverLetter, opts: CoverLetterNarrativeOpts): CoverLetterViolation[] {
+    const out: CoverLetterViolation[] = [];
+    const p1 = letter.paragraphs[0] ?? '';
+    const tokens = techTokens(p1);
+    if (tokens.length > MAX_P1_TECH_TOKENS) {
+        out.push({ code: 'opener_too_technical', detail: `P1 carries ${tokens.length} technical tokens (${tokens.slice(0, 6).join(', ')}…) — the opener must pass the recruiter test: plain language, the why-this-role connection, at most two widely-known acronyms.` });
+    }
+    if (opts.hasYearsBar === false && letter.paragraphs.some((p) => TENURE_RE.test(p))) {
+        out.push({ code: 'tenure_without_bar', detail: 'The JD sets no years requirement (and may explicitly de-emphasise years) — remove every tenure mention; demonstrate impact and ownership instead.' });
+    }
+    if (opts.resumeNumbers && opts.resumeNumbers.size > 0) {
+        const shared = [...numbersInText(letter.paragraphs.join(' '))].filter((n) => opts.resumeNumbers?.has(n));
+        if (shared.length > MAX_SHARED_RESUME_NUMBERS) {
+            out.push({ code: 'letter_restates_resume', detail: `Letter repeats ${shared.length} numbers from the resume (${shared.join(', ')}) — the resume proves, the letter tells the story; keep at most one.` });
+        }
+    }
+    return out;
+}
+
 /** Any markdown the agent should NOT emit (formatting belongs to the UI/PDF). */
 const MARKDOWN = /\*\*|__|##|^\s*[-*+]\s+/m;
 
@@ -143,7 +206,7 @@ const CTX: BasePipelineContext = { pipelineId: 'cover-letter-guard', environment
 export async function rewriteCoverLetter(
     letter: CoverLetter,
     violations: CoverLetterViolation[],
-    ctx: { targetRole: string; leadIdentity: string; yearsGapFraming: string },
+    ctx: { targetRole: string; leadIdentity: string; yearsGapFraming: string; narrative?: CoverLetterNarrativeOpts },
 ): Promise<CoverLetter> {
     const system = [
         'You repair a cover letter, fixing ONLY the listed issues. Call emit_cover_letter with structured JSON.',
@@ -153,6 +216,9 @@ export async function rewriteCoverLetter(
         '- Remove every sentence that names, apologises for, or argues against a gap or missing experience. Delete them, do not replace.',
         '- The letter speaks in FIRST PERSON. Rewrite any sentence that says "this candidate" or "the candidate" as an "I…" sentence carrying the same facts. Never copy internal framing text verbatim.',
         ctx.yearsGapFraming ? `- Where tenure is mentioned, restate this true framing in first person, paraphrased in the letter's own voice (never verbatim): "${ctx.yearsGapFraming}".` : '- Do not state a single-role tenure that undersells the candidate.',
+        '- For opener_too_technical: rewrite P1 in PLAIN language a non-technical recruiter understands — the genuine why-this-role connection and one simply-stated outcome; no error narratives, no code identifiers, at most two widely-known acronyms.',
+        '- For tenure_without_bar: DELETE every years/tenure mention — this JD judges impact, ownership and learning, not tenure.',
+        ctx.narrative?.valuesSignals?.length ? `- For letter_restates_resume: replace restated resume facts with STORY beats answering the JD's stated values BY NAME (${ctx.narrative.valuesSignals.slice(0, 5).join('; ')}) — ownership via the documented projects${ctx.narrative.projectPitches?.length ? ` (${ctx.narrative.projectPitches.map((pp) => `${pp.name}: ${pp.pitch.slice(0, 120)}`).join(' | ')})` : ''}, learning via a real growth arc, collaboration via cross-functional work. Keep at most ONE resume number.` : '- For letter_restates_resume: replace restated resume facts with story beats (why this role, ownership, learning, collaboration); keep at most one resume number.',
         '- Remove claims of not-yet-realised impact (e.g. "pending review").',
         '- Split any sentence longer than ~40 words into shorter sentences; prefer a full stop or comma over an em-dash.',
         '- Ensure the greeting ends with a comma (e.g. "Dear Hiring Manager,").',
@@ -204,17 +270,21 @@ export function stripThirdPersonSentences(letter: CoverLetter): { letter: CoverL
     return { letter: { ...letter, paragraphs }, stripped };
 }
 
-/** Validate → rewrite on violation → deterministic voice backstop → return. Never throws. */
+/** Validate (content + narrative) → rewrite on violation → deterministic voice backstop → return. Never throws. */
 export async function guardCoverLetter(
     letter: CoverLetter | null,
     targetRole: string,
     leadIdentity: string,
     yearsGapFraming: string,
+    narrative: CoverLetterNarrativeOpts = {},
 ): Promise<{ letter: CoverLetter | null; violations: CoverLetterViolation[] }> {
     if (!letter) return { letter, violations: [] };
-    const violations = validateCoverLetter(letter, targetRole, leadIdentity);
+    const violations = [
+        ...validateCoverLetter(letter, targetRole, leadIdentity),
+        ...validateCoverLetterNarrative(letter, narrative),
+    ];
     if (violations.length === 0) return { letter: stripEmDashes(letter), violations };
-    const fixed = await rewriteCoverLetter(letter, violations, { targetRole, leadIdentity, yearsGapFraming });
+    const fixed = await rewriteCoverLetter(letter, violations, { targetRole, leadIdentity, yearsGapFraming, narrative });
     const { letter: voiced, stripped } = stripThirdPersonSentences(fixed);
     if (stripped) violations.push({ code: 'third_person_stripped', detail: 'Rewrite left third-person self-references — offending sentences deleted deterministically.' });
     return { letter: stripEmDashes(voiced), violations };
