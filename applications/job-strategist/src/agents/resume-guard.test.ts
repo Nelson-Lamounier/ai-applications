@@ -177,3 +177,26 @@ describe('summary_restates_bullets', () => {
         expect(summarySharedNumbers(r)).toEqual(['265']);
     });
 });
+
+describe('project_restates_bullets', () => {
+    it('flags a project description repeating two bullet numbers', () => {
+        const r = base({
+            projects: [{ name: 'AI Platform', github: '', description: '16-CDK-stack monorepo with ArgoCD GitOps managing 25 applications and Blue/Green rollouts.' }],
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Engineered 16-CDK-stack IaC monorepo across four accounts.',
+                'Manages 25 ArgoCD applications with self-healing GitOps.',
+            ] }],
+        } as never);
+        expect(codes(r)).toContain('project_restates_bullets');
+    });
+
+    it('allows a pitch-led description with one fresh metric and one shared number', () => {
+        const r = base({
+            projects: [{ name: 'AI Platform', github: '', description: 'SaaS for engineers seeking honest, code-grounded resumes. Differentiates via anti-fabrication guards; 38 KB passages ground each run across 25 applications.' }],
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Manages 25 ArgoCD applications with self-healing GitOps.',
+            ] }],
+        } as never);
+        expect(codes(r)).not.toContain('project_restates_bullets');
+    });
+});
