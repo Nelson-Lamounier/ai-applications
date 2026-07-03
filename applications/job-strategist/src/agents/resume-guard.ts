@@ -170,7 +170,7 @@ function nameVariants(name: string): string[] {
         if (ch === ')' && depth > 0) { depth -= 1; inner.push(buf); outer += ' '; continue; }
         if (depth > 0) buf += ch; else outer += ch;
     }
-    const collapsed = outer.toLowerCase().split(/\s+/).join(' ');
+    const collapsed = outer.toLowerCase().replaceAll(/\s+/g, ' ');
     return [...collapsed.split(' via '), ...inner]
         .map((v) => v.trim().toLowerCase())
         .filter((v) => v.length >= 3);
@@ -266,6 +266,48 @@ function checkSummaryAttribution(out: ResumeViolation[], resume: StructuredResum
     if (unattributed) {
         out.push({ code: 'summary_problem_bridge_unattributed', detail: `Problem-bridge sentence reads as an unattributed claim about the candidate's environment: "${unattributed.slice(0, 140)}" — attribute it to the company or the role ("${ctx.targetCompany ?? 'the company'} needs…", "this role exists to…"), paraphrase the JD only, never a literal "The problem:" label.` });
     }
+}
+
+// =============================================================================
+// EXPERIENCE ROSTER INVARIANT (deterministic)
+// =============================================================================
+
+type ExperienceEntry = StructuredResumeData['experience'][number];
+
+/** A before-role is present in `after` when a role shares its title or a company name variant. */
+function rosterHasRole(after: ReadonlyArray<ExperienceEntry>, role: ExperienceEntry): boolean {
+    const title = role.title.trim().toLowerCase();
+    const companyVariants = new Set(nameVariants(role.company));
+    return after.some((e) => {
+        if (e.title.trim().toLowerCase() === title) return true;
+        return nameVariants(e.company).some((v) => companyVariants.has(v));
+    });
+}
+
+/**
+ * No pass may REMOVE an experience role. Every mutating LLM pass (guard
+ * rewrite, condense, expand, reframe, surface-keywords) returns a full resume
+ * JSON, and Haiku was observed dropping a whole role while "fixing" other
+ * issues (run 8830a239 lost Meta via Accenture). Matching is rename-tolerant
+ * (title OR company-variant overlap) because repairs legitimately relabel
+ * companies (e.g. the solo-platform framing). Dropped roles are reinserted
+ * verbatim at their original index.
+ */
+export function preserveExperienceRoster(
+    before: StructuredResumeData,
+    after: StructuredResumeData,
+    onViolation?: (v: ResumeViolation) => void,
+): StructuredResumeData {
+    const beforeRoles = before.experience ?? [];
+    const merged = [...(after.experience ?? [])];
+    let changed = false;
+    beforeRoles.forEach((role, idx) => {
+        if (rosterHasRole(merged, role)) return;
+        merged.splice(Math.min(idx, merged.length), 0, role);
+        changed = true;
+        onViolation?.({ code: 'experience_role_dropped', detail: `A rewrite pass removed the "${role.title}" role at "${role.company}" — reinserted verbatim. Every career-history role must appear on the resume.` });
+    });
+    return changed ? { ...after, experience: merged } : after;
 }
 
 /**
@@ -512,7 +554,7 @@ export interface ScopedClaim {
 export const SCOPED_CLAIMS: readonly ScopedClaim[] = [
     {
         context:       /cach|prompt/i,
-        metricCore:    /~?\s*90\s*%/,
+        metricCore:    /~?\s{0,5}90\s{0,5}%/,
         qualifier:     /writer\s+lambda/i,
         qualifierText: '(Writer Lambda)',
         label:         'prompt-cache cost reduction',
@@ -541,7 +583,7 @@ function qualifyClaim(text: string, claim: ScopedClaim): string {
  * carrying it, then (if it survives outside parentheses) drop the sentence.
  */
 function stripClaimFromProse(text: string, claim: ScopedClaim): string {
-    const withoutParen = text.replace(/\s{0,10}\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
+    const withoutParen = text.replace(/ ?\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
     if (!isUnqualified(withoutParen, claim)) return withoutParen.trim();
     return withoutParen
         .split(/(?<=[.!?])\s+/)
@@ -706,6 +748,7 @@ export async function rewriteResume(
         `For summary_problem_bridge_unattributed: rewrite the bridge sentence so it is explicitly the company's/role's problem — start it with "${ctx.targetCompany ?? 'The company'} needs" or "This role exists to" — paraphrasing ONLY what the JD states (no invented specifics such as failure modes the JD never mentions), and never a literal "The problem:" label.`,
         'For unbridged_transferable_claim: restate each flagged term with its honest transfer framing in the same clause (e.g. "AWS CDK, transferable to Terraform") — or remove the term. Never leave a flat claim of a tool the candidate has not used.',
         'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
+        'NEVER remove an entire experience role — every role in the input resume must appear in the output, even when trimming.',
         'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
     ].join('\n');
 
@@ -769,7 +812,9 @@ export async function revalidateResumeContent(
     ];
     if (needsRepair.length > 0) {
         violations.push(...inventory);
+        const beforeRepair = out;
         out = await rewriteResume(out, needsRepair, ctx);
+        out = preserveExperienceRoster(beforeRepair, out, (v) => violations.push(v));
         // Deterministic passes are idempotent — re-assert after the repair.
         out = enforceProhibitedClaims(out).resume;
         out = enforceCertYears(out, ctx.verifiedCertifications ?? []).resume;
@@ -795,7 +840,8 @@ export async function guardResume(
     ctx: ResumeGuardCtx,
 ): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
     const violations = validateResume(resume, ctx);
-    const rewritten = violations.length === 0 ? resume : await rewriteResume(resume, violations, ctx);
+    let rewritten = violations.length === 0 ? resume : await rewriteResume(resume, violations, ctx);
+    rewritten = preserveExperienceRoster(resume, rewritten, (v) => violations.push(v));
     const scoped = enforceScopedClaims(rewritten);
     violations.push(...scoped.violations);
     const sectioned = dropKeyAchievementsSection(scoped.resume);

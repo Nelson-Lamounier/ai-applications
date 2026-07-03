@@ -80,6 +80,25 @@ describe('recordInvocationToRds', () => {
     expect(insert!.params[16]).toBe(50);                    // $17 output_tokens
   });
 
+  it('writes prompt_id and prompt_version from the invocation log (frontmatter identity)', async () => {
+    const { pool, queries } = fakePool();
+    await recordInvocationToRds(pool, 'job-strategist')({
+      ...baseLog, promptId: 'strategist-persona', promptVersion: '2',
+    });
+    const insert = queries.find((q) => /INSERT INTO prompt_invocations/.test(q.sql))!;
+    expect(insert.sql).toContain('prompt_id, prompt_version');
+    expect(insert.params[17]).toBe('strategist-persona');   // $18 prompt_id
+    expect(insert.params[18]).toBe('2');                    // $19 prompt_version
+  });
+
+  it('prompt identity defaults to NULL when the log carries none', async () => {
+    const { pool, queries } = fakePool();
+    await recordInvocationToRds(pool, 'job-strategist')({ ...baseLog });
+    const insert = queries.find((q) => /INSERT INTO prompt_invocations/.test(q.sql))!;
+    expect(insert.params[17]).toBeNull();
+    expect(insert.params[18]).toBeNull();
+  });
+
   it('threads applicationId/projectId/syncKind from the context into the INSERT', async () => {
     const { pool, queries } = fakePool();
     await recordInvocationToRds(pool, 'job-strategist', {

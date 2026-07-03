@@ -19,6 +19,7 @@ import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../agents/resume-tool-schema.js';
 import type { ResumeViolation } from '../agents/resume-guard.js';
+import { preserveExperienceRoster } from '../agents/resume-guard.js';
 
 export const LENGTH_BUDGET = {
     /** ~2 rendered A4 pages at the ATS template's density. */
@@ -122,7 +123,7 @@ function hardTrimSkills(resume: StructuredResumeData): StructuredResumeData {
         skills: (g.skills ?? [])
             // A "skill" longer than the cap is a sentence, not a name — drop the
             // parenthetical first; if it is still prose, drop the item.
-            .map((s) => (words(s) > LENGTH_BUDGET.perSkillItemWords ? s.replace(/\s*\([^)]*\)/g, '').trim() : s))
+            .map((s) => (words(s) > LENGTH_BUDGET.perSkillItemWords ? s.replace(/ ?\([^)]*\)/g, '').trim() : s))
             .filter((s) => s.length > 0 && words(s) <= LENGTH_BUDGET.perSkillItemWords * 2)
             .slice(0, LENGTH_BUDGET.maxSkillItemsPerCategory),
     }));
@@ -194,6 +195,7 @@ export async function condenseResume(
     const system = [
         'You CONDENSE a tailored resume that is over its length budget. Call emit_resume with the full resume JSON.',
         'NEVER fabricate; NEVER add content; NEVER change a number, date, name, or degree. Only cut and tighten.',
+        'NEVER remove an entire experience role — trim bullets within roles, but every role in the input appears in the output.',
         'PRIORITISE BY THE JD: content that answers a required skill, a responsibility, or the company problem below stays; content that answers none of them is cut FIRST. Do not saturate — one strong proof per JD requirement beats three restatements.',
         `Required skills: ${jd.requiredSkills.join(', ') || 'n/a'}.`,
         `Company problem: ${jd.companyProblem || 'n/a'}.`,
@@ -253,6 +255,7 @@ export async function expandResume(
     const system = [
         'You EXPAND an under-filled tailored resume. Call emit_resume with the full resume JSON.',
         'GROUNDING IS ABSOLUTE: every added claim must come from the grounding facts provided — NEVER invent a fact, number, technology, or outcome. Do not touch education or certifications. Keep every existing fact.',
+        'NEVER remove an entire experience role — every role in the input appears in the output.',
         `PRIORITISE BY THE JD — add only content answering a required skill, responsibility, or the company problem: ${jd.requiredSkills.join(', ') || 'n/a'} | ${jd.companyProblem || 'n/a'}.`,
         'TARGETS:',
         `- grand total ${LENGTH_BUDGET.minTotalWords}-${LENGTH_BUDGET.totalWords} words (currently ${measure.total}) — the resume must FILL two pages with relevant evidence, never overflow them.`,
@@ -294,7 +297,7 @@ async function shrinkToBudget(
     onViolation?: (v: ResumeViolation) => void,
 ): Promise<StructuredResumeData> {
     onViolation?.({ code: 'length_over_budget', detail: `Sections over budget: ${before.overBudget.join(', ')} (total ${before.total}/${LENGTH_BUDGET.totalWords} words).` });
-    const condensed = await condenseResume(resume, before, jd);
+    const condensed = preserveExperienceRoster(resume, await condenseResume(resume, before, jd), onViolation);
     let out = condensed;
     let m = measureResume(out);
     if (condensed !== resume && m.total < before.total) {
@@ -317,7 +320,7 @@ async function growToFill(
 ): Promise<StructuredResumeData> {
     const thin = before.thinRoles.length > 0 ? `; thin roles: ${before.thinRoles.join('; ')}` : '';
     onViolation?.({ code: 'length_under_filled', detail: `Resume under-fills two pages (total ${before.total}/${LENGTH_BUDGET.minTotalWords} min${thin}).` });
-    const expanded = await expandResume(resume, before, jd, groundingFacts);
+    const expanded = preserveExperienceRoster(resume, await expandResume(resume, before, jd, groundingFacts), onViolation);
     if (expanded === resume) return resume;
     let out = expanded;
     if (measureResume(out).overBudget.length > 0) out = hardTrim(out);

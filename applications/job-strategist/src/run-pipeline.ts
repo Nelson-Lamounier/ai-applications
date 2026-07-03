@@ -31,7 +31,7 @@ import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
-import { guardResume, revalidateResumeContent } from './agents/resume-guard.js';
+import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { applyLengthBudget } from './ats/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
@@ -873,7 +873,7 @@ export async function main(): Promise<void> {
                     migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
                 }, 'migration_reframe_fired');
                 const preReframe = finalResume;
-                finalResume = await reframeStaleMigrations(preReframe, staleMigrations).catch(() => preReframe);
+                finalResume = preserveExperienceRoster(preReframe, await reframeStaleMigrations(preReframe, staleMigrations).catch(() => preReframe));
             }
             // ── Length budget (measure → condense → hard trim; fail-open) ──
             // The 2026-07-02 Google run shipped 1,723 words / 4 pages: the
@@ -953,7 +953,7 @@ export async function main(): Promise<void> {
                 // Allowed numbers = original resume + grounding facts. Any number the
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
-                const refined = await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume);
+                const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
                 let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
                 if (surfaced !== baseResume) {
                     // The keyword rewrite is the last stage that can GROW the
