@@ -34,6 +34,7 @@ import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import { guardResume } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { applyLengthBudget } from './ats/length-budget.js';
+import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
 import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -671,10 +672,17 @@ export async function main(): Promise<void> {
         // fail-open: an empty lane index simply yields no sourceLanes. Career
         // terms are the exact company + job-title strings from the résumé.
         const careerTerms = careerEntries.flatMap((e) => [e.company, e.title]).filter(Boolean);
-        const skillEvidenceLedger = attachSourceLanes(ledgerWithCode, {
+        const lanedLedger = attachSourceLanes(ledgerWithCode, {
             projectNames: projectLaneIndex.projectNames,
             careerTerms,
         });
+
+        // Join the run's own retrieved KB passages onto each entry — the
+        // "how was this verified" audit trail (source + cosine/rerank +
+        // snippet) the evidence panel renders. Deterministic; gap entries
+        // untouched; entries with no matching passage stay unannotated.
+        const kbPassages = parseKbPassages(guardedResearch.data.kbContext, KB_CONTEXT_SEPARATOR);
+        const skillEvidenceLedger = attachPassageProvenance(lanedLedger, kbPassages);
 
         const researchData: StrategistResearchResult = {
             ...jdExtraction,
