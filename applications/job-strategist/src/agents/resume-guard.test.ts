@@ -159,9 +159,19 @@ describe('summary_restates_bullets', () => {
         expect(codes(r)).toContain('summary_restates_bullets');
     });
 
-    it('allows exactly one shared number (the closing metric)', () => {
+    it('flags even a single bullet-shared number (the ladder rule: counts belong to bullets)', () => {
         const r = base({
             summary: 'Ships production AI and applies root-cause methodology to support escalations. Positioning prose without bullet facts. Closing metric: 25 ArgoCD apps.',
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
+                'Manages 25 ArgoCD applications with self-healing GitOps.',
+            ] }],
+        });
+        expect(codes(r)).toContain('summary_restates_bullets');
+    });
+
+    it('a numberless altitude summary passes', () => {
+        const r = base({
+            summary: 'Platform engineer who builds and operates production Kubernetes on AWS end to end, backed by hands-on operational support experience. Every change is gated by automated tests and policy-as-code before production.',
             experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: [
                 'Manages 25 ArgoCD applications with self-healing GitOps.',
             ] }],

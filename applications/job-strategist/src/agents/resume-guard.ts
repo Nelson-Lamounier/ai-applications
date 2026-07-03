@@ -73,8 +73,8 @@ export function summarySharedNumbers(resume: StructuredResumeData): string[] {
  */
 function checkSummaryInventory(out: ResumeViolation[], resume: StructuredResumeData): void {
     const sharedNumbers = summarySharedNumbers(resume);
-    if (sharedNumbers.length > 1) {
-        out.push({ code: 'summary_restates_bullets', detail: `Summary repeats ${sharedNumbers.length} numbers already used in experience bullets (${sharedNumbers.join(', ')}) — max one (the closing metric); replace restated facts with the problem bridge and a distinctive angle.` });
+    if (sharedNumbers.length > 0) {
+        out.push({ code: 'summary_restates_bullets', detail: `Summary repeats ${sharedNumbers.length} number(s) already used in experience bullets (${sharedNumbers.join(', ')}) — the ladder rule: summary states the shape, bullets substantiate; convey rigor qualitatively and keep counts in the bullets.` });
     }
 }
 
@@ -554,7 +554,7 @@ export async function rewriteResume(
         ctx.projectPitches?.length
             ? `For project_restates_bullets: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${ctx.projectPitches.map((p) => `"${p.name}: ${p.pitch.slice(0, 200)}"`).join(' | ')}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
             : 'For project_restates_bullets: rewrite the flagged project description as pitch (what it is, who it is for, the problem it solves) + one JD-relevant differentiator + one fresh metric. Remove numbers duplicated from experience bullets and all stack enumerations.',
-        ctx.companyProblem ? `For summary_restates_bullets: rewrite the summary as POSITIONING, not inventory — S1 capability + years framing, S2 ONE sentence bridging to this problem (paraphrased): "${ctx.companyProblem.slice(0, 400)}", S3 a distinctive angle NOT already an experience bullet, S4 keep the closing metric sentence. Remove every number that duplicates an experience bullet except the closing metric.` : 'For summary_restates_bullets: rewrite the summary as positioning — remove numbers duplicated from experience bullets (keep only the closing metric) and replace restated facts with a distinctive, non-bullet angle.',
+        ctx.companyProblem ? `For summary_restates_bullets: rewrite the summary at ALTITUDE — S1 identity anchor + capability ("<Role-family> engineer who builds…"), S2 ONE sentence bridging to this problem (paraphrased): "${ctx.companyProblem.slice(0, 400)}", S3 the concrete paid-experience anchor, S4 qualitative rigor close ("every change gated by automated tests and policy-as-code"). Remove EVERY number that also appears in an experience bullet — counts belong to bullets.` : 'For summary_restates_bullets: rewrite the summary at altitude — identity anchor, problem bridge, concrete paid-experience anchor, qualitative rigor close; remove every number that also appears in an experience bullet.',
         'For headline_is_title: rewrite profile.title as a DESCRIPTIVE domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect, Consultant…) — e.g. "Cloud & AI Operations · Python Automation & Incident Response". Never claim a role the candidate does not hold.',
         'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
         `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,
