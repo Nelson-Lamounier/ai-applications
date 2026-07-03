@@ -162,6 +162,11 @@ function buildCoverLetterNarrative(
 }
 
 /** Verified certification facts for the guard (name + date string). */
+/** Career-history employers + their verified highlight facts — the guard's attribution boundary. */
+function toVerifiedEmployers(entries: ReadonlyArray<{ company: string; highlights?: readonly string[] }> | undefined): Array<{ name: string; facts: string }> {
+    return (entries ?? []).map((c) => ({ name: c.company, facts: (c.highlights ?? []).join(' ') }));
+}
+
 function toVerifiedCerts(entries: ReadonlyArray<{ name: string; date: string }> | undefined): Array<{ name: string; date: string }> {
     return (entries ?? []).map((c) => ({ name: c.name, date: c.date }));
 }
@@ -825,8 +830,10 @@ export async function main(): Promise<void> {
             verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
             archetypeSkillLead,
             companyProblem:    jdExtraction.companyProblem,
+            targetCompany:     researchData.targetCompany,
             projectPitches:    projectLaneIndex.projectPitches,
             verifiedCertifications: toVerifiedCerts(certificationEntries),
+            verifiedEmployers: toVerifiedEmployers(careerEntries),
         };
         // Grounding for the expand direction + the allowed-number set that
         // bounds ANY pass that can add content (expand, surface-keywords).
