@@ -33,6 +33,7 @@ import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import { guardResume } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
+import { applyLengthBudget } from './ats/length-budget.js';
 import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -764,6 +765,14 @@ export async function main(): Promise<void> {
             for (const v of guarded.violations) resumeViolationsMetric.inc({ code: v.code });
         }
 
+        // JD-priority context for length enforcement — required skills + the
+        // company problem decide what survives a condense (JD-relevant first).
+        const jdPriority = {
+            requiredSkills:   jdExtraction.requiredSkills,
+            companyProblem:   jdExtraction.companyProblem,
+            responsibilities: jdExtraction.responsibilities,
+        };
+
         // Career/bullet drift: reframe an experience bullet describing a tech the code
         // has since superseded (e.g. self-hosted kubeadm → managed EKS) into an honest
         // migration narrative. Deterministic detection + grounded Haiku reframe; fail-open.
@@ -774,8 +783,16 @@ export async function main(): Promise<void> {
                     pipelineRunId: env.pipelineRunId,
                     migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
                 }, 'migration_reframe_fired');
-                finalResume = await reframeStaleMigrations(finalResume, staleMigrations).catch(() => finalResume);
+                const preReframe = finalResume;
+                finalResume = await reframeStaleMigrations(preReframe, staleMigrations).catch(() => preReframe);
             }
+            // ── Length budget (measure → condense → hard trim; fail-open) ──
+            // The 2026-07-02 Google run shipped 1,723 words / 4 pages: the
+            // strategist emitted 1,045 and the guard + keyword rewrites added
+            // the rest. Enforce here (before persist/ATS) and again after the
+            // keyword-surfacing rewrite — the last stage that can grow it.
+            const preBudget = finalResume;
+            finalResume = await applyLengthBudget(preBudget, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code })).catch(() => preBudget);
         }
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
@@ -838,8 +855,13 @@ export async function main(): Promise<void> {
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
                 const refined = await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume);
-                const surfaced = refined !== baseResume ? stripUngroundedNumbers(refined, allowed) : baseResume;
+                let surfaced = refined !== baseResume ? stripUngroundedNumbers(refined, allowed) : baseResume;
                 if (surfaced !== baseResume) {
+                    // The keyword rewrite is the last stage that can GROW the
+                    // resume (it inflated the 2026-07-02 Google run by pulling
+                    // grounding-facts prose into projects) — re-enforce the
+                    // length budget before persisting and re-checking.
+                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code })).catch(() => surfaced);
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
                         applicationId:  env.applicationId,

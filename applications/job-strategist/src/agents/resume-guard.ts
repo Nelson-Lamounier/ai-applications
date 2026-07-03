@@ -288,6 +288,7 @@ export async function rewriteResume(
         'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
         `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,
         'Within each experience role, lead with the strongest number-led bullet.',
+        'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
         'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
     ].join('\n');
 

@@ -1,0 +1,126 @@
+/** @format */
+jest.mock('@bedrock/shared', () => ({
+    ...jest.requireActual('@bedrock/shared'),
+    runAgent: jest.fn(),
+    log: () => undefined,
+}));
+import { runAgent } from '@bedrock/shared';
+import type { StructuredResumeData } from '@bedrock/shared';
+import { LENGTH_BUDGET, measureResume, hardTrim, applyLengthBudget } from './length-budget.js';
+
+const mockRun = runAgent as jest.Mock;
+
+const sentence = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ') + '.';
+
+const base = (over: Partial<StructuredResumeData> = {}): StructuredResumeData => ({
+    profile: { name: 'Nelson', title: 'Production AI Systems · LLM Evaluation', email: 'e', location: 'Dublin' },
+    summary: 'Ships production AI systems. Five years across cloud and support. Closing metric: 25 ArgoCD apps.',
+    experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: ['Cut enrichment cost to near-zero via dedup caching.'] }],
+    skills: [{ category: 'AI & LLM Engineering', skills: ['AWS Bedrock', 'RAG pipelines'] }],
+    education: [{ degree: 'Higher Diploma in Computing', institution: 'DBS', period: '2022-2024' }],
+    certifications: [], projects: [], keyAchievements: [],
+    sectionOrder: ['summary', 'experience', 'projects', 'education', 'skills', 'certifications'],
+    ...over,
+} as StructuredResumeData);
+
+const jd = { requiredSkills: ['RAG', 'Python'], companyProblem: 'production AI delivery', responsibilities: ['ship agentic systems'] };
+
+describe('measureResume', () => {
+    it('a compact resume is within budget', () => {
+        const m = measureResume(base());
+        expect(m.overBudget).toEqual([]);
+    });
+
+    it('flags every section over budget (the 2026-07-02 Google shape)', () => {
+        const m = measureResume(base({
+            summary: sentence(120),
+            experience: [{ company: 'F', title: 'E', period: 'p', highlights: [sentence(200), sentence(200), sentence(150)] }],
+            skills: [{ category: 'C', skills: [sentence(180)] }],
+            projects: [{ name: 'P', description: sentence(200), github: '' }, { name: 'Q', description: sentence(280), github: '' }],
+        } as never));
+        expect(m.overBudget).toEqual(expect.arrayContaining(['summary', 'experience', 'skills', 'projects', 'total']));
+        expect(m.total).toBeGreaterThan(LENGTH_BUDGET.totalWords);
+    });
+});
+
+describe('hardTrim', () => {
+    it('drops skill items beyond the per-category cap and strips prose parentheticals', () => {
+        const items = ['prompt caching (a very long parenthetical essay about tools frameworks and everything else in the platform)',
+            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+        // Force the skills section over budget so the trim engages.
+        const filler = { category: 'Filler', skills: [sentence(150)] };
+        const r = base({ skills: [{ category: 'C', skills: items }, filler] } as never);
+        const out = hardTrim(r);
+        expect(out.skills[0].skills.length).toBeLessThanOrEqual(LENGTH_BUDGET.maxSkillItemsPerCategory);
+        expect(out.skills[0].skills[0]).toBe('prompt caching');
+    });
+
+    it('trims project descriptions to whole sentences under the cap', () => {
+        const desc = `${sentence(40)} ${sentence(40)} ${sentence(40)}`;
+        const r = base({ projects: [{ name: 'P', description: desc, github: '' }, { name: 'Q', description: sentence(150), github: '' }] } as never);
+        const out = hardTrim(r);
+        const outWords = (out.projects[0].description ?? '').split(/\s+/).length;
+        expect(outWords).toBeLessThanOrEqual(LENGTH_BUDGET.perProjectWords + 1);
+        expect(out.projects[0].description).toMatch(/\.$/);
+    });
+
+    it('caps bullets per role when experience is over budget', () => {
+        const highlights = Array.from({ length: 8 }, () => sentence(60));
+        const r = base({ experience: [{ company: 'F', title: 'E', period: 'p', highlights }] } as never);
+        const out = hardTrim(r);
+        expect(out.experience[0].highlights.length).toBe(LENGTH_BUDGET.maxBulletsPerRole);
+    });
+
+    it('trims middle summary sentences, keeping the first and the closing metric', () => {
+        const r = base({ summary: `Opening positioning line. ${sentence(60)} ${sentence(60)} Closing metric: 25 ArgoCD apps.` });
+        const out = hardTrim(r);
+        expect(out.summary.startsWith('Opening positioning line.')).toBe(true);
+        expect(out.summary).toContain('Closing metric: 25 ArgoCD apps.');
+    });
+});
+
+describe('applyLengthBudget', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('within budget → untouched, no LLM call, no violations', async () => {
+        const r = base();
+        const seen: string[] = [];
+        const out = await applyLengthBudget(r, jd, (v) => seen.push(v.code));
+        expect(out).toBe(r);
+        expect(seen).toEqual([]);
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('over budget → condense runs; a compliant condense needs no hard trim', async () => {
+        const fixed = base();
+        mockRun.mockResolvedValue({ data: fixed });
+        const fat = base({ projects: [{ name: 'P', description: sentence(300), github: '' }] } as never);
+        const seen: string[] = [];
+        const out = await applyLengthBudget(fat, jd, (v) => seen.push(v.code));
+        expect(out).toStrictEqual(fixed);
+        expect(seen).toEqual(['length_over_budget', 'length_condensed']);
+    });
+
+    it('condense fails (fail-open) → deterministic hard trim still bounds the resume', async () => {
+        mockRun.mockRejectedValue(new Error('bedrock down'));
+        const fat = base({
+            skills: [{ category: 'C', skills: Array.from({ length: 12 }, () => sentence(20)) }],
+            projects: [{ name: 'P', description: sentence(300), github: '' }],
+        } as never);
+        const seen: string[] = [];
+        const out = await applyLengthBudget(fat, jd, (v) => seen.push(v.code));
+        expect(seen).toEqual(expect.arrayContaining(['length_over_budget', 'length_hard_trimmed']));
+        const m = measureResume(out);
+        expect(m.skills).toBeLessThanOrEqual(measureResume(fat).skills);
+        expect(m.projects).toBeLessThanOrEqual(LENGTH_BUDGET.projectsWords);
+    });
+
+    it('condense that still exceeds budget gets the hard trim on top', async () => {
+        const stillFat = base({ projects: [{ name: 'P', description: sentence(200), github: '' }, { name: 'Q', description: sentence(200), github: '' }] } as never);
+        mockRun.mockResolvedValue({ data: stillFat });
+        const fat = base({ projects: [{ name: 'P', description: sentence(400), github: '' }] } as never);
+        const out = await applyLengthBudget(fat, jd);
+        const m = measureResume(out);
+        expect(m.projects).toBeLessThanOrEqual(LENGTH_BUDGET.projectsWords + 2);
+    });
+});
