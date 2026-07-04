@@ -40,6 +40,9 @@ export type { TitanCostContext }     from './implementations/TitanEmbeddingProvi
 export { BedrockChunkEnricher }      from './implementations/BedrockChunkEnricher.js';
 export type { BedrockChunkEnricherConfig } from './implementations/BedrockChunkEnricher.js';
 
+// Runtime credential hydration — SSM host + Secrets Manager password
+export { hydrateRdsEnv }             from './hydrate-rds-env.js';
+
 // Pipeline
 export { IngestionPipeline }          from './pipeline/IngestionPipeline.js';
 export type { IngestionPipelineOptions } from './pipeline/IngestionPipeline.js';
