@@ -548,4 +548,13 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch(() => process.exit(1));
+// Exit EXPLICITLY on success too. main() awaits its work and cleanup (closePool
+// + obs.shutdown), but module-scope handles (Bedrock keep-alive sockets,
+// pushgateway HTTP agent) keep the event loop alive, so the process would
+// otherwise hang after success — leaving the K8s Job Running 0/1 until
+// activeDeadlineSeconds force-kills it (~30min) and stamping a successful run as
+// Failed. process.exit(0) ends it cleanly. Mirrors run-pipeline.ts.
+main().then(
+    () => process.exit(0),
+    () => process.exit(1),
+);
