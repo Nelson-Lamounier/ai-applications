@@ -17,7 +17,10 @@ import {
     preserveExperienceRoster,
     summaryConflationSentences,
     identityProblemPhrases,
-    unattributedBridgeSentence,
+    jobDescribingSentences,
+    targetCompanySentences,
+    stripJobDescribingSentences,
+    stripIdentityProblemClause,
 } from './resume-guard.js';
 import type { ResumeGuardCtx } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
@@ -106,30 +109,80 @@ describe('summary_identity_echoes_problem', () => {
     });
 });
 
-describe('summary_problem_bridge_unattributed', () => {
-    it('flags the run summary — "The problem:" sentence has no company/role attribution', () => {
-        const bridge = unattributedBridgeSentence(base(RUN_SUMMARY), ctx);
-        expect(bridge).toContain('The problem:');
-        expect(codes(RUN_SUMMARY)).toContain('summary_problem_bridge_unattributed');
+/** The exact bridge sentence the Mater run (f133155f) shipped — mission recitation. */
+const MATER_SENTENCE =
+    'This role exists to expand Mater Private Network\'s IT capacity to deliver clinical and ' +
+    'patient-facing systems navigating compliance and healthcare interoperability constraints.';
+
+const materCtx: ResumeGuardCtx = {
+    ...ctx,
+    targetCompany: 'The Mater Private Network',
+    companyProblem:
+        'Mater Private Network needs to build and maintain secure, scalable digital applications ' +
+        'across clinical and patient-facing healthcare systems in a complex, regulated environment.',
+};
+
+describe('summary_describes_job (inverse of the removed bridge-attribution rule)', () => {
+    it('flags the Mater run sentence — "This role exists to…" describes the job, not the candidate', () => {
+        const flagged = jobDescribingSentences(base('Full-stack TypeScript practitioner who ships tested applications. ' + MATER_SENTENCE));
+        expect(flagged).toHaveLength(1);
+        expect(flagged[0]).toContain('This role exists to');
     });
 
-    it('passes a bridge attributed to the company by name', () => {
-        const attributed =
-            'Solo DevOps builder shipping production platforms. ' +
-            'Accenture needs a secure, repeatable delivery layer so product teams stay fast, and that is the platform shape I build.';
-        expect(unattributedBridgeSentence(base(attributed), ctx)).toBeNull();
+    it('flags the d4aae717 "The problem:" label too', () => {
+        expect(codes(RUN_SUMMARY)).toContain('summary_describes_job');
     });
 
-    it('passes a bridge attributed via "this role exists to"', () => {
-        const attributed =
-            'Solo DevOps builder shipping production platforms. ' +
-            'This role exists to own the foundational delivery layer, cloud environments and observability, so delivery stays repeatable.';
-        expect(unattributedBridgeSentence(base(attributed), ctx)).toBeNull();
+    it('passes a candidate-voice bridge (capability-level relevance, no job description)', () => {
+        const clean =
+            'Full-stack TypeScript practitioner who ships tested, security-hardened applications. ' +
+            'Applies policy-as-code and automated compliance testing, the delivery discipline regulated environments demand.';
+        expect(jobDescribingSentences(base(clean))).toHaveLength(0);
+    });
+});
+
+describe('summary_names_target_company', () => {
+    it('flags the Mater sentence — target company named in the summary', () => {
+        const flagged = targetCompanySentences(base(MATER_SENTENCE), materCtx);
+        expect(flagged).toHaveLength(1);
+        expect(validateResume(base(MATER_SENTENCE), materCtx).map((v) => v.code)).toContain('summary_names_target_company');
     });
 
-    it('ignores summaries whose later sentences never draw on the problem (bridge-missing is a separate code)', () => {
-        const noBridge = 'Solo DevOps builder shipping production platforms. I automate everything twice.';
-        expect(unattributedBridgeSentence(base(noBridge), ctx)).toBeNull();
+    it('does NOT flag a target name that is also a verified employer (Accenture via Meta)', () => {
+        const anchor = 'At Meta via Accenture I ran QA analysis for content workflows.';
+        expect(targetCompanySentences(base(anchor), ctx)).toHaveLength(0);
+    });
+});
+
+describe('deterministic strips (backstops after the bounded repair)', () => {
+    it('stripJobDescribingSentences deletes the Mater sentence and keeps the rest', () => {
+        const seen: string[] = [];
+        const out = stripJobDescribingSentences(
+            base('Full-stack TypeScript practitioner who ships tested applications. ' + MATER_SENTENCE + ' AWS Certified DevOps Engineer.'),
+            materCtx,
+            (v) => seen.push(v.code),
+        );
+        expect(out.summary).toBe('Full-stack TypeScript practitioner who ships tested applications. AWS Certified DevOps Engineer.');
+        expect(seen).toEqual(['summary_job_sentence_stripped']);
+    });
+
+    it('stripIdentityProblemClause removes the leaked clause from run 1f1bd3c2 shape', () => {
+        const seen: string[] = [];
+        const out = stripIdentityProblemClause(
+            base('DevOps/platform engineer who designs and operates IaC, CI/CD, Kubernetes, and DevSecOps foundations for cross-functional teams. Second sentence stays.'),
+            COMPANY_PROBLEM,
+            (v) => seen.push(v.code),
+        );
+        expect(out.summary).toContain('DevSecOps foundations.');
+        expect(out.summary).not.toContain('cross-functional');
+        expect(out.summary).toContain('Second sentence stays.');
+        expect(seen).toEqual(['summary_identity_clause_stripped']);
+    });
+
+    it('both strips are no-ops on a clean summary', () => {
+        const clean = base('Full-stack practitioner who ships tested applications. Applies policy-as-code discipline.');
+        expect(stripJobDescribingSentences(clean, materCtx)).toBe(clean);
+        expect(stripIdentityProblemClause(clean, COMPANY_PROBLEM)).toBe(clean);
     });
 });
 
