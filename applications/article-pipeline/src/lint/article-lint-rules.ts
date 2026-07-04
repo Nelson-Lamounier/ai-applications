@@ -237,6 +237,45 @@ export function checkEmDashDensity(source: string): Finding[] {
 }
 
 // ---------------------------------------------------------------------------
+// Rule 4b — Readability (Flesch Reading Ease)
+// ---------------------------------------------------------------------------
+
+/** Heuristic syllable count: vowel groups, minus a silent trailing 'e'. */
+function countSyllables(word: string): number {
+  const w = word.toLowerCase();
+  const groups = w.match(/[aeiouy]+/g)?.length ?? 0;
+  const adjusted = w.endsWith('e') ? groups - 1 : groups;
+  return Math.max(1, adjusted);
+}
+
+/**
+ * Flesch Reading Ease over the article's prose. Technical writing that scores
+ * below ~55 ("fairly difficult") reads as jargon-dense and loses non-expert
+ * readers (recruiters). Warn only — the fix is vocabulary, not a mechanical
+ * rewrite. Short fragments (< 25 words of prose) are skipped to avoid noise.
+ */
+export function checkReadability(source: string, floor = 55): Finding[] {
+  const prose = proseOnly(source);
+  const words = prose.match(/[A-Za-z']+/g) ?? [];
+  const sentences = prose.split(/[.!?]+/).filter((s) => s.trim().length > 2);
+  if (words.length < 25 || sentences.length === 0) return [];
+  const syllables = words.reduce((n, w) => n + countSyllables(w), 0);
+  const score =
+    206.835 - 1.015 * (words.length / sentences.length) - 84.6 * (syllables / words.length);
+  if (score >= floor) return [];
+  return [
+    {
+      rule: 'readability',
+      severity: 'warn',
+      message:
+        `Flesch Reading Ease ${score.toFixed(0)} (floor ${floor}). Prose reads as ` +
+        `difficult — usually jargon density, not sentence length. Gloss domain ` +
+        `terms on first use or swap multi-syllable words for plainer ones.`,
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Rule 5 — Dangling references (name-dropped, never explained)
 // ---------------------------------------------------------------------------
 
@@ -533,6 +572,7 @@ export function lintArticle(source: string, fm: Frontmatter): Finding[] {
     ...checkCrossSectionDuplicates(source),
     ...checkSlopConstructions(source),
     ...checkEmDashDensity(source),
+    ...checkReadability(source),
     ...checkDanglingReferences(source),
     ...checkNoManualToc(source),
     ...checkLinkShape(source),

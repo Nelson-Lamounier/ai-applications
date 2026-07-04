@@ -16,8 +16,18 @@ import { Counter, Histogram } from 'prom-client';
 
 import { executeResearchAgent } from './agents/research-agent.js';
 import { executeWriterAgent }   from './agents/writer-agent.js';
-import { executeQaAgent }       from './agents/qa-agent.js';
+import { executeQaAgent, QA_PASS_THRESHOLD } from './agents/qa-agent.js';
 import { lintArticle, checkLinkLiveness, type Finding } from './lint/article-lint-rules.js';
+import { reconcileFrontmatter, computeReadingTime, stripProseEmDashes } from './lint/frontmatter-reconcile.js';
+import {
+    resolveMaxRetries,
+    qaPassed,
+    recordAttempt,
+    buildRevisionNotes,
+    articleStatusFor,
+    type QaAttempt,
+    type QaGateResult,
+} from './qa-gate.js';
 import { BedrockEvidenceAdjudicator, type EvidenceAdjudicationResult } from './agents/evidence-adjudicator.js';
 import { selectArchetype }      from './prompts/archetypes.js';
 import { parseEnv }             from './env.js';
@@ -76,6 +86,7 @@ async function timed<T>(step: string, fn: () => Promise<T>): Promise<T> {
  */
 function buildRunMetadata(
     qa: QaValidationResult,
+    gate: QaGateResult,
     groundingMeta: object | undefined,
     lintMeta: object | undefined,
     proseMeta: object | undefined,
@@ -95,6 +106,11 @@ function buildRunMetadata(
             ),
             issues,
         },
+        // Full gate history: every attempt's score, verdict, failed dimensions
+        // and issues, plus whether the article ultimately passed or was flagged.
+        // This is the queryable record for iterating the Writer prompt / QA design
+        // (pipeline_runs.metadata->'qaGate').
+        qaGate: gate,
     };
     if (groundingMeta !== undefined) {
         meta['grounding'] = groundingMeta;
@@ -312,6 +328,110 @@ function gateArchetypeEligibility(
     throw new Error(`archetype selection ineligible — ${sel.fallbackReason}`);
 }
 
+// ---------------------------------------------------------------------------
+// QA gate — retry-then-flag with full attempt capture
+// ---------------------------------------------------------------------------
+// Decision logic (pass boundary, retry clamp, attempt capture) lives in the
+// unit-tested ./qa-gate module. This section is the Bedrock-facing orchestration.
+
+/**
+ * Retry budget, hard-clamped in ./qa-gate to [0, 2]. Configurable DOWN via
+ * ARTICLE_QA_MAX_RETRIES; it can never exceed 2, so at most 3 generations run
+ * (1 initial + 2 retries) before the article is flagged for human review.
+ */
+const QA_MAX_RETRIES = resolveMaxRetries(process.env['ARTICLE_QA_MAX_RETRIES']);
+
+/** EMF per-attempt so QA-fail rates are visible in CloudWatch without a DB read. */
+function emitQaAttemptMetric(qa: QaValidationResult): void {
+    emitEmfMetric('ArticlePipeline', { Stage: 'qa-attempt', Recommendation: qa.recommendation }, [
+        { name: 'QaAttemptScore',  value: qa.overallScore,                       unit: 'None' },
+        { name: 'QaAttemptFailed', value: qaPassed(qa, QA_PASS_THRESHOLD) ? 0 : 1, unit: 'Count' },
+    ]);
+}
+
+type WriterOut = Awaited<ReturnType<typeof executeWriterAgent>>;
+type QaOut     = Awaited<ReturnType<typeof executeQaAgent>>;
+
+/** Run one Writer -> QA cycle and record the attempt. */
+async function writeAndReview(
+    ctx: PipelineContext,
+    researchData: ResearchData,
+    attemptNo: number,
+    revisionNotes: readonly string[] | undefined,
+    attempts: QaAttempt[],
+): Promise<{ writer: WriterOut; qa: QaOut }> {
+    const writer = await timed('writing', () => executeWriterAgent(ctx, researchData, revisionNotes));
+    const qa = await timed('qa', () => executeQaAgent(
+        ctx, writer.data, researchData.technicalFacts, researchData.mode,
+    ));
+    attempts.push(recordAttempt(attemptNo, qa.data, QA_PASS_THRESHOLD));
+    emitQaAttemptMetric(qa.data);
+    return { writer, qa };
+}
+
+/**
+ * Generate with a bounded QA gate. Writes, reviews, and on a failing verdict
+ * retries the Writer with the QA issues injected as feedback — up to
+ * {@link QA_MAX_RETRIES} times. Returns the final draft plus the full gate
+ * history so the caller can persist review vs flagged and record every attempt.
+ */
+async function generateWithQaGate(
+    ctx: PipelineContext,
+    env: ReturnType<typeof parseEnv>,
+    researchData: ResearchData,
+): Promise<{ writer: WriterOut; qa: QaOut; gate: QaGateResult }> {
+    const attempts: QaAttempt[] = [];
+    let { writer, qa } = await writeAndReview(ctx, researchData, 0, undefined, attempts);
+
+    let n = 0;
+    while (!qaPassed(qa.data, QA_PASS_THRESHOLD) && n < QA_MAX_RETRIES) {
+        n++;
+        ctx.retryAttempt = n;
+        log.warn({
+            pipelineRunId:  env.pipelineRunId,
+            slug:           env.slug,
+            attempt:        n,
+            prevScore:      qa.data.overallScore,
+            recommendation: qa.data.recommendation,
+        }, 'article_qa_retry');
+        ({ writer, qa } = await writeAndReview(ctx, researchData, n, buildRevisionNotes(qa.data), attempts));
+    }
+
+    const passed = qaPassed(qa.data, QA_PASS_THRESHOLD);
+    emitEmfMetric('ArticlePipeline', { Stage: 'qa-gate', Outcome: passed ? 'PASSED' : 'FLAGGED' }, [
+        { name: 'QaGateAttempts', value: attempts.length,  unit: 'Count' },
+        { name: 'QaGateFlagged',  value: passed ? 0 : 1,   unit: 'Count' },
+    ]);
+    if (!passed) {
+        log.warn({
+            pipelineRunId: env.pipelineRunId,
+            slug:          env.slug,
+            attempts:      attempts.length,
+            finalScore:    qa.data.overallScore,
+        }, 'article_qa_gate_flagged');
+    }
+    return { writer, qa, gate: { attempts, passed, finalAttempt: n, maxRetries: QA_MAX_RETRIES } };
+}
+
+/**
+ * Deterministic pre-persist normalisation. Overwrites the Writer's frontmatter
+ * slug/publishDate/readingTime with canonical values (the served URL routes on
+ * env.slug, not the Writer's guess) and strips em-dash connectors from prose.
+ * Returns the normalised content and the em-dash replacement count for audit.
+ */
+function normaliseArticle(content: string, slug: string): { content: string; emDashesReplaced: number } {
+    const readingTime = computeReadingTime(content);
+    const publishDate = new Date().toISOString().slice(0, 10);
+    const reconciled = reconcileFrontmatter(content, { slug, publishDate, readingTime });
+    const { content: deDashed, replaced } = stripProseEmDashes(reconciled);
+    if (replaced > 0) {
+        emitEmfMetric('ArticlePipeline', { Stage: 'emdash-fix' }, [
+            { name: 'EmDashReplaced', value: replaced, unit: 'Count' },
+        ]);
+    }
+    return { content: deDashed, emDashesReplaced: replaced };
+}
+
 async function main(): Promise<void> {
     const env  = parseEnv();
     const pool = getPool(env.pg);
@@ -356,22 +476,23 @@ async function main(): Promise<void> {
         // archetype meets its evidence minimums. No-op unless the flag is on.
         gateArchetypeEligibility(env, researchData);
 
+        // Bounded QA gate: write -> review, retry the Writer with QA feedback on a
+        // failing verdict (max 2 retries), then either 'review' (pass) or 'flagged'
+        // (still failing). Every attempt is captured in `gate` for the review UI.
         await updatePipelineRun(pool, env.pipelineRunId, 'writing');
-        const writer = await timed('writing', () => executeWriterAgent(ctx, researchData));
+        const { writer, qa, gate } = await generateWithQaGate(ctx, env, researchData);
 
-        await updatePipelineRun(pool, env.pipelineRunId, 'qa');
-        const qa = await timed('qa', () => executeQaAgent(
-            ctx,
-            writer.data,
-            researchData.technicalFacts,
-            researchData.mode,
-        ));
+        // Deterministic normalisation BEFORE the verifiers and persist: canonical
+        // frontmatter (slug/date/readingTime) + em-dash strip. The verifiers then
+        // score the exact bytes that get persisted.
+        const { content: normalisedContent, emDashesReplaced } =
+            normaliseArticle(writer.data.content, env.slug);
 
         // Post-QA verifiers (flag/record mode, both fail-open) — run pre-persist,
         // neither blocks nor mutates content. Structural lint runs first so its
         // findings can drive the grounding verifier (Phase 2). scrubbedContent is
         // what both see and what gets persisted.
-        const scrubbedContent = piiScrubber.scrub(writer.data.content).redacted;
+        const scrubbedContent = piiScrubber.scrub(normalisedContent).redacted;
         const lintMeta = await lintArticleStructure(env, writer.data.metadata.title, scrubbedContent);
         const groundingMeta = await verifyArticleGrounding(pool, env, research.data, scrubbedContent);
         const proseMeta = await lintArticleProse(pool, env, scrubbedContent);
@@ -385,30 +506,35 @@ async function main(): Promise<void> {
         // Write the Writer's title/excerpt/tags into their own columns so the
         // portfolio (public-api) and admin dashboard render the real SEO metadata,
         // not the placeholder slug. The DB slug (env.slug) stays authoritative;
-        // the Writer's frontmatter slug is intentionally not used for the URL.
+        // the Writer's frontmatter slug is reconciled to it in normaliseArticle.
+        // status: 'review' on a QA pass, 'flagged' when the gate exhausted retries.
+        const articleStatus = articleStatusFor(gate.passed);
         await persistArticle(pool, env.slug, scrubbedContent, env.foundationModel, {
             title:   writer.data.metadata.title,
             excerpt: writer.data.metadata.description,
             tags:    writer.data.metadata.tags,
-        });
+        }, articleStatus);
 
-        // Attach QA + grounding results to pipeline_runs.metadata (JSONB — no
-        // migration needed) so the review UI can show WHY an article needs
-        // revision, not just a score.
+        // Attach QA + gate + grounding results to pipeline_runs.metadata (JSONB —
+        // no migration needed) so the review UI can show WHY an article needs
+        // revision, not just a score, and every failed attempt is inspectable.
         await updatePipelineRunMetadata(
             pool,
             env.pipelineRunId,
-            buildRunMetadata(qa.data, groundingMeta, lintMeta, proseMeta, evidenceMeta),
+            buildRunMetadata(qa.data, gate, groundingMeta, lintMeta, proseMeta, evidenceMeta),
         );
 
         await updatePipelineRun(pool, env.pipelineRunId, 'complete');
         outcome = 'success';
 
         log.info({
-            pipelineRunId: env.pipelineRunId,
-            slug:          env.slug,
-            qaScore:       qa.data.overallScore,
+            pipelineRunId:  env.pipelineRunId,
+            slug:           env.slug,
+            qaScore:        qa.data.overallScore,
             recommendation: qa.data.recommendation,
+            articleStatus,
+            qaAttempts:     gate.attempts.length,
+            emDashesReplaced,
         }, 'article_pipeline_complete');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
