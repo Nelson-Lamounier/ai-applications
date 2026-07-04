@@ -88,4 +88,51 @@ describe('validateArticleResearch', () => {
         expect(() => validateArticleResearch({ ...VALID, evidenceInventory: { failureNarratives: 'lots' } }))
             .toThrow(/schema validation/i);
     });
+
+    // ── Array-field coercion (forced tool_use does not guarantee nested arrays) ──
+    // Regression for run af9b983b: the model returned `citableLinks` as a bare
+    // string, a plain z.array rejected it, and the whole research brief failed
+    // schema validation — aborting the pipeline before the Writer ran.
+    describe('coerces a stringified array field instead of hard-failing', () => {
+        it('coerces citableLinks: "" to [] (the live failure shape)', () => {
+            const r = validateArticleResearch({ ...VALID, citableLinks: '' });
+            expect(r.citableLinks).toEqual([]);
+        });
+
+        it('coerces citableLinks: "none" / "n/a" to []', () => {
+            expect(validateArticleResearch({ ...VALID, citableLinks: 'none' }).citableLinks).toEqual([]);
+            expect(validateArticleResearch({ ...VALID, citableLinks: 'N/A' }).citableLinks).toEqual([]);
+        });
+
+        it('parses a JSON-stringified citableLinks array', () => {
+            const links = [{ url: 'https://docs.aws.amazon.com', supportsClaim: 'official docs' }];
+            const r = validateArticleResearch({ ...VALID, citableLinks: JSON.stringify(links) });
+            expect(r.citableLinks).toEqual(links);
+        });
+
+        it('preserves a well-formed citableLinks array unchanged', () => {
+            const links = [{ url: 'https://example.com', supportsClaim: 'x' }];
+            expect(validateArticleResearch({ ...VALID, citableLinks: links }).citableLinks).toEqual(links);
+        });
+
+        it('drops a non-JSON string to [] rather than smuggling it in as a link', () => {
+            const r = validateArticleResearch({ ...VALID, citableLinks: 'see the appendix' });
+            expect(r.citableLinks).toEqual([]);
+        });
+
+        it('applies the same coercion to seoResearch.suggestedReferences and availableMetrics', () => {
+            const r = validateArticleResearch({
+                ...VALID,
+                seoResearch: { ...VALID.seoResearch, suggestedReferences: '' },
+                availableMetrics: 'none',
+            });
+            expect(r.seoResearch?.suggestedReferences).toEqual([]);
+            expect(r.availableMetrics).toEqual([]);
+        });
+
+        it('still rejects a genuinely wrong type (number) for an array field', () => {
+            expect(() => validateArticleResearch({ ...VALID, citableLinks: 42 }))
+                .toThrow(/schema validation/i);
+        });
+    });
 });
