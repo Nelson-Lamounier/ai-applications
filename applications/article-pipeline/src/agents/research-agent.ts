@@ -550,6 +550,44 @@ const RESEARCH_TOOL = {
     },
 };
 
+/**
+ * Coerce a model-emitted value into an array before the item schema validates.
+ *
+ * Research runs under forced tool_use, but Bedrock's constrained decoding does
+ * NOT reliably enforce nested `type: array` fields — the model occasionally
+ * emits a bare string (an empty "", "none"/"n/a", or a JSON-stringified array)
+ * where an array is required. A plain `z.array(...)` REJECTS that and the whole
+ * research brief fails schema validation, aborting the pipeline before the
+ * Writer runs (observed live: `citableLinks` returned as a string, run
+ * af9b983b). This preprocessor coerces those shapes to an array so a soft,
+ * optional field never hard-fails the run:
+ *   - already an array            → unchanged
+ *   - "" / "none" / "n/a" / null  → []  (no data, not an error)
+ *   - a JSON-stringified array    → the parsed array
+ *   - anything else               → passed through so the item schema still
+ *                                    rejects genuinely wrong shapes (number, object)
+ *
+ * Malformed string content is dropped to [] rather than wrapped, so a stray
+ * string can never be smuggled in as a fabricated link/metric object.
+ */
+function coerceJsonArray<T extends z.ZodTypeAny>(items: T) {
+    return z.preprocess((v): unknown => {
+        if (Array.isArray(v)) return v;
+        if (v === null || v === undefined) return [];
+        if (typeof v === 'string') {
+            const s = v.trim();
+            if (s === '' || s.toLowerCase() === 'none' || s.toLowerCase() === 'n/a') return [];
+            try {
+                const parsed: unknown = JSON.parse(s);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch {
+                return [];
+            }
+        }
+        return v;
+    }, z.array(items));
+}
+
 const ResearchModelSchema = z.object({
     outline: z.array(z.object({
         heading:     z.string(),
@@ -563,7 +601,7 @@ const ResearchModelSchema = z.object({
     seoResearch: z.object({
         primaryKeyword:    z.string(),
         secondaryKeywords: z.array(z.string()),
-        suggestedReferences: z.array(z.object({
+        suggestedReferences: coerceJsonArray(z.object({
             label:     z.string(),
             url:       z.string(),
             relevance: z.string(),
@@ -579,13 +617,13 @@ const ResearchModelSchema = z.object({
         deepLinks:           z.number(),
         diagnosticArtifacts: z.number(),
     }).strict().optional(),
-    citableLinks: z.array(z.object({
+    citableLinks: coerceJsonArray(z.object({
         url:           z.string(),
         supportsClaim: z.string(),
     }).strict()).optional(),
     publicRepos:        z.array(z.string()).optional(),
     publishIdentifiers: z.array(z.string()).optional(),
-    availableMetrics: z.array(z.object({
+    availableMetrics: coerceJsonArray(z.object({
         value:    z.string(),
         measures: z.string(),
     }).strict()).optional(),
