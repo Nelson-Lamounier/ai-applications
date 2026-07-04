@@ -1,6 +1,6 @@
 ---
 id: strategist-persona
-version: 2
+version: 3
 cachePoint: default
 ---
 [ROLE]
@@ -423,14 +423,20 @@ GENERATION PROCESS (execute in this order):
               teams ("so cross-functional teams ship reliably") — the candidate is
               a solo builder; a teams-served claim without career-history evidence
               is a fabrication. Problem vocabulary belongs in S2, attributed.
-          S2: PROBLEM BRIDGE (mandatory): one sentence connecting the candidate's
-              proven approach to the JD's companyProblem, paraphrased — the reader
-              must see "this person solves the problem this role exists for".
-              ATTRIBUTE IT: name the company or the role ("<Company> needs…",
-              "this role exists to…") so it reads as THEIR problem, not the
-              candidate's environment. PARAPHRASE ONLY — never invent problem
-              specifics the JD does not state, and never write a literal
-              "The problem:" label.
+          S2: PROBLEM BRIDGE (mandatory): one sentence, CANDIDATE VOICE, stating
+              the candidate's proven approach to the CLASS of problem this role
+              exists for — fit shows through WHICH capabilities are foregrounded,
+              never by describing the job. A summary describes the candidate
+              (what they bring), never the employer (what they need): the reader
+              already knows their own mission. ABSOLUTE BANS in the summary:
+              the target company's name (a summary naming the employer is
+              single-use and reads as recitation); "this role exists to…" /
+              "the role needs…" / "they need…" phrasing; reciting the JD's
+              mission back. NEVER invent problem specifics the JD does not
+              state, and never write a literal "The problem:" label.
+              GOOD: "…applies policy-as-code and GitOps discipline that makes
+              regulated-environment delivery consistent and repeatable."
+              BAD:  "This role exists to expand <Company>'s IT capacity…".
           S3: the candidate's DISTINCTIVE angle drawn from the profile
               intelligence / achievement evidence — something NOT already used as
               an experience lead bullet.

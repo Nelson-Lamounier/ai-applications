@@ -171,9 +171,10 @@ function nameVariants(name: string): string[] {
         if (depth > 0) buf += ch; else outer += ch;
     }
     const collapsed = outer.toLowerCase().replaceAll(/\s+/g, ' ');
-    return [...collapsed.split(' via '), ...inner]
-        .map((v) => v.trim().toLowerCase())
-        .filter((v) => v.length >= 3);
+    const raw = [...collapsed.split(' via '), ...inner].map((v) => v.trim().toLowerCase());
+    // "The Mater Private Network" must match "Mater Private Network's" in prose.
+    const dearticled = raw.filter((v) => v.startsWith('the ')).map((v) => v.slice(4));
+    return [...raw, ...dearticled].filter((v) => v.length >= 3);
 }
 
 function escapeRe(s: string): string {
@@ -220,36 +221,87 @@ export function identityProblemPhrases(resume: StructuredResumeData, companyProb
     const problemBigrams = contentBigrams(companyProblem);
     return [...contentBigrams(first)].filter((b) => problemBigrams.has(b));
 }
-
-const BRIDGE_ATTRIBUTION_RE = /this role|the role|role exists|they need|needs to|is hiring|is building|their (?:team|teams|platform|engineers)/i;
-
 /**
- * The bridge sentence (the non-first sentence with the most companyProblem
- * token hits, min 2) must be ATTRIBUTED — name the company or the role — or it
- * reads as an unattributed statement about the candidate's own environment.
- * Invented problem specifics ride in on exactly this shape ("The problem:
- * teams manually patch security posture…" — none of it in the JD).
+ * Job-describing phrases — BANNED in a summary. A summary describes the
+ * candidate (what they bring), never the job (what the employer needs): the
+ * reader already knows their own mission. This is the INVERSE of the original
+ * bridge-attribution rule, which produced "This role exists to expand Mater
+ * Private Network's IT capacity…" — an employer-named mission recitation
+ * (run f133155f). Tailoring surfaces through which capabilities the summary
+ * foregrounds, never through sentences about the employer.
  */
-/** The sentence with the most problem-token hits, or null when none reaches the minimum. */
-function bridgeSentenceOf(sentences: string[], problemTokens: Set<string>): string | null {
-    let bridge: string | null = null;
-    let bestHits = 0;
-    for (const s of sentences) {
-        const hits = contentTokens(s).filter((t) => problemTokens.has(t)).length;
-        if (hits > bestHits) { bestHits = hits; bridge = s; }
-    }
-    return bestHits >= 2 ? bridge : null;
+const JOB_DESCRIBING_RE = /\bthis role\b|\bthe role\b|\brole exists\b|\bthey need\b|\bis hiring\b|\btheir (?:team|teams|platform|engineers|mission)\b|\bthe problem:/i;
+
+/** Summary sentences that describe the JOB rather than the candidate. */
+export function jobDescribingSentences(resume: StructuredResumeData): string[] {
+    return (resume.summary ?? '').split(SENTENCE_SPLIT).filter((s) => JOB_DESCRIBING_RE.test(s));
 }
 
-export function unattributedBridgeSentence(resume: StructuredResumeData, ctx: ResumeGuardCtx): string | null {
-    if (!ctx.companyProblem) return null;
-    const problemTokens = new Set(contentTokens(ctx.companyProblem));
-    if (problemTokens.size < 3) return null;
-    const bridge = bridgeSentenceOf((resume.summary ?? '').split(SENTENCE_SPLIT).slice(1), problemTokens);
-    if (!bridge) return null;
-    const attributionVariants = ctx.targetCompany ? nameVariants(ctx.targetCompany) : [];
-    const attributed = BRIDGE_ATTRIBUTION_RE.test(bridge) || anyVariantIn(bridge, attributionVariants);
-    return attributed ? null : bridge;
+/**
+ * Target-company name variants that are safe to flag: variants shared with a
+ * verified employer stay legal (e.g. target Accenture while the career history
+ * holds "Meta via Accenture" — the employer anchor may name it).
+ */
+function flaggableTargetVariants(ctx: ResumeGuardCtx): string[] {
+    const target = ctx.targetCompany ? nameVariants(ctx.targetCompany) : [];
+    if (target.length === 0) return [];
+    const employerVariants = new Set((ctx.verifiedEmployers ?? []).flatMap((e) => nameVariants(e.name)));
+    return target.filter((v) => !employerVariants.has(v));
+}
+
+/** Summary sentences naming the target company (single-use resume + recitation smell). */
+export function targetCompanySentences(resume: StructuredResumeData, ctx: ResumeGuardCtx): string[] {
+    const variants = flaggableTargetVariants(ctx);
+    if (variants.length === 0) return [];
+    return (resume.summary ?? '').split(SENTENCE_SPLIT).filter((s) => anyVariantIn(s, variants));
+}
+
+/**
+ * Deterministic backstop: DELETE summary sentences that describe the job or
+ * name the target company. Runs when the bounded repair leaves them behind —
+ * same precedent as the cover letter's third-person sentence strip. A summary
+ * must never ship describing the employer's mission.
+ */
+export function stripJobDescribingSentences(
+    resume: StructuredResumeData,
+    ctx: ResumeGuardCtx,
+    onViolation?: (v: ResumeViolation) => void,
+): StructuredResumeData {
+    const variants = flaggableTargetVariants(ctx);
+    const sentences = (resume.summary ?? '').split(SENTENCE_SPLIT);
+    const kept = sentences.filter((s) => !JOB_DESCRIBING_RE.test(s) && !anyVariantIn(s, variants));
+    if (kept.length === sentences.length) return resume;
+    onViolation?.({ code: 'summary_job_sentence_stripped', detail: `Deterministically removed ${sentences.length - kept.length} summary sentence(s) describing the job / naming the target company after the bounded repair left them in.` });
+    return { ...resume, summary: kept.join(' ').trim() };
+}
+
+/**
+ * Deterministic backstop for identity-echo residuals: remove the clause
+ * carrying a companyProblem bigram from the FIRST sentence (e.g. "…foundations
+ * for cross-functional teams" -> "…foundations"). Falls back to deleting the
+ * bigram words when no clause boundary wraps them.
+ */
+export function stripIdentityProblemClause(
+    resume: StructuredResumeData,
+    companyProblem: string | undefined,
+    onViolation?: (v: ResumeViolation) => void,
+): StructuredResumeData {
+    const leaked = identityProblemPhrases(resume, companyProblem);
+    if (leaked.length === 0) return resume;
+    const sentences = (resume.summary ?? '').split(SENTENCE_SPLIT);
+    let first = sentences[0] ?? '';
+    for (const bigram of leaked) {
+        const [a, b] = bigram.split(' ');
+        const clause = new RegExp(String.raw`,?\s*(?:for|so that|so|enabling|supporting|helping|that)\s+[^,.]*${escapeRe(a)}[^,.]*${escapeRe(b)}[^,.]*`, 'i');
+        if (clause.test(first)) {
+            first = first.replace(clause, '');
+        } else {
+            first = first.replace(new RegExp(String.raw`${escapeRe(a)}[\s-]+${escapeRe(b)}`, 'i'), '');
+        }
+    }
+    first = first.replaceAll(/\s{2,}/g, ' ').replaceAll(/\s+([,.])/g, '$1').replace(/,\s*\./, '.').trim();
+    onViolation?.({ code: 'summary_identity_clause_stripped', detail: `Deterministically removed companyProblem phrasing (${leaked.join('; ')}) from the identity sentence after the bounded repair left it in.` });
+    return { ...resume, summary: [first, ...sentences.slice(1)].join(' ').trim() };
 }
 
 /** All three attribution checks — shared by the first guard pass and revalidation. */
@@ -262,9 +314,13 @@ function checkSummaryAttribution(out: ResumeViolation[], resume: StructuredResum
     if (leaked.length > 0) {
         out.push({ code: 'summary_identity_echoes_problem', detail: `Identity sentence re-uses the JD companyProblem's phrasing (${leaked.slice(0, 3).join('; ')}) as the candidate's own track record — problem language belongs in the attributed bridge sentence.` });
     }
-    const unattributed = unattributedBridgeSentence(resume, ctx);
-    if (unattributed) {
-        out.push({ code: 'summary_problem_bridge_unattributed', detail: `Problem-bridge sentence reads as an unattributed claim about the candidate's environment: "${unattributed.slice(0, 140)}" — attribute it to the company or the role ("${ctx.targetCompany ?? 'the company'} needs…", "this role exists to…"), paraphrase the JD only, never a literal "The problem:" label.` });
+    const jobSentences = jobDescribingSentences(resume);
+    if (jobSentences.length > 0) {
+        out.push({ code: 'summary_describes_job', detail: `Summary sentence describes the JOB, not the candidate: "${jobSentences[0].slice(0, 140)}" — a summary states what the candidate brings; rewrite in candidate voice (the capabilities that meet this problem class) and delete role/mission recitation.` });
+    }
+    const namesTarget = targetCompanySentences(resume, ctx);
+    if (namesTarget.length > 0) {
+        out.push({ code: 'summary_names_target_company', detail: `Summary names the target company ("${namesTarget[0].slice(0, 140)}") — a summary naming the employer is single-use and reads as mission recitation; remove the name, keep the capability.` });
     }
 }
 
@@ -745,7 +801,8 @@ export async function rewriteResume(
             ? `For summary_employer_project_conflation: SPLIT the flagged sentence — the employer sentence may carry ONLY that employer's verified facts: ${formatEmployerFacts(ctx.verifiedEmployers)}. The project sentence is SEPARATE and opens with the solo framing ("Solo-building Tucaken, …"). Never join employer and project claims with a semicolon or comma chain.`
             : 'For summary_employer_project_conflation: split the flagged sentence so the employer anchor and the solo-project bridge are separate sentences; each claim stays with the entity it belongs to.',
         'For summary_identity_echoes_problem: rewrite the FIRST sentence using ONLY the candidate\'s own capability vocabulary — remove every phrase borrowed from the company problem (no "so <their> teams ship…", no bottleneck framing). The candidate is a solo builder: never claim outcomes delivered for internal teams.',
-        `For summary_problem_bridge_unattributed: rewrite the bridge sentence so it is explicitly the company's/role's problem — start it with "${ctx.targetCompany ?? 'The company'} needs" or "This role exists to" — paraphrasing ONLY what the JD states (no invented specifics such as failure modes the JD never mentions), and never a literal "The problem:" label.`,
+        'For summary_describes_job: rewrite the flagged sentence in CANDIDATE voice — state what the candidate brings to this problem class, never what the role/employer needs. Delete "this role exists to…"/"they need…" phrasing and any mission recitation; a summary describes the candidate, the reader already knows their own mission.',
+        `For summary_names_target_company: remove the target company's name ("${ctx.targetCompany ?? ''}") from the summary entirely — keep the capability content, drop the name. A summary naming the employer is single-use and reads as recitation.`,
         'For unbridged_transferable_claim: restate each flagged term with its honest transfer framing in the same clause (e.g. "AWS CDK, transferable to Terraform") — or remove the term. Never leave a flat claim of a tool the candidate has not used.',
         'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
         'NEVER remove an entire experience role — every role in the input resume must appear in the output, even when trimming.',
@@ -831,6 +888,11 @@ export async function revalidateResumeContent(
             violations.push({ code: 'content_revalidation_residual', detail: `After one bounded repair, still violating: ${residual.map((r) => r.code).join(', ')}.` });
         }
     }
+    // Deterministic backstops — a summary must never SHIP describing the job,
+    // naming the target company, or wearing the companyProblem's phrasing as
+    // identity. Prose-preserving repair got its one chance above.
+    out = stripJobDescribingSentences(out, ctx, (v) => violations.push(v));
+    out = stripIdentityProblemClause(out, ctx.companyProblem, (v) => violations.push(v));
     return { resume: stripEmDashes(out), violations };
 }
 
