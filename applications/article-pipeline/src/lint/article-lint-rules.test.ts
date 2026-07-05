@@ -194,6 +194,12 @@ describe('identifier leaks', () => {
     const f = checkIdentifierLeaks(src, ['api.nelsonlamounier.com']);
     expect(f.map((x) => x.rule)).not.toContain('identifier-leak:public-hostname');
   });
+
+  it('flags service-DNS even when the namespace collides with a public TLD (dev/app)', () => {
+    const rules = checkIdentifierLeaks('It calls public-api.dev:3001 and web.app:8080.')
+      .map((f) => f.rule);
+    expect(rules).toContain('identifier-leak:k8s-service-dns');
+  });
 });
 
 describe('enumerated generalisations (PDB/cert-manager claim)', () => {

@@ -479,25 +479,27 @@ export function checkIdentifierLeaks(
       name: 'kb-verification-metadata',
       re: /\bverified active \d{4}-\d{2}-\d{2}\b/gi,
     },
-    // Public domain patterns: nelsonlamounier.com domain
+    // Owner's public hostnames are a reachable attack surface if published.
     { name: 'public-hostname', re: /\b[a-z0-9-]+\.nelsonlamounier\.com\b/gi },
     // Kubernetes service DNS with port: name.namespace(.svc(.cluster.local))?:port
     // The false-positive guard prevents matches on public FQDNs and localhost.
     { name: 'k8s-service-dns', re: /\b[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*(?:\.svc(?:\.cluster\.local)?)?:\d{2,5}\b/g },
-    // Private IPv4 addresses and CIDR ranges (RFC 1918 + 172.16.0.0/12)
+    // Private ranges reveal internal network topology; generalise before publish.
     { name: 'private-ip', re: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})(?:\/\d{1,2})?\b/g },
-    // AWS network resource IDs: sg-*, vpc-*, subnet-*, eni-*
+    // Network resource IDs expose specific infra/account state.
     { name: 'aws-network-id', re: /\b(?:sg|vpc|subnet|eni)-[0-9a-f]{8,}\b/g },
   ];
   for (const p of patterns) {
     for (const m of source.matchAll(p.re)) {
       const value = m[0];
       if (allowlist.some((a) => value.includes(a))) continue;
-      // k8s-service-dns pattern must not fire on public FQDNs or localhost — those are
-      // either caught by the hostname rule (and allow-listed there) or legitimate.
+      // Only documented example domains and localhost are benign here. A broad
+      // public-TLD skip would swallow real leaks in namespaces named dev/app/co
+      // (e.g. public-api.dev:3001), so fail toward flagging — the author allow-lists
+      // any legitimate public host via publishIdentifiers.
       if (
         p.name === 'k8s-service-dns' &&
-        (/^localhost:/i.test(value) || /\.(com|org|net|io|dev|app|co|ai):/i.test(value))
+        /^(?:localhost:|(?:[a-z0-9-]+\.)?example\.(?:com|org|net):)/i.test(value)
       ) {
         continue;
       }
