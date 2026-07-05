@@ -828,7 +828,10 @@ Target Word Count: [approximate length]
 - If the context is insufficient for a section, note it in processingNote
   but do NOT hallucinate missing details.
 - Generate MermaidChart components based on architecture descriptions in the
-  KB context — use the real resource names and identifiers found there.`;
+  KB context. Use real component NAMES (services, patterns), but GENERALISE any
+  concrete identifier — hostnames, service-DNS:port, IPs, ARNs, resource IDs —
+  that is not in the brief's publishIdentifiers, per OPERATIONAL IDENTIFIERS.
+  A diagram must show the shape of the system, not its reachable addresses.`;
 
 // =============================================================================
 // EXPORTED SYSTEM PROMPT BLOCKS
