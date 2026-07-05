@@ -106,3 +106,16 @@ export class RedisReadCache {
 export function projectCaseStudyKey(projectId: string): string {
     return `shared:project:case_study:${projectId}:v1`;
 }
+
+/**
+ * Canonical key for a user's PUBLIC project list (the portfolio /projects
+ * grid). Keyed by github username rather than user id because the reader
+ * (public-api) resolves identity through oauth_connections.username and
+ * never touches the internal id. Writers that flip project visibility
+ * should invalidate this alongside projectCaseStudyKey; until they do,
+ * staleness is bounded by the read-cache TTL (5 minutes), which matches
+ * the route's s-maxage.
+ */
+export function projectPublicListKey(username: string): string {
+    return `shared:project:public_list:${username.toLowerCase()}:v1`;
+}

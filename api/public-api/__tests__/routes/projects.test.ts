@@ -133,3 +133,70 @@ describe('GET /public/projects/:username/:slug', () => {
         expect((body.architecture as { diagram_format: string }).diagram_format).toBe('mermaid');
     });
 });
+
+describe('GET /public/projects/:username (list)', () => {
+    // Card row shape produced by the list query (subset of the projects table
+    // plus case_study_status so the consumer can distinguish a rich card).
+    const LIST_ROW = {
+        id:                '00000000-0000-0000-0000-000000000111',
+        slug:              'tucaken',
+        name:              'Tucaken',
+        tagline:           'A grounded RAG portfolio',
+        type:              'production_saas',
+        shape:             'multi_repo',
+        role_exhibited:    'sole_builder',
+        case_study_status: 'complete',
+        started_at:        new Date('2025-06-01T00:00:00.000Z'),
+        last_activity_at:  new Date('2025-07-01T00:00:00.000Z'),
+        updated_at:        new Date('2025-07-01T00:00:00.000Z'),
+    };
+
+    it('returns 404 when username path param fails the regex', async () => {
+        const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedGetPool.mockReturnValue({ query: queryMock } as any);
+        const res = await projectsRoute.request('/public/projects/Bad User!');
+        expect(res.status).toBe(404);
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty items list (200, not 404) when the user has no public projects', async () => {
+        const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedGetPool.mockReturnValue({ query: queryMock } as any);
+        const res = await projectsRoute.request('/public/projects/alice');
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ items: [], count: 0 });
+        const sql = String(queryMock.mock.calls[0]?.[0]);
+        expect(sql).toMatch(/visibility = 'public'/);
+        expect(sql).toMatch(/status <> 'archived'/);
+        expect(sql).toMatch(/oauth_connections/);
+    });
+
+    it('returns assembled cards with tags, stack, and public repo names', async () => {
+        const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
+        queryMock
+            .mockResolvedValueOnce({ rows: [LIST_ROW] })                                        // projects
+            .mockResolvedValueOnce({ rows: [{ project_id: LIST_ROW.id, tag: 'rag' }, { project_id: LIST_ROW.id, tag: 'aws' }] })
+            .mockResolvedValueOnce({ rows: [{ project_id: LIST_ROW.id, category: 'language', name: 'TypeScript', order_index: 0 }] })
+            .mockResolvedValueOnce({ rows: [{ project_id: LIST_ROW.id, repository_full_name: 'alice/tucaken-api' }] });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedGetPool.mockReturnValue({ query: queryMock } as any);
+
+        const res = await projectsRoute.request('/public/projects/alice');
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('public, s-maxage=300, stale-while-revalidate=600');
+        const body = await res.json() as { items: Array<Record<string, unknown>>; count: number };
+        expect(body.count).toBe(1);
+        const card = body.items[0]!;
+        expect(card.slug).toBe('tucaken');
+        expect(card.caseStudyStatus).toBe('complete');
+        expect(card.tags).toEqual(['rag', 'aws']);
+        expect(card.stack).toEqual([{ category: 'language', name: 'TypeScript' }]);
+        expect(card.repositories).toEqual(['alice/tucaken-api']);
+        // Private repos must be excluded by the SQL, same as the detail route.
+        const repoSql = String(queryMock.mock.calls[3]?.[0]);
+        expect(repoSql).toMatch(/is_private = FALSE/);
+    });
+});

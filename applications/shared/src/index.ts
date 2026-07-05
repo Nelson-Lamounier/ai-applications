@@ -475,6 +475,7 @@ export {
     resolveRedisCacheConfig,
     createRedisCacheClient,
     projectCaseStudyKey,
+    projectPublicListKey,
 } from './cache/index.js';
 export type { RedisCacheConfig, RedisLike, CacheMetrics } from './cache/index.js';
 

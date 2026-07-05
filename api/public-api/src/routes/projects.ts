@@ -2,7 +2,7 @@
  * @file projects.ts
  * @description Public-facing project case-study endpoint.
  *
- * Single route, no authentication. The migration spec calls for
+ * No authentication. The migration spec calls for
  * `/public/projects/:slug`, but per-user slug uniqueness (`UNIQUE(user_id,
  * slug)` from migration 030) means two users could legitimately share a
  * slug. We therefore expose `/public/projects/:username/:slug` to match
@@ -12,6 +12,13 @@
  *
  * Routes:
  *
+ *   GET /public/projects/:username       — public project cards for the
+ *                                          portfolio /projects grid.
+ *                                          Empty list (not 404) when
+ *                                          nothing is public, so an
+ *                                          unknown username is
+ *                                          indistinguishable from a user
+ *                                          with no public projects.
  *   GET /public/projects/:username/:slug — returns the assembled case
  *                                          study JSON. 404 unless
  *                                          `visibility='public'`.
@@ -21,7 +28,7 @@
  * way to bypass the filter from outside the database.
  *
  * Authentication: none — this is the recruiter-facing share URL. The
- * single route is rate-limited at the upstream (Traefik) layer via the
+ * routes are rate-limited at the upstream (Traefik) layer via the
  * existing public-api ingress; this file does not implement its own
  * limiter.
  *
@@ -32,7 +39,7 @@
 
 import { Hono } from 'hono';
 
-import { projectCaseStudyKey } from '@bedrock/shared';
+import { projectCaseStudyKey, projectPublicListKey } from '@bedrock/shared';
 import { loadConfig } from '../lib/config.js';
 import { getPool } from '../lib/pg.js';
 import { getReadCache, READ_CACHE_DEFAULT_TTL } from '../lib/cache.js';
@@ -95,6 +102,123 @@ interface ArchitectureRow {
 }
 interface ResumeBulletRow { angle: string; bullets: string[] }
 interface TagRow { tag: string }
+
+// Card-level rows for the list endpoint. Children (tags/stack/repos) are
+// fetched with `project_id = ANY($1)` batch queries and grouped in JS —
+// the list is portfolio-scale (single digits), so three flat queries beat
+// per-project fan-out or JSON aggregation for readability.
+interface ListProjectRow {
+    id:                string;
+    slug:              string;
+    name:              string;
+    tagline:           string | null;
+    type:              string;
+    shape:             string;
+    role_exhibited:    string;
+    case_study_status: string | null;
+    started_at:        Date | null;
+    last_activity_at:  Date | null;
+    updated_at:        Date;
+}
+interface ListTagRow   { project_id: string; tag: string }
+interface ListStackRow { project_id: string; category: string; name: string; order_index: number }
+interface ListRepoRow  { project_id: string; repository_full_name: string }
+
+/**
+ * GET /public/projects/:username
+ *
+ * Card list for the portfolio /projects grid: every `visibility='public'`,
+ * non-archived project for the github username, with the fields a card
+ * needs (tagline, tags, stack, public repo names, caseStudyStatus). Uses
+ * the same SQL gate as the detail route below, so no listed card can 404
+ * on click for visibility reasons.
+ */
+projects.get('/public/projects/:username', async (c) => {
+    const username = c.req.param('username');
+    if (!USERNAME_REGEX.test(username)) return c.json({ error: 'Not found' }, 404);
+
+    const cfg  = loadConfig();
+    const pool = getPool(cfg);
+
+    const payload = await getReadCache().getOrCompute(
+        projectPublicListKey(username),
+        READ_CACHE_DEFAULT_TTL,
+        async () => {
+            const projectRows = await pool.query<ListProjectRow>(
+                `SELECT p.id, p.slug, p.name, p.tagline, p.type, p.shape,
+                        p.role_exhibited, p.case_study_status,
+                        p.started_at, p.last_activity_at, p.updated_at
+                   FROM projects p
+                   JOIN oauth_connections oc
+                     ON oc.user_id = p.user_id AND oc.provider = 'github'
+                  WHERE p.visibility = 'public'
+                    AND p.status <> 'archived'
+                    AND oc.username = $1
+                  ORDER BY p.last_activity_at DESC NULLS LAST, p.name`,
+                [username],
+            );
+            if (projectRows.rows.length === 0) return { items: [], count: 0 };
+
+            const ids = projectRows.rows.map((r) => r.id);
+            const [tags, stack, repos] = await Promise.all([
+                pool.query<ListTagRow>(
+                    `SELECT project_id, tag
+                       FROM project_tags WHERE project_id = ANY($1) ORDER BY tag`,
+                    [ids],
+                ),
+                pool.query<ListStackRow>(
+                    `SELECT project_id, category, name, order_index
+                       FROM project_stack_items WHERE project_id = ANY($1) ORDER BY order_index`,
+                    [ids],
+                ),
+                // Same is_private filter as the detail route: a private repo
+                // linked to a public project must not leak its name in cards.
+                pool.query<ListRepoRow>(
+                    `SELECT DISTINCT pc.project_id, r.full_name AS repository_full_name
+                       FROM project_repositories pr
+                       JOIN project_components pc ON pc.id = pr.project_component_id
+                       JOIN repositories r ON r.id = pr.repository_id
+                      WHERE pc.project_id = ANY($1) AND r.is_private = FALSE`,
+                    [ids],
+                ),
+            ]);
+
+            const byProject = <T extends { project_id: string }>(rows: T[]) => {
+                const m = new Map<string, T[]>();
+                for (const row of rows) {
+                    const list = m.get(row.project_id) ?? [];
+                    list.push(row);
+                    m.set(row.project_id, list);
+                }
+                return m;
+            };
+            const tagsBy  = byProject(tags.rows);
+            const stackBy = byProject(stack.rows);
+            const reposBy = byProject(repos.rows);
+
+            const items = projectRows.rows.map((p) => ({
+                slug:            p.slug,
+                name:            p.name,
+                tagline:         p.tagline,
+                type:            p.type,
+                shape:           p.shape,
+                roleExhibited:   p.role_exhibited,
+                caseStudyStatus: p.case_study_status,
+                startedAt:       p.started_at?.toISOString()       ?? null,
+                lastActivityAt:  p.last_activity_at?.toISOString() ?? null,
+                updatedAt:       p.updated_at.toISOString(),
+                tags:            (tagsBy.get(p.id)  ?? []).map((t) => t.tag),
+                stack:           (stackBy.get(p.id) ?? []).map((s) => ({ category: s.category, name: s.name })),
+                repositories:    (reposBy.get(p.id) ?? []).map((r) => r.repository_full_name).sort(),
+            }));
+            return { items, count: items.length };
+        },
+        'project_public_list',
+    );
+
+    c.header('Cache-Control', CACHE_CONTROL);
+    return c.json(payload);
+});
 
 /**
  * GET /public/projects/:username/:slug
