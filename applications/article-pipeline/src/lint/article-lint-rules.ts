@@ -479,11 +479,28 @@ export function checkIdentifierLeaks(
       name: 'kb-verification-metadata',
       re: /\bverified active \d{4}-\d{2}-\d{2}\b/gi,
     },
+    // Public domain patterns: nelsonlamounier.com domain
+    { name: 'public-hostname', re: /\b[a-z0-9-]+\.nelsonlamounier\.com\b/gi },
+    // Kubernetes service DNS with port: name.namespace(.svc(.cluster.local))?:port
+    // The false-positive guard prevents matches on public FQDNs and localhost.
+    { name: 'k8s-service-dns', re: /\b[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*(?:\.svc(?:\.cluster\.local)?)?:\d{2,5}\b/g },
+    // Private IPv4 addresses and CIDR ranges (RFC 1918 + 172.16.0.0/12)
+    { name: 'private-ip', re: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})(?:\/\d{1,2})?\b/g },
+    // AWS network resource IDs: sg-*, vpc-*, subnet-*, eni-*
+    { name: 'aws-network-id', re: /\b(?:sg|vpc|subnet|eni)-[0-9a-f]{8,}\b/g },
   ];
   for (const p of patterns) {
     for (const m of source.matchAll(p.re)) {
       const value = m[0];
       if (allowlist.some((a) => value.includes(a))) continue;
+      // k8s-service-dns pattern must not fire on public FQDNs or localhost — those are
+      // either caught by the hostname rule (and allow-listed there) or legitimate.
+      if (
+        p.name === 'k8s-service-dns' &&
+        (/^localhost:/i.test(value) || /\.(com|org|net|io|dev|app|co|ai):/i.test(value))
+      ) {
+        continue;
+      }
       findings.push({
         rule: `identifier-leak:${p.name}`,
         severity: 'error',

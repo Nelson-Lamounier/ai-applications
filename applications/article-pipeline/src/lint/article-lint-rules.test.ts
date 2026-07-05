@@ -166,6 +166,34 @@ describe('identifier leaks', () => {
     const f = checkIdentifierLeaks(src, ['/k8s/development/eks/token']);
     expect(f).toHaveLength(0);
   });
+
+  it('flags the public hostname and the service-DNS:port that leaked in the BFF article', () => {
+    const src =
+      'The site reaches api.nelsonlamounier.com and calls ' +
+      'public-api.public-api:3001 over cluster DNS.';
+    const rules = checkIdentifierLeaks(src).map((f) => f.rule);
+    expect(rules).toContain('identifier-leak:public-hostname');
+    expect(rules).toContain('identifier-leak:k8s-service-dns');
+  });
+
+  it('flags private IPs/CIDRs and AWS network resource IDs', () => {
+    const src = 'Ingress from 10.0.0.0/16 via sg-0a3858a82377815de in vpc-0abc1234.';
+    const rules = checkIdentifierLeaks(src).map((f) => f.rule);
+    expect(rules).toContain('identifier-leak:private-ip');
+    expect(rules).toContain('identifier-leak:aws-network-id');
+  });
+
+  it('does NOT flag example domains or localhost (false-positive guard)', () => {
+    const src = 'For local dev use localhost:3000; docs use example.com:443.';
+    const rules = checkIdentifierLeaks(src).map((f) => f.rule);
+    expect(rules).not.toContain('identifier-leak:k8s-service-dns');
+  });
+
+  it('allows a hostname that is explicitly on the publishIdentifiers allowlist', () => {
+    const src = 'The public read API is served at api.nelsonlamounier.com.';
+    const f = checkIdentifierLeaks(src, ['api.nelsonlamounier.com']);
+    expect(f.map((x) => x.rule)).not.toContain('identifier-leak:public-hostname');
+  });
 });
 
 describe('enumerated generalisations (PDB/cert-manager claim)', () => {
