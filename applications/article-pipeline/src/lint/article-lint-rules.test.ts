@@ -6,6 +6,8 @@
  * defects found in the 2026-06-20 review.
  */
 import { describe, it, expect } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   checkTitleCoverage,
   checkCrossSectionDuplicates,
@@ -19,7 +21,9 @@ import {
   checkHeadingExpressions,
   checkReadability,
   checkSecurityClaims,
+  lintArticle,
 } from './article-lint-rules.js';
+import { hasDisclosureBlocker } from './disclosure-gate.js';
 
 describe('title-coverage (the Golden Path bug)', () => {
   it('fails when a title term never appears in the body', () => {
@@ -252,5 +256,28 @@ describe('security-claim router', () => {
   it('does not flag neutral architecture prose', () => {
     const src = '## Design\nThe BFF fetches data over cluster DNS and returns JSON.';
     expect(checkSecurityClaims(src)).toHaveLength(0);
+  });
+});
+
+// Golden regression from the live BFF-migration article: the fixtures are the
+// real pre-fix excerpt (leaked api host + svc-DNS:port + attacker-limitation
+// claim) and the user-approved corrected excerpt. They pin the whole
+// lint→gate chain end-to-end, so a future rule "simplification" that would
+// re-admit the original leak fails here rather than in production.
+describe('BFF article golden regression', () => {
+  const fx = (name: string) =>
+    readFileSync(join(__dirname, '__fixtures__', name), 'utf8');
+
+  it('the original leaky text is disclosure-blocked', () => {
+    const findings = lintArticle(fx('bff-article-leaky.md'), { title: 'BFF' });
+    expect(hasDisclosureBlocker(findings)).toBe(true);
+  });
+
+  it('the corrected text passes the disclosure gate', () => {
+    const findings = lintArticle(fx('bff-article-clean.md'), {
+      title: 'BFF',
+      publishIdentifiers: [],
+    });
+    expect(hasDisclosureBlocker(findings)).toBe(false);
   });
 });
