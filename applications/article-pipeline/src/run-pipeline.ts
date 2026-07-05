@@ -18,6 +18,7 @@ import { executeResearchAgent } from './agents/research-agent.js';
 import { executeWriterAgent }   from './agents/writer-agent.js';
 import { executeQaAgent, QA_PASS_THRESHOLD } from './agents/qa-agent.js';
 import { lintArticle, checkLinkLiveness, type Finding } from './lint/article-lint-rules.js';
+import { hasDisclosureBlocker } from './lint/disclosure-gate.js';
 import { reconcileFrontmatter, computeReadingTime, stripProseEmDashes } from './lint/frontmatter-reconcile.js';
 import {
     resolveMaxRetries,
@@ -508,7 +509,10 @@ async function main(): Promise<void> {
         // not the placeholder slug. The DB slug (env.slug) stays authoritative;
         // the Writer's frontmatter slug is reconciled to it in normaliseArticle.
         // status: 'review' on a QA pass, 'flagged' when the gate exhausted retries.
-        const articleStatus = articleStatusFor(gate.passed);
+        // A confirmed reachable-identifier leak hard-blocks publish regardless of
+        // the QA score: 'flagged' routes it to admin review instead of 'review'.
+        const disclosureBlocked = hasDisclosureBlocker(lintMeta?.findings ?? []);
+        const articleStatus = articleStatusFor(gate.passed && !disclosureBlocked);
         await persistArticle(pool, env.slug, scrubbedContent, env.foundationModel, {
             title:   writer.data.metadata.title,
             excerpt: writer.data.metadata.description,
