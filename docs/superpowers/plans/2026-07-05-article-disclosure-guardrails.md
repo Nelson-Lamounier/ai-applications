@@ -353,16 +353,39 @@ but never its reachable ADDRESS unless whitelisted.
   claim rather than resolving it in the flattering direction.
 ```
 
-- [ ] **Step 3: Typecheck** (prompt is a plain string; verify the file still compiles)
+- [ ] **Step 3: Add a `## READER CLARITY` block** immediately after SECURITY-CLAIM
+  DISCIPLINE. These rules were validated by hand-correcting the live BFF article
+  (spell-out acronyms; "application" over vague "site"; gloss internal service
+  names for a non-expert reader). They are prose-clarity rules, not disclosure
+  rules, but belong in the universal Writer layer:
+
+```ts
+## READER CLARITY
+
+- Expand every acronym on FIRST use, then use the short form: "Backend-for-Frontend
+  (BFF)", not a bare "BFF". Applies to product/domain acronyms a general reader
+  may not know (BFF, RRF, ISR, IRSA); standard ones (AWS, API, SQL, JSON) need no
+  expansion.
+- Prefer concrete product nouns over vague ones: call it "the application" or the
+  named service, not "the site", when describing a system with real backend
+  behaviour.
+- The first time you name an internal service, endpoint, framework helper, or API
+  action a general reader would not recognise, add a short gloss of what it is
+  (e.g. "`/api/chat` (the site's server-side route behind the chat widget)",
+  "`secretsmanager:GetSecretValue` (the AWS API action that reads a secret)").
+  One gloss per term, at first use only.
+```
+
+- [ ] **Step 4: Typecheck** (prompt is a plain string; verify the file still compiles)
 
 Run: `cd applications/article-pipeline && npx tsc --noEmit`
-Expected: exit 0.
+Expected: exit 0 (build `applications/shared` first: `cd applications/shared && npx tsc -b`).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add applications/article-pipeline/src/prompts/writer-core-prompt.ts
-git commit -m "feat(writer-prompt): widen identifier rule + add security-claim discipline"
+git commit -m "feat(writer-prompt): widen identifier rule, security-claim discipline, reader clarity"
 ```
 
 ---
