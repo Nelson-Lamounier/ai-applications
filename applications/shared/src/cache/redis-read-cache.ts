@@ -108,14 +108,15 @@ export function projectCaseStudyKey(projectId: string): string {
 }
 
 /**
- * Canonical key for a user's PUBLIC project list (the portfolio /projects
- * grid). Keyed by github username rather than user id because the reader
- * (public-api) resolves identity through oauth_connections.username and
- * never touches the internal id. Writers that flip project visibility
+ * Canonical key for the portfolio owner's PUBLIC project list (the
+ * portfolio /projects grid). Keyed by internal user id, NOT github
+ * username: oauth_connections.username is not unique (UNIQUE is on
+ * (user_id, provider)) and usernames can be renamed/reclaimed, so the id
+ * is the only stable isolation key. Writers that flip project visibility
  * should invalidate this alongside projectCaseStudyKey; until they do,
  * staleness is bounded by the read-cache TTL (5 minutes), which matches
  * the route's s-maxage.
  */
-export function projectPublicListKey(username: string): string {
-    return `shared:project:public_list:${username.toLowerCase()}:v1`;
+export function projectOwnerPublicListKey(userId: string): string {
+    return `shared:project:owner_public_list:${userId}:v1`;
 }

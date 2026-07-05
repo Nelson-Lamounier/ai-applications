@@ -30,4 +30,4 @@ export { RedisExactCache } from './redis-exact-cache.js';
 export type { RedisExactCacheOptions } from './redis-exact-cache.js';
 
 // BFF hot-key read cache.
-export { RedisReadCache, projectCaseStudyKey, projectPublicListKey } from './redis-read-cache.js';
+export { RedisReadCache, projectCaseStudyKey, projectOwnerPublicListKey } from './redis-read-cache.js';

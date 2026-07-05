@@ -71,6 +71,18 @@ export interface Config {
    * `GITHUB_APP_SECRET_ARN` env var (ConfigMap).
    */
   readonly githubAppSecretArn: string;
+  /**
+   * Internal user id of the portfolio owner. Sourced from
+   * PORTFOLIO_OWNER_USER_ID (ConfigMap) — the same owner-pinning concept
+   * the chatbot RAG lambdas use. The owner-scoped /api/projects routes
+   * filter on THIS id rather than a GitHub username, because
+   * oauth_connections.username is not unique (UNIQUE is on
+   * (user_id, provider)) and usernames can be renamed/reclaimed on
+   * GitHub — identity, not a display handle, is the isolation key.
+   * Optional — if absent the owner-scoped project routes fail closed
+   * (empty list / 404) rather than guessing an owner.
+   */
+  readonly portfolioOwnerUserId: string | undefined;
 }
 
 /**
@@ -116,5 +128,6 @@ export function loadConfig(): Config {
     bedrockPublicApiUrl: process.env['BEDROCK_PUBLIC_API_URL'] ?? undefined,
     bedrockAuthApiUrl: process.env['BEDROCK_AUTH_API_URL'] ?? undefined,
     githubAppSecretArn: process.env['GITHUB_APP_SECRET_ARN'] as string,
+    portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'],
   });
 }

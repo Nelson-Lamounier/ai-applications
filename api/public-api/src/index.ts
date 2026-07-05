@@ -11,7 +11,7 @@
  *   - Resumes route    → GET /api/resumes/active
  *   - Chatbot route    → POST /api/chatbot/invoke
  *   - GitHub webhook   → POST /api/github-webhook
- *   - Projects routes  → GET /public/projects/:username[/:slug]
+ *   - Projects routes  → GET /api/projects[/:slug] (portfolio owner), GET /public/projects/:username/:slug (share)
  *
  * ## Credential Chain
  *

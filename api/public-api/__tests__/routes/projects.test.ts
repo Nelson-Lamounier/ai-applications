@@ -30,6 +30,8 @@ import { loadConfig } from '../../src/lib/config.js';
 const mockedGetPool    = jest.mocked(getPool);
 const mockedLoadConfig = jest.mocked(loadConfig);
 
+const OWNER_ID = '00000000-0000-0000-0000-000000000001';
+
 const BASE_CONFIG = {
     awsRegion:           'eu-west-1',
     pgHost:              'pgbouncer',
@@ -43,6 +45,7 @@ const BASE_CONFIG = {
     bedrockApiKeySecretArn: undefined,
     bedrockAuthApiUrl:   undefined,
     oauthTokenKmsKeyArn: 'arn',
+    portfolioOwnerUserId: OWNER_ID,
 } as const;
 
 const PROJECT_ROW = {
@@ -134,7 +137,7 @@ describe('GET /public/projects/:username/:slug', () => {
     });
 });
 
-describe('GET /public/projects/:username (list)', () => {
+describe('GET /api/projects (owner-scoped list)', () => {
     // Card row shape produced by the list query (subset of the projects table
     // plus case_study_status so the consumer can distinguish a rich card).
     const LIST_ROW = {
@@ -151,27 +154,38 @@ describe('GET /public/projects/:username (list)', () => {
         updated_at:        new Date('2025-07-01T00:00:00.000Z'),
     };
 
-    it('returns 404 when username path param fails the regex', async () => {
+    it('fails closed with an empty list when PORTFOLIO_OWNER_USER_ID is unset', async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedLoadConfig.mockReturnValue({ ...BASE_CONFIG, portfolioOwnerUserId: undefined } as any);
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
         const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         mockedGetPool.mockReturnValue({ query: queryMock } as any);
-        const res = await projectsRoute.request('/public/projects/Bad User!');
-        expect(res.status).toBe(404);
+        const res = await projectsRoute.request('/api/projects');
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ items: [], count: 0 });
+        // Fail closed means NO query: an unset owner must not fall back to
+        // an unscoped read that could surface other users' projects.
         expect(queryMock).not.toHaveBeenCalled();
     });
 
-    it('returns an empty items list (200, not 404) when the user has no public projects', async () => {
+    it('scopes the list by the owner user id, not by username', async () => {
         const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
         queryMock.mockResolvedValueOnce({ rows: [] });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         mockedGetPool.mockReturnValue({ query: queryMock } as any);
-        const res = await projectsRoute.request('/public/projects/alice');
+        const res = await projectsRoute.request('/api/projects');
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ items: [], count: 0 });
-        const sql = String(queryMock.mock.calls[0]?.[0]);
+        const sql    = String(queryMock.mock.calls[0]?.[0]);
+        const params = queryMock.mock.calls[0]?.[1] as unknown[];
+        expect(sql).toMatch(/p\.user_id = \$1/);
         expect(sql).toMatch(/visibility = 'public'/);
         expect(sql).toMatch(/status <> 'archived'/);
-        expect(sql).toMatch(/oauth_connections/);
+        // No username join anywhere in the owner path — usernames are not
+        // unique and can be renamed/reclaimed on GitHub.
+        expect(sql).not.toMatch(/oauth_connections/);
+        expect(params[0]).toBe(OWNER_ID);
     });
 
     it('returns assembled cards with tags, stack, and public repo names', async () => {
@@ -184,7 +198,7 @@ describe('GET /public/projects/:username (list)', () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         mockedGetPool.mockReturnValue({ query: queryMock } as any);
 
-        const res = await projectsRoute.request('/public/projects/alice');
+        const res = await projectsRoute.request('/api/projects');
         expect(res.status).toBe(200);
         expect(res.headers.get('Cache-Control')).toBe('public, s-maxage=300, stale-while-revalidate=600');
         const body = await res.json() as { items: Array<Record<string, unknown>>; count: number };
@@ -198,5 +212,59 @@ describe('GET /public/projects/:username (list)', () => {
         // Private repos must be excluded by the SQL, same as the detail route.
         const repoSql = String(queryMock.mock.calls[3]?.[0]);
         expect(repoSql).toMatch(/is_private = FALSE/);
+    });
+});
+
+describe('GET /api/projects/:slug (owner-scoped detail)', () => {
+    it('returns 404 when PORTFOLIO_OWNER_USER_ID is unset (fail closed)', async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedLoadConfig.mockReturnValue({ ...BASE_CONFIG, portfolioOwnerUserId: undefined } as any);
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedGetPool.mockReturnValue({ query: queryMock } as any);
+        const res = await projectsRoute.request('/api/projects/tucaken');
+        expect(res.status).toBe(404);
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('pins the lookup to the owner user id and 404s when no row matches', async () => {
+        const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedGetPool.mockReturnValue({ query: queryMock } as any);
+        const res = await projectsRoute.request('/api/projects/tucaken');
+        expect(res.status).toBe(404);
+        const sql    = String(queryMock.mock.calls[0]?.[0]);
+        const params = queryMock.mock.calls[0]?.[1] as unknown[];
+        expect(sql).toMatch(/p\.user_id = \$1/);
+        expect(sql).toMatch(/visibility = 'public'/);
+        expect(params[0]).toBe(OWNER_ID);
+        expect(params[1]).toBe('tucaken');
+    });
+
+    it('returns the assembled case study for the owner slug', async () => {
+        const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
+        queryMock
+            .mockResolvedValueOnce({ rows: [{ ...PROJECT_ROW, username: 'alice' }] })            // project + username join
+            .mockResolvedValueOnce({ rows: [] })   // components
+            .mockResolvedValueOnce({ rows: [] })   // repositories
+            .mockResolvedValueOnce({ rows: [] })   // decisions
+            .mockResolvedValueOnce({ rows: [] })   // highlights
+            .mockResolvedValueOnce({ rows: [] })   // challenges
+            .mockResolvedValueOnce({ rows: [] })   // stack
+            .mockResolvedValueOnce({ rows: [] })   // depth markers
+            .mockResolvedValueOnce({ rows: [] })   // architecture
+            .mockResolvedValueOnce({ rows: [] })   // resume bullets
+            .mockResolvedValueOnce({ rows: [] });  // tags
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedGetPool.mockReturnValue({ query: queryMock } as any);
+
+        const res = await projectsRoute.request('/api/projects/tucaken');
+        expect(res.status).toBe(200);
+        const body = await res.json() as Record<string, unknown>;
+        expect(body.slug).toBe('tucaken');
+        expect(body.username).toBe('alice');
+        expect(body.tags).toEqual([]);
     });
 });
