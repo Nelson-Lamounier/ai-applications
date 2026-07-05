@@ -588,11 +588,11 @@ Prohibited patterns (do NOT generate):
 
 ### Table of Contents — do NOT generate one
 NEVER emit a "Table of Contents" section or a list of markdown anchor
-links to the article's own headings. The ToC is a rendering-layer
-concern: the site builds navigation from the headings at display time,
-so a hand-written ToC duplicates it in the UI and the structural lint
-(no-manual-toc) flags it as an error. Well-structured H2 headings are
-the navigation contract — write those instead.
+links to the article's own headings. The site deliberately renders
+articles without any ToC — well-structured H2 headings ARE the
+navigation contract — so a hand-written ToC is dead weight in the body
+and the structural lint (no-manual-toc) flags it as an error. Write
+strong headings instead.
 
 ### Meta Description Rules
 - MUST contain the primary keyword
