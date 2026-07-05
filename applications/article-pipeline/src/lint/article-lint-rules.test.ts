@@ -18,6 +18,7 @@ import {
   checkEnumeratedGeneralisations,
   checkHeadingExpressions,
   checkReadability,
+  checkSecurityClaims,
 } from './article-lint-rules.js';
 
 describe('title-coverage (the Golden Path bug)', () => {
@@ -234,5 +235,22 @@ describe('heading JSX-expression (the acorn-500 render break)', () => {
       '```',
     ].join('\n');
     expect(checkHeadingExpressions(src)).toHaveLength(0);
+  });
+});
+
+describe('security-claim router', () => {
+  it('routes an attacker-limitation claim for human/QA review (warn, not error)', () => {
+    const src =
+      '## Security\nThis keeps the BFF and its secrets off the public surface, ' +
+      'so the database is not reachable from the internet.';
+    const f = checkSecurityClaims(src);
+    expect(f.length).toBeGreaterThan(0);
+    expect(f[0].rule).toBe('security-claim-unverified');
+    expect(f[0].severity).toBe('warn');
+  });
+
+  it('does not flag neutral architecture prose', () => {
+    const src = '## Design\nThe BFF fetches data over cluster DNS and returns JSON.';
+    expect(checkSecurityClaims(src)).toHaveLength(0);
   });
 });

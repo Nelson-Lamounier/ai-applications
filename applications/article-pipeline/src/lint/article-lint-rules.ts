@@ -516,6 +516,43 @@ export function checkIdentifierLeaks(
 }
 
 // ---------------------------------------------------------------------------
+// Rule 8b — Security-posture claims (router, not judge)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flags prose that ASSERTS a protection ("off the public surface", "not
+ * reachable", "cannot be accessed", "no credentials"). Regex cannot verify
+ * whether such a claim is TRUE — the BFF article's "off the public surface"
+ * was false — so this only routes the sentence to QA/human adjudication as a
+ * `warn`. It never blocks and never asserts truth.
+ */
+export function checkSecurityClaims(source: string): Finding[] {
+  const prose = proseOnly(source);
+  const patterns: RegExp[] = [
+    /\boff the public surface\b/gi,
+    /\b(?:not|never|un)\s*reachable\b/gi,
+    /\bcannot be (?:accessed|reached|exploited)\b/gi,
+    /\bimpossible to (?:access|reach|exploit)\b/gi,
+    /\bno (?:aws )?credentials?\b/gi,
+    /\bhas no (?:public|internet) (?:access|exposure)\b/gi,
+  ];
+  const findings: Finding[] = [];
+  for (const re of patterns) {
+    for (const m of prose.matchAll(re)) {
+      findings.push({
+        rule: 'security-claim-unverified',
+        severity: 'warn',
+        message:
+          `Security-posture claim "${m[0]}" — verify it is grounded in the KB ` +
+          `and TRUE before publishing; describe what the code does, not what an ` +
+          `attacker cannot do.`,
+      });
+    }
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
 // Rule 9 — Enumerated generalisations (GroundednessVerifier pre-filter)
 // ---------------------------------------------------------------------------
 
@@ -596,6 +633,7 @@ export function lintArticle(source: string, fm: Frontmatter): Finding[] {
     ...checkNoManualToc(source),
     ...checkLinkShape(source),
     ...checkIdentifierLeaks(source, allowlist),
+    ...checkSecurityClaims(source),
     ...checkEnumeratedGeneralisations(source),
     ...checkHeadingExpressions(source),
   ];
