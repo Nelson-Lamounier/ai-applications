@@ -479,17 +479,73 @@ export function checkIdentifierLeaks(
       name: 'kb-verification-metadata',
       re: /\bverified active \d{4}-\d{2}-\d{2}\b/gi,
     },
+    // Owner's public hostnames are a reachable attack surface if published.
+    { name: 'public-hostname', re: /\b[a-z0-9-]+\.nelsonlamounier\.com\b/gi },
+    // Kubernetes service DNS with port: name.namespace(.svc(.cluster.local))?:port
+    // The false-positive guard prevents matches on public FQDNs and localhost.
+    { name: 'k8s-service-dns', re: /\b[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*(?:\.svc(?:\.cluster\.local)?)?:\d{2,5}\b/g },
+    // Private ranges reveal internal network topology; generalise before publish.
+    { name: 'private-ip', re: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})(?:\/\d{1,2})?\b/g },
+    // Network resource IDs expose specific infra/account state.
+    { name: 'aws-network-id', re: /\b(?:sg|vpc|subnet|eni)-[0-9a-f]{8,}\b/g },
   ];
   for (const p of patterns) {
     for (const m of source.matchAll(p.re)) {
       const value = m[0];
       if (allowlist.some((a) => value.includes(a))) continue;
+      // Only documented example domains and localhost are benign here. A broad
+      // public-TLD skip would swallow real leaks in namespaces named dev/app/co
+      // (e.g. public-api.dev:3001), so fail toward flagging — the author allow-lists
+      // any legitimate public host via publishIdentifiers.
+      if (
+        p.name === 'k8s-service-dns' &&
+        /^(?:localhost:|(?:[a-z0-9-]+\.)?example\.(?:com|org|net):)/i.test(value)
+      ) {
+        continue;
+      }
       findings.push({
         rule: `identifier-leak:${p.name}`,
         severity: 'error',
         message:
           `Operational identifier in prose: "${value}". Generalise it or ` +
           `add it to frontmatter publishIdentifiers to publish deliberately.`,
+      });
+    }
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
+// Rule 8b — Security-posture claims (router, not judge)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flags prose that ASSERTS a protection ("off the public surface", "not
+ * reachable", "cannot be accessed", "no credentials"). Regex cannot verify
+ * whether such a claim is TRUE — the BFF article's "off the public surface"
+ * was false — so this only routes the sentence to QA/human adjudication as a
+ * `warn`. It never blocks and never asserts truth.
+ */
+export function checkSecurityClaims(source: string): Finding[] {
+  const prose = proseOnly(source);
+  const patterns: RegExp[] = [
+    /\boff the public surface\b/gi,
+    /\b(?:not|never|un)\s*reachable\b/gi,
+    /\bcannot be (?:accessed|reached|exploited)\b/gi,
+    /\bimpossible to (?:access|reach|exploit)\b/gi,
+    /\bno (?:aws )?credentials?\b/gi,
+    /\bhas no (?:public|internet) (?:access|exposure)\b/gi,
+  ];
+  const findings: Finding[] = [];
+  for (const re of patterns) {
+    for (const m of prose.matchAll(re)) {
+      findings.push({
+        rule: 'security-claim-unverified',
+        severity: 'warn',
+        message:
+          `Security-posture claim "${m[0]}" — verify it is grounded in the KB ` +
+          `and TRUE before publishing; describe what the code does, not what an ` +
+          `attacker cannot do.`,
       });
     }
   }
@@ -577,6 +633,7 @@ export function lintArticle(source: string, fm: Frontmatter): Finding[] {
     ...checkNoManualToc(source),
     ...checkLinkShape(source),
     ...checkIdentifierLeaks(source, allowlist),
+    ...checkSecurityClaims(source),
     ...checkEnumeratedGeneralisations(source),
     ...checkHeadingExpressions(source),
   ];

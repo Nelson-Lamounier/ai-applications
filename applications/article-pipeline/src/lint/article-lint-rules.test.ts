@@ -6,6 +6,8 @@
  * defects found in the 2026-06-20 review.
  */
 import { describe, it, expect } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   checkTitleCoverage,
   checkCrossSectionDuplicates,
@@ -18,7 +20,10 @@ import {
   checkEnumeratedGeneralisations,
   checkHeadingExpressions,
   checkReadability,
+  checkSecurityClaims,
+  lintArticle,
 } from './article-lint-rules.js';
+import { hasDisclosureBlocker } from './disclosure-gate.js';
 
 describe('title-coverage (the Golden Path bug)', () => {
   it('fails when a title term never appears in the body', () => {
@@ -166,6 +171,40 @@ describe('identifier leaks', () => {
     const f = checkIdentifierLeaks(src, ['/k8s/development/eks/token']);
     expect(f).toHaveLength(0);
   });
+
+  it('flags the public hostname and the service-DNS:port that leaked in the BFF article', () => {
+    const src =
+      'The site reaches api.nelsonlamounier.com and calls ' +
+      'public-api.public-api:3001 over cluster DNS.';
+    const rules = checkIdentifierLeaks(src).map((f) => f.rule);
+    expect(rules).toContain('identifier-leak:public-hostname');
+    expect(rules).toContain('identifier-leak:k8s-service-dns');
+  });
+
+  it('flags private IPs/CIDRs and AWS network resource IDs', () => {
+    const src = 'Ingress from 10.0.0.0/16 via sg-0a3858a82377815de in vpc-0abc1234.';
+    const rules = checkIdentifierLeaks(src).map((f) => f.rule);
+    expect(rules).toContain('identifier-leak:private-ip');
+    expect(rules).toContain('identifier-leak:aws-network-id');
+  });
+
+  it('does NOT flag example domains or localhost (false-positive guard)', () => {
+    const src = 'For local dev use localhost:3000; docs use example.com:443.';
+    const rules = checkIdentifierLeaks(src).map((f) => f.rule);
+    expect(rules).not.toContain('identifier-leak:k8s-service-dns');
+  });
+
+  it('allows a hostname that is explicitly on the publishIdentifiers allowlist', () => {
+    const src = 'The public read API is served at api.nelsonlamounier.com.';
+    const f = checkIdentifierLeaks(src, ['api.nelsonlamounier.com']);
+    expect(f.map((x) => x.rule)).not.toContain('identifier-leak:public-hostname');
+  });
+
+  it('flags service-DNS even when the namespace collides with a public TLD (dev/app)', () => {
+    const rules = checkIdentifierLeaks('It calls public-api.dev:3001 and web.app:8080.')
+      .map((f) => f.rule);
+    expect(rules).toContain('identifier-leak:k8s-service-dns');
+  });
 });
 
 describe('enumerated generalisations (PDB/cert-manager claim)', () => {
@@ -200,5 +239,45 @@ describe('heading JSX-expression (the acorn-500 render break)', () => {
       '```',
     ].join('\n');
     expect(checkHeadingExpressions(src)).toHaveLength(0);
+  });
+});
+
+describe('security-claim router', () => {
+  it('routes an attacker-limitation claim for human/QA review (warn, not error)', () => {
+    const src =
+      '## Security\nThis keeps the BFF and its secrets off the public surface, ' +
+      'so the database is not reachable from the internet.';
+    const f = checkSecurityClaims(src);
+    expect(f.length).toBeGreaterThan(0);
+    expect(f[0].rule).toBe('security-claim-unverified');
+    expect(f[0].severity).toBe('warn');
+  });
+
+  it('does not flag neutral architecture prose', () => {
+    const src = '## Design\nThe BFF fetches data over cluster DNS and returns JSON.';
+    expect(checkSecurityClaims(src)).toHaveLength(0);
+  });
+});
+
+// Golden regression from the live BFF-migration article: the fixtures are the
+// real pre-fix excerpt (leaked api host + svc-DNS:port + attacker-limitation
+// claim) and the user-approved corrected excerpt. They pin the whole
+// lint→gate chain end-to-end, so a future rule "simplification" that would
+// re-admit the original leak fails here rather than in production.
+describe('BFF article golden regression', () => {
+  const fx = (name: string) =>
+    readFileSync(join(__dirname, '__fixtures__', name), 'utf8');
+
+  it('the original leaky text is disclosure-blocked', () => {
+    const findings = lintArticle(fx('bff-article-leaky.md'), { title: 'BFF' });
+    expect(hasDisclosureBlocker(findings)).toBe(true);
+  });
+
+  it('the corrected text passes the disclosure gate', () => {
+    const findings = lintArticle(fx('bff-article-clean.md'), {
+      title: 'BFF',
+      publishIdentifiers: [],
+    });
+    expect(hasDisclosureBlocker(findings)).toBe(false);
   });
 });

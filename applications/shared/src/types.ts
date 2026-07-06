@@ -657,6 +657,8 @@ export interface QaValidationResult {
         readonly contentQuality: DimensionResult;
         /** Narrow problem focus + a concrete measured result (2026 portfolio thesis). */
         readonly specificityAndResult: DimensionResult;
+        /** Leaked identifiers, ungrounded/false security claims, or exploit how-to. */
+        readonly securityDisclosure: DimensionResult;
     };
     /** Human-readable review summary */
     readonly summary: string;

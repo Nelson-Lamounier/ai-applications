@@ -110,7 +110,7 @@ const QA_DIMENSION_SCHEMA = {
 
 const QA_TOOL = {
     name: 'emit_qa_result',
-    description: 'Emit the structured QA validation result across the six dimensions.',
+    description: 'Emit the structured QA validation result across the seven dimensions.',
     inputSchema: {
         type: 'object',
         properties: {
@@ -125,9 +125,11 @@ const QA_TOOL = {
                     metadataQuality:      QA_DIMENSION_SCHEMA,
                     contentQuality:       QA_DIMENSION_SCHEMA,
                     specificityAndResult: QA_DIMENSION_SCHEMA,
+                    securityDisclosure:   QA_DIMENSION_SCHEMA,
                 },
                 required: ['technicalAccuracy', 'seoCompliance', 'mdxStructure',
-                           'metadataQuality', 'contentQuality', 'specificityAndResult'],
+                           'metadataQuality', 'contentQuality', 'specificityAndResult',
+                           'securityDisclosure'],
                 additionalProperties: false,
             },
             summary:            { type: 'string' },
@@ -161,6 +163,7 @@ const QaOutputSchema = z.object({
         metadataQuality:      QaDimensionSchema,
         contentQuality:       QaDimensionSchema,
         specificityAndResult: QaDimensionSchema,
+        securityDisclosure:   QaDimensionSchema,
     }).strict(),
     summary:            z.string(),
     confidenceOverride: z.number(),
@@ -258,11 +261,15 @@ function clampDimension(d: DimensionResult): DimensionResult {
  * (fail-fast, structure-output-checklist §7). Scores are clamped to
  * 0–100 to preserve the previous defensive behaviour.
  *
+ * Exported (rather than module-private) so parser tests can validate
+ * new dimensions — e.g. securityDisclosure — without going through the
+ * mocked Bedrock client in qaAgent.execute().
+ *
  * @param responseText - Forced tool_use input as JSON
  * @returns Validated QA result
  * @throws Error if the output fails schema validation
  */
-function parseQaResponse(responseText: string): QaValidationResult {
+export function parseQaResponse(responseText: string): QaValidationResult {
     const raw = parseJsonResponse<unknown>(responseText, 'qa');
     const validated = QaOutputSchema.safeParse(raw);
     if (!validated.success) {
@@ -281,6 +288,7 @@ function parseQaResponse(responseText: string): QaValidationResult {
             metadataQuality:      clampDimension(d.dimensions.metadataQuality),
             contentQuality:       clampDimension(d.dimensions.contentQuality),
             specificityAndResult: clampDimension(d.dimensions.specificityAndResult),
+            securityDisclosure:   clampDimension(d.dimensions.securityDisclosure),
         },
         summary: d.summary,
         confidenceOverride: clampScore(d.confidenceOverride),
