@@ -46,10 +46,55 @@ function padded(text: string): string {
 }
 
 /**
+ * Canonicals whose lowercase token collides with a differently-cased term of
+ * art: "ReAct" (agent pattern) case-folds to "react" (UI library); same class
+ * as Go/go and Ray/ray. For these canonicals the SOURCE phrase must contain
+ * one of the accepted spellings as a case-exact whole word, or the canonical
+ * does not resolve — this is what stopped "ReAct" citing react-pdf.ts as
+ * evidence. Extensible: add an entry whenever a new collision is discovered.
+ */
+const CASE_SENSITIVE_CANONICALS: ReadonlyMap<string, readonly string[]> = new Map([
+    ['react', ['react', 'React', 'REACT', 'react.js', 'React.js', 'ReactJS', 'reactjs']],
+    ['go',    ['Go', 'GO', 'golang', 'Golang', 'GoLang', 'GOLANG']],
+    ['ray',   ['Ray', 'RAY']],
+    ['dash',  ['Dash', 'DASH']],
+]);
+
+function escapeRegExp(s: string): string {
+    return s.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
+/**
+ * True when `phrase` contains an accepted case-exact spelling of `canonical`
+ * (always true for canonicals with no registered collision).
+ */
+function caseAccepted(phrase: string, canonical: string): boolean {
+    const accepted = CASE_SENSITIVE_CANONICALS.get(canonical);
+    if (!accepted) return true;
+    return accepted.some((form) =>
+        new RegExp(String.raw`(?<![A-Za-z0-9])${escapeRegExp(form)}(?![A-Za-z0-9])`).test(phrase),
+    );
+}
+
+/**
+ * Lockfiles and build artifacts are never citable evidence — a dependency
+ * pin proves installation, not use, and reads as padding on the evidence
+ * panel (yarn.lock cited as ReAct proof was the founding instance).
+ */
+const NON_CITABLE_FILE_RE = /(^|\/)(yarn\.lock|package-lock\.json|pnpm-lock\.yaml|bun\.lockb?|go\.sum|Gemfile\.lock|poetry\.lock|Cargo\.lock|composer\.lock)$|(^|\/)(dist|build|node_modules|\.yarn|cdk\.out|coverage)\//i;
+
+/** Filter a file list down to citable evidence (drops lockfiles/build output). */
+export function citableFiles(files: readonly string[]): string[] {
+    return files.filter((f) => !NON_CITABLE_FILE_RE.test(f));
+}
+
+/**
  * Resolve a skill phrase to a tech canonical the user HAS in code, or null. Scans only
  * the canonicals present in code evidence (≤ a few hundred), so a match means there is
  * real code to cite. Whole-token match via the alias reverse map — "Python scripting and
  * automation" → python; "Complex technical communication" → null (no code canonical named).
+ * Collision-guarded: a canonical registered in CASE_SENSITIVE_CANONICALS additionally
+ * requires a case-exact spelling in the ORIGINAL phrase ("ReAct" never resolves to react).
  */
 function resolveCodeCanonical(
     skill: string,
@@ -58,7 +103,7 @@ function resolveCodeCanonical(
 ): string | null {
     const hay = padded(skill);
     for (const canonical of canonicalToFiles.keys()) {
-        if (mentionsCanonical(canonical, hay, reverse)) return canonical;
+        if (mentionsCanonical(canonical, hay, reverse) && caseAccepted(skill, canonical)) return canonical;
     }
     return null;
 }
@@ -80,12 +125,12 @@ function filesFromBridge(
     const files: string[] = [];
     const seen = new Set<string>();
     for (const [canonical, paths] of canonicalToFiles) {
-        if (!mentionsCanonical(canonical, hay, reverse)) continue;
+        if (!mentionsCanonical(canonical, hay, reverse) || !caseAccepted(bridge, canonical)) continue;
         for (const p of paths) {
             if (!seen.has(p)) { seen.add(p); files.push(p); }
         }
     }
-    return files;
+    return citableFiles(files);
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +180,7 @@ export function attachCodeEvidence(
         // CODE skill grounded purely in experience (matcher cited nothing): leave as-is.
         if (entry.evidenceFiles.length === 0) return entry;
 
-        const codeFiles = deps.canonicalToFiles.get(canonical) ?? [];
+        const codeFiles = citableFiles(deps.canonicalToFiles.get(canonical) ?? []);
         if (codeFiles.length === 0) return entry;                       // no code proof → keep matcher files
 
         // Structured-only: cite the real code files, not the matcher's (possibly doc) files.

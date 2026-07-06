@@ -36,10 +36,10 @@ describe('strategist-persona cover-letter JSON schema rules', () => {
         expect(lower).toContain('capability/domain headline');
     });
 
-    it('summary opener rule leads with capability, never a claimed job title', () => {
+    it('summary opener anchors identity with a defensible role family, never the target JD title', () => {
         const lower = joined.toLowerCase();
-        expect(lower).toContain('summary opener');
-        expect(lower).toContain('never a claimed job title');
+        expect(lower).toContain('anchors identity then capability');
+        expect(lower).toContain('never self-label with the');
     });
 
     it('preserves the fixed sign-off identity', () => {

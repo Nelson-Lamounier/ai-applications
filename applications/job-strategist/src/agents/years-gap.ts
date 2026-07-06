@@ -120,6 +120,7 @@ async function selectRelevant(roles: YearsGapRole[], yearsExpected: string): Pro
         'Call emit_years_relevance. Rules:',
         '- Include a role when its function relates to the requirement (use its family/role-class, not just an exact title match).',
         '- framingLine: a true re-description aggregating the relevant breadth + the relevant-years number. Use the union of ALL relevant role spans (overlapping roles count once across the combined calendar range), never a single role\'s tenure. Never claim the required number; never invent; never apologise.',
+        '- framingLine VOICE: a subjectless noun phrase, e.g. "approximately 5 years across technical support, cloud infrastructure and quality assurance". NEVER "this candidate…", "the candidate…", or any sentence with a subject — the line is embedded into both first-person and impersonal documents and must read naturally in each.',
     ].join('\n');
     const config: AgentConfig = {
         agentName: 'years-relevance', modelId: MODEL_ID, maxTokens: 512, thinkingBudget: 0,

@@ -153,6 +153,8 @@ export type AgentName =
     | 'cover-letter-rewrite'
     // resume guard pipeline.
     | 'resume-rewrite'
+    | 'resume-condense'
+    | 'resume-expand'
     // ATS feedback loop — surface attainable-but-missing keywords.
     | 'surface-keywords'
     // doc-vs-code drift — reframe a superseded-tech bullet as a migration narrative.
@@ -199,6 +201,14 @@ export interface AgentConfig {
      * Written to prompt_invocations.prompt_id.
      */
     readonly promptId?: string;
+
+    /**
+     * Prompt content version — sourced from the prompt markdown frontmatter
+     * (`version:`) when the persona lives in prompts/content/*.md.
+     * Written to prompt_invocations.prompt_version; falls back to the
+     * process-wide PROMPT_VERSION env var when unset.
+     */
+    readonly promptVersion?: string;
 
     /**
      * Forced tool_use (constrained decoding). When set, runAgent sends a
@@ -647,6 +657,8 @@ export interface QaValidationResult {
         readonly contentQuality: DimensionResult;
         /** Narrow problem focus + a concrete measured result (2026 portfolio thesis). */
         readonly specificityAndResult: DimensionResult;
+        /** Leaked identifiers, ungrounded/false security claims, or exploit how-to. */
+        readonly securityDisclosure: DimensionResult;
     };
     /** Human-readable review summary */
     readonly summary: string;

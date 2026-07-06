@@ -6,6 +6,36 @@ import type { AgentConfig, BasePipelineContext } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import type { ProfileInputBundle } from './ProfileInputCollector.js';
 
+/**
+ * Coerce a value the model may have returned as a string into a string[].
+ * Claude occasionally emits array-typed fields (highlights, tech_stack) as a
+ * single string — a JSON-stringified array, a newline/bullet list, or one bare
+ * item. Rather than fail the whole extraction (which discards an otherwise
+ * valid profile and leaves the downstream mirror/direction/reconciliation
+ * agents running on degraded input), normalise to an array so the array schema
+ * applies. Non-string input passes through untouched.
+ */
+function coerceToStringArray(val: unknown): unknown {
+    if (typeof val !== 'string') return val;
+    const s = val.trim();
+    if (!s) return [];
+    // A JSON-stringified array, e.g. '["a","b"]'.
+    if (s.startsWith('[')) {
+        try {
+            const parsed: unknown = JSON.parse(s);
+            if (Array.isArray(parsed)) return parsed;
+        } catch {
+            // Not valid JSON — fall through to line splitting.
+        }
+    }
+    // A newline/bullet-delimited list. Strip leading "-", "*", "•" or "1." markers.
+    const lines = s
+        .split(/\r?\n/)
+        .map(line => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+        .filter(Boolean);
+    return lines.length > 0 ? lines : [s];
+}
+
 export const ExtractedRepoDataSchema = z.object({
     // Clamp the upper bound instead of hard-failing: an LLM tagline a few chars
     // over the limit must not fail the whole repo ingestion. Min still validates
@@ -14,13 +44,17 @@ export const ExtractedRepoDataSchema = z.object({
     one_liner:     z.string().min(20).transform(s => s.slice(0, 140)),
     description:   z.string().min(40).transform(s => s.slice(0, 800)),
     domain:        z.enum(['web','ml','devops','infra','mobile','data','cli','lib','other']),
-    tech_stack:    z.array(z.string()).transform(arr => arr.slice(0, 40)),
+    tech_stack:    z.preprocess(coerceToStringArray, z.array(z.string())).transform(arr => arr.slice(0, 40)),
     role_inferred: z.enum(['creator','maintainer','contributor']),
     complexity:    z.enum(['simple','moderate','complex']),
-    // Truncate to 5 (NOT .max(5), which REJECTS a 6+ array and hard-fails the whole
-    // ingestion). Mirrors the tech_stack/one_liner slice transforms — tolerate the
-    // model returning a few extra, keep the first 5.
-    highlights:    z.array(z.string().transform(s => s.slice(0, 280))).transform(arr => arr.slice(0, 5)),
+    // Coerce a stringified list into an array (Haiku sometimes returns highlights
+    // as a JSON string or bullet list), then truncate to 5 (NOT .max(5), which
+    // REJECTS a 6+ array and hard-fails the whole ingestion). Mirrors the
+    // tech_stack/one_liner slice transforms — tolerate shape drift and overflow.
+    highlights:    z.preprocess(
+        coerceToStringArray,
+        z.array(z.string().transform(s => s.slice(0, 280))),
+    ).transform(arr => arr.slice(0, 5)),
     signals: z.object({
         has_readme:       z.boolean(),
         has_tests:        z.boolean(),
@@ -32,7 +66,7 @@ export const ExtractedRepoDataSchema = z.object({
         last_active_at:   z.string().nullable(),
     }).strict(),
     confidence: z.number().min(0).max(1),
-    missing:    z.array(z.string()).default([]),
+    missing:    z.preprocess(coerceToStringArray, z.array(z.string())).default([]),
     // Migration/lifecycle events extracted ONLY from explicit evidence (README
     // migration notes, CHANGELOG, ADRs). Empty when none is stated — never
     // inferred. Clamp to 5 (transform, not .max) to match the tolerate-extra

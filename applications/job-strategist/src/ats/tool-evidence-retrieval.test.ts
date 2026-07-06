@@ -1,5 +1,5 @@
 /** @format */
-import { attachCodeEvidence } from './tool-evidence-retrieval.js';
+import { attachCodeEvidence, citableFiles } from './tool-evidence-retrieval.js';
 import type { SkillEvidenceEntry } from '@bedrock/shared';
 
 // canonical → real code files (the structured proof lane).
@@ -93,5 +93,57 @@ describe('attachCodeEvidence', () => {
             transferableBridge: 'Implied by the role\'s verified competencies — the matcher did not flag this as a gap.',
         })], BEDROCK_DEPS);
         expect(r[0].evidenceFiles).toEqual([]);
+    });
+});
+
+describe('case-sensitive canonical collisions + citable files', () => {
+    const reactDeps = {
+        canonicalToFiles: new Map<string, string[]>([
+            ['react', [
+                'Nelson-Lamounier/ai-applications/applications/job-strategist/src/render/react-pdf.ts',
+                'Nelson-Lamounier/ai-applications/yarn.lock',
+                'Nelson-Lamounier/frontend-portfolio/apps/site/src/components/Hero.tsx',
+            ]],
+        ]),
+        aliasToCanonical: new Map<string, string>([['react', 'react']]),
+    };
+    const entry = (tool: string): SkillEvidenceEntry => ({
+        tool, status: 'transferable', evidenceFiles: ['some/matcher/file.md'],
+        evidence: 'x', transferableBridge: '',
+    } as SkillEvidenceEntry);
+
+    it('"ReAct" (agent pattern) never resolves to the react UI-library canonical', () => {
+        const [out] = attachCodeEvidence([entry('ReAct')], reactDeps);
+        // No canonical resolved + transferable with empty bridge → files stripped (soft path).
+        expect(out.evidenceFiles).toEqual([]);
+    });
+
+    it('"React" (the UI library, brand casing) still resolves and cites citable code only', () => {
+        const [out] = attachCodeEvidence([entry('React component development')], reactDeps);
+        expect(out.evidenceFiles.length).toBeGreaterThan(0);
+        expect(out.evidenceFiles.join(' ')).not.toContain('yarn.lock');
+    });
+
+    it('lowercase "react.js" in a JD phrase resolves (accepted spelling)', () => {
+        const [out] = attachCodeEvidence([entry('frontend work with react.js and hooks')], reactDeps);
+        expect(out.evidenceFiles.length).toBeGreaterThan(0);
+    });
+
+    it('citableFiles drops lockfiles and build output, keeps source', () => {
+        expect(citableFiles([
+            'a/yarn.lock', 'b/package-lock.json', 'c/dist/index.js', 'd/node_modules/x.js',
+            'e/src/agent.ts', 'f/go.sum', 'g/cdk.out/tree.json',
+        ])).toEqual(['e/src/agent.ts']);
+    });
+
+    it('a bridge naming an accepted spelling cites files; a case-collision does not', () => {
+        const bridged = (bridge: string): SkillEvidenceEntry => ({
+            tool: 'SomePattern', status: 'transferable', evidenceFiles: ['x.md'],
+            evidence: 'x', transferableBridge: bridge,
+        } as SkillEvidenceEntry);
+        const [hit] = attachCodeEvidence([bridged('interchangeable alternative (React)')], reactDeps);
+        expect(hit.evidenceFiles.join(' ')).toContain('react-pdf.ts');
+        const [miss] = attachCodeEvidence([bridged('approximates the ReAct cycle')], reactDeps);
+        expect(miss.evidenceFiles).toEqual([]);
     });
 });

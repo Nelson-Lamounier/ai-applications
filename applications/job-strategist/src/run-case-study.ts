@@ -393,4 +393,14 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch(() => process.exit(1));
+// Exit EXPLICITLY on success too. main() awaits its work, closes the pg pool,
+// and shuts down observability — but module-scope handles (the Bedrock client's
+// keep-alive sockets, the Redis cache connection, the pushgateway HTTP agent)
+// keep the event loop alive, so the process would otherwise hang after logging
+// success — leaving the K8s Job Running 0/1 until activeDeadlineSeconds
+// force-kills it (~30min) and stamping a successful run as Failed.
+// process.exit(0) ends it cleanly. Mirrors run-pipeline.ts.
+main().then(
+    () => process.exit(0),
+    () => process.exit(1),
+);

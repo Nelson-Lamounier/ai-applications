@@ -18,6 +18,7 @@
 // ─── Agent Runner ────────────────────────────────────────────────────────────
 export {
     runAgent,
+    setDefaultAgentInvocationSink,
     parseJsonResponse,
     AgentExecutionError,
 } from './agent-runner.js';
@@ -174,6 +175,7 @@ export type {
     // Skill Evidence Ledger
     EvidenceStatus,
     SkillEvidenceEntry,
+    SkillEvidencePassage,
     SkillEvidenceLane,
 
     // Phase 0 Archetype Selection
@@ -473,6 +475,7 @@ export {
     resolveRedisCacheConfig,
     createRedisCacheClient,
     projectCaseStudyKey,
+    projectOwnerPublicListKey,
 } from './cache/index.js';
 export type { RedisCacheConfig, RedisLike, CacheMetrics } from './cache/index.js';
 

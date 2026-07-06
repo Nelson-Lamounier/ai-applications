@@ -7,6 +7,8 @@ export const STANDARD_SECTIONS = ['Summary', 'Experience', 'Skills', 'Projects',
 export interface ParsedPdf {
     readonly text: string;
     readonly sections: string[];
+    /** Rendered page count — the ground truth for the 2-page limit. */
+    readonly pages: number;
 }
 
 /**
@@ -22,7 +24,7 @@ export async function parsePdfBack(buf: Buffer): Promise<ParsedPdf> {
         const sections = STANDARD_SECTIONS.filter(h =>
             new RegExp(`(^|\\n)\\s*${h}\\s*(\\n|$)`, 'i').test(text),
         );
-        return { text, sections };
+        return { text, sections, pages: result.total ?? 0 };
     } finally {
         await parser.destroy();
     }

@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import { validateCoverLetter, guardCoverLetter, type CoverLetter } from './cover-letter-guard.js';
+import { validateCoverLetter, validateCoverLetterNarrative, guardCoverLetter, stripThirdPersonSentences, type CoverLetter } from './cover-letter-guard.js';
 
 /** Wrap a body string in a structured CoverLetter for the content checks. */
 const cl = (body: string): CoverLetter => ({
@@ -127,5 +127,88 @@ describe('guardCoverLetter', () => {
         expect(r.violations).toEqual([]);
         expect(mockRun).not.toHaveBeenCalled();
         expect(r.letter?.paragraphs[0]).toBe('I build production AI support, the biggest win. The AI Support Engineer role at OpenAI fits.');
+    });
+});
+
+describe('third-person voice (framingLine leakage)', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('flags "this candidate" phrasing as third_person_voice', () => {
+        const letter = clObj(['Across support roles, this candidate brings approximately 5 years of experience. The AI Support Engineer role fits.']);
+        const v = validateCoverLetter(letter, 'AI Support Engineer', '');
+        expect(v.map((x) => x.code)).toContain('third_person_voice');
+    });
+
+    it("flags the possessive \"the candidate's\" form", () => {
+        const letter = clObj(["The candidate's AWS depth is strong. The AI Support Engineer role fits."]);
+        const v = validateCoverLetter(letter, 'AI Support Engineer', '');
+        expect(v.map((x) => x.code)).toContain('third_person_voice');
+    });
+
+    it('does not flag first-person tenure framing', () => {
+        const letter = clObj(['I bring approximately 5 years across support and cloud infrastructure. The AI Support Engineer role fits.']);
+        const v = validateCoverLetter(letter, 'AI Support Engineer', '');
+        expect(v.map((x) => x.code)).not.toContain('third_person_voice');
+    });
+
+    it('stripThirdPersonSentences deletes only the offending sentence', () => {
+        const letter = clObj(['This candidate brings 5 years of experience. I built the production RAG pipeline end-to-end.']);
+        const { letter: out, stripped } = stripThirdPersonSentences(letter);
+        expect(stripped).toBe(true);
+        expect(out.paragraphs[0]).toBe('I built the production RAG pipeline end-to-end.');
+    });
+
+    it('guardCoverLetter deterministically strips third-person left behind by the rewrite', async () => {
+        const stillBad = clObj(['This candidate brings 5 years of experience. I fit the AI Support Engineer role.']);
+        mockRun.mockResolvedValue({ data: stillBad });
+        const bad = clObj(['Across roles, this candidate brings 5 years. I fit the AI Support Engineer role.']);
+        const r = await guardCoverLetter(bad, 'AI Support Engineer', '', '5 years across support');
+        expect(r.violations.map((v) => v.code)).toEqual(expect.arrayContaining(['third_person_voice', 'third_person_stripped']));
+        expect(r.letter?.paragraphs.join(' ')).not.toMatch(/this candidate/i);
+    });
+});
+
+describe('validateCoverLetterNarrative', () => {
+    const letter = (paras: string[]): CoverLetter => clObj(paras);
+
+    it('flags a jargon-dense P1 (the SSMClient/prom-client opener)', () => {
+        const v = validateCoverLetterNarrative(letter([
+            'The /api/metrics endpoint was hanging because the SSMClient had no TCP timeout and no VPC endpoint existed; prom-client was bundled twice by webpack, splitting the Registry singleton. I added an AbortController timeout.',
+        ]), {});
+        expect(v.map((x) => x.code)).toContain('opener_too_technical');
+    });
+
+    it('passes a plain-language recruiter-readable P1', () => {
+        const v = validateCoverLetterNarrative(letter([
+            'I want this role because the problem it exists to solve, helping teams ship reliably and securely, is the exact problem I chose to spend the last years solving on my own platform.',
+        ]), {});
+        expect(v.map((x) => x.code)).not.toContain('opener_too_technical');
+    });
+
+    it('flags tenure mentions when the JD sets no years bar', () => {
+        const v = validateCoverLetterNarrative(letter([
+            'I want this role for its mission.',
+            'I have spent approximately five years, well, 5 years across delivery.',
+        ]), { hasYearsBar: false });
+        expect(v.map((x) => x.code)).toContain('tenure_without_bar');
+    });
+
+    it('allows tenure when a years bar exists', () => {
+        const v = validateCoverLetterNarrative(letter(['I bring 5 years across support and cloud.']), { hasYearsBar: true });
+        expect(v.map((x) => x.code)).not.toContain('tenure_without_bar');
+    });
+
+    it('flags a letter repeating more than one resume number', () => {
+        const v = validateCoverLetterNarrative(letter([
+            'I run 22 workflows and a 16-stack monorepo with 265 assertions.',
+        ]), { resumeNumbers: new Set(['22', '16', '265']) });
+        expect(v.map((x) => x.code)).toContain('letter_restates_resume');
+    });
+
+    it('allows one shared number', () => {
+        const v = validateCoverLetterNarrative(letter([
+            'My platform serves users through 25 continuously delivered applications.',
+        ]), { resumeNumbers: new Set(['25', '16']) });
+        expect(v.map((x) => x.code)).not.toContain('letter_restates_resume');
     });
 });

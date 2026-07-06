@@ -237,6 +237,45 @@ export function checkEmDashDensity(source: string): Finding[] {
 }
 
 // ---------------------------------------------------------------------------
+// Rule 4b — Readability (Flesch Reading Ease)
+// ---------------------------------------------------------------------------
+
+/** Heuristic syllable count: vowel groups, minus a silent trailing 'e'. */
+function countSyllables(word: string): number {
+  const w = word.toLowerCase();
+  const groups = w.match(/[aeiouy]+/g)?.length ?? 0;
+  const adjusted = w.endsWith('e') ? groups - 1 : groups;
+  return Math.max(1, adjusted);
+}
+
+/**
+ * Flesch Reading Ease over the article's prose. Technical writing that scores
+ * below ~55 ("fairly difficult") reads as jargon-dense and loses non-expert
+ * readers (recruiters). Warn only — the fix is vocabulary, not a mechanical
+ * rewrite. Short fragments (< 25 words of prose) are skipped to avoid noise.
+ */
+export function checkReadability(source: string, floor = 55): Finding[] {
+  const prose = proseOnly(source);
+  const words = prose.match(/[A-Za-z']+/g) ?? [];
+  const sentences = prose.split(/[.!?]+/).filter((s) => s.trim().length > 2);
+  if (words.length < 25 || sentences.length === 0) return [];
+  const syllables = words.reduce((n, w) => n + countSyllables(w), 0);
+  const score =
+    206.835 - 1.015 * (words.length / sentences.length) - 84.6 * (syllables / words.length);
+  if (score >= floor) return [];
+  return [
+    {
+      rule: 'readability',
+      severity: 'warn',
+      message:
+        `Flesch Reading Ease ${score.toFixed(0)} (floor ${floor}). Prose reads as ` +
+        `difficult — usually jargon density, not sentence length. Gloss domain ` +
+        `terms on first use or swap multi-syllable words for plainer ones.`,
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Rule 5 — Dangling references (name-dropped, never explained)
 // ---------------------------------------------------------------------------
 
@@ -440,17 +479,73 @@ export function checkIdentifierLeaks(
       name: 'kb-verification-metadata',
       re: /\bverified active \d{4}-\d{2}-\d{2}\b/gi,
     },
+    // Owner's public hostnames are a reachable attack surface if published.
+    { name: 'public-hostname', re: /\b[a-z0-9-]+\.nelsonlamounier\.com\b/gi },
+    // Kubernetes service DNS with port: name.namespace(.svc(.cluster.local))?:port
+    // The false-positive guard prevents matches on public FQDNs and localhost.
+    { name: 'k8s-service-dns', re: /\b[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*(?:\.svc(?:\.cluster\.local)?)?:\d{2,5}\b/g },
+    // Private ranges reveal internal network topology; generalise before publish.
+    { name: 'private-ip', re: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})(?:\/\d{1,2})?\b/g },
+    // Network resource IDs expose specific infra/account state.
+    { name: 'aws-network-id', re: /\b(?:sg|vpc|subnet|eni)-[0-9a-f]{8,}\b/g },
   ];
   for (const p of patterns) {
     for (const m of source.matchAll(p.re)) {
       const value = m[0];
       if (allowlist.some((a) => value.includes(a))) continue;
+      // Only documented example domains and localhost are benign here. A broad
+      // public-TLD skip would swallow real leaks in namespaces named dev/app/co
+      // (e.g. public-api.dev:3001), so fail toward flagging — the author allow-lists
+      // any legitimate public host via publishIdentifiers.
+      if (
+        p.name === 'k8s-service-dns' &&
+        /^(?:localhost:|(?:[a-z0-9-]+\.)?example\.(?:com|org|net):)/i.test(value)
+      ) {
+        continue;
+      }
       findings.push({
         rule: `identifier-leak:${p.name}`,
         severity: 'error',
         message:
           `Operational identifier in prose: "${value}". Generalise it or ` +
           `add it to frontmatter publishIdentifiers to publish deliberately.`,
+      });
+    }
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
+// Rule 8b — Security-posture claims (router, not judge)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flags prose that ASSERTS a protection ("off the public surface", "not
+ * reachable", "cannot be accessed", "no credentials"). Regex cannot verify
+ * whether such a claim is TRUE — the BFF article's "off the public surface"
+ * was false — so this only routes the sentence to QA/human adjudication as a
+ * `warn`. It never blocks and never asserts truth.
+ */
+export function checkSecurityClaims(source: string): Finding[] {
+  const prose = proseOnly(source);
+  const patterns: RegExp[] = [
+    /\boff the public surface\b/gi,
+    /\b(?:not|never|un)\s*reachable\b/gi,
+    /\bcannot be (?:accessed|reached|exploited)\b/gi,
+    /\bimpossible to (?:access|reach|exploit)\b/gi,
+    /\bno (?:aws )?credentials?\b/gi,
+    /\bhas no (?:public|internet) (?:access|exposure)\b/gi,
+  ];
+  const findings: Finding[] = [];
+  for (const re of patterns) {
+    for (const m of prose.matchAll(re)) {
+      findings.push({
+        rule: 'security-claim-unverified',
+        severity: 'warn',
+        message:
+          `Security-posture claim "${m[0]}" — verify it is grounded in the KB ` +
+          `and TRUE before publishing; describe what the code does, not what an ` +
+          `attacker cannot do.`,
       });
     }
   }
@@ -533,10 +628,12 @@ export function lintArticle(source: string, fm: Frontmatter): Finding[] {
     ...checkCrossSectionDuplicates(source),
     ...checkSlopConstructions(source),
     ...checkEmDashDensity(source),
+    ...checkReadability(source),
     ...checkDanglingReferences(source),
     ...checkNoManualToc(source),
     ...checkLinkShape(source),
     ...checkIdentifierLeaks(source, allowlist),
+    ...checkSecurityClaims(source),
     ...checkEnumeratedGeneralisations(source),
     ...checkHeadingExpressions(source),
   ];
