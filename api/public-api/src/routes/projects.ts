@@ -60,6 +60,9 @@ const projects = new Hono();
 
 const CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=600';
 
+/** List-cache TTL — must track s-maxage above, not the 1h default TTL. */
+const PROJECT_LIST_TTL_SECONDS = 300;
+
 /** Loose username sanity check — alphanumeric + dashes, 1–80 chars. */
 const USERNAME_REGEX = /^[A-Za-z0-9][A-Za-z0-9-]{0,79}$/;
 /** Slug regex from migration 030's expected shape. */
@@ -272,9 +275,12 @@ projects.get('/api/projects', async (c) => {
         return c.json({ items: [], count: 0 });
     }
 
+    // Explicit 300s: matches CACHE_CONTROL's s-maxage. The configured default
+    // TTL is an hour in production, which turned a visibility flip into an
+    // hour of stale-empty grid — publish latency must track the HTTP cache.
     const payload = await getReadCache().getOrCompute(
         projectOwnerPublicListKey(owner),
-        READ_CACHE_DEFAULT_TTL,
+        PROJECT_LIST_TTL_SECONDS,
         async () => {
             const projectRows = await pool.query<ListProjectRow>(
                 `SELECT p.id, p.slug, p.name, p.tagline, p.type, p.shape,
