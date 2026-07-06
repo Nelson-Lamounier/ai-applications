@@ -164,7 +164,9 @@ export type AgentName =
     // narrative eval: LLM judge for combined-overview quality.
     | 'case-study-overview-judge'
     // free-tier narrative resume + cover letter writer.
-    | 'free-resume-writer';
+    | 'free-resume-writer'
+    // CRAG-style re-retrieval adjudicator for kb_present_not_retrieved gaps.
+    | 'corrective-retrieval';
 
 /**
  * Model-agnostic configuration for a single agent.

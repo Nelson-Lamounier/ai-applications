@@ -33,6 +33,7 @@ import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
 import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
+import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
 import { applyLengthBudget } from './ats/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
 import { parseEnv, isFreeMode }   from './env.js';
@@ -176,6 +177,47 @@ function toVerifiedCerts(entries: ReadonlyArray<{ name: string; date: string }> 
     return (entries ?? []).map((c) => ({ name: c.name, date: c.date }));
 }
 
+/**
+ * Corrective retrieval (CRAG-style, fail-open; CORRECTIVE_RETRIEVAL=off is the
+ * kill switch). Live measurement: 76% of classified gaps (100/131) were
+ * kb_present_not_retrieved — evidence exists in the KB but the JD-wide research
+ * queries missed it. Re-query per gap with a skill-focused query and let a
+ * strict Haiku adjudicator promote genuine evidence to a partialMatch (default
+ * verdict: stand — the tsv classifier overcounts lexical mentions). Runs AFTER
+ * the deterministic guards so demotions are respected, BEFORE the
+ * ledger/strategist consume gaps. Extracted from main() to keep its complexity
+ * bounded (same pattern as buildQueryRetrievalPrefilter).
+ */
+async function runCorrectiveRetrievalPass<T extends { gaps: SkillGap[]; partialMatches: PartialMatch[] }>(args: {
+    matching: T;
+    pool: Pool;
+    userId: string;
+    pipelineRunId: string;
+    pipelineContext: BasePipelineContext;
+    retrievalPrefilter: RetrievalPrefilter | undefined;
+}): Promise<{ matching: T; stats: CorrectiveStats | null }> {
+    if (process.env['CORRECTIVE_RETRIEVAL'] === 'off') return { matching: args.matching, stats: null };
+    try {
+        const correctiveStore = RdsVectorStore.fromEnvironment();
+        const corrective = await applyCorrectiveRetrieval(args.matching, {
+            pool: args.pool,
+            userId: args.userId,
+            retrieve: (q, k) => querySingleRds(q, args.userId, correctiveStore, k, args.retrievalPrefilter),
+            adjudicate: buildBedrockAdjudicator({ pipelineContext: args.pipelineContext, userId: args.userId }),
+        });
+        if (corrective.stats.promoted > 0) correctiveRetrievalMetric.inc({ outcome: 'promoted' }, corrective.stats.promoted);
+        const stood = corrective.stats.retrieved - corrective.stats.promoted;
+        if (stood > 0) correctiveRetrievalMetric.inc({ outcome: 'stood' }, stood);
+        if (corrective.stats.candidates > 0) {
+            log.info({ pipelineRunId: args.pipelineRunId, ...corrective.stats }, 'corrective_retrieval_pass');
+        }
+        return { matching: corrective.matching, stats: corrective.stats };
+    } catch (err) {
+        log.warn({ pipelineRunId: args.pipelineRunId, err: String(err) }, 'corrective_retrieval_failed_open');
+        return { matching: args.matching, stats: null };
+    }
+}
+
 /** S3 client for canonical resume PDF storage. */
 const s3 = new S3Client({});
 
@@ -235,6 +277,12 @@ const gapCauseMetric = new Counter({
     name:       'job_strategist_gap_cause_total',
     help:       'Research gap causes: kb_present_not_retrieved (retrieval tuning lead) vs kb_no_evidence (document-or-build signal).',
     labelNames: ['cause'] as const,
+    registers:  [obs.registry],
+});
+const correctiveRetrievalMetric = new Counter({
+    name:       'job_strategist_corrective_retrieval_total',
+    help:       'Corrective-retrieval verdicts on kb_present_not_retrieved gaps: promoted (evidence recovered) vs stood (lexical mention only).',
+    labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
 // Prose linting runs in 'flag' mode only — telemetry on AI-tell language in the
@@ -706,7 +754,11 @@ export async function main(): Promise<void> {
                 cappedFitRating: yearsReconciled.overallFitRating,
             }, 'years_gap_enforced_disqualifying_experience_bar');
         }
-        const guardedResearch = { ...research, data: yearsReconciled };
+        const { matching: correctedMatching, stats: correctiveStats } = await runCorrectiveRetrievalPass({
+            matching: yearsReconciled, pool, userId: env.userId, pipelineRunId: env.pipelineRunId,
+            pipelineContext: ctx, retrievalPrefilter,
+        });
+        const guardedResearch = { ...research, data: correctedMatching };
 
         // Assemble StrategistResearchResult from jdExtraction (JdSignal) + guarded matching.
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
@@ -1041,7 +1093,7 @@ export async function main(): Promise<void> {
         // falls back to metadata.analysis.atsCheck.
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
             analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
-            research:     { ...researchData, gaps: gapsWithCauses },
+            research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             // LLM-agent cost (extraction + research + analysis + grounding); excludes embeddings/rerank.
             tokens:  ctx.cumulativeTokens,
