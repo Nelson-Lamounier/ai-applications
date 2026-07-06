@@ -42,6 +42,13 @@ COPY applications/job-strategist/src           ./applications/job-strategist/src
 RUN node_modules/.bin/tsc -b applications/shared applications/job-strategist --force \
  || ([ -f applications/job-strategist/dist/run-pipeline.js ] && [ -f applications/job-strategist/dist/run-coach.js ])
 
+# Prompt content is markdown DATA — tsc emits only compiled TS, so the loader's
+# content dir must be copied into dist explicitly (mirrors the package build
+# script). The existence gate fails the image build, not the Job at runtime.
+RUN cp -R applications/job-strategist/src/prompts/content applications/job-strategist/dist/prompts/ \
+ && [ -f applications/job-strategist/dist/prompts/content/strategist-persona.md ] \
+ && [ -f applications/job-strategist/dist/prompts/content/jd-extractor-persona.md ]
+
 RUN node -e "const f='applications/shared/package.json';const p=require('./'+f);p.main='dist/index.js';p.types='dist/index.d.ts';require('fs').writeFileSync(f,JSON.stringify(p,null,2));"
 
 RUN yarn workspaces focus @bedrock/shared @bedrock/job-strategist --production

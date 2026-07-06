@@ -70,6 +70,7 @@ const BASE_CONFIG: Config = {
   bedrockApiKeySecretArn:  SECRET_ARN,
   bedrockPublicApiUrl:     'https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-public',
   bedrockAuthApiUrl:       'https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-authenticated',
+  portfolioOwnerUserId:    undefined,
 };
 
 function makeUpstreamResponse(body: Record<string, unknown>, status = 200): Response {

@@ -17,6 +17,11 @@ function qaResult(over: Partial<QaValidationResult['dimensions']> = {}, recommen
             metadataQuality:      clean(),
             contentQuality:       clean(),
             specificityAndResult: clean(),
+            // securityDisclosure (Task 6) isn't part of this eval's golden-case
+            // dimension set (QaDimensionKey) yet — that wiring is Task 7 — but
+            // the shared QaValidationResult type now requires it on every
+            // fixture, so default it clean here.
+            securityDisclosure:   clean(),
             ...over,
         },
         summary: 's',

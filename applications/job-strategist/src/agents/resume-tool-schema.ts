@@ -30,7 +30,14 @@ export const ExperienceSchema = z.object({
 
 export const SkillCategorySchema = z.object({
     category: z.string(),
-    skills: z.array(z.string()),
+    // Haiku rewrite passes occasionally emit the skill list as ONE
+    // comma-joined string ("CDK, Docker, Kubernetes") — that shape failure
+    // made the resume-expand pass fail-open and left a run under-filled.
+    // Coerce deterministically instead of rejecting a paid invocation.
+    skills: z.preprocess(
+        (v) => (typeof v === 'string' ? v.split(',').map((t) => t.trim()).filter(Boolean) : v),
+        z.array(z.string()),
+    ),
 }).passthrough();
 
 export const EducationSchema = z.object({

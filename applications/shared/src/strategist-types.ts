@@ -330,6 +330,25 @@ export interface SkillEvidenceEntry {
      * produced before source-lane provenance shipped.
      */
     readonly sourceLanes?: SkillEvidenceLane[];
+    /**
+     * Retrieved KB passages that mention this skill — the "how was this
+     * verified" audit trail (source path + retrieval scores + a short
+     * snippet). Attached deterministically from the run's own KB context.
+     * Optional — absent on runs produced before passage provenance shipped.
+     */
+    readonly provenance?: SkillEvidencePassage[];
+}
+
+/** One retrieved KB passage backing a ledger entry. */
+export interface SkillEvidencePassage {
+    /** Passage source (repo-relative file path or document URI). */
+    readonly source: string;
+    /** Cosine similarity of the passage for the run's retrieval query. */
+    readonly cosine?: number;
+    /** Rerank score when reranking ran. */
+    readonly rerank?: number;
+    /** First ~200 chars of the passage — enough to see WHY it matched. */
+    readonly snippet: string;
 }
 
 /**
@@ -473,6 +492,10 @@ export interface ResearchMatching {
     readonly resumeData: StructuredResumeData | null;
     readonly kbContext: string;
     readonly kbRetrievalStats?: KbRetrievalStats;
+    /** Verbatim KB retrieval queries this run issued — first-class artifact:
+     *  "was the query reasonable?" must be answerable before "did retrieval
+     *  fail?". Optional — absent on runs before query persistence shipped. */
+    readonly retrievalQueries?: string[];
     readonly resumeConstraints: string;
     readonly dsaTopicCalibration?: {
         readonly likelyTopics: ReadonlyArray<{
@@ -551,6 +574,10 @@ export interface StrategistResearchResult {
      * (not model-produced). Absent on legacy runs.
      */
     readonly kbRetrievalStats?: KbRetrievalStats;
+    /** Verbatim KB retrieval queries this run issued — first-class artifact:
+     *  "was the query reasonable?" must be answerable before "did retrieval
+     *  fail?". Optional — absent on runs before query persistence shipped. */
+    readonly retrievalQueries?: string[];
 
     /** Resume domain constraints — rules, gaps, and status thresholds (non-negotiable) */
     readonly resumeConstraints: string;

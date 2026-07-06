@@ -35,16 +35,20 @@ export async function loadProjectEvidenceBlock(pool: Pool, userId: string): Prom
 export async function loadProjectLaneIndex(
     pool: Pool,
     userId: string,
-): Promise<{ projectNames: string[] }> {
+): Promise<{ projectNames: string[]; projectPitches: Array<{ name: string; pitch: string }> }> {
     try {
         const evidence = await new RdsProjectEvidenceRepository(pool).load(userId);
         const projectNames: string[] = [];
+        const projectPitches: Array<{ name: string; pitch: string }> = [];
         for (const p of evidence.projects) {
-            if (p.name) projectNames.push(p.name);
+            if (!p.name) continue;
+            projectNames.push(p.name);
+            const pitch = p.pitch ?? p.tagline ?? '';
+            if (pitch) projectPitches.push({ name: p.name, pitch });
         }
-        return { projectNames };
+        return { projectNames, projectPitches };
     } catch (e) {
         log('WARN', 'project lane index load failed (non-fatal)', { agent: 'strategist', error: (e as Error).message });
-        return { projectNames: [] };
+        return { projectNames: [], projectPitches: [] };
     }
 }

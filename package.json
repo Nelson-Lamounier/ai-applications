@@ -34,7 +34,8 @@
     "@grpc/grpc-js": "^1.14.4",
     "protobufjs": "^7.6.4",
     "ws": "^8.21.0",
-    "undici@^6.25.0": "^6.27.0"
+    "undici@^6.25.0": "^6.27.0",
+    "linkify-it": "^5.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^9",

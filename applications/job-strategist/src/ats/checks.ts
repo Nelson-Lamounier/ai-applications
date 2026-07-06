@@ -20,9 +20,14 @@ export interface BuildAtsCheckArgs {
     readonly jdMustHaves?: string[];
     /** Used only when `coverage` is not provided (legacy / test path). */
     readonly groundedTerms?: Set<string>;
+    /** Rendered PDF page count (from parse-back); optional for the legacy/test path. */
+    readonly pages?: number;
 }
 
 type Coverage = AtsCheckResult['jdKeywordCoverage'];
+
+/** Rendered pages beyond this fail the check — industry-standard resume cap. */
+export const MAX_PDF_PAGES = 2;
 
 /** Human-readable ATS issues derived from the computed check facts. */
 function deriveIssues(facts: {
@@ -31,6 +36,7 @@ function deriveIssues(facts: {
     emailFound: boolean;
     coverage: Coverage;
     parseBreakers: string[];
+    pages?: number;
 }): string[] {
     const issues: string[] = [];
     const missing = REQUIRED_SECTIONS.filter(s => !facts.standardSectionsDetected.includes(s));
@@ -41,6 +47,9 @@ function deriveIssues(facts: {
         if (!k.present && k.grounded) issues.push(`Grounded JD must-have "${k.term}" missing from resume.`);
     }
     if (facts.parseBreakers.length) issues.push(`Parse-breaking elements detected: ${facts.parseBreakers.join(', ')}.`);
+    if (typeof facts.pages === 'number' && facts.pages > MAX_PDF_PAGES) {
+        issues.push(`Resume renders to ${facts.pages} pages — exceeds the ${MAX_PDF_PAGES}-page maximum.`);
+    }
     return issues;
 }
 
@@ -72,7 +81,7 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
     // classic tab-delimited multi-column artifact as a regression guard.
     const parseBreakers = /\t.+\t/.test(a.text) ? ['multi-column-tabs'] : [];
 
-    const issues = deriveIssues({ standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage, parseBreakers });
+    const issues = deriveIssues({ standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage, parseBreakers, pages: a.pages });
     const passed = issues.length === 0;
     return {
         machineReadable: true,
@@ -83,5 +92,6 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
         status: passed ? 'passed' : 'issues',
         passed,
         issues,
+        ...(typeof a.pages === 'number' ? { pageCount: a.pages } : {}),
     };
 }

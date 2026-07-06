@@ -60,7 +60,7 @@ const UNVERIFIED: AtsCheckResult = {
 export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsCheckResult> {
     try {
         const pdf = await renderResumePdf(a.resume);
-        const { text, sections } = await parsePdfBack(pdf);
+        const { text, sections, pages } = await parsePdfBack(pdf);
 
         // Must-haves = the single JD signal's technology inventory (atomic, the same list
         // the writer targets). a.research is the assembled brief carrying technologyInventory.
@@ -92,7 +92,7 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
         }
 
         const check = buildAtsCheck({
-            text, sections,
+            text, sections, pages,
             profile: { name: a.resume.profile.name, email: a.resume.profile.email },
             coverage,
         });
