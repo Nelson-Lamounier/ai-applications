@@ -71,6 +71,7 @@ const BASE_CONFIG: Config = {
   bedrockPublicApiUrl:     'https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-public',
   bedrockAuthApiUrl:       'https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-authenticated',
   portfolioOwnerUserId:    undefined,
+  articleAssetsBucketName: undefined,
 };
 
 function makeUpstreamResponse(body: Record<string, unknown>, status = 200): Response {

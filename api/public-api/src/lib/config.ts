@@ -83,6 +83,13 @@ export interface Config {
    * (empty list / 404) rather than guessing an owner.
    */
   readonly portfolioOwnerUserId: string | undefined;
+  /**
+   * Name of the dedicated article-assets S3 bucket that serves published
+   * article media (no PII lives in that bucket). Sourced from
+   * ARTICLE_ASSETS_BUCKET_NAME (optional ESO secret).
+   * Optional — if absent GET /api/articles/images/:file returns 503.
+   */
+  readonly articleAssetsBucketName: string | undefined;
 }
 
 /**
@@ -129,5 +136,6 @@ export function loadConfig(): Config {
     bedrockAuthApiUrl: process.env['BEDROCK_AUTH_API_URL'] ?? undefined,
     githubAppSecretArn: process.env['GITHUB_APP_SECRET_ARN'] as string,
     portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'],
+    articleAssetsBucketName: process.env['ARTICLE_ASSETS_BUCKET_NAME'],
   });
 }
