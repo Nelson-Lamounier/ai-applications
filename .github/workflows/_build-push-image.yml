@@ -6,11 +6,12 @@
 # Reusable workflow: builds a Docker image from the monorepo, pushes to ECR,
 # and optionally writes the image URI to SSM (for ESO-backed apps).
 #
-# When image-ssm-path is set this workflow also patches the corresponding
-# K8s Secret key directly (bypassing the ESO poll interval) so that the
-# admin-api file mount picks up the new image within ~60s of the push.
-# The ESO will eventually overwrite the patch with the same value on its
-# next cycle — the direct patch is purely a speed-up, not a replacement.
+# Propagation to the cluster is ESO-owned: the ExternalSecret polls SSM
+# (refreshInterval 5m) and kubelet re-projects the mounted Secret within
+# ~60s — worst case ~6 minutes from merge to dispatchable image. A direct
+# kubectl secret-patch fast-path was removed 2026-07-06: the EKS endpoint
+# is private-only, so GitHub-hosted runners could never reach it and every
+# deploy run failed red after the real work had succeeded.
 #
 # Usage:
 #   jobs:
@@ -48,17 +49,17 @@ on:
         type: string
         default: ""
       k8s-secret-namespace:
-        description: "Namespace of the K8s Secret to patch immediately after SSM update (bypasses ESO poll delay)."
+        description: "DEPRECATED (unused since 2026-07-06): the kubectl fast-path was removed — ESO owns propagation. Kept so existing callers keep validating."
         required: false
         type: string
         default: "admin-api"
       k8s-secret-name:
-        description: "Name of the K8s Secret to patch immediately after SSM update."
+        description: "DEPRECATED (unused since 2026-07-06): see k8s-secret-namespace."
         required: false
         type: string
         default: "admin-api-job-images"
       eks-cluster-name:
-        description: "EKS cluster name used to generate kubeconfig for the direct K8s secret patch."
+        description: "DEPRECATED (unused since 2026-07-06): see k8s-secret-namespace."
         required: false
         type: string
         default: "k8s-eks-development"
@@ -147,9 +148,6 @@ jobs:
       ECR_SSM_PATH: ${{ inputs.ecr-ssm-path }}
       IMAGE_SSM_PATH: ${{ inputs.image-ssm-path }}
       AWS_REGION: ${{ inputs.aws-region }}
-      K8S_SECRET_NAMESPACE: ${{ inputs.k8s-secret-namespace }}
-      K8S_SECRET_NAME: ${{ inputs.k8s-secret-name }}
-      EKS_CLUSTER_NAME: ${{ inputs.eks-cluster-name }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -198,6 +196,17 @@ jobs:
       - name: Publish image URI to SSM
         # Only runs when image-ssm-path is provided (ESO-backed apps).
         # ArgoCD Image Updater apps (e.g. platform-job-watcher) leave this empty.
+        #
+        # Propagation after this step is ESO-owned: the ExternalSecret polls
+        # SSM every 5m (refreshInterval, measured live 2026-07-06) and kubelet
+        # re-projects the mounted Secret within ~60s — worst case ~6 minutes
+        # from merge to dispatchable image. The old "Patch K8s Secret" kubectl
+        # fast-path was removed 2026-07-06: the EKS API endpoint is
+        # private-only, so GitHub-hosted runners timed out for ~3 minutes and
+        # failed EVERY deploy run red after the real work (ECR + SSM) had
+        # already succeeded. If instant propagation is ever needed again,
+        # lower that ExternalSecret's refreshInterval or trigger a force-sync
+        # from inside the VPC — do not reintroduce kubectl here.
         if: ${{ inputs.image-ssm-path != '' }}
         env:
           ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
@@ -207,30 +216,6 @@ jobs:
             --value "${ECR_URL}:${IMAGE_TAG}" \
             --type String \
             --overwrite
-
-      - name: Patch K8s Secret (bypass ESO poll delay)
-        # ESO polls SSM every 15 min. Directly patching the secret here ensures
-        # the admin-api file mount picks up the new image within ~60s via kubelet
-        # sync, rather than waiting up to 16 min for ESO + kubelet.
-        # The secret key name is derived from app-name (matches ESO secretKey).
-        # ESO will overwrite this with the same value on its next cycle.
-        if: ${{ inputs.image-ssm-path != '' }}
-        env:
-          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
-        run: |
-          aws eks update-kubeconfig \
-            --name "$EKS_CLUSTER_NAME" \
-            --region "$AWS_REGION"
-
-          IMAGE_URI="${ECR_URL}:${IMAGE_TAG}"
-          IMAGE_URI_B64=$(echo -n "$IMAGE_URI" | base64 -w 0)
-
-          kubectl patch secret "$K8S_SECRET_NAME" \
-            -n "$K8S_SECRET_NAMESPACE" \
-            --type='json' \
-            -p="[{\"op\":\"replace\",\"path\":\"/data/${APP_NAME}\",\"value\":\"${IMAGE_URI_B64}\"}]"
-
-          echo "Patched ${K8S_SECRET_NAMESPACE}/${K8S_SECRET_NAME}[${APP_NAME}] → ${IMAGE_URI}"
 
       - name: Push Summary
         env:
