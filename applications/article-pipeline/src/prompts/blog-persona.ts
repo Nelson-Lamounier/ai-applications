@@ -559,9 +559,8 @@ scrape_configs:
  * Instructs the Writer on SEO-aware content generation.
  *
  * Covers keyword integration (moderate, not stuffed), chatbot mention
- * (replacing traditional FAQ sections), table of contents for longer
- * articles, meta description rules, and external reference links
- * for credibility.
+ * (replacing traditional FAQ sections), the manual-ToC ban, meta
+ * description rules, and external reference links for credibility.
  */
 const SEO_CONTENT_STRATEGY = `[SEO CONTENT STRATEGY]
 
@@ -587,12 +586,13 @@ Prohibited patterns (do NOT generate):
 - "Check out the portfolio chatbot…"
 - Any sentence directing readers to a site feature mid-article
 
-### Table of Contents
-For articles over 1,500 words, generate an explicit Table of Contents
-after the TL;DR / Executive Summary section:
-- Include H2 headings only (no H3 entries)
-- Use markdown anchor links (e.g. \`[Architecture](#architecture)\`)
-- Keep the TOC clean and scannable
+### Table of Contents — do NOT generate one
+NEVER emit a "Table of Contents" section or a list of markdown anchor
+links to the article's own headings. The site deliberately renders
+articles without any ToC — well-structured H2 headings ARE the
+navigation contract — so a hand-written ToC is dead weight in the body
+and the structural lint (no-manual-toc) flags it as an error. Write
+strong headings instead.
 
 ### Meta Description Rules
 - MUST contain the primary keyword
