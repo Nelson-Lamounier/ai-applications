@@ -190,9 +190,23 @@ describe('RdsVectorStore.querySimilar (filter-then-rank)', () => {
         expect(sql).not.toMatch(/repo_tech_stack' \?\|/);
         // hard authorship gates still present.
         expect(sql).toMatch(/COALESCE\(\(d\.metadata->>'is_fork'\)::bool, false\) = false/);
-        // applySoft=true on pass 1; $7 carries skills ∪ tech.
+        // applySoft=true on pass 1; $7 carries skills ∪ tech; skills lane defaults on ($9).
         expect(values[5]).toBe(true);
         expect(values[6]).toEqual(['python', 'openai_api']);
+        expect(values[8]).toBe(true);
+    });
+
+    it('skips the enriched-skills admitter when prefilter.skillsLane=false (enrichment A/B leg)', async () => {
+        const query = jest.fn(async () => ({ rows: [simRow()] }));
+        await store(query).querySimilar({
+            userId: 'u1', queryEmbedding: [0.1, 0.2], limit: 5,
+            prefilter: { skills: ['python'], tech: ['openai_api'], minResults: 1, skillsLane: false },
+        });
+        const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        // The admitter is parameterised, not removed — deterministic lanes unchanged.
+        expect(sql).toMatch(/\$9::bool AND d\.skills && \$7::text\[\]/);
+        expect(values[8]).toBe(false);
+        expect(sql).toMatch(/metadata->'file_tech_stack' \?\| \$7::text\[\]/);
     });
 
     it('tops up from the hard-gated-only set (soft relaxed) when pass 1 under-fills minResults', async () => {

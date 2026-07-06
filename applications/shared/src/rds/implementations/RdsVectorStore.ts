@@ -499,8 +499,7 @@ export class RdsVectorStore implements IVectorStore {
     /** One filtered vector pass. `applySoft` toggles the tech/skill widener; `excludeIds` skips already-returned chunks. */
     private async runFilteredVector(params: QueryParams, applySoft: boolean, excludeIds: string[]): Promise<SimilarityResult[]> {
         const { userId, repoFullName, queryEmbedding, limit = 10, efSearch = 40, prefilter } = params;
-        const skills = prefilter?.skills ?? [];
-        const tech = prefilter?.tech ?? [];
+        const { skills = [], tech = [], skillsLane = true } = prefilter ?? {};
         const result = await this.execute<SimilarityRow>(
             `WITH _ AS (SELECT set_config('hnsw.ef_search', $1, true))
              SELECT d.id, d.repo_full_name, d.file_path, d.heading, d.content, d.chunk_index, d.tags,
@@ -525,9 +524,10 @@ export class RdsVectorStore implements IVectorStore {
                 --   • CONFIG WITHOUT file evidence is excluded: it must not free-ride its
                 --     repo's stack (the old repo_tech_stack fallback admitted any YAML in a
                 --     repo that used a JD tech anywhere). Code/other without evidence passes
-                --     to cosine. Chunk skills[] overlap always admits.
+                --     to cosine. Chunk skills[] overlap admits when the skills lane is
+                --     enabled ($9, prefilter.skillsLane — off in the enrichment A/B leg).
                 AND ($6::bool = false OR cardinality($7::text[]) = 0
-                     OR d.skills && $7::text[]
+                     OR ($9::bool AND d.skills && $7::text[])
                      OR (d.metadata ? 'file_tech_stack' AND d.metadata->'file_tech_stack' ?| $7::text[])
                      OR (NOT (d.metadata ? 'file_tech_stack')
                          AND d.file_path !~* '\\.(ya?ml|json|toml|lock|cfg|ini|env|tf|tfvars)$'))
@@ -543,6 +543,7 @@ export class RdsVectorStore implements IVectorStore {
                 applySoft,
                 [...new Set([...skills, ...tech])],
                 excludeIds.length > 0 ? excludeIds : null,
+                skillsLane,
             ],
         );
         return result.rows.map((row) => this.mapSimilarityRow(row));

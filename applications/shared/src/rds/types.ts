@@ -165,6 +165,14 @@ export interface RetrievalPrefilter {
     readonly tech: readonly string[];
     /** Minimum survivors before the soft tech/skill filter is topped-up from the hard-gated set. */
     readonly minResults?: number;
+    /**
+     * When false, the LLM-enriched `d.skills && query terms` admitter inside the
+     * soft widener is skipped, leaving only the deterministic lanes
+     * (file_tech_stack overlap, non-config-path fail-open). Default true.
+     * Exists for the enrichment-value A/B: retrieval as it would behave if
+     * chunk enrichment were retired.
+     */
+    readonly skillsLane?: boolean;
 }
 
 // =============================================================================
