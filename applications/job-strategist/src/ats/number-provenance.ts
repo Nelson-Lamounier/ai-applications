@@ -162,21 +162,34 @@ function matchPhraseCovering(region: string, targetRel: number): RegExpExecArray
  * GUARANTEE: no number outside `allowed` survives in any scrubbed field.
  * Pure + deterministic.
  */
+/**
+ * Runtime view of an LLM-rewritten resume. The declared StructuredResumeData
+ * type promises these fields are strings, but rewritten resumes arrive through
+ * tool schemas that under-specify item shapes, so at runtime any text field
+ * can be absent (run 850b81d0 crashed on a keyAchievements entry without an
+ * `achievement` string). The guard reads through this honest view.
+ */
+interface DriftedResumeView {
+    readonly summary?: unknown;
+    readonly experience?: ReadonlyArray<{ readonly highlights?: ReadonlyArray<unknown> }>;
+    readonly keyAchievements?: ReadonlyArray<{ readonly achievement?: unknown }>;
+}
+
 export function stripUngroundedNumbers(resume: StructuredResumeData, allowed: Set<number>): StructuredResumeData {
-    // TOTAL over LLM shape drift: rewritten resumes arrive through tool
-    // schemas that under-specify item shapes (run 850b81d0 crashed here on a
-    // keyAchievements entry without an `achievement` string). Scrub what is a
-    // string, pass through what is not — a guard must never fail the pipeline.
-    const scrub = (v: string): string => (typeof v === 'string' ? scrubText(v, allowed) : v);
+    // TOTAL over LLM shape drift: scrub what is a string, pass through what
+    // is not — a guard must never fail the pipeline it protects.
+    const view = resume as unknown as DriftedResumeView;
+    const scrub = (v: unknown): unknown => (typeof v === 'string' ? scrubText(v, allowed) : v);
     return {
         ...resume,
-        summary: scrub(resume.summary),
-        experience: (resume.experience ?? []).map((exp) => ({
+        summary: scrub(view.summary) as string,
+        experience: (view.experience ?? []).map((exp) => ({
             ...exp,
             highlights: (exp.highlights ?? []).map(scrub),
-        })),
-        keyAchievements: (resume.keyAchievements ?? []).map((a) => (
-            typeof a?.achievement === 'string' ? { ...a, achievement: scrubText(a.achievement, allowed) } : a
-        )),
+        })) as StructuredResumeData['experience'],
+        keyAchievements: (view.keyAchievements ?? []).map((a) => ({
+            ...a,
+            achievement: scrub(a.achievement),
+        })) as StructuredResumeData['keyAchievements'],
     };
 }
