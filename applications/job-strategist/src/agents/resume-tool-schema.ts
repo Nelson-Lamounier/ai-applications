@@ -55,7 +55,10 @@ export const ResumeRewriteSchema = z.object({
     education: z.array(EducationSchema),
     certifications: z.array(z.object({}).passthrough()),
     projects: z.array(z.object({}).passthrough()),
-    keyAchievements: z.array(z.object({}).passthrough()),
+    // keyAchievements items MUST carry the achievement string — the
+    // number-provenance guard scrubs it, and an unshaped item let the
+    // resume-expand model emit `{title}`-only entries (run 850b81d0).
+    keyAchievements: z.array(z.object({ achievement: z.string() }).passthrough()),
     sectionOrder: z.array(z.string()).optional(),
 });
 
@@ -101,7 +104,14 @@ export const RESUME_EMIT_INPUT_SCHEMA = {
         },
         certifications: { type: 'array', items: { type: 'object' } },
         projects: { type: 'array', items: { type: 'object' } },
-        keyAchievements: { type: 'array', items: { type: 'object' } },
+        keyAchievements: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: { achievement: { type: 'string' } },
+                required: ['achievement'],
+            },
+        },
         sectionOrder: { type: 'array', items: { type: 'string' } },
     },
     required: ['profile', 'summary', 'experience', 'skills', 'education', 'certifications', 'projects', 'keyAchievements'],
