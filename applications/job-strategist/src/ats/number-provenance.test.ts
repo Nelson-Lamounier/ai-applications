@@ -107,3 +107,36 @@ describe('stripUngroundedNumbers', () => {
         expect(h).not.toMatch(/^by |^of |^to |^with /i);
     });
 });
+
+describe('stripUngroundedNumbers — LLM shape drift (run 850b81d0 regression)', () => {
+    // The resume-expand tool schema leaves keyAchievements items unshaped and
+    // ResumeRewriteSchema passthroughs them, so the model can emit entries
+    // without an `achievement` string. The deterministic guard must be TOTAL:
+    // scrub what is a string, pass through what is not — never crash the run.
+    it('tolerates a keyAchievements entry without an achievement string', () => {
+        const r = resume({
+            keyAchievements: [
+                { title: 'Cost saver' } as unknown as StructuredResumeData['keyAchievements'][number],
+                { achievement: 'Cut spend 90% across 4 systems' },
+            ],
+        });
+        const out = stripUngroundedNumbers(r, new Set([4]));
+        expect(out.keyAchievements[0]).toEqual({ title: 'Cost saver' });
+        expect(out.keyAchievements[1].achievement).not.toContain('90');
+        expect(out.keyAchievements[1].achievement).toContain('4');
+    });
+
+    it('tolerates undefined summary and non-string highlight entries', () => {
+        const r = resume({
+            summary: undefined as unknown as string,
+            experience: [{
+                company: 'Acme', title: 'Engineer', period: '2020-2024',
+                highlights: ['Shipped 7 services', undefined] as unknown as string[],
+            }],
+        });
+        const out = stripUngroundedNumbers(r, new Set<number>());
+        expect(out.summary).toBeUndefined();
+        expect(out.experience[0].highlights[0]).not.toContain('7');
+        expect(out.experience[0].highlights[1]).toBeUndefined();
+    });
+});
