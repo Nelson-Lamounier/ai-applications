@@ -19,9 +19,19 @@ export type GapCause = 'kb_present_not_retrieved' | 'kb_no_evidence';
 export type SkillGapWithCause = SkillGap & { readonly gapCause: GapCause };
 
 /**
+ * fileClass lanes whose lexical hits are noise, not evidence: a skill name
+ * appearing only in config values or data fixtures does not indicate the
+ * user practised it (the retrieval weights already down-rank these lanes).
+ * Excluding them keeps the corrective-retrieval pass from chasing ghosts.
+ * Unstamped chunks (no fileClass, pre-restamp) fail open and still count.
+ */
+export const NOISE_FILE_CLASSES = ['config', 'data'] as const;
+
+/**
  * Classify every gap in one round-trip using the generated `content_tsv`
  * full-text column (multi-word skills like "Google Cloud Platform" match as
- * a phrase-agnostic AND, which ILIKE cannot do).
+ * a phrase-agnostic AND, which ILIKE cannot do). Presence is scoped to
+ * evidence-bearing fileClass lanes — see NOISE_FILE_CLASSES.
  */
 export async function classifyGapCauses(
     pool: Pool,
@@ -35,10 +45,11 @@ export async function classifyGapCauses(
                 EXISTS (
                     SELECT 1 FROM document_embeddings de
                     WHERE de.user_id = $1
+                      AND COALESCE(de.metadata->>'fileClass', '') <> ALL($3::text[])
                       AND de.content_tsv @@ plainto_tsquery('english', s.skill)
                 ) AS present
          FROM unnest($2::text[]) AS s(skill)`,
-        [userId, [...skills]],
+        [userId, [...skills], [...NOISE_FILE_CLASSES]],
     );
     for (const row of res.rows) {
         causes.set(row.skill, row.present ? 'kb_present_not_retrieved' : 'kb_no_evidence');

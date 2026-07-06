@@ -30,6 +30,18 @@ describe('classifyGapCauses', () => {
         expect(causes.size).toBe(0);
         expect((pool as unknown as { query: jest.Mock }).query).not.toHaveBeenCalled();
     });
+
+    it('scopes tsv presence to evidence lanes: config/data hits are excluded, unstamped chunks fail open', async () => {
+        const pool = poolWithPresence({ Angular: true });
+        await classifyGapCauses(pool, 'u1', ['Angular']);
+        const [sql, params] = (pool as unknown as { query: jest.Mock }).query.mock.calls[0] as [string, unknown[]];
+        // The lexical check must not count noise lanes (a skill name in a config
+        // value or data fixture is not practised evidence)…
+        expect(sql).toMatch(/COALESCE\(de\.metadata->>'fileClass', ''\) <> ALL\(\$3::text\[\]\)/);
+        expect(params[2]).toEqual(['config', 'data']);
+        // …while COALESCE('') keeps unstamped (pre-restamp) chunks counting.
+        expect(sql).toContain("COALESCE(de.metadata->>'fileClass', '')");
+    });
 });
 
 describe('annotateGapCauses', () => {
