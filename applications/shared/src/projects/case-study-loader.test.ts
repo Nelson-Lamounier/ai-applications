@@ -52,8 +52,11 @@ function makePool(canned: {
         [(s) => /FROM user_profile_rollup/.test(s), () => canned.rollup ?? []],
         [(s) => /UPDATE projects/.test(s), () => []],
     ];
+    const seen: string[] = [];
     return {
+        seen,
         async query(sql: string): Promise<QueryResult> {
+            seen.push(sql);
             const route = routes.find(([match]) => match(sql));
             if (!route) throw new Error(`unexpected SQL: ${sql}`);
             return { rows: route[1]() };
@@ -284,5 +287,40 @@ describe('loadCaseStudyContext — difficulty signals (challenge recency fix)', 
         });
         const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
         expect(out.context.difficultySignals ?? null).toBeNull();
+    });
+});
+
+describe('loadCaseStudyContext — multi-repo evidence fairness', () => {
+    it('interleaves commits per repo so one busy repo cannot monopolise the packer cap', async () => {
+        const pool = makePool({
+            projects: [projectRow], repositories: [repoRow], embeddings: [], commits: [], pulls: [],
+        });
+        await loadCaseStudyContext(pool as never, 'proj-uuid');
+        const commitsSql = pool.seen.find((s) => /FROM repo_commits\b/.test(s) && /author_name/.test(s));
+        expect(commitsSql).toMatch(/ROW_NUMBER\(\) OVER \(PARTITION BY repo_full_name ORDER BY authored_at DESC\)/);
+        expect(commitsSql).toMatch(/ORDER BY rn, authored_at DESC/);
+    });
+
+    it('scopes difficulty areas per repo and caps each repo share', async () => {
+        const pool = makePool({
+            projects: [projectRow], repositories: [repoRow], embeddings: [], commits: [], pulls: [],
+        });
+        await loadCaseStudyContext(pool as never, 'proj-uuid');
+        const diffSql = pool.seen.find((s) => /JOIN repo_commits/.test(s));
+        // Area labels carry the repo so `.github/workflows` in four repos never
+        // merges into one fake battle; each repo holds at most 3 of the 8 slots.
+        expect(diffSql).toMatch(/split_part\(.*repo.*'\/'.*2\)/);
+        expect(diffSql).toMatch(/PARTITION BY repo/);
+        expect(diffSql).toMatch(/rpr <= 3/);
+    });
+
+    it('caps KB chunks per repo so relevance ranking cannot starve member repos', async () => {
+        const pool = makePool({
+            projects: [projectRow], repositories: [repoRow], embeddings: [], commits: [], pulls: [],
+        });
+        await loadCaseStudyContext(pool as never, 'proj-uuid');
+        const kbSql = pool.seen.find((s) => /content_tsv/.test(s) && /LIMIT/.test(s));
+        expect(kbSql).toMatch(/PARTITION BY .*repo_full_name/);
+        expect(kbSql).toMatch(/rpr <= 12/);
     });
 });

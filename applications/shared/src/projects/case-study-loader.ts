@@ -236,27 +236,41 @@ async function loadDifficultySignals(
     userId: string,
     repoNames: string[],
 ): Promise<Pick<CaseStudyContext, 'difficultySignals'>> {
+    // Areas are repo-scoped ('tucaken-app:src/features') so a path that exists
+    // in several member repos ('.github/workflows', 'docs') never merges into
+    // one fake battle, and each repo holds at most 3 of the capped slots so a
+    // fix-noisy repo cannot monopolise the map.
     const areas = (await pool.query<DifficultyAreaRow>(
-        `SELECT area,
-                count(DISTINCT sha) FILTER (WHERE is_fix) AS fix_commits,
-                count(DISTINCT sha)                        AS total_commits,
-                min(authored_at)                           AS first_at,
-                max(authored_at)                           AS last_at
+        `SELECT area, fix_commits, total_commits, first_at, last_at
            FROM (
-             SELECT array_to_string((string_to_array(f.file_path, '/'))[1:2], '/') AS area,
-                    c.sha, c.authored_at,
-                    c.message ~* '\\y(fix|bug|hotfix|revert)' AS is_fix
-               FROM repo_commit_files f
-               JOIN repo_commits c
-                 ON c.user_id = f.user_id
-                AND c.repo_full_name = f.repo_full_name
-                AND c.sha = f.commit_sha
-              WHERE f.user_id = $1
-                AND f.repo_full_name = ANY($2::text[])
-                AND f.file_path NOT IN ('yarn.lock', 'package-lock.json', 'pnpm-lock.yaml')
-           ) t
-          GROUP BY area
-         HAVING count(DISTINCT sha) FILTER (WHERE is_fix) > 0
+             SELECT split_part(repo, '/', 2) || ':' || area AS area,
+                    fix_commits, total_commits, first_at, last_at,
+                    ROW_NUMBER() OVER (PARTITION BY repo ORDER BY fix_commits DESC, total_commits DESC) AS rpr
+               FROM (
+                 SELECT repo, area,
+                        count(DISTINCT sha) FILTER (WHERE is_fix) AS fix_commits,
+                        count(DISTINCT sha)                        AS total_commits,
+                        min(authored_at)                           AS first_at,
+                        max(authored_at)                           AS last_at
+                   FROM (
+                     SELECT f.repo_full_name AS repo,
+                            array_to_string((string_to_array(f.file_path, '/'))[1:2], '/') AS area,
+                            c.sha, c.authored_at,
+                            c.message ~* '\\y(fix|bug|hotfix|revert)' AS is_fix
+                       FROM repo_commit_files f
+                       JOIN repo_commits c
+                         ON c.user_id = f.user_id
+                        AND c.repo_full_name = f.repo_full_name
+                        AND c.sha = f.commit_sha
+                      WHERE f.user_id = $1
+                        AND f.repo_full_name = ANY($2::text[])
+                        AND f.file_path NOT IN ('yarn.lock', 'package-lock.json', 'pnpm-lock.yaml')
+                   ) t
+                  GROUP BY repo, area
+                 HAVING count(DISTINCT sha) FILTER (WHERE is_fix) > 0
+               ) g
+           ) ranked
+          WHERE rpr <= 3
           ORDER BY fix_commits DESC, total_commits DESC
           LIMIT $3`,
         [userId, repoNames, DIFFICULTY_AREA_CAP],
@@ -391,22 +405,37 @@ async function selectKbChunks(
     repoNames: string[],
     terms: string,
 ): Promise<KbRow[]> {
+    // Rank columns are computed once, reused for the per-repo window and the
+    // final order. rpr <= 12 stops one member repo's docs from taking every
+    // slot of a multi-repo project's 24-chunk budget.
     const result = await pool.query<KbRow>(
-        `SELECT
-            de.repo_full_name AS repo_full_name,
-            de.file_path      AS file_path,
-            'document'        AS chunk_type,
-            de.content        AS content
-         FROM document_embeddings de
-         WHERE de.user_id::text = $1::text
-           AND de.repo_full_name = ANY($2::text[])
-           AND lower(de.file_path) NOT IN ('readme.md', 'readme')
-         ORDER BY
-            CASE WHEN $4 <> '' AND de.content_tsv @@ to_tsquery('english', $4) THEN 0 ELSE 1 END,
-            CASE WHEN de.metadata->>'fileClass' IN ('docs', 'history') THEN 0 ELSE 1 END,
-            CASE WHEN $4 <> '' THEN ts_rank_cd(de.content_tsv, to_tsquery('english', $4)) ELSE 0 END DESC,
-            de.last_synced_at DESC
-         LIMIT $3`,
+        `SELECT repo_full_name, file_path, chunk_type, content
+           FROM (
+             SELECT
+                de.repo_full_name AS repo_full_name,
+                de.file_path      AS file_path,
+                'document'        AS chunk_type,
+                de.content        AS content,
+                CASE WHEN $4 <> '' AND de.content_tsv @@ to_tsquery('english', $4) THEN 0 ELSE 1 END AS relevance_bucket,
+                CASE WHEN de.metadata->>'fileClass' IN ('docs', 'history') THEN 0 ELSE 1 END AS lane_bucket,
+                CASE WHEN $4 <> '' THEN ts_rank_cd(de.content_tsv, to_tsquery('english', $4)) ELSE 0 END AS rank_score,
+                de.last_synced_at AS last_synced_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY de.repo_full_name
+                    ORDER BY
+                        CASE WHEN $4 <> '' AND de.content_tsv @@ to_tsquery('english', $4) THEN 0 ELSE 1 END,
+                        CASE WHEN de.metadata->>'fileClass' IN ('docs', 'history') THEN 0 ELSE 1 END,
+                        CASE WHEN $4 <> '' THEN ts_rank_cd(de.content_tsv, to_tsquery('english', $4)) ELSE 0 END DESC,
+                        de.last_synced_at DESC
+                ) AS rpr
+             FROM document_embeddings de
+             WHERE de.user_id::text = $1::text
+               AND de.repo_full_name = ANY($2::text[])
+               AND lower(de.file_path) NOT IN ('readme.md', 'readme')
+           ) ranked
+          WHERE rpr <= 12
+          ORDER BY relevance_bucket, lane_bucket, rank_score DESC, last_synced_at DESC
+          LIMIT $3`,
         [userId, repoNames, KB_CHUNK_CAP, terms],
     );
     return result.rows;
@@ -496,12 +525,20 @@ export async function loadCaseStudyContext(
     );
 
     // Commit evidence now lives in RDS (`repo_commits`, populated by
-    // ingestion). Newest first across all member repos.
+    // ingestion). Fair-share interleave: newest-first WITHIN each repo,
+    // round-robin ACROSS repos — the packer keeps the first ~150, and a
+    // globally-newest-first order let one busy repo starve the other members
+    // of a multi-repo project of citable evidence. Single-repo projects get
+    // the identical newest-first order they always had.
     const commitRows = (await pool.query<{ repo_full_name: string; sha: string; author_name: string; author_login: string | null; authored_at: Date | string; message: string }>(
         `SELECT repo_full_name, sha, author_name, author_login, authored_at, message
-           FROM repo_commits
-          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
-          ORDER BY authored_at DESC`,
+           FROM (
+             SELECT repo_full_name, sha, author_name, author_login, authored_at, message,
+                    ROW_NUMBER() OVER (PARTITION BY repo_full_name ORDER BY authored_at DESC) AS rn
+               FROM repo_commits
+              WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
+           ) t
+          ORDER BY rn, authored_at DESC`,
         [p.user_id, repoNames],
     )).rows;
     const commits = commitRows.map((r) => ({
