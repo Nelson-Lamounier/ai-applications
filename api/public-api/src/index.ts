@@ -12,6 +12,7 @@
  *   - Chatbot route    → POST /api/chatbot/invoke
  *   - GitHub webhook   → POST /api/github-webhook
  *   - Projects routes  → GET /api/projects[/:slug] (portfolio owner), GET /public/projects/:username/:slug (share)
+ *   - Article images   → GET /api/articles/images/:file (streams from the article-assets S3 bucket)
  *
  * ## Credential Chain
  *
@@ -40,6 +41,7 @@ import resumes from './routes/resumes.js';
 import githubWebhook from './routes/github-webhook.js';
 import projects from './routes/projects.js';
 import metrics from './routes/metrics.js';
+import articleImages from './routes/article-images.js';
 
 const cfg = loadConfig();
 
@@ -81,6 +83,7 @@ app.route('/', tags);
 app.route('/', resumes);
 app.route('/', githubWebhook);
 app.route('/', projects);
+app.route('/', articleImages);
 
 // ---------------------------------------------------------------------------
 // 404 fallback

@@ -6613,6 +6613,7 @@ __metadata:
   resolution: "@repo/public-api@workspace:api/public-api"
   dependencies:
     "@aws-sdk/client-kms": "npm:^3.1001.0"
+    "@aws-sdk/client-s3": "npm:^3.1001.0"
     "@aws-sdk/client-secrets-manager": "npm:^3.758.0"
     "@bedrock/shared": "workspace:*"
     "@hono/node-server": "npm:^1.14.1"

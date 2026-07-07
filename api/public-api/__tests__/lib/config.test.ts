@@ -48,6 +48,7 @@ describe('loadConfig()', () => {
     'BEDROCK_AUTH_API_URL',
     'OAUTH_TOKEN_KMS_KEY_ARN',
     'GITHUB_APP_SECRET_ARN',
+    'ARTICLE_ASSETS_BUCKET_NAME',
   ]));
 
   describe('happy path', () => {
@@ -109,6 +110,17 @@ describe('loadConfig()', () => {
     it('exposes the ARN on the returned Config when OAUTH_TOKEN_KMS_KEY_ARN is set', () => {
       const cfg = loadConfig();
       expect(cfg.oauthTokenKmsKeyArn).toBe('arn:aws:kms:eu-west-1:123456789012:key/12345678-1234-1234-1234-123456789012');
+    });
+
+    it('articleAssetsBucketName is undefined when ARTICLE_ASSETS_BUCKET_NAME is absent', () => {
+      const cfg = loadConfig();
+      expect(cfg.articleAssetsBucketName).toBeUndefined();
+    });
+
+    it('reads articleAssetsBucketName from ARTICLE_ASSETS_BUCKET_NAME', () => {
+      process.env['ARTICLE_ASSETS_BUCKET_NAME'] = 'article-assets-bucket';
+      const cfg = loadConfig();
+      expect(cfg.articleAssetsBucketName).toBe('article-assets-bucket');
     });
   });
 
