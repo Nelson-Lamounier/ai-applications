@@ -63,7 +63,7 @@ describe('QaAgent (forced tool_use)', () => {
 
     it('returns a validated QA result and clamps scores', async () => {
         mockSend.mockResolvedValueOnce(toolUseReply({ ...VALID_QA, overallScore: 130 }));
-        const result = await qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX);
+        const result = await qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX);
         expect(result.data.overallScore).toBe(100); // clamped
         expect(result.data.recommendation).toBe('publish');
         expect(result.data.dimensions.contentQuality.issues).toHaveLength(1);
@@ -73,7 +73,7 @@ describe('QaAgent (forced tool_use)', () => {
         const { ConverseCommand } = jest.requireMock('@aws-sdk/client-bedrock-runtime') as { ConverseCommand: jest.Mock };
         ConverseCommand.mockClear();
         mockSend.mockResolvedValueOnce(toolUseReply(VALID_QA));
-        await qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX);
+        await qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX);
         const sent = ConverseCommand.mock.calls.at(-1)?.[0] as any;
         expect(sent.toolConfig.toolChoice).toEqual({ tool: { name: 'emit_qa_result' } });
         expect(sent.toolConfig.tools[0].toolSpec.inputSchema.json.additionalProperties).toBe(false);
@@ -82,12 +82,12 @@ describe('QaAgent (forced tool_use)', () => {
 
     it('fails fast on an invalid recommendation enum', async () => {
         mockSend.mockResolvedValueOnce(toolUseReply({ ...VALID_QA, recommendation: 'maybe' }));
-        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX)).rejects.toThrow();
+        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX)).rejects.toThrow();
     });
 
     it('fails fast when the model injects an unknown field', async () => {
         mockSend.mockResolvedValueOnce(toolUseReply({ ...VALID_QA, injected: 'nope' }));
-        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX)).rejects.toThrow();
+        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX)).rejects.toThrow();
     });
 
     it('parses the securityDisclosure dimension', () => {
