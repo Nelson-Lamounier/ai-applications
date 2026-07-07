@@ -264,3 +264,35 @@ describe('persistCaseStudy — optional depthMarkers', () => {
         expect(calls.some((c) => /project_depth_markers/.test(c.sql))).toBe(false);
     });
 });
+
+describe('persistCaseStudy — order_index stability on reconcile', () => {
+    it('renumbers a surviving (already-present) row to its current payload position', async () => {
+        // makeClient returns rowCount 0 for the guarded INSERT — i.e. the row
+        // already exists from a prior run. The reconcile must then align its
+        // order_index with the current payload position, or kept rows collide
+        // with newly-inserted ones (observed live: two challenges at index 2).
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     {
+                ...emptyCaseStudy,
+                highlights: [{
+                    title:       'Launched the thing',
+                    description: 'Shipped it end to end.',
+                    sourceSignals: {
+                        commits: [], pulls: [], files: [],
+                        ungroundedClaims: [], grounding: 'NOT_VERIFIED',
+                    },
+                }],
+            },
+        });
+        const renumber = calls.find((c) =>
+            /UPDATE project_highlights\s+SET order_index/.test(c.sql));
+        expect(renumber).toBeDefined();
+        expect(renumber?.sql).toMatch(/order_index\s*<>\s*\$3/);
+    });
+});
