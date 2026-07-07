@@ -24,6 +24,32 @@ import type { Construct } from 'constructs';
 import { ApplicationInferenceProfile } from '../../constructs/observability/application-inference-profile';
 
 /**
+ * CORS rules shared by AssetsBucket and ArticleAssetsBucket — both allow
+ * browser-direct PUT (presigned URL) / GET / HEAD from the same set of
+ * Tucaken origins. Kept as a single source of truth so the two buckets
+ * cannot silently drift apart.
+ */
+const BUCKET_CORS_RULES: s3.CorsRule[] = [
+    {
+        allowedOrigins: [
+            'http://localhost:5001',
+            'https://tucaken.io',
+            'https://www.tucaken.io',
+            'https://tucaken.com',
+            'https://www.tucaken.com',
+        ],
+        allowedMethods: [
+            s3.HttpMethods.PUT,
+            s3.HttpMethods.GET,
+            s3.HttpMethods.HEAD,
+        ],
+        allowedHeaders: ['*'],
+        exposedHeaders: ['ETag'],
+        maxAge: 3000,
+    },
+];
+
+/**
  * Props for BedrockDataStack
  */
 export interface BedrockDataStackProps extends cdk.StackProps {
@@ -174,25 +200,7 @@ export class BedrockDataStack extends cdk.Stack {
             autoDeleteObjects: removalPolicy === cdk.RemovalPolicy.DESTROY,
             serverAccessLogsBucket: this.accessLogsBucket,
             serverAccessLogsPrefix: 'assets-bucket/',
-            cors: [
-                {
-                    allowedOrigins: [
-                        'http://localhost:5001',
-                        'https://tucaken.io',
-                        'https://www.tucaken.io',
-                        'https://tucaken.com',
-                        'https://www.tucaken.com',
-                    ],
-                    allowedMethods: [
-                        s3.HttpMethods.PUT,
-                        s3.HttpMethods.GET,
-                        s3.HttpMethods.HEAD,
-                    ],
-                    allowedHeaders: ['*'],
-                    exposedHeaders: ['ETag'],
-                    maxAge: 3000,
-                },
-            ],
+            cors: BUCKET_CORS_RULES,
         });
 
         // =================================================================
@@ -211,25 +219,7 @@ export class BedrockDataStack extends cdk.Stack {
             autoDeleteObjects: removalPolicy === cdk.RemovalPolicy.DESTROY,
             serverAccessLogsBucket: this.accessLogsBucket,
             serverAccessLogsPrefix: 'article-assets-bucket/',
-            cors: [
-                {
-                    allowedOrigins: [
-                        'http://localhost:5001',
-                        'https://tucaken.io',
-                        'https://www.tucaken.io',
-                        'https://tucaken.com',
-                        'https://www.tucaken.com',
-                    ],
-                    allowedMethods: [
-                        s3.HttpMethods.PUT,
-                        s3.HttpMethods.GET,
-                        s3.HttpMethods.HEAD,
-                    ],
-                    allowedHeaders: ['*'],
-                    exposedHeaders: ['ETag'],
-                    maxAge: 3000,
-                },
-            ],
+            cors: BUCKET_CORS_RULES,
         });
 
         const articleAdminRole = iam.Role.fromRoleName(
