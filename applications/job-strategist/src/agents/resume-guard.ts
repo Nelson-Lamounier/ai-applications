@@ -1,4 +1,5 @@
 /** @format */
+import { CLAIM_STRENGTH_RULE } from '../lib/claim-strength.js';
 import { runAgent, log, normalizeProse } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.js';
@@ -807,6 +808,7 @@ export async function rewriteResume(
         'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
         'NEVER remove an entire experience role — every role in the input resume must appear in the output, even when trimming.',
         'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
+        CLAIM_STRENGTH_RULE,
     ].join('\n');
 
     const config: AgentConfig = {

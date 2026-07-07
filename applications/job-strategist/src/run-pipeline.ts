@@ -26,7 +26,7 @@ import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock, loadProjectLaneIndex } from './agents/project-evidence-block.js';
 import { loadAchievementEvidence } from './agents/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
-import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
+import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/career-history.js';
 import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js';
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
@@ -61,12 +61,43 @@ import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, p
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { stripDocumentSections } from './lib/strip-document-sections.js';
+import { ensureSummaryIntegrity } from './lib/summary-integrity.js';
+import { preserveResumeFields } from './lib/preserve-resume-fields.js';
 
 /**
  * GROUNDED echoes the verifier's (document-stripped) answer back — keep the
  * full original analysis; only a NOT_GROUNDED fallback substitution replaces
  * it. Extracted from main() to keep its complexity at the baseline.
  */
+/**
+ * Post-chain resume integrity: restore fields a lossy rewrite dropped
+ * (projects[].github, observed live) and pass the summary through the
+ * lint + bounded-repair gate. Fail-open; never throws; null-safe so the
+ * call sites add no branching to main().
+ */
+async function applyResumeIntegrity(
+    resume: StructuredResumeData,
+    writerOriginal: StructuredResumeData | null,
+    allowed: Set<number>,
+    onViolation: (code: string) => void,
+): Promise<StructuredResumeData> {
+    const restored = preserveResumeFields(writerOriginal, resume);
+    try {
+        const view = restored as unknown as { summary?: unknown };
+        if (typeof view.summary !== 'string' || view.summary.length === 0) return restored;
+        const originalSummary = (writerOriginal as unknown as { summary?: unknown } | null)?.summary;
+        const gate = await ensureSummaryIntegrity(view.summary, {
+            originalSummary: typeof originalSummary === 'string' ? originalSummary : null,
+            allowed,
+        });
+        for (const i of gate.issues) onViolation(i.code);
+        if (gate.action !== 'clean') onViolation(`summary_${gate.action}`);
+        return { ...restored, summary: gate.summary } as StructuredResumeData;
+    } catch {
+        return restored;
+    }
+}
+
 function resolveVerifiedAnalysis(original: string, g: { status: string; answer: string }): string {
     return g.status === 'GROUNDED' ? original : g.answer;
 }
@@ -911,6 +942,10 @@ export async function main(): Promise<void> {
         const budgetGroundingFacts = [
             experienceFactsBlock,
             projectEvidenceBlock,
+            // Server-computed years figure: without it the allowed-number set
+            // has no years value and the stripper deletes "N years" from the
+            // summary mid-sentence (observed live on run a428bdf4).
+            formatVerifiedYearsFact(careerEntries),
             researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
         ].filter(Boolean).join('\n\n');
         let finalResume = tailoredResumeData;
@@ -957,7 +992,7 @@ export async function main(): Promise<void> {
             // "Terraform" claim). One bounded repair, then report residuals.
             const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
             for (const v of revalidated.violations) resumeViolationsMetric.inc({ code: v.code });
-            finalResume = revalidated.resume;
+            finalResume = await applyResumeIntegrity(revalidated.resume, tailoredResumeData, allowedNumbers, (code) => resumeViolationsMetric.inc({ code }));
         }
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
@@ -1035,7 +1070,7 @@ export async function main(): Promise<void> {
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     for (const v of reval.violations) resumeViolationsMetric.inc({ code: v.code });
-                    surfaced = reval.resume;
+                    surfaced = await applyResumeIntegrity(reval.resume, tailoredResumeData, allowed, (code) => resumeViolationsMetric.inc({ code }));
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
                         applicationId:  env.applicationId,

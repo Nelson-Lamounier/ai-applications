@@ -64,3 +64,18 @@ describe('formatExperienceFacts', () => {
         expect(formatExperienceFacts([])).toBe('');
     });
 });
+
+describe('computeVerifiedYears — from career-history periods', () => {
+	it('sums distinct employment years across entries, honouring Present', async () => {
+		const { computeVerifiedYears } = await import('./career-history.js');
+		const years = computeVerifiedYears([
+			{ title: 'a', company: 'AWS', period: '2021 – 2024', highlights: [] },
+			{ title: 'b', company: 'Meta', period: '2019 - 2021', highlights: [] },
+		]);
+		expect(years).toBe(5);
+	});
+	it('returns null when no period parses', async () => {
+		const { computeVerifiedYears } = await import('./career-history.js');
+		expect(computeVerifiedYears([{ title: 'a', company: 'x', period: 'n/a', highlights: [] }])).toBeNull();
+	});
+});
