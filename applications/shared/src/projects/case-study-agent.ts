@@ -129,6 +129,16 @@ Rules:
      When any highlight cites a measurement, give its plain-English
      meaning before the number and metric name — "pages render in about
      0.13 seconds (132 ms LCP)", never an acronym-led bare figure.
+     Choose WHICH highlights to write by answering the questions a
+     hiring panel asks about a project like this, using the strongest
+     available evidence: what does it do and for whom? what makes it
+     distinctive (e.g. an AI capability)? how is it secured, and how
+     does it run and deploy in production? what proves engineering
+     discipline? Answer a question ONLY when the evidence supports it —
+     never emit a box-ticking claim ("hosted on the cloud") without
+     real work behind it. Routine facts a reader can find elsewhere
+     (language, database, protocol) belong in \`stack\` and
+     \`architecture\`, not in a highlight.
   7. \`resumeBullets\`: at most 3 sets — pick only the angles this
      project most strongly evidences. Bullets are past-tense, quantified
      where possible, never longer than 250 characters. Omit angles that
@@ -229,6 +239,15 @@ export function buildSystemPrompt(context: CaseStudyContext): string {
             'Still emit every section the evidence supports — calibration changes emphasis, never truthfulness. Omit any section you cannot ground.',
         ].filter(Boolean).join('\n');
         prompt = `${prompt}\n${block}`;
+    }
+    if (context.evidenceMix) {
+        const m = context.evidenceMix;
+        prompt = `${prompt}\n\nEvidence mix (measured from the ingested repository data): ` +
+            `application code ~${m.appPct}% vs infrastructure/IaC ~${m.infraPct}% of classified files. ` +
+            'When both lanes hold a meaningful share (roughly 20% or more each), balance the ' +
+            'highlights across them in about that proportion — one lane must not take every slot. ' +
+            'When one lane dominates, weight the highlights accordingly and do not invent work ' +
+            'in the minor lane.';
     }
     if (context.priorCaseStudy) prompt = `${prompt}\n${REFINE_PROMPT_BLOCK}`;
     return prompt;
