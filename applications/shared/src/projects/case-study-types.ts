@@ -205,6 +205,10 @@ export const ArchitectureSchema = z.object({
 export type Architecture = z.infer<typeof ArchitectureSchema>;
 
 export const CaseStudySchema = z.object({
+    // Recruiter-facing PRODUCT name — replaces repo-slug project names
+    // ("frontend-portfolio") on every surface. Optional so pre-rename cached
+    // artefacts keep validating; the tool schema requires it of the model.
+    displayName: z.string().min(1).max(80).optional(),
     tagline: z.string().min(1).max(200),
     pitch:   z.string().min(1).max(4000),
     stack:        z.array(StackItemSchema).max(40),

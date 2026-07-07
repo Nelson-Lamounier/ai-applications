@@ -101,7 +101,13 @@ Rules:
      <productContext> is supplied, infer the product's purpose from the
      repositories/components and README-style KB passages — still lead
      with what it does, not how it's built.
-  3. The \`tagline\` is a single sentence under 200 characters that says
+  3. \`displayName\` is the project's recruiter-facing PRODUCT name
+     (max 80 chars) — how its landing page would title it. NEVER a
+     repository name or slug: no kebab-case or snake_case identifiers
+     (a name like "frontend-portfolio" must become a real product name,
+     e.g. "Lami — AI-Assisted Portfolio"). A named feature may lead the
+     name when it is the differentiator.
+     The \`tagline\` is a single sentence under 200 characters that says
      what the product is and who it's for (not a tech-stack summary).
      The \`pitch\` is at most three short paragraphs: paragraph 1 = what
      it does + who it's for + the problem it solves (from productContext);
@@ -461,6 +467,7 @@ export const CASE_STUDY_TOOL = {
     inputSchema: {
         type: 'object',
         properties: {
+            displayName:   { type: 'string', minLength: 1, maxLength: 80 },
             tagline:       { type: 'string', minLength: 1, maxLength: 200 },
             pitch:         { type: 'string', minLength: 1, maxLength: 4000 },
             stack:         { type: 'array', maxItems: 40, items: STACK_ITEM_SCHEMA },
@@ -478,8 +485,8 @@ export const CASE_STUDY_TOOL = {
             },
         },
         required: [
-            'tagline', 'pitch', 'stack', 'decisions', 'highlights',
-            'challenges', 'architecture', 'resumeBullets',
+            'displayName', 'tagline', 'pitch', 'stack', 'decisions',
+            'highlights', 'challenges', 'architecture', 'resumeBullets',
         ],
         additionalProperties: false,
     },

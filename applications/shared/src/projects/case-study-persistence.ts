@@ -128,15 +128,20 @@ async function upsertProjectTopFields(
     client: PoolClient,
     input: PersistCaseStudyInput,
     overrides: StickyOverrides,
-): Promise<{ taglineUpdated: boolean; pitchUpdated: boolean }> {
+): Promise<{ taglineUpdated: boolean; pitchUpdated: boolean; nameUpdated: boolean }> {
     const cs = input.caseStudy;
     const updateTagline = !isSticky(overrides, 'tagline');
     const updatePitch   = !isSticky(overrides, 'pitch');
+    // The model's product name replaces repo-slug project names. Sticky
+    // 'name' (user renamed it themselves) always wins; absent displayName
+    // (pre-rename cached artefact) leaves the name untouched.
+    const updateName    = !isSticky(overrides, 'name') && Boolean(cs.displayName?.trim());
 
     await client.query(
         `UPDATE projects
             SET tagline = CASE WHEN $2 THEN $3 ELSE tagline END,
                 pitch   = CASE WHEN $4 THEN $5 ELSE pitch   END,
+                name    = CASE WHEN $11 THEN $12 ELSE name END,
                 case_study_status            = 'complete',
                 case_study_generated_at      = NOW(),
                 case_study_pipeline_run_id   = $6,
@@ -156,9 +161,10 @@ async function upsertProjectTopFields(
             input.inputHash,
             input.computedArchetype ?? null,
             input.computedStage ?? null,
+            updateName, cs.displayName ?? null,
         ],
     );
-    return { taglineUpdated: updateTagline, pitchUpdated: updatePitch };
+    return { taglineUpdated: updateTagline, pitchUpdated: updatePitch, nameUpdated: updateName };
 }
 
 /**
