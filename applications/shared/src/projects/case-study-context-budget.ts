@@ -37,11 +37,20 @@ export interface PackContextOptions {
     readonly maxKbChunkChars?: number;
     /** Max chars kept per PR body. Default 1200. */
     readonly maxPullBodyChars?: number;
+    /**
+     * Hard cap on commits BEFORE budget packing (newest-first, so the cap
+     * keeps the most recent). Commits are the bulk-noise lane — up to 500/repo
+     * × 800 chars from ingestion — and were measured filling most of the
+     * budget on the live frontend-portfolio project (84K→131K input tokens
+     * per regenerate). Default 150.
+     */
+    readonly maxCommits?: number;
 }
 
 const DEFAULT_COMMIT_MESSAGE_CHARS = 800;
 const DEFAULT_KB_CHUNK_CHARS = 2_400;
 const DEFAULT_PULL_BODY_CHARS = 1_200;
+const DEFAULT_MAX_COMMITS = 150;
 
 /** Estimate the token count of a string via the chars-per-token heuristic. */
 export function estimateTokens(text: string): number {
@@ -56,6 +65,19 @@ function clamp(text: string, max: number): string {
     return text.slice(0, Math.max(0, max - marker.length)) + marker;
 }
 
+/** Greedily keep items (in order) while their serialised cost fits the budget. */
+function takeWithinBudget<T>(items: readonly T[], budget: number): { kept: T[]; remaining: number } {
+    const kept: T[] = [];
+    let remaining = budget;
+    for (const item of items) {
+        const cost = estimateTokens(JSON.stringify(item));
+        if (cost > remaining) break;
+        kept.push(item);
+        remaining -= cost;
+    }
+    return { kept, remaining };
+}
+
 /**
  * Bound `context` to `opts.maxTokens` estimated tokens.
  *
@@ -67,9 +89,11 @@ export function packContext(context: CaseStudyContext, opts: PackContextOptions)
     const commitMsgCap = opts.maxCommitMessageChars ?? DEFAULT_COMMIT_MESSAGE_CHARS;
     const kbChunkCap   = opts.maxKbChunkChars ?? DEFAULT_KB_CHUNK_CHARS;
     const pullBodyCap  = opts.maxPullBodyChars ?? DEFAULT_PULL_BODY_CHARS;
+    const commitCap    = opts.maxCommits ?? DEFAULT_MAX_COMMITS;
 
-    // 1. Per-item truncation (does not change list lengths).
-    const commits = context.commits.map((c) => ({ ...c, message: clamp(c.message, commitMsgCap) }));
+    // 1. Per-item truncation (does not change list lengths) + the commit
+    //    pre-cap (loader sorts newest-first, so the cap keeps recent work).
+    const commits = context.commits.slice(0, commitCap).map((c) => ({ ...c, message: clamp(c.message, commitMsgCap) }));
     const pulls   = context.pulls.map((p) => ({ ...p, body: p.body == null ? p.body : clamp(p.body, pullBodyCap) }));
     const kbChunks = context.kbChunks.map((k) => ({ ...k, content: clamp(k.content, kbChunkCap) }));
 
@@ -82,37 +106,20 @@ export function packContext(context: CaseStudyContext, opts: PackContextOptions)
         kbChunks: [],
     };
     const skeletonTokens = estimateTokens(JSON.stringify(skeleton));
-    let remaining = opts.maxTokens - skeletonTokens;
 
-    // 3. Greedy fill in priority order: commits first (primary evidence),
-    //    then KB chunks, then PRs. Each item costs its serialised size.
-    const keptCommits: typeof commits = [];
-    const keptKb: typeof kbChunks = [];
-    const keptPulls: typeof pulls = [];
-
-    for (const c of commits) {
-        const cost = estimateTokens(JSON.stringify(c));
-        if (cost > remaining) break;
-        keptCommits.push(c);
-        remaining -= cost;
-    }
-    for (const k of kbChunks) {
-        const cost = estimateTokens(JSON.stringify(k));
-        if (cost > remaining) break;
-        keptKb.push(k);
-        remaining -= cost;
-    }
-    for (const p of pulls) {
-        const cost = estimateTokens(JSON.stringify(p));
-        if (cost > remaining) break;
-        keptPulls.push(p);
-        remaining -= cost;
-    }
+    // 3. Greedy fill in priority order: PRs FIRST (the system prompt calls
+    //    them the strongest form of evidence — under the old commits-first
+    //    order they were the first evidence silently dropped on commit-heavy
+    //    projects), then KB chunks (narrative context), then commits (bulk,
+    //    pre-capped above). Each item costs its serialised size.
+    const pullsFill   = takeWithinBudget(pulls, opts.maxTokens - skeletonTokens);
+    const kbFill      = takeWithinBudget(kbChunks, pullsFill.remaining);
+    const commitsFill = takeWithinBudget(commits, kbFill.remaining);
 
     return {
         ...context,
-        commits:  keptCommits,
-        kbChunks: keptKb,
-        pulls:    keptPulls,
+        commits:  commitsFill.kept,
+        kbChunks: kbFill.kept,
+        pulls:    pullsFill.kept,
     };
 }
