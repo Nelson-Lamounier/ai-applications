@@ -157,6 +157,7 @@ export { RdsSystemTourRepository } from './system-tour-persistence.js';
 export {
     runSystemTour,
     computeCaseStudyHash,
+    semanticTourCache,
 } from './system-tour-orchestrator.js';
 export type {
     RunSystemTourInput,

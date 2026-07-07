@@ -535,6 +535,7 @@ export {
     RdsSystemTourRepository,
     runSystemTour,
     computeCaseStudyHash,
+    semanticTourCache,
 } from './projects/index.js';
 export type {
     ProjectComponentKind,

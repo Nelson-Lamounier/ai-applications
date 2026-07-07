@@ -147,3 +147,49 @@ describe('runSystemTour — cache', () => {
         expect(repo.upsert).toHaveBeenCalledWith('u1', 'p1', tour, out.inputHash);
     });
 });
+
+describe('semanticTourCache — ISemanticCache adapter (P1.4 cost fix)', () => {
+    const opts = { userId: 'u1', projectId: 'p1', kbTag: 'dev:v1:sonnet' };
+
+    it('reads through with the scoped key and validates the hit', async () => {
+        const { semanticTourCache } = await import('./system-tour-orchestrator.js');
+        const get = jest.fn(async (_input: unknown) => ({ hit: true as const, response: tour, similarity: 1 }));
+        const sc = { get, put: jest.fn(async () => undefined), invalidate: jest.fn(async () => 0) };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const out = await semanticTourCache(sc as any, opts).get('abc123');
+        expect(out).toEqual(tour);
+        expect(get).toHaveBeenCalledWith({
+            scope: 'systemtour:u1:p1', kbTag: 'dev:v1:sonnet', queryText: 'abc123',
+        });
+    });
+
+    it('treats malformed payloads and cache errors as misses (fail-open)', async () => {
+        const { semanticTourCache } = await import('./system-tour-orchestrator.js');
+        const bad = {
+            get: async () => ({ hit: true as const, response: { nope: true }, similarity: 1 }),
+            put: async () => undefined, invalidate: async () => 0,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        expect(await semanticTourCache(bad as any, opts).get('h')).toBeNull();
+        const boom = {
+            get: async () => { throw new Error('redis down'); },
+            put: async () => { throw new Error('redis down'); },
+            invalidate: async () => 0,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const adapter = semanticTourCache(boom as any, opts);
+        expect(await adapter.get('h')).toBeNull();
+        await expect(adapter.set('h', tour)).resolves.toBeUndefined();
+    });
+
+    it('writes through with the same key shape', async () => {
+        const { semanticTourCache } = await import('./system-tour-orchestrator.js');
+        const put = jest.fn(async (_input: unknown) => undefined);
+        const sc = { get: async () => ({ hit: false as const }), put, invalidate: async () => 0 };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await semanticTourCache(sc as any, opts).set('abc123', tour);
+        expect(put).toHaveBeenCalledWith({
+            scope: 'systemtour:u1:p1', kbTag: 'dev:v1:sonnet', queryText: 'abc123', response: tour,
+        });
+    });
+});
