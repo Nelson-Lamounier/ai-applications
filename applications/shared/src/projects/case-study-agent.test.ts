@@ -139,3 +139,34 @@ describe('system prompt — highlight coverage + metric translation rules', () =
         expect(prompt).toMatch(/plain-English\s+meaning before the number/);
     });
 });
+
+describe('system prompt — evidence-mix balance block', () => {
+    it('states the app/infra mix and the balance instruction when the data holds both lanes', () => {
+        const prompt = buildSystemPrompt({
+            ...baseCtx,
+            evidenceMix: { appPct: 70, infraPct: 30, appFiles: 700, infraFiles: 300 },
+        });
+        expect(prompt).toMatch(/Evidence mix/);
+        expect(prompt).toMatch(/application code ~70%/);
+        expect(prompt).toMatch(/infrastructure\/IaC ~30%/);
+        expect(prompt).toMatch(/one lane must not take every slot/i);
+    });
+
+    it('omits the block entirely when the project is single-lane', () => {
+        expect(buildSystemPrompt(baseCtx)).not.toMatch(/Evidence mix/);
+        expect(buildSystemPrompt({ ...baseCtx, evidenceMix: null })).not.toMatch(/Evidence mix/);
+    });
+});
+
+describe('system prompt — question-led highlight selection', () => {
+    it("frames highlight selection as answering a hiring panel's questions, evidence-gated", () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        // \s+ — the prompt template hard-wraps prose across indented lines.
+        expect(prompt).toMatch(/questions a\s+hiring panel/i);
+        expect(prompt).toMatch(/what does it do/i);
+        expect(prompt).toMatch(/secured/i);
+        expect(prompt).toMatch(/box-ticking claim/i);
+        // Table-stakes facts must be routed to stack/architecture, not highlights.
+        expect(prompt).toMatch(/belong in `stack` and\s+`architecture`/);
+    });
+});

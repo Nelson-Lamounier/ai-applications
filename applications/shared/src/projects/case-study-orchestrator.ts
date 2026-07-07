@@ -150,6 +150,9 @@ export function computeInputHash(
     updateOptionalHash(h, 'stage:', c.stage);
     updateListHash(h, c.prioritySections ?? [], 'ps:');
     updateListHash(h, c.deemphasizedSections ?? [], 'ds:');
+    // Rounded-to-5 percentages (stable across small syncs), because the mix
+    // changes the system prompt's highlight-balance block.
+    updateOptionalHash(h, 'mix:', c.evidenceMix ? `${c.evidenceMix.appPct}/${c.evidenceMix.infraPct}` : undefined);
     return h.digest('hex');
 }
 

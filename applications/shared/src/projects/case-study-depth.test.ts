@@ -51,3 +51,25 @@ describe('deriveDepthMarkers', () => {
         expect(d).toMatchObject({ hasTests: true, testCoverageSignal: 'strong', hasCi: true, ciMaturity: 'multi_env', hasDeploymentEvidence: true });
     });
 });
+
+describe('deriveEvidenceMix', () => {
+    it('splits app (source+test) vs infra (iac+ci) lanes into rounded-to-5 percentages', async () => {
+        const { deriveEvidenceMix } = await import('./case-study-depth.js');
+        const mix = deriveEvidenceMix({ source: 141, test: 640, iac: 45, ci: 0, docs: 200, config: 30 });
+        // 781 app vs 45 infra = 94.6% → nearest 5 = 95/5. docs/config excluded.
+        expect(mix).toEqual({ appPct: 95, infraPct: 5, appFiles: 781, infraFiles: 45 });
+    });
+
+    it('returns null when either lane is empty (nothing to balance)', async () => {
+        const { deriveEvidenceMix } = await import('./case-study-depth.js');
+        expect(deriveEvidenceMix({ source: 100, test: 20 })).toBeNull();
+        expect(deriveEvidenceMix({ iac: 80 })).toBeNull();
+        expect(deriveEvidenceMix({})).toBeNull();
+    });
+
+    it('reflects an infra-dominant project (e.g. a Terraform/CDK repo)', async () => {
+        const { deriveEvidenceMix } = await import('./case-study-depth.js');
+        const mix = deriveEvidenceMix({ source: 30, iac: 270 });
+        expect(mix).toEqual({ appPct: 10, infraPct: 90, appFiles: 30, infraFiles: 270 });
+    });
+});

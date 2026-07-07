@@ -24,7 +24,7 @@ import { packContext } from './case-study-context-budget.js';
 import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectOntologyRepository.js';
 import { classifyArchetype } from './archetype-classifier.js';
 import { pickStage } from './derive-stage.js';
-import { deriveDepthMarkers } from './case-study-depth.js';
+import { deriveDepthMarkers, deriveEvidenceMix } from './case-study-depth.js';
 import { buildVerifiedStackMap } from './case-study-verified-stack.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
@@ -182,7 +182,7 @@ async function loadCodeGroundedEvidence(
     repoNames: string[],
     archetype: Record<string, boolean>,
     commits: ReadonlyArray<{ message: string }>,
-): Promise<Pick<CaseStudyContext, 'depthMarkers' | 'fileChangeEvidence'>> {
+): Promise<Pick<CaseStudyContext, 'depthMarkers' | 'fileChangeEvidence' | 'evidenceMix'>> {
     const laneRows = (await pool.query<{ fc: string; cnt: string }>(
         `SELECT de.metadata->>'fileClass' AS fc, count(*) AS cnt
            FROM document_embeddings de
@@ -197,6 +197,7 @@ async function loadCodeGroundedEvidence(
 
     const refactorCount = commits.filter((c) => /\brefactor/i.test(c.message)).length;
     const depthMarkers = deriveDepthMarkers({ laneCounts, archetype, refactorCount });
+    const evidenceMix = deriveEvidenceMix(laneCounts);
 
     const fileRows = (await pool.query<{ repo_full_name: string; file_path: string; additions: string; deletions: string; changes: string }>(
         `SELECT repo_full_name, file_path,
@@ -216,7 +217,7 @@ async function loadCodeGroundedEvidence(
         changes:      Number(r.changes),
     }));
 
-    return { depthMarkers, fileChangeEvidence };
+    return { depthMarkers, fileChangeEvidence, evidenceMix };
 }
 
 /**
@@ -479,7 +480,7 @@ export async function loadCaseStudyContext(
         htmlUrl:      r.html_url,
     }));
 
-    const { depthMarkers, fileChangeEvidence } = await loadCodeGroundedEvidence(
+    const { depthMarkers, fileChangeEvidence, evidenceMix } = await loadCodeGroundedEvidence(
         pool, p.user_id, repoNames, mergedSignals, commits,
     );
 
@@ -511,6 +512,7 @@ export async function loadCaseStudyContext(
         })),
         depthMarkers,
         fileChangeEvidence,
+        evidenceMix,
         verifiedStack,
     };
 

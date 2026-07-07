@@ -157,6 +157,14 @@ const DepthMarkersSchema = z.object({
 }).strict();
 export type DepthMarkers = z.infer<typeof DepthMarkersSchema>;
 
+/** App-vs-infra share of a project's classified files; see deriveEvidenceMix. */
+export interface EvidenceMix {
+    readonly appPct:     number;
+    readonly infraPct:   number;
+    readonly appFiles:   number;
+    readonly infraFiles: number;
+}
+
 export const ArchitectureSchema = z.object({
     diagramFormat: z.enum(['mermaid', 'svg']),
     diagramSource: z.string().min(1),
@@ -308,6 +316,12 @@ export interface CaseStudyContext {
     // OVERRIDES the model's depthMarkers with these so depth is measured, not
     // guessed. Absent → the model's own assessment stands.
     readonly depthMarkers?: DepthMarkers | null;
+    // Application-vs-infrastructure share of the project's classified files
+    // (source+test vs iac+ci fileClass lanes), percentages rounded to the
+    // nearest 5 so the value stays stable across small syncs. Drives the
+    // prompt's highlight-balance instruction AND is folded into the cache
+    // key. Null/absent when the evidence is single-lane — nothing to balance.
+    readonly evidenceMix?: EvidenceMix | null;
     // The most-changed files across member repos (from repo_commit_files diffs)
     // — real file-level evidence the agent can cite in sourceSignals.files for
     // challenges / highlights / decisions. Capped + newest-churn first.
