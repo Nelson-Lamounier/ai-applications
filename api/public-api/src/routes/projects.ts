@@ -117,7 +117,6 @@ interface ArchitectureRow {
     nodes:          unknown;
     edges:          unknown;
 }
-interface ResumeBulletRow { angle: string; bullets: string[] }
 interface TagRow { tag: string }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +133,7 @@ interface TagRow { tag: string }
 async function assembleCaseStudy(pool: Pool, project: ProjectRow, username: string | null) {
     const [
         components, repositories, decisions, highlights, challenges,
-        stack, depth, architecture, resumeBullets, tags,
+        stack, depth, architecture, tags,
     ] = await Promise.all([
         pool.query<ComponentRow>(
             `SELECT id, name, kind, order_index
@@ -181,11 +180,6 @@ async function assembleCaseStudy(pool: Pool, project: ProjectRow, username: stri
                FROM project_architecture WHERE project_id = $1`,
             [project.id],
         ),
-        pool.query<ResumeBulletRow>(
-            `SELECT angle, bullets
-               FROM project_resume_bullets WHERE project_id = $1`,
-            [project.id],
-        ),
         pool.query<TagRow>(
             `SELECT tag FROM project_tags WHERE project_id = $1 ORDER BY tag`,
             [project.id],
@@ -214,7 +208,10 @@ async function assembleCaseStudy(pool: Pool, project: ProjectRow, username: stri
         stack:          stack.rows,
         depthMarkers:   depth.rows[0] ?? null,
         architecture:   architecture.rows[0] ?? null,
-        resumeBullets:  resumeBullets.rows,
+        // Dashboard-only CV material — never served publicly. The key stays
+        // (as an empty array) so an older deployed UI reading
+        // `.resumeBullets.length` cannot crash on a missing field.
+        resumeBullets:  [],
         tags:           tags.rows.map((r) => r.tag),
     };
 }

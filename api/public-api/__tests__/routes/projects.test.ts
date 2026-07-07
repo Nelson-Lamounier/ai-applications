@@ -118,7 +118,6 @@ describe('GET /public/projects/:username/:slug', () => {
                 documentation_density: 'docs_dir', has_deployment_evidence: true, deployment_url: 'https://x.test', refactor_count: 3,
             }] })
             .mockResolvedValueOnce({ rows: [{ diagram_format: 'mermaid', diagram_source: 'graph LR\n A --> B', nodes: [], edges: [] }] })
-            .mockResolvedValueOnce({ rows: [{ angle: 'backend', bullets: ['Shipped X.'] }] })
             .mockResolvedValueOnce({ rows: [{ tag: 'rag' }, { tag: 'aws' }] });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         mockedGetPool.mockReturnValue({ query: queryMock } as any);
@@ -266,5 +265,34 @@ describe('GET /api/projects/:slug (owner-scoped detail)', () => {
         expect(body.slug).toBe('tucaken');
         expect(body.username).toBe('alice');
         expect(body.tags).toEqual([]);
+    });
+});
+
+describe('GET /public/projects/:username/:slug — resume bullets are private', () => {
+    it('serves an empty resumeBullets array and never queries the table', async () => {
+        const queryMock = jest.fn() as jest.Mock<(sql: string, params?: unknown[]) => Promise<{ rows: object[] }>>;
+        queryMock
+            .mockResolvedValueOnce({ rows: [PROJECT_ROW] })
+            .mockResolvedValueOnce({ rows: [] })  // components
+            .mockResolvedValueOnce({ rows: [] })  // repositories
+            .mockResolvedValueOnce({ rows: [] })  // decisions
+            .mockResolvedValueOnce({ rows: [] })  // highlights
+            .mockResolvedValueOnce({ rows: [] })  // challenges
+            .mockResolvedValueOnce({ rows: [] })  // stack
+            .mockResolvedValueOnce({ rows: [] })  // depth
+            .mockResolvedValueOnce({ rows: [] })  // architecture
+            .mockResolvedValueOnce({ rows: [] }); // tags
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockedGetPool.mockReturnValue({ query: queryMock } as any);
+
+        const res = await projectsRoute.request('/public/projects/alice/tucaken');
+        expect(res.status).toBe(200);
+        const body = await res.json() as Record<string, unknown>;
+        // Dashboard-only CV material: the public payload carries an empty
+        // array (key kept for old-UI compatibility) and the table is never
+        // read on the public path.
+        expect(body.resumeBullets).toEqual([]);
+        const sqls = queryMock.mock.calls.map((call) => String(call[0]));
+        expect(sqls.some((sql) => /project_resume_bullets/.test(sql))).toBe(false);
     });
 });
