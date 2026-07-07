@@ -50,10 +50,8 @@ describe('strategist-persona cover-letter JSON schema rules', () => {
     });
 });
 
-describe('strategist-persona output budget (writer latency)', () => {
-	it('carries hard brevity limits for the analysis prose', () => {
-		expect(joined).toMatch(/OUTPUT BUDGET/);
-		expect(joined).toMatch(/2 sentences/);
-		expect(joined).toMatch(/[Nn]o prose outside the XML/);
+describe('strategist-persona output budget — REVERTED, do not reintroduce', () => {
+	it('carries no OUTPUT BUDGET block (measured live run a8ffad34: the in-template comment DOUBLED writer output to 51,930 tokens and timed the pipeline out)', () => {
+		expect(joined).not.toMatch(/OUTPUT BUDGET/);
 	});
 });
