@@ -43,6 +43,7 @@ function makeContext(overrides: {
     archetype?: { id: string; name: string } | null;
     stage?: 'junior' | 'mid' | 'senior' | 'staff' | null;
     evidenceMix?: { appPct: number; infraPct: number; appFiles: number; infraFiles: number } | null;
+    difficultySignals?: CaseStudyContext['difficultySignals'];
 } = {}): LoadCaseStudyContextResult {
     // Destructuring defaults, not `??` chains — keeps the helper's cyclomatic
     // complexity flat as override knobs are added.
@@ -58,6 +59,7 @@ function makeContext(overrides: {
         archetype = null,
         stage = null,
         evidenceMix = null,
+        difficultySignals = null,
     } = overrides;
     const context: CaseStudyContext = {
         projectId:     'proj-1',
@@ -84,6 +86,7 @@ function makeContext(overrides: {
         archetype,
         stage,
         evidenceMix,
+        difficultySignals,
     };
     return { userId: 'user-1', context };
 }
@@ -430,5 +433,24 @@ describe('computeInputHash — evidence mix', () => {
         const absent = computeInputHash(makeContext());
         expect(balanced).not.toBe(infraHeavy);
         expect(balanced).not.toBe(absent);
+    });
+});
+
+describe('computeInputHash — difficulty signals', () => {
+    it('changes when the difficulty signals change (they change the prompt)', () => {
+        const withSignals = computeInputHash(makeContext({
+            difficultySignals: {
+                firstCommitMonth: '2025-11', lastCommitMonth: '2026-07', totalCommits: 405,
+                areas: [{ area: 'src/auth', fixCommits: 15, totalCommits: 40, firstMonth: '2026-01', lastMonth: '2026-06' }],
+            },
+        }));
+        const shifted = computeInputHash(makeContext({
+            difficultySignals: {
+                firstCommitMonth: '2025-11', lastCommitMonth: '2026-07', totalCommits: 405,
+                areas: [{ area: 'src/auth', fixCommits: 25, totalCommits: 50, firstMonth: '2026-01', lastMonth: '2026-07' }],
+            },
+        }));
+        expect(withSignals).not.toBe(shifted);
+        expect(withSignals).not.toBe(computeInputHash(makeContext()));
     });
 });

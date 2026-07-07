@@ -170,3 +170,47 @@ describe('system prompt — question-led highlight selection', () => {
         expect(prompt).toMatch(/belong in `stack` and\s+`architecture`/);
     });
 });
+
+describe('system prompt — challenge quality rules', () => {
+    it('selects defining difficulties across the whole history, capping debugging anecdotes', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/DEFINING\s+difficulties/);
+        expect(prompt).toMatch(/WHOLE\s+history/);
+        expect(prompt).toMatch(/At most 2/);
+        expect(prompt).toMatch(/single-incident\s+debugging/);
+    });
+
+    it('requires stakes-first problems and narrated, never transcribed, solutions', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/FIRST\s+sentence/);
+        expect(prompt).toMatch(/ONE\s+identifying\s+code\s+detail/);
+        expect(prompt).toMatch(/NEVER\s+transcribe\s+configuration/i);
+    });
+
+    it('explains difficultySignals as the measured map of the real battles', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/difficultySignals/);
+        expect(prompt).toMatch(/approximate/);
+    });
+});
+
+describe('buildUserMessage — difficultySignals block', () => {
+    const signals = {
+        firstCommitMonth: '2025-11',
+        lastCommitMonth:  '2026-07',
+        totalCommits:     405,
+        areas: [{ area: 'src/auth', fixCommits: 15, totalCommits: 40, firstMonth: '2026-01', lastMonth: '2026-06' }],
+    };
+
+    it('serialises the signals when present', () => {
+        const msg = buildUserMessage({ ...baseCtx, difficultySignals: signals });
+        expect(msg).toContain('<difficultySignals>');
+        expect(msg).toContain('src/auth');
+        expect(msg).toContain('2025-11');
+    });
+
+    it('omits the block when absent or null', () => {
+        expect(buildUserMessage(baseCtx)).not.toContain('<difficultySignals>');
+        expect(buildUserMessage({ ...baseCtx, difficultySignals: null })).not.toContain('<difficultySignals>');
+    });
+});

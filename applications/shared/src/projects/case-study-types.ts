@@ -165,6 +165,29 @@ export interface EvidenceMix {
     readonly infraFiles: number;
 }
 
+/** One fix-dense code area from the full commit history; counts are bucketed. */
+export interface DifficultyArea {
+    readonly area:         string;
+    readonly fixCommits:   number;
+    readonly totalCommits: number;
+    readonly firstMonth:   string;
+    readonly lastMonth:    string;
+}
+
+/**
+ * Measured "where the real battles were" map for challenge selection, derived
+ * from the WHOLE commit history (not the packed recency window); see
+ * deriveDifficultySignals. Counts bucketed to the nearest 5 and dates to
+ * months so the value — which feeds the prompt and the cache key — stays
+ * stable across small syncs.
+ */
+export interface DifficultySignals {
+    readonly firstCommitMonth: string;
+    readonly lastCommitMonth:  string;
+    readonly totalCommits:     number;
+    readonly areas:            readonly DifficultyArea[];
+}
+
 export const ArchitectureSchema = z.object({
     diagramFormat: z.enum(['mermaid', 'svg']),
     diagramSource: z.string().min(1),
@@ -322,6 +345,10 @@ export interface CaseStudyContext {
     // prompt's highlight-balance instruction AND is folded into the cache
     // key. Null/absent when the evidence is single-lane — nothing to balance.
     readonly evidenceMix?: EvidenceMix | null;
+    // Fix-density map over the FULL commit history — frees challenge selection
+    // from the packed window's recency bias. Null/absent when no fix-dense
+    // area exists.
+    readonly difficultySignals?: DifficultySignals | null;
     // The most-changed files across member repos (from repo_commit_files diffs)
     // — real file-level evidence the agent can cite in sourceSignals.files for
     // challenges / highlights / decisions. Capped + newest-churn first.

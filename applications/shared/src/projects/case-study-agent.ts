@@ -112,6 +112,24 @@ Rules:
   5. \`challenges\` answer "tell me about a hard problem you solved" —
      each is a problem / solution pair grounded in real commits or
      issues. At most 5.
+     Select the project's DEFINING difficulties across its WHOLE
+     history — an outage class eliminated, a migration survived, a
+     security or observability model built — not merely the most recent
+     bug-fixes. At most 2 of the 5 may be single-incident debugging
+     stories. When a <difficultySignals> block is supplied, it maps —
+     from the FULL commit history — the areas with the most sustained
+     fix activity and the project's overall active span; treat it as
+     the measured record of where the real battles were, prefer
+     challenges it supports, and treat its counts as approximate.
+     The problem's FIRST sentence states what was broken and what was
+     at risk in plain language a non-engineer can follow; technical
+     specifics come after.
+     Solutions narrate the engineering — the diagnosis, the decision
+     taken and why, the outcome — in the candidate's voice. Name at
+     most ONE identifying code detail (a flag, a function, a config
+     key) as evidence colour; NEVER transcribe configuration or code
+     from the commits — the receipts belong in \`sourceSignals\`, not
+     in the prose.
   6. \`highlights\` are 3–5 things a recruiter could point to in 5
      seconds: shipped features, scale numbers, public outcomes.
      A highlight or challenge TITLE must lead with the WORK or OUTCOME —
@@ -438,6 +456,43 @@ export const CASE_STUDY_TOOL = {
 
 // ─── User message ───────────────────────────────────────────────────────────
 
+/**
+ * Append the optional code-grounded evidence blocks to the user message.
+ * Extracted from buildUserMessage to keep its complexity bounded as
+ * evidence lanes are added.
+ */
+function appendEvidenceBlocks(lines: string[], ctx: CaseStudyContext): void {
+    // Real file-level change evidence (from ingested commit diffs). The agent may
+    // cite these paths in sourceSignals.files to ground challenges/highlights in
+    // WHAT changed, not just commit messages.
+    if (ctx.fileChangeEvidence && ctx.fileChangeEvidence.length > 0) {
+        lines.push(
+            '<fileChanges>',
+            JSON.stringify(ctx.fileChangeEvidence),
+            '</fileChanges>',
+        );
+    }
+    // Real code dependencies (technology_evidence: Syft/treesitter/IaC/Docker),
+    // each with its actual version + canonical purl. The stack must reflect
+    // these; do not invent a dependency that is absent here and unevidenced.
+    if (ctx.verifiedStack && ctx.verifiedStack.length > 0) {
+        lines.push(
+            '<verifiedStack>',
+            JSON.stringify(ctx.verifiedStack),
+            '</verifiedStack>',
+        );
+    }
+    // Fix-density map over the FULL commit history (~200 tokens) — lets the
+    // challenges section see battles that predate the packed recency window.
+    if (ctx.difficultySignals) {
+        lines.push(
+            '<difficultySignals>',
+            JSON.stringify(ctx.difficultySignals),
+            '</difficultySignals>',
+        );
+    }
+}
+
 export function buildUserMessage(ctx: CaseStudyContext): string {
     // Trim to the project envelope the model needs. We deliberately do not
     // forward `user_overrides` here — sticky-edit enforcement lives at the
@@ -468,26 +523,7 @@ export function buildUserMessage(ctx: CaseStudyContext): string {
         JSON.stringify(ctx.kbChunks),
         '</kbChunks>',
     );
-    // Real file-level change evidence (from ingested commit diffs). The agent may
-    // cite these paths in sourceSignals.files to ground challenges/highlights in
-    // WHAT changed, not just commit messages.
-    if (ctx.fileChangeEvidence && ctx.fileChangeEvidence.length > 0) {
-        lines.push(
-            '<fileChanges>',
-            JSON.stringify(ctx.fileChangeEvidence),
-            '</fileChanges>',
-        );
-    }
-    // Real code dependencies (technology_evidence: Syft/treesitter/IaC/Docker),
-    // each with its actual version + canonical purl. The stack must reflect
-    // these; do not invent a dependency that is absent here and unevidenced.
-    if (ctx.verifiedStack && ctx.verifiedStack.length > 0) {
-        lines.push(
-            '<verifiedStack>',
-            JSON.stringify(ctx.verifiedStack),
-            '</verifiedStack>',
-        );
-    }
+    appendEvidenceBlocks(lines, ctx);
     if (ctx.priorCaseStudy) {
         lines.push(
             '<priorCaseStudy>',

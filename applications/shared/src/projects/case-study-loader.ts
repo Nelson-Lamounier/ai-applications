@@ -24,7 +24,8 @@ import { packContext } from './case-study-context-budget.js';
 import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectOntologyRepository.js';
 import { classifyArchetype } from './archetype-classifier.js';
 import { pickStage } from './derive-stage.js';
-import { deriveDepthMarkers, deriveEvidenceMix } from './case-study-depth.js';
+import { deriveDepthMarkers, deriveDifficultySignals, deriveEvidenceMix } from './case-study-depth.js';
+import type { CommitSpanRow, DifficultyAreaRow } from './case-study-depth.js';
 import { buildVerifiedStackMap } from './case-study-verified-stack.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
@@ -218,6 +219,58 @@ async function loadCodeGroundedEvidence(
     }));
 
     return { depthMarkers, fileChangeEvidence, evidenceMix };
+}
+
+/** Areas with the most sustained fix activity, ranked by fix-commit count. */
+const DIFFICULTY_AREA_CAP = 8;
+
+/**
+ * Difficulty signals over the ENTIRE stored commit history — deliberately NOT
+ * limited to the packed recency window, so the challenges section can see
+ * battles from the project's early months. Two cheap aggregates (no LLM):
+ * per-area fix-commit density (area = first two path segments; lockfiles
+ * excluded) and the whole-repo commit span.
+ */
+async function loadDifficultySignals(
+    pool: Pool,
+    userId: string,
+    repoNames: string[],
+): Promise<Pick<CaseStudyContext, 'difficultySignals'>> {
+    const areas = (await pool.query<DifficultyAreaRow>(
+        `SELECT area,
+                count(DISTINCT sha) FILTER (WHERE is_fix) AS fix_commits,
+                count(DISTINCT sha)                        AS total_commits,
+                min(authored_at)                           AS first_at,
+                max(authored_at)                           AS last_at
+           FROM (
+             SELECT array_to_string((string_to_array(f.file_path, '/'))[1:2], '/') AS area,
+                    c.sha, c.authored_at,
+                    c.message ~* '\\y(fix|bug|hotfix|revert)' AS is_fix
+               FROM repo_commit_files f
+               JOIN repo_commits c
+                 ON c.user_id = f.user_id
+                AND c.repo_full_name = f.repo_full_name
+                AND c.sha = f.commit_sha
+              WHERE f.user_id = $1
+                AND f.repo_full_name = ANY($2::text[])
+                AND f.file_path NOT IN ('yarn.lock', 'package-lock.json', 'pnpm-lock.yaml')
+           ) t
+          GROUP BY area
+         HAVING count(DISTINCT sha) FILTER (WHERE is_fix) > 0
+          ORDER BY fix_commits DESC, total_commits DESC
+          LIMIT $3`,
+        [userId, repoNames, DIFFICULTY_AREA_CAP],
+    )).rows;
+    const spanRows = (await pool.query<CommitSpanRow>(
+        `SELECT min(authored_at) AS first_commit_at,
+                max(authored_at) AS last_commit_at,
+                count(*)         AS total
+           FROM repo_commits
+          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
+         HAVING count(*) > 0`,
+        [userId, repoNames],
+    )).rows;
+    return { difficultySignals: deriveDifficultySignals(areas, spanRows[0] ?? null) };
 }
 
 /**
@@ -483,6 +536,7 @@ export async function loadCaseStudyContext(
     const { depthMarkers, fileChangeEvidence, evidenceMix } = await loadCodeGroundedEvidence(
         pool, p.user_id, repoNames, mergedSignals, commits,
     );
+    const { difficultySignals } = await loadDifficultySignals(pool, p.user_id, repoNames);
 
     const verifiedStack = await loadVerifiedStack(pool, p.user_id, repoNames);
 
@@ -513,6 +567,7 @@ export async function loadCaseStudyContext(
         depthMarkers,
         fileChangeEvidence,
         evidenceMix,
+        difficultySignals,
         verifiedStack,
     };
 

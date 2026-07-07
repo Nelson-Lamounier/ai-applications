@@ -220,6 +220,18 @@ async function insertGenerated(
         `;
         const r = await client.query(insertSql, vals);
         inserted += r.rowCount ?? 0;
+        if ((r.rowCount ?? 0) === 0) {
+            // Row already exists from a prior run (unchanged content). Align
+            // its order_index with the current payload position — kept rows
+            // otherwise retain stale indices and collide with newly-inserted
+            // ones (observed live: two challenges sharing order_index 2).
+            await client.query(
+                `UPDATE ${table}
+                    SET order_index = $3
+                  WHERE project_id = $1 AND content_hash = $2 AND order_index <> $3`,
+                [input.projectId, hash, i],
+            );
+        }
     }
 
     // Prune superseded machine rows so the section reflects only the current run.
