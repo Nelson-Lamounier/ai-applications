@@ -55,3 +55,11 @@ describe('strategist-persona output budget — REVERTED, do not reintroduce', ()
 		expect(joined).not.toMatch(/OUTPUT BUDGET/);
 	});
 });
+
+describe('strategist-persona employment fidelity mandate', () => {
+	it('forbids inferring role content from employer name or industry', () => {
+		expect(joined).toMatch(/EMPLOYMENT FIDELITY/);
+		expect(joined).toMatch(/NEVER inventing/);
+		expect(joined).toMatch(/employer's name or industry/);
+	});
+});

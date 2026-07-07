@@ -777,6 +777,12 @@ function formatEmployerFacts(employers: ReadonlyArray<VerifiedEmployer>): string
 }
 
 /** Haiku rewrite that fixes ONLY the flagged issues. FAIL-OPEN: returns the input on error. */
+/** Rewrite instruction for experience_ungrounded, '' when no employer facts. */
+function experienceFidelityRule(ctx: ResumeGuardCtx): string {
+    if (!ctx.verifiedEmployers?.length) return '';
+    return `For experience_ungrounded: REBUILD that employer's bullets ONLY from its verified facts below - JD-aligned vocabulary is fine, new deeds/systems/domains are not: ${formatEmployerFacts(ctx.verifiedEmployers)}`;
+}
+
 export async function rewriteResume(
     resume: StructuredResumeData,
     violations: ResumeViolation[],
@@ -805,6 +811,7 @@ export async function rewriteResume(
         'For summary_describes_job: rewrite the flagged sentence in CANDIDATE voice — state what the candidate brings to this problem class, never what the role/employer needs. Delete "this role exists to…"/"they need…" phrasing and any mission recitation; a summary describes the candidate, the reader already knows their own mission.',
         `For summary_names_target_company: remove the target company's name ("${ctx.targetCompany ?? ''}") from the summary entirely — keep the capability content, drop the name. A summary naming the employer is single-use and reads as recitation.`,
         'For unbridged_transferable_claim: restate each flagged term with its honest transfer framing in the same clause (e.g. "AWS CDK, transferable to Terraform") — or remove the term. Never leave a flat claim of a tool the candidate has not used.',
+        experienceFidelityRule(ctx),
         'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
         'NEVER remove an entire experience role — every role in the input resume must appear in the output, even when trimming.',
         'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
@@ -899,11 +906,74 @@ export async function revalidateResumeContent(
 }
 
 /** Validate → rewrite on violation → deterministic scoped-claim + section passes → return. Never throws. */
+/** Role-generic words that overlap in ANY two tech-job descriptions — they
+ *  must not count as grounding evidence. */
+const GENERIC_EXPERIENCE_WORDS = new Set([
+    'engineering', 'operations', 'teams', 'systems', 'platform', 'platforms',
+    'infrastructure', 'technical', 'support', 'across', 'working', 'worked',
+    'procedures', 'processes', 'process', 'quality', 'assurance', 'analyst',
+    'documentation', 'workflows', 'standardised', 'standardized', 'collaborated',
+]);
+
+function distinctiveTokens(text: string): Set<string> {
+    const out = new Set<string>();
+    for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
+        if (raw.length >= 5 && !GENERIC_EXPERIENCE_WORDS.has(raw)) out.add(raw);
+    }
+    return out;
+}
+
+/**
+ * Experience fidelity — bullets for an employer must RESTATE work the
+ * ingested career-history facts describe; JD-tailoring is rephrasing and
+ * emphasis, never new deeds or a new domain. Observed live (Meta via
+ * Accenture): the ingested facts describe ads-platform operations, but
+ * generated bullets claimed "content moderation workflows" (world-knowledge
+ * stereotype) and, on another run, invented test-strategy/quality-gate design
+ * work. Deterministic: an entry whose bullets share fewer than 2 distinctive
+ * tokens with its employer's verified facts is flagged for a grounded rewrite.
+ */
+type LooseExperienceEntry = { company?: unknown; highlights?: readonly unknown[] };
+
+/** Violation for one entry, or null when grounded / not matchable. */
+function entryFidelityViolation(
+    entry: LooseExperienceEntry,
+    verifiedEmployers: ReadonlyArray<VerifiedEmployer>,
+): ResumeViolation | null {
+    const company = typeof entry.company === 'string' ? entry.company : '';
+    if (!company) return null;
+    const employer = verifiedEmployers.find((e) =>
+        e.name.toLowerCase().includes(company.toLowerCase()) || company.toLowerCase().includes(e.name.toLowerCase()));
+    if (!employer) return null;
+    const bulletText = (entry.highlights ?? []).filter((h): h is string => typeof h === 'string').join(' ');
+    if (bulletText.length === 0) return null;
+    const factTokens = distinctiveTokens(employer.facts);
+    let overlap = 0;
+    for (const t of distinctiveTokens(bulletText)) if (factTokens.has(t)) overlap++;
+    if (overlap >= 2) return null;
+    return {
+        code: 'experience_ungrounded',
+        detail: `${company}: bullets share ${overlap} distinctive terms with the ingested career facts - the work described is not the work on record.`,
+    };
+}
+
+export function checkExperienceFidelity(
+    resume: StructuredResumeData,
+    verifiedEmployers: ReadonlyArray<VerifiedEmployer> | undefined,
+): ResumeViolation[] {
+    if (!verifiedEmployers || verifiedEmployers.length === 0) return [];
+    const view = resume as unknown as { experience?: ReadonlyArray<LooseExperienceEntry> };
+    return (view.experience ?? [])
+        .map((entry) => entryFidelityViolation(entry, verifiedEmployers))
+        .filter((v): v is ResumeViolation => v !== null);
+}
+
 export async function guardResume(
     resume: StructuredResumeData,
     ctx: ResumeGuardCtx,
 ): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
     const violations = validateResume(resume, ctx);
+    violations.push(...checkExperienceFidelity(resume, ctx.verifiedEmployers));
     let rewritten = violations.length === 0 ? resume : await rewriteResume(resume, violations, ctx);
     rewritten = preserveExperienceRoster(resume, rewritten, (v) => violations.push(v));
     const scoped = enforceScopedClaims(rewritten);
