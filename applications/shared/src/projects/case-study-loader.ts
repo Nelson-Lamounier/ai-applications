@@ -305,6 +305,59 @@ async function computeCalibration(
     return assembleCalibration(classified.archetypeId, def, stage, overlay);
 }
 
+/**
+ * Salient full-text terms for KB-chunk relevance ranking, from the project's
+ * name + tagline (short, high-signal — the pitch is too long to AND and too
+ * noisy to OR). Lowercased, alphanumeric-only, ≥4 chars, deduped, capped at
+ * 12, OR-joined for to_tsquery. Empty string ⇒ caller falls back to recency.
+ */
+export function kbRelevanceTerms(name: string, tagline: string | null): string {
+    const words = `${name} ${tagline ?? ''}`
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 4);
+    return [...new Set(words)].slice(0, 12).join(' | ');
+}
+
+/**
+ * Select the KB chunks fed to the case-study prompt. Previously this was
+ * `ORDER BY last_synced_at DESC LIMIT 24` — pure sync-timing luck, which let
+ * config chunks of whichever repo synced last fill the window and duplicate
+ * README content already carried by <productContext>. Selection is now:
+ *   1. full-text relevance to the project name/tagline (content_tsv, the
+ *      same generated column the strategist's hybrid retrieval uses),
+ *   2. docs/history lanes preferred over code/config (narrative evidence),
+ *   3. recency as the tie-break and the fill when few chunks match,
+ * with root-README rows excluded (they already feed <productContext>).
+ * Falls back to the docs-preferred recency ordering when no terms derive.
+ */
+async function selectKbChunks(
+    pool: Pool,
+    userId: string,
+    repoNames: string[],
+    terms: string,
+): Promise<KbRow[]> {
+    const result = await pool.query<KbRow>(
+        `SELECT
+            de.repo_full_name AS repo_full_name,
+            de.file_path      AS file_path,
+            'document'        AS chunk_type,
+            de.content        AS content
+         FROM document_embeddings de
+         WHERE de.user_id::text = $1::text
+           AND de.repo_full_name = ANY($2::text[])
+           AND lower(de.file_path) NOT IN ('readme.md', 'readme')
+         ORDER BY
+            CASE WHEN $4 <> '' AND de.content_tsv @@ to_tsquery('english', $4) THEN 0 ELSE 1 END,
+            CASE WHEN de.metadata->>'fileClass' IN ('docs', 'history') THEN 0 ELSE 1 END,
+            CASE WHEN $4 <> '' THEN ts_rank_cd(de.content_tsv, to_tsquery('english', $4)) ELSE 0 END DESC,
+            de.last_synced_at DESC
+         LIMIT $3`,
+        [userId, repoNames, KB_CHUNK_CAP, terms],
+    );
+    return result.rows;
+}
+
 export async function loadCaseStudyContext(
     pool: Pool,
     projectId: string,
@@ -367,19 +420,7 @@ export async function loadCaseStudyContext(
         }
     }
 
-    const kb = (await pool.query<KbRow>(
-        `SELECT
-            de.repo_full_name AS repo_full_name,
-            de.file_path      AS file_path,
-            'document'        AS chunk_type,
-            de.content        AS content
-         FROM document_embeddings de
-         WHERE de.user_id::text = $1::text
-           AND de.repo_full_name = ANY($2::text[])
-         ORDER BY de.last_synced_at DESC
-         LIMIT $3`,
-        [p.user_id, repoNames, KB_CHUNK_CAP],
-    )).rows;
+    const kb = await selectKbChunks(pool, p.user_id, repoNames, kbRelevanceTerms(p.name, p.tagline));
 
     // Root-README prose per repo — the human "what/why/who" the code evidence
     // can't carry. Ordered by chunk_index so the intro (chunk 0) leads; capped

@@ -32,9 +32,6 @@ import {
     PROJECT_TYPES,
     RESUME_BULLET_ANGLES,
     STACK_CATEGORIES,
-    TEST_COVERAGE_SIGNALS,
-    CI_MATURITY,
-    DOC_DENSITY,
     type CaseStudy,
     type CaseStudyContext,
 } from './case-study-types.js';
@@ -121,13 +118,11 @@ Rules:
      never with a repository name (no "tucaken-infra: …") and never with a
      roll-call of technologies ("EKS, Karpenter, ArgoCD, Prometheus …").
      Name a repo or a technology only afterwards, as supporting detail.
-  7. \`resumeBullets\`: one set per relevant angle. Bullets are
-     past-tense, quantified where possible, never longer than 250
-     characters. Omit angles that don't apply to this project.
-  8. \`depthMarkers\` is an HONEST assessment of engineering maturity.
-     "comprehensive" documentation means a docs/ folder with multiple
-     files plus a thorough README — do not inflate.
-  9. \`architecture\` is a Mermaid graph (graph LR or graph TD).
+  7. \`resumeBullets\`: at most 3 sets — pick only the angles this
+     project most strongly evidences. Bullets are past-tense, quantified
+     where possible, never longer than 250 characters. Omit angles that
+     don't apply to this project.
+  8. \`architecture\` is a Mermaid graph (graph LR or graph TD).
      Rectangles for services, cylinders for datastores, clouds for
      external services. Keep it readable in 5 seconds. For a line break
      inside a node label use \`<br/>\` and WRAP THE WHOLE LABEL IN DOUBLE
@@ -338,29 +333,10 @@ const RESUME_BULLET_SET_SCHEMA = {
         bullets: {
             type: 'array',
             minItems: 1, maxItems: 8,
-            items: { type: 'string', minLength: 1, maxLength: 500 },
+            items: { type: 'string', minLength: 1, maxLength: 250 },
         },
     },
     required: ['angle', 'bullets'],
-    additionalProperties: false,
-};
-
-const DEPTH_MARKERS_SCHEMA = {
-    type: 'object',
-    properties: {
-        hasTests:              { type: 'boolean' },
-        testCoverageSignal:    { type: 'string', enum: [...TEST_COVERAGE_SIGNALS] },
-        hasCi:                 { type: 'boolean' },
-        ciMaturity:            { type: 'string', enum: [...CI_MATURITY] },
-        documentationDensity:  { type: 'string', enum: [...DOC_DENSITY] },
-        hasDeploymentEvidence: { type: 'boolean' },
-        deploymentUrl:         { type: ['string', 'null'] },
-        refactorCount:         { type: 'integer', minimum: 0 },
-    },
-    required: [
-        'hasTests', 'testCoverageSignal', 'hasCi', 'ciMaturity',
-        'documentationDensity', 'hasDeploymentEvidence', 'refactorCount',
-    ],
     additionalProperties: false,
 };
 
@@ -400,7 +376,7 @@ const ARCHITECTURE_SCHEMA = {
     additionalProperties: false,
 };
 
-const CASE_STUDY_TOOL = {
+export const CASE_STUDY_TOOL = {
     name: 'emit_case_study',
     description: 'Emit the full case study for a single project.',
     inputSchema: {
@@ -412,17 +388,19 @@ const CASE_STUDY_TOOL = {
             decisions:     { type: 'array', maxItems: 5,  items: DECISION_SCHEMA },
             highlights:    { type: 'array', maxItems: 5,  items: HIGHLIGHT_SCHEMA },
             challenges:    { type: 'array', maxItems: 5,  items: CHALLENGE_SCHEMA },
-            depthMarkers:  DEPTH_MARKERS_SCHEMA,
             architecture: ARCHITECTURE_SCHEMA,
             resumeBullets: {
+                // 3, not RESUME_BULLET_ANGLES.length: resumeBullets dominate
+                // output tokens, and a project rarely evidences more than 3
+                // angles. The Zod gate still accepts up to 6 (cached artefacts).
                 type: 'array',
-                minItems: 1, maxItems: RESUME_BULLET_ANGLES.length,
+                minItems: 1, maxItems: 3,
                 items: RESUME_BULLET_SET_SCHEMA,
             },
         },
         required: [
             'tagline', 'pitch', 'stack', 'decisions', 'highlights',
-            'challenges', 'depthMarkers', 'architecture', 'resumeBullets',
+            'challenges', 'architecture', 'resumeBullets',
         ],
         additionalProperties: false,
     },

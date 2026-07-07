@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
