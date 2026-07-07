@@ -103,9 +103,10 @@ describe('persistCaseStudy — computed archetype/stage', () => {
         });
 
         const upd = findProjectsUpdate(calls);
-        // computed_archetype + computed_stage params resolve to null.
-        expect(upd.params[upd.params.length - 2]).toBeNull();
-        expect(upd.params[upd.params.length - 1]).toBeNull();
+        // computed_archetype ($9) + computed_stage ($10) params resolve to
+        // null. Indexed explicitly — displayName params follow them now.
+        expect(upd.params[8]).toBeNull();
+        expect(upd.params[9]).toBeNull();
     });
 });
 
@@ -294,5 +295,48 @@ describe('persistCaseStudy — order_index stability on reconcile', () => {
             /UPDATE project_highlights\s+SET order_index/.test(c.sql));
         expect(renumber).toBeDefined();
         expect(renumber?.sql).toMatch(/order_index\s*<>\s*\$3/);
+    });
+});
+
+describe('persistCaseStudy — displayName renames the project', () => {
+    const base = {
+        projectId:     'proj-1',
+        userId:        'user-1',
+        pipelineRunId: 'run-1',
+        model:         'sonnet',
+        inputHash:     'hash-1',
+    };
+
+    it('writes displayName to projects.name when present and not sticky', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            ...base,
+            caseStudy: { ...emptyCaseStudy, displayName: 'Lami — AI-Assisted Portfolio' },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        expect(upd?.sql).toMatch(/name\s*=\s*CASE WHEN/);
+        expect(upd?.params).toContain('Lami — AI-Assisted Portfolio');
+        expect(upd?.params).toContain(true);
+    });
+
+    it('leaves the name untouched when the user made it sticky', async () => {
+        const calls: CapturedQuery[] = [];
+        const client = {
+            async query(sql: string, params?: readonly unknown[]) {
+                calls.push({ sql, params: params ?? [] });
+                if (/SELECT user_overrides/.test(sql)) return { rows: [{ user_overrides: { name: true } }] };
+                if (/DELETE FROM project_/.test(sql)) return { rows: [], rowCount: 2 };
+                return { rows: [], rowCount: 0 };
+            },
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await persistCaseStudy(client as any, {
+            ...base,
+            caseStudy: { ...emptyCaseStudy, displayName: 'Should not land' },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        // The flag parameter driving the name CASE WHEN must be false.
+        const nameFlagIdx = upd!.params.indexOf('Should not land') - 1;
+        expect(upd!.params[nameFlagIdx]).toBe(false);
     });
 });

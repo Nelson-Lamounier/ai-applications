@@ -255,3 +255,18 @@ describe('system prompt — decision log quality rules', () => {
         expect(prompt).toMatch(/balance the\s+highlights and decisions/);
     });
 });
+
+describe('emit_case_study — displayName (product name, never the repo slug)', () => {
+    it('requires a displayName in the tool schema', async () => {
+        const { CASE_STUDY_TOOL } = await import('./case-study-agent.js');
+        expect(CASE_STUDY_TOOL.inputSchema.properties).toHaveProperty('displayName');
+        expect(CASE_STUDY_TOOL.inputSchema.required).toContain('displayName');
+    });
+
+    it('instructs the model to name the product, never a repository slug', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/displayName/);
+        expect(prompt).toMatch(/NEVER a\s+repository name or slug/);
+        expect(prompt).toMatch(/kebab-case/);
+    });
+});

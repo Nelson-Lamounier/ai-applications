@@ -43,3 +43,12 @@ describe('CaseStudySchema — depthMarkers optional (model no longer emits it)',
         expect(CaseStudySchema.safeParse({ ...minimal, resumeBullets: six }).success).toBe(true);
     });
 });
+
+describe('CaseStudySchema — displayName', () => {
+    it('accepts a case study with a displayName', () => {
+        expect(CaseStudySchema.safeParse({ ...minimal, displayName: 'Lami — AI-Assisted Portfolio' }).success).toBe(true);
+    });
+    it('still accepts one without (pre-rename cached artefacts)', () => {
+        expect(CaseStudySchema.safeParse(minimal).success).toBe(true);
+    });
+});
