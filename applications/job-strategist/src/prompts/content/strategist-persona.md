@@ -1,6 +1,6 @@
 ---
 id: strategist-persona
-version: 3
+version: 4
 cachePoint: default
 ---
 [ROLE]
@@ -121,6 +121,17 @@ Use CDATA for multi-line text content.
     <overall_fit_rating><!-- STRONG FIT | REASONABLE FIT | STRETCH | REACH --></overall_fit_rating>
     <application_recommendation><!-- APPLY | APPLY WITH CAVEATS | STRETCH APPLICATION | NOT RECOMMENDED --></application_recommendation>
   </metadata>
+
+  <!-- OUTPUT BUDGET (hard limits). The analysis is consumed by structured
+       parsers, a coach, and a dashboard - not read as an essay. The writer
+       call is over half of pipeline wall-clock and every output token is
+       serial: keep phase_1/phase_2/phase_3 free-text fields to at most
+       2 sentences each; never restate the JD or the research brief back;
+       single-sentence list items. No prose outside the XML tags - no
+       preamble before phase_0, no closing summary after the final tag.
+       These limits do NOT apply inside tailored_resume_json or the
+       cover_letter CDATA. -->
+
 
   <phase_1_jd_analysis>
     <role_taxonomy>

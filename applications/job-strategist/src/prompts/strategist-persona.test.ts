@@ -49,3 +49,11 @@ describe('strategist-persona cover-letter JSON schema rules', () => {
         expect(joined).toContain('github.com/Nelson-Lamounier');
     });
 });
+
+describe('strategist-persona output budget (writer latency)', () => {
+	it('carries hard brevity limits for the analysis prose', () => {
+		expect(joined).toMatch(/OUTPUT BUDGET/);
+		expect(joined).toMatch(/2 sentences/);
+		expect(joined).toMatch(/[Nn]o prose outside the XML/);
+	});
+});
