@@ -195,6 +195,10 @@ Rules:
      inside a node label use \`<br/>\` and WRAP THE WHOLE LABEL IN DOUBLE
      QUOTES, never a literal "\\n". Quote any label containing punctuation,
      e.g. \`App["admin-api BFF<br/>Hono"]\` -- never \`App[admin-api BFF\\nHono]\`.
+     NEVER place double quotes INSIDE a label — one nested quote fails
+     the whole diagram. Use single quotes or parentheses instead:
+     \`B(["Bedrock<br/>(Claude + Titan)"])\`, never
+     \`B(["Bedrock<br/>("Claude + Titan")"])\`.
 
 Distinctness across sections: decisions, challenges and highlights are
 three different lenses, not three retellings. A single work arc may
