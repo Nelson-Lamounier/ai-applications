@@ -13,6 +13,7 @@
  *                                     missing/disallowed extension, leading
  *                                     dash, encoded path separator)
  *   GET /api/articles/images/:file — 404 when the object does not exist
+ *   GET /api/articles/images/:file — 502 when S3 fails with a generic error
  *   GET /api/articles/images/:file — 503 when the bucket is not configured
  */
 
@@ -118,6 +119,13 @@ describe('GET /api/articles/images/:file', () => {
     mockSend.mockRejectedValueOnce(err);
     const res = await articleImages.request('/api/articles/images/missing.png');
     expect(res.status).toBe(404);
+  });
+
+  it('returns 502 when S3 fails with a generic (non-NoSuchKey) error', async () => {
+    mockSend.mockRejectedValueOnce(new Error('InternalError: S3 blew up'));
+    const res = await articleImages.request('/api/articles/images/valid-name.png');
+    expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toEqual({ error: 'Upstream storage error' });
   });
 
   it('returns 503 when the bucket is not configured', async () => {

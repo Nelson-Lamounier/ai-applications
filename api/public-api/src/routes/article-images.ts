@@ -10,7 +10,8 @@
  *
  * Routes:
  *   GET /api/articles/images/:file — 200 stream | 400 invalid name |
- *                                     404 missing | 503 unconfigured
+ *                                     404 missing | 502 upstream S3 error |
+ *                                     503 unconfigured
  */
 
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -73,7 +74,8 @@ articleImages.get('/api/articles/images/:file', async (c) => {
     if (name === 'NoSuchKey' || name === 'NotFound') {
       return c.json({ error: 'Not found' }, 404);
     }
-    throw err; // onError handler in index.ts logs and returns 500
+    console.error('[article-images] S3 GetObject failed');
+    return c.json({ error: 'Upstream storage error' }, 502);
   }
 });
 
