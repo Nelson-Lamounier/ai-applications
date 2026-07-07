@@ -247,3 +247,20 @@ describe('upsertArchitecture -- Mermaid normalisation', () => {
         expect(sourceParam).toBe(svgSource); // untouched
     });
 });
+
+describe('persistCaseStudy — optional depthMarkers', () => {
+    it('skips project_depth_markers when the case study carries none', async () => {
+        const { client, calls } = makeClient();
+        const { depthMarkers: _omitted, ...withoutDepth } = emptyCaseStudy;
+        const out = await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     withoutDepth as CaseStudy,
+        });
+        expect(out.depthMarkersUpserted).toBe(false);
+        expect(calls.some((c) => /project_depth_markers/.test(c.sql))).toBe(false);
+    });
+});

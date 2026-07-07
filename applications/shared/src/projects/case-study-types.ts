@@ -180,7 +180,12 @@ export const CaseStudySchema = z.object({
     decisions:    z.array(DecisionSchema).max(5),
     highlights:   z.array(HighlightSchema).max(5),
     challenges:   z.array(ChallengeSchema).max(5),
-    depthMarkers: DepthMarkersSchema,
+    // Optional: the emit_case_study tool no longer asks the model for
+    // depthMarkers — the orchestrator overrides them with the deterministic,
+    // code-grounded values from the loader. Kept accepted for pre-trim
+    // cached artefacts. Likewise resumeBullets stays at 6 sets / 500-char
+    // bullets here while generation asks for at most 3 sets / 250 chars.
+    depthMarkers: DepthMarkersSchema.optional(),
     architecture: ArchitectureSchema,
     resumeBullets: z.array(ResumeBulletSetSchema)
         .min(1)

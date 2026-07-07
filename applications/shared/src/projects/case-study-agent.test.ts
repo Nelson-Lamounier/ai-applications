@@ -102,3 +102,23 @@ describe('buildUserMessage — refine mode', () => {
         expect(out).not.toMatch(/<newRepos>/);
     });
 });
+
+describe('emit_case_study tool schema — output trim', () => {
+    it('does not ask the model for depthMarkers (deterministically derived, then overridden)', async () => {
+        const { CASE_STUDY_TOOL } = await import('./case-study-agent.js');
+        expect(CASE_STUDY_TOOL.inputSchema.properties).not.toHaveProperty('depthMarkers');
+        expect(CASE_STUDY_TOOL.inputSchema.required).not.toContain('depthMarkers');
+        // The prompt rule describing depthMarkers must be gone too.
+        expect(buildSystemPrompt(baseCtx)).not.toMatch(/depthMarkers/);
+    });
+
+    it('caps resumeBullets at 3 angle sets of ≤250-char bullets (matches prompt rule 7)', async () => {
+        const { CASE_STUDY_TOOL } = await import('./case-study-agent.js');
+        const rb = CASE_STUDY_TOOL.inputSchema.properties.resumeBullets as {
+            maxItems: number;
+            items: { properties: { bullets: { items: { maxLength: number } } } };
+        };
+        expect(rb.maxItems).toBe(3);
+        expect(rb.items.properties.bullets.items.maxLength).toBe(250);
+    });
+});

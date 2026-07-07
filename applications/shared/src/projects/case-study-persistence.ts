@@ -252,6 +252,10 @@ async function upsertDepthMarkers(
     input: PersistCaseStudyInput,
 ): Promise<boolean> {
     const d = input.caseStudy.depthMarkers;
+    // The model no longer emits depthMarkers; the orchestrator injects the
+    // deterministic values whenever the loader derived them. Absent → keep
+    // the last computed row rather than overwrite with nothing.
+    if (!d) return false;
     await client.query(
         `INSERT INTO project_depth_markers (
             user_id, project_id, has_tests, test_coverage_signal, has_ci,
