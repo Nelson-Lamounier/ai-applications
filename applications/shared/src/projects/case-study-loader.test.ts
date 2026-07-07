@@ -324,3 +324,24 @@ describe('loadCaseStudyContext — multi-repo evidence fairness', () => {
         expect(kbSql).toMatch(/rpr <= 12/);
     });
 });
+
+describe('loadCaseStudyContext — sticky stage override', () => {
+    it('uses user_overrides.stage instead of the rollup-derived stage', async () => {
+        const pool = makePool({
+            projects: [{ ...projectRow, type: 'production_saas', user_overrides: { stage: 'staff' } }],
+            components: [],
+            repositories: [{ ...repoRow, tech_stack: ['docker'] }],
+            embeddings: [],
+            syncState: [{ archetype_signals: { has_iac: true } }],
+            commits: [], pulls: [],
+            archetypes: [{ id: 'production_saas', name: 'Production SaaS Application', description: 'd',
+                classification_signals: { required_any: ['has_iac'], positive: [], negative: [] },
+                expected_sections: [], expected_artifacts: [] }],
+            overlays: [{ archetype_id: 'production_saas', stage: 'staff',
+                priority_sections: ['architecture'], deemphasized_sections: [], stage_suggestions: [] }],
+            rollup: [{ direction: { seniority: [{ area: 'backend', level: 'junior' }] } }],
+        });
+        const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
+        expect(out.context.stage).toBe('staff');
+    });
+});
