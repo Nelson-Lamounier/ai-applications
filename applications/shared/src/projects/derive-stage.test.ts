@@ -21,3 +21,18 @@ describe('pickStage', () => {
         expect(pickStage([{ area: 'x', level: 'wizard' }])).toBeNull();
     });
 });
+
+describe('stickyStage — user override wins over derived seniority', () => {
+    it('returns the override when it is a valid stage', async () => {
+        const { stickyStage } = await import('./derive-stage.js');
+        expect(stickyStage({ stage: 'staff' })).toBe('staff');
+        expect(stickyStage({ stage: 'junior' })).toBe('junior');
+    });
+    it('returns null for missing, invalid, or boolean-sticky values', async () => {
+        const { stickyStage } = await import('./derive-stage.js');
+        expect(stickyStage({})).toBeNull();
+        expect(stickyStage(null)).toBeNull();
+        expect(stickyStage({ stage: 'principal' })).toBeNull();
+        expect(stickyStage({ stage: true })).toBeNull();
+    });
+});

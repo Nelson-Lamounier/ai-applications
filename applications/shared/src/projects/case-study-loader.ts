@@ -23,7 +23,7 @@ import type { CaseStudyContext } from './case-study-types.js';
 import { packContext } from './case-study-context-budget.js';
 import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectOntologyRepository.js';
 import { classifyArchetype } from './archetype-classifier.js';
-import { pickStage } from './derive-stage.js';
+import { pickStage, stickyStage } from './derive-stage.js';
 import { deriveDepthMarkers, deriveDifficultySignals, deriveEvidenceMix } from './case-study-depth.js';
 import type { CommitSpanRow, DifficultyAreaRow } from './case-study-depth.js';
 import { buildVerifiedStackMap } from './case-study-verified-stack.js';
@@ -355,6 +355,7 @@ async function computeCalibration(
     userId: string,
     projectType: string,
     mergedSignals: Record<string, boolean>,
+    userOverrides: Record<string, unknown> | null,
 ): Promise<Calibration> {
     const ontology   = new RdsProjectOntologyRepository(pool);
     const archetypes = await ontology.listArchetypes();
@@ -367,7 +368,9 @@ async function computeCalibration(
         [userId],
     );
     const seniority = seniorityRow.rows[0]?.direction?.seniority ?? [];
-    const stage = pickStage(seniority);
+    // The owner's explicit override (user_overrides.stage) wins over the
+    // rollup-derived level — the Direction synthesizer can under/over-level.
+    const stage = stickyStage(userOverrides) ?? pickStage(seniority);
     const overlay = stage ? await ontology.getStageOverlay(classified.archetypeId, stage) : null;
 
     return assembleCalibration(classified.archetypeId, def, stage, overlay);
@@ -617,7 +620,7 @@ export async function loadCaseStudyContext(
     // agent) so the orchestrator's input-hash and the prompt see identical,
     // already-bounded content.
     // ── Archetype/stage calibration (additive; absent fields = no change) ──
-    const calibration = await computeCalibration(pool, p.user_id, p.type, mergedSignals);
+    const calibration = await computeCalibration(pool, p.user_id, p.type, mergedSignals, p.user_overrides);
 
     const context = packContext({ ...rawContext, ...calibration }, { maxTokens: CONTEXT_TOKEN_BUDGET });
 
