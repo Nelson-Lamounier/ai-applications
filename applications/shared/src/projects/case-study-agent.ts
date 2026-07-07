@@ -118,6 +118,17 @@ Rules:
      never with a repository name (no "tucaken-infra: …") and never with a
      roll-call of technologies ("EKS, Karpenter, ArgoCD, Prometheus …").
      Name a repo or a technology only afterwards, as supporting detail.
+     At least ONE highlight must state the project's headline capability
+     in plain language — what its primary audience can do with it or
+     what it delivers for them. Calibrate to the project's nature: for
+     an application, what a user or visitor can DO; for infrastructure
+     or IaC, what it provisions, automates or operates and for whom; for
+     a library or CLI, what it lets a developer build or skip; for a
+     data/ML project, what question it answers. A non-technical
+     recruiter must understand that highlight without knowing the stack.
+     When any highlight cites a measurement, give its plain-English
+     meaning before the number and metric name — "pages render in about
+     0.13 seconds (132 ms LCP)", never an acronym-led bare figure.
   7. \`resumeBullets\`: at most 3 sets — pick only the angles this
      project most strongly evidences. Bullets are past-tense, quantified
      where possible, never longer than 250 characters. Omit angles that
