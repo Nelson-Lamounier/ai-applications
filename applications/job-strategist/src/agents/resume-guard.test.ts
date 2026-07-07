@@ -365,3 +365,49 @@ describe('compliance overclaim + metric-stuffed bullets', () => {
         expect(codes(pair)).not.toContain('bullet_metric_stuffed');
     });
 });
+
+describe('checkExperienceFidelity — bullets must restate the ingested facts', () => {
+	const METAFACTS =
+		"Configured and troubleshot enterprise platform deployments on Meta's ad infrastructure. Worked on campaign delivery reliability and tracked performance metrics across distributed systems. " +
+		'Wrote standardised operational procedures and reusable configuration templates. These cut resolution times for recurring platform issues. ' +
+		'Built SQL-based monitoring dashboards and correlation queries for platform health. ' +
+		'Worked across engineering and operations teams to find process bottlenecks, reduce escalation turnaround, and simplify operational workflows';
+	const employers = [{ name: 'Meta via Accenture', facts: METAFACTS }];
+
+	const entry = (highlights: string[]) => ({
+		experience: [{ company: 'Meta via Accenture', title: 'Quality Assurance Analyst', period: '2021 - 2022', highlights }],
+	}) as never;
+
+	it('flags the content-moderation fabrication (observed live — zero grounding in the ingested facts)', async () => {
+		const { checkExperienceFidelity } = await import('./resume-guard.js');
+		const violations = checkExperienceFidelity(entry([
+			'Performed structured quality assurance on content moderation workflows, applying systematic test strategies.',
+			'Collaborated with engineering and operations teams to standardise testing procedures across moderation pipelines.',
+		]), employers);
+		expect(violations.some((v) => v.code === 'experience_ungrounded')).toBe(true);
+	});
+
+	it('flags the test-strategy/quality-gate fabrication (observed live)', async () => {
+		const { checkExperienceFidelity } = await import('./resume-guard.js');
+		const violations = checkExperienceFidelity(entry([
+			'Designed test strategies, quality gate processes, and cross-functional workflow documentation for digital pipelines.',
+			'Translating quality requirements into actionable specifications adopted across adjacent teams.',
+		]), employers);
+		expect(violations.some((v) => v.code === 'experience_ungrounded')).toBe(true);
+	});
+
+	it('passes a faithful JD-tailored rephrase of the ingested facts', async () => {
+		const { checkExperienceFidelity } = await import('./resume-guard.js');
+		const violations = checkExperienceFidelity(entry([
+			"Troubleshot enterprise deployments on Meta's ad infrastructure, tracking campaign delivery reliability metrics across distributed systems.",
+			'Built SQL-based monitoring dashboards and correlation queries, spotting anomalies before they became incidents.',
+		]), employers);
+		expect(violations).toEqual([]);
+	});
+
+	it('ignores entries with no matching verified employer (projects, solo work)', async () => {
+		const { checkExperienceFidelity } = await import('./resume-guard.js');
+		const violations = checkExperienceFidelity(entry(['Anything at all here.']), [{ name: 'SomeOther Corp', facts: 'irrelevant facts' }]);
+		expect(violations).toEqual([]);
+	});
+});
