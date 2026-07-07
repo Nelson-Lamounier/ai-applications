@@ -100,6 +100,20 @@ export interface KnowledgeBaseConfig {
 }
 
 /**
+ * IAM role names (Pod Identity association roles, not ARNs) granted scoped
+ * access to the article-assets bucket. Discovered live via
+ * `aws eks list-pod-identity-associations` / `describe-pod-identity-association`
+ * against the tucaken-infra-managed EksPodIdentity-<env> stack — these roles
+ * are NOT created by this repo.
+ */
+export interface ArticleAssetsRolesConfig {
+    /** admin-api's runtime role — granted s3:PutObject/DeleteObject under images|videos/articles/*. */
+    readonly adminRoleName: string;
+    /** public-api's runtime role — granted s3:GetObject under images/articles/*. */
+    readonly readerRoleName: string;
+}
+
+/**
  * Complete resource configurations for Bedrock project
  */
 export interface BedrockConfigs {
@@ -121,6 +135,8 @@ export interface BedrockConfigs {
     readonly removalPolicy: cdk.RemovalPolicy;
     /** Whether to create customer-managed KMS keys */
     readonly createKmsKeys: boolean;
+    /** Runtime role names granted access to the article-assets bucket */
+    readonly articleAssets: ArticleAssetsRolesConfig;
 }
 
 // =============================================================================
@@ -177,6 +193,15 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
         isProduction: false,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         createKmsKeys: false,
+        // Discovered 2026-07-06 via `aws eks list-pod-identity-associations` /
+        // `describe-pod-identity-association` against k8s-eks-development
+        // (associations a-4mizmqiy9p3ttok14 / a-6fabmnn98toakc4au). These
+        // roles are provisioned by tucaken-infra's EksPodIdentity-development
+        // stack, not by this repo.
+        articleAssets: {
+            adminRoleName: 'EksPodIdentity-development-Roleadminapi5EAE4B6E-gYZToUb4xsCc',
+            readerRoleName: 'EksPodIdentity-development-Rolepublicapi88CC20CC-xv2h0dN8FPQ8',
+        },
     },
 
     [Environment.STAGING]: {
@@ -207,6 +232,14 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
         isProduction: false,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         createKmsKeys: false,
+        // TODO: no staging EKS cluster exists yet — placeholder role names.
+        // Replace with the real Pod Identity association role names (see the
+        // development entry above for the discovery commands) before this
+        // environment is ever deployed.
+        articleAssets: {
+            adminRoleName: 'EksPodIdentity-staging-admin-api-TBD',
+            readerRoleName: 'EksPodIdentity-staging-public-api-TBD',
+        },
     },
 
     [Environment.PRODUCTION]: {
@@ -237,6 +270,14 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
         isProduction: true,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
         createKmsKeys: true,
+        // TODO: no production EKS cluster exists yet — placeholder role names.
+        // Replace with the real Pod Identity association role names (see the
+        // development entry above for the discovery commands) before this
+        // environment is ever deployed.
+        articleAssets: {
+            adminRoleName: 'EksPodIdentity-production-admin-api-TBD',
+            readerRoleName: 'EksPodIdentity-production-public-api-TBD',
+        },
     },
 };
 
