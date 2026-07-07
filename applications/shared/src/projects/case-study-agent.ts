@@ -108,7 +108,29 @@ Rules:
      paragraphs 2–3 = the engineering approach and depth. Written in the
      candidate's voice ("I built" / "I designed", never "we built").
   4. \`decisions\` are ADR-style: title, context (problem), decision
-     (what was chosen), consequences (tradeoff). At most 5.
+     (what was chosen), consequences. At most 5.
+     Select decisions the way a hiring panel reads them — as proof of
+     JUDGEMENT across the project's WHOLE history (use
+     <difficultySignals> where supplied), not a log of recent changes.
+     When the evidence supports it, include at least one decision about
+     the product's differentiating capability (e.g. how its AI feature
+     is grounded), not only platform plumbing.
+     \`context\` must name the alternative option(s) considered and why
+     they were rejected — that comparison is the senior-judgement
+     signal. Evidence-gated: if the commits/docs show no alternative,
+     state the constraint that forced the choice instead; NEVER invent
+     an option that was not really on the table.
+     \`consequences\` lead with what the decision ACHIEVED — for users,
+     security, cost or reliability, quantified when the evidence
+     supports a number — and only then state the honest tradeoff.
+     Example shape: "Eliminated the frontend's entire AWS credential
+     surface and gave the data contract a single owner. The cost: the
+     site depends on the in-cluster BFF, mitigated by graceful
+     build-time degradation."
+     \`confidence\` is calibrated, not decorative: 'high' ONLY when the consequence is
+     validated by production evidence cited in sourceSignals (a live
+     metric, a measured result, a verified deploy); otherwise 'medium',
+     or 'low' when the outcome is expected but unmeasured.
   5. \`challenges\` answer "tell me about a hard problem you solved" —
      each is a problem / solution pair grounded in real commits or
      issues. At most 5.
@@ -167,6 +189,15 @@ Rules:
      inside a node label use \`<br/>\` and WRAP THE WHOLE LABEL IN DOUBLE
      QUOTES, never a literal "\\n". Quote any label containing punctuation,
      e.g. \`App["admin-api BFF<br/>Hono"]\` -- never \`App[admin-api BFF\\nHono]\`.
+
+Distinctness across sections: decisions, challenges and highlights are
+three different lenses, not three retellings. A single work arc may
+appear in at most one section unless each appearance adds genuinely
+distinct substance — the decision is WHY a path was chosen, the
+challenge is HOW a hard problem was beaten, the highlight is WHAT
+outcome a recruiter can verify in five seconds. Never repeat sentences
+or near-identical text across sections; a story that earns two slots
+must say something different in each.
 
 The input is a compact JSON envelope describing the project, its
 components, its repositories, recent commits, and selected KB passages,
@@ -263,7 +294,7 @@ export function buildSystemPrompt(context: CaseStudyContext): string {
         prompt = `${prompt}\n\nEvidence mix (measured from the ingested repository data): ` +
             `application code ~${m.appPct}% vs infrastructure/IaC ~${m.infraPct}% of classified files. ` +
             'When both lanes hold a meaningful share (roughly 20% or more each), balance the ' +
-            'highlights across them in about that proportion — one lane must not take every slot. ' +
+            'highlights and decisions across them in about that proportion — one lane must not take every slot. ' +
             'When one lane dominates, weight the highlights accordingly and do not invent work ' +
             'in the minor lane.';
     }
