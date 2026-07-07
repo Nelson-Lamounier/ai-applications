@@ -15,6 +15,7 @@ import type {
     SimilarityResult,
     UpsertBatchResult,
 } from '../types.js';
+import type { KbQualityInput } from '../quality/computeKbQuality.js';
 
 export interface IVectorStore {
     /**
@@ -68,4 +69,14 @@ export interface IVectorStore {
      * (e.g. repo_sync_state.chunk_count) must use this, read after upsert + prune.
      */
     countChunks(userId: string, repoFullName: string): Promise<number>;
+
+    /**
+     * Lite per-chunk rows for KB-quality scoring over the FULL persisted
+     * corpus (file path, char length, tags, file type, skills — never chunk
+     * content). Same cumulative-vs-delta rule as countChunks: an incremental
+     * run must never score repo quality from its changed-file delta (a
+     * 61-chunk activity delta once overwrote a 0.65 whole-repo score with
+     * 0.29 — no README, no skills in the delta).
+     */
+    loadQualityInputs(userId: string, repoFullName: string): Promise<KbQualityInput[]>;
 }

@@ -15,6 +15,7 @@ import { Pool, type QueryResult } from 'pg';
 
 import { buildCroissant, type CroissantDataset } from '../../rag/croissant.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import type { KbQualityInput } from '../quality/computeKbQuality.js';
 import type {
     ChunkIdentity,
     DocumentChunk,
@@ -784,6 +785,34 @@ export class RdsVectorStore implements IVectorStore {
         );
 
         return result.rows[0]?.n ?? 0;
+    }
+
+    // =========================================================================
+    // IVectorStore.loadQualityInputs
+    // =========================================================================
+
+    async loadQualityInputs(userId: string, repoFullName: string): Promise<KbQualityInput[]> {
+        const result = await this.execute<{
+            file_path: string;
+            content_chars: number;
+            tags: string[] | null;
+            file_type: string | null;
+            skills: string[] | null;
+        }>(
+            `SELECT file_path,
+                    char_length(content)::int AS content_chars,
+                    tags, file_type, skills
+               FROM document_embeddings
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName],
+        );
+        return result.rows.map((r) => ({
+            filePath:     r.file_path,
+            contentChars: r.content_chars,
+            tags:         r.tags ?? undefined,
+            fileType:     r.file_type ?? undefined,
+            skills:       r.skills ?? undefined,
+        }));
     }
 
     // =========================================================================
