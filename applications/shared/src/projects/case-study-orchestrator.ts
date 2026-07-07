@@ -153,6 +153,9 @@ export function computeInputHash(
     // Rounded-to-5 percentages (stable across small syncs), because the mix
     // changes the system prompt's highlight-balance block.
     updateOptionalHash(h, 'mix:', c.evidenceMix ? `${c.evidenceMix.appPct}/${c.evidenceMix.infraPct}` : undefined);
+    // Bucketed (nearest-5 counts, month dates) so small syncs don't bust the
+    // cache; the signals feed the <difficultySignals> prompt block.
+    updateOptionalHash(h, 'diff:', c.difficultySignals ? JSON.stringify(c.difficultySignals) : undefined);
     return h.digest('hex');
 }
 

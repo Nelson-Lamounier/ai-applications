@@ -23,6 +23,8 @@ function makePool(canned: {
     fileChanges?: unknown[];
     laneCounts?: unknown[];
     verifiedStack?: unknown[];
+    difficultyAreas?: unknown[];
+    commitSpan?: unknown[];
 }) {
     // Table-driven dispatch: first matching predicate wins. Keeps the stub's
     // cognitive complexity flat as queries are added (one row per query).
@@ -31,6 +33,11 @@ function makePool(canned: {
         [(s) => /FROM projects/.test(s), () => canned.projects ?? []],
         [(s) => /FROM project_components/.test(s) && !/FROM project_repositories/.test(s), () => canned.components ?? []],
         [(s) => /FROM project_repositories/.test(s), () => canned.repositories ?? []],
+        // Difficulty signals: the fix-density query JOINs commit files to
+        // commits; the span query aliases first_commit_at. Both must route
+        // before the generic repo_commit_files / repo_commits matchers.
+        [(s) => /JOIN repo_commits/.test(s), () => canned.difficultyAreas ?? []],
+        [(s) => /first_commit_at/.test(s), () => canned.commitSpan ?? []],
         [(s) => /FROM repo_commit_files/.test(s), () => canned.fileChanges ?? []],
         // Lane-counts is the GROUP BY fileClass aggregate; the KB-chunk SELECT
         // also mentions fileClass now (docs-lane preference), so match on the
@@ -248,5 +255,34 @@ describe('loadCaseStudyContext — evidence mix (highlight balance)', () => {
         });
         const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
         expect(out.context.evidenceMix ?? null).toBeNull();
+    });
+});
+
+describe('loadCaseStudyContext — difficulty signals (challenge recency fix)', () => {
+    it('attaches bucketed signals from the full-history fix-density query', async () => {
+        const pool = makePool({
+            projects:     [projectRow],
+            repositories: [repoRow],
+            embeddings:   [],
+            commits:      [],
+            pulls:        [],
+            difficultyAreas: [{ area: 'src/auth', fix_commits: '13', total_commits: '38', first_at: '2026-01-15T00:00:00.000Z', last_at: '2026-06-02T00:00:00.000Z' }],
+            commitSpan:      [{ first_commit_at: '2025-11-29T00:00:00.000Z', last_commit_at: '2026-07-07T00:00:00.000Z', total: '406' }],
+        });
+        const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
+        expect(out.context.difficultySignals).toEqual({
+            firstCommitMonth: '2025-11',
+            lastCommitMonth:  '2026-07',
+            totalCommits:     405,
+            areas: [{ area: 'src/auth', fixCommits: 15, totalCommits: 40, firstMonth: '2026-01', lastMonth: '2026-06' }],
+        });
+    });
+
+    it('attaches null when the history holds no fix-dense areas', async () => {
+        const pool = makePool({
+            projects: [projectRow], repositories: [repoRow], embeddings: [], commits: [], pulls: [],
+        });
+        const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
+        expect(out.context.difficultySignals ?? null).toBeNull();
     });
 });

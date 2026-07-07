@@ -73,3 +73,36 @@ describe('deriveEvidenceMix', () => {
         expect(mix).toEqual({ appPct: 10, infraPct: 90, appFiles: 30, infraFiles: 270 });
     });
 });
+
+describe('deriveDifficultySignals', () => {
+    const span = { first_commit_at: '2025-11-29T00:00:00Z', last_commit_at: '2026-07-07T00:00:00Z', total: '406' };
+
+    it('buckets counts to the nearest 5 (floor 1) and dates to months', async () => {
+        const { deriveDifficultySignals } = await import('./case-study-depth.js');
+        const out = deriveDifficultySignals(
+            [{ area: 'src/auth', fix_commits: '13', total_commits: '38', first_at: '2026-01-15T10:00:00Z', last_at: '2026-06-02T10:00:00Z' }],
+            span,
+        );
+        expect(out).toEqual({
+            firstCommitMonth: '2025-11',
+            lastCommitMonth:  '2026-07',
+            totalCommits:     405,
+            areas: [{ area: 'src/auth', fixCommits: 15, totalCommits: 40, firstMonth: '2026-01', lastMonth: '2026-06' }],
+        });
+    });
+
+    it('keeps tiny counts visible instead of rounding them to zero', async () => {
+        const { deriveDifficultySignals } = await import('./case-study-depth.js');
+        const out = deriveDifficultySignals(
+            [{ area: 'infra/lib', fix_commits: '1', total_commits: '2', first_at: '2026-05-01T00:00:00Z', last_at: '2026-05-02T00:00:00Z' }],
+            span,
+        );
+        expect(out?.areas[0]).toMatchObject({ fixCommits: 1, totalCommits: 1 });
+    });
+
+    it('returns null when no fix-dense areas exist (block omitted from the prompt)', async () => {
+        const { deriveDifficultySignals } = await import('./case-study-depth.js');
+        expect(deriveDifficultySignals([], span)).toBeNull();
+        expect(deriveDifficultySignals([{ area: 'a', fix_commits: '1', total_commits: '1', first_at: '2026-01-01T00:00:00Z', last_at: '2026-01-01T00:00:00Z' }], null)).toBeNull();
+    });
+});
