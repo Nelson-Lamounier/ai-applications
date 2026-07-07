@@ -50,6 +50,27 @@ const BUCKET_CORS_RULES: s3.CorsRule[] = [
 ];
 
 /**
+ * Guards against deploying with a placeholder `articleAssets` role name.
+ * `infra/lib/config/bedrock/configurations.ts` seeds staging/production with
+ * `*-TBD` role names until the real EKS Pod Identity association roles exist
+ * for those environments — synth must fail loudly rather than let CDK grant
+ * `iam.Role.fromRoleName` a non-existent role.
+ */
+function assertNotPlaceholderRoleName(
+    roleName: string,
+    environmentName: string,
+    configField: string,
+): void {
+    if (roleName.includes('TBD')) {
+        throw new Error(
+            `articleAssets.${configField} role for environment "${environmentName}" is a `
+            + `placeholder ("${roleName}") — set a real IAM role name in `
+            + 'infra/lib/config/bedrock/configurations.ts',
+        );
+    }
+}
+
+/**
  * Props for BedrockDataStack
  */
 export interface BedrockDataStackProps extends cdk.StackProps {
@@ -221,6 +242,17 @@ export class BedrockDataStack extends cdk.Stack {
             serverAccessLogsPrefix: 'article-assets-bucket/',
             cors: BUCKET_CORS_RULES,
         });
+
+        assertNotPlaceholderRoleName(
+            props.articleAssetsAdminRoleName,
+            props.environmentName,
+            'adminRoleName',
+        );
+        assertNotPlaceholderRoleName(
+            props.articleAssetsReaderRoleName,
+            props.environmentName,
+            'readerRoleName',
+        );
 
         const articleAdminRole = iam.Role.fromRoleName(
             this,

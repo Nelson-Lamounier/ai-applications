@@ -25,20 +25,27 @@ const NAME_PREFIX = 'bedrock-dev';
 const ADMIN_ROLE_NAME = 'ADMIN_ROLE_NAME';
 const PUBLIC_ROLE_NAME = 'PUBLIC_ROLE_NAME';
 
-function synth(): Template {
+function buildStack(overrides: {
+    articleAssetsAdminRoleName?: string;
+    articleAssetsReaderRoleName?: string;
+    environmentName?: string;
+} = {}): BedrockDataStack {
     const app = createTestApp();
-    const stack = new BedrockDataStack(app, 'TestData', {
+    return new BedrockDataStack(app, 'TestData', {
         namePrefix: NAME_PREFIX,
         createEncryptionKey: false,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         haikuProfileSourceArn: 'arn:aws:bedrock:eu-west-1:111111111111:inference-profile/h',
         sonnetProfileSourceArn: 'arn:aws:bedrock:eu-west-1:111111111111:inference-profile/s',
-        environmentName: 'development',
-        articleAssetsAdminRoleName: ADMIN_ROLE_NAME,
-        articleAssetsReaderRoleName: PUBLIC_ROLE_NAME,
+        environmentName: overrides.environmentName ?? 'development',
+        articleAssetsAdminRoleName: overrides.articleAssetsAdminRoleName ?? ADMIN_ROLE_NAME,
+        articleAssetsReaderRoleName: overrides.articleAssetsReaderRoleName ?? PUBLIC_ROLE_NAME,
         env: TEST_ENV_EU,
     });
-    return Template.fromStack(stack);
+}
+
+function synth(): Template {
+    return Template.fromStack(buildStack());
 }
 
 // =============================================================================
@@ -85,5 +92,27 @@ describe('BedrockDataStack — article assets bucket', () => {
             }),
             Roles: [PUBLIC_ROLE_NAME],
         });
+    });
+
+    it('should throw at synth time when the admin role name is a -TBD placeholder', () => {
+        expect(() => buildStack({
+            articleAssetsAdminRoleName: 'EksPodIdentity-staging-admin-api-TBD',
+            environmentName: 'staging',
+        })).toThrow(/articleAssets\.adminRoleName role for environment "staging" is a placeholder/);
+    });
+
+    it('should throw at synth time when the reader role name is a -TBD placeholder', () => {
+        expect(() => buildStack({
+            articleAssetsReaderRoleName: 'EksPodIdentity-production-public-api-TBD',
+            environmentName: 'production',
+        })).toThrow(/articleAssets\.readerRoleName role for environment "production" is a placeholder/);
+    });
+
+    it('should not throw for a real, non-placeholder role name', () => {
+        expect(() => buildStack({
+            articleAssetsAdminRoleName: 'EksPodIdentity-production-Roleadminapi5EAE4B6E-gYZToUb4xsCc',
+            articleAssetsReaderRoleName: 'EksPodIdentity-production-Rolepublicapi88CC20CC-xv2h0dN8FPQ8',
+            environmentName: 'production',
+        })).not.toThrow();
     });
 });
