@@ -122,3 +122,20 @@ describe('emit_case_study tool schema — output trim', () => {
         expect(rb.items.properties.bullets.items.maxLength).toBe(250);
     });
 });
+
+describe('system prompt — highlight coverage + metric translation rules', () => {
+    it('requires one plain-language headline-capability highlight, phrased for any archetype', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/At least ONE highlight/);
+        // Archetype-neutral: the rule must speak to apps, infrastructure/IaC,
+        // and libraries/CLIs — not just visitor-facing web products.
+        expect(prompt).toMatch(/provisions, automates or operates/);
+        expect(prompt).toMatch(/lets a developer/);
+    });
+
+    it('requires metrics to be translated to plain English before the number', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        // \s+ — the prompt template hard-wraps prose across indented lines.
+        expect(prompt).toMatch(/plain-English\s+meaning before the number/);
+    });
+});
