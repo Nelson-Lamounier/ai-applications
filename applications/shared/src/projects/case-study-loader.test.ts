@@ -220,3 +220,33 @@ describe('kbRelevanceTerms', () => {
         expect(kbRelevanceTerms('a-b', 'x y z')).toBe('');
     });
 });
+
+describe('loadCaseStudyContext — evidence mix (highlight balance)', () => {
+    it('attaches the app/infra mix derived from fileClass lane counts', async () => {
+        const pool = makePool({
+            projects:     [projectRow],
+            components:   [],
+            repositories: [repoRow],
+            embeddings:   [],
+            laneCounts:   [{ fc: 'source', cnt: '141' }, { fc: 'test', cnt: '640' }, { fc: 'iac', cnt: '45' }],
+            commits:      [],
+            pulls:        [],
+        });
+        const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
+        expect(out.context.evidenceMix).toEqual({ appPct: 95, infraPct: 5, appFiles: 781, infraFiles: 45 });
+    });
+
+    it('attaches null when the repos hold only one lane', async () => {
+        const pool = makePool({
+            projects:     [projectRow],
+            components:   [],
+            repositories: [repoRow],
+            embeddings:   [],
+            laneCounts:   [{ fc: 'source', cnt: '100' }],
+            commits:      [],
+            pulls:        [],
+        });
+        const out = await loadCaseStudyContext(pool as never, 'proj-uuid');
+        expect(out.context.evidenceMix ?? null).toBeNull();
+    });
+});

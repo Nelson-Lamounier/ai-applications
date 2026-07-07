@@ -12,7 +12,7 @@
  * Pure — no I/O, no LLM.
  */
 
-import type { DepthMarkers } from './case-study-types.js';
+import type { DepthMarkers, EvidenceMix } from './case-study-types.js';
 
 export interface DepthSignals {
     /** Summed fileClass lane counts across the project's repos. */
@@ -88,4 +88,22 @@ export function deriveDepthMarkers(s: DepthSignals): DepthMarkers {
         deploymentUrl:         s.deploymentUrl ?? null,
         refactorCount:         Math.max(0, Math.trunc(s.refactorCount ?? 0)),
     };
+}
+
+/**
+ * App-vs-infra evidence split from fileClass lane counts: application =
+ * source + test, infrastructure = iac + ci. Docs and config are excluded —
+ * docs is its own narrative lane and config is classification noise.
+ * Percentages are rounded to the nearest 5 so the value — which feeds the
+ * system prompt AND the case-study cache key — stays stable across small
+ * syncs. Returns null when either side is empty: a single-lane project
+ * (e.g. a pure Terraform repo, or an app with no IaC) has nothing to
+ * balance, and the prompt must not pressure the model to invent one.
+ */
+export function deriveEvidenceMix(laneCounts: DepthSignals['laneCounts']): EvidenceMix | null {
+    const app   = n(laneCounts.source) + n(laneCounts.test);
+    const infra = n(laneCounts.iac) + n(laneCounts.ci);
+    if (app === 0 || infra === 0) return null;
+    const appPct = Math.round((app / (app + infra)) * 20) * 5;
+    return { appPct, infraPct: 100 - appPct, appFiles: app, infraFiles: infra };
 }
