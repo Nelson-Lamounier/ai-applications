@@ -15,6 +15,7 @@
  * never mid-sentence chops. Bullets are ordered by JD relevance upstream, so
  * dropping from the end removes the least relevant content first.
  */
+import { CLAIM_STRENGTH_RULE } from '../lib/claim-strength.js';
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../agents/resume-tool-schema.js';
@@ -208,6 +209,7 @@ export async function condenseResume(
         `- projects total <= ${LENGTH_BUDGET.projectsWords} (currently ${measure.projects}); each description <= ${LENGTH_BUDGET.perProjectWords} words — what it is, the JD-relevant proof, one metric. No stack dumps.`,
         `- grand total <= ${LENGTH_BUDGET.totalWords} (currently ${measure.total}).`,
         'Style: industry-standard, terse, no adjectives without evidence, no repeated technology lists across sections.',
+        CLAIM_STRENGTH_RULE,
     ].join('\n');
 
     const config: AgentConfig = {
@@ -263,6 +265,7 @@ export async function expandResume(
         `- the primary (most JD-relevant) role may grow to ${LENGTH_BUDGET.maxBulletsPerRole} bullets; every bullet <= ${LENGTH_BUDGET.perBulletWords} words, one impact clause.`,
         `- projects may grow toward ${LENGTH_BUDGET.perProjectWords} words each: pitch-led, one differentiator, one fresh metric — never stack dumps.`,
         'Style stays dry and verb-first. No repetition of existing bullets in new ones.',
+        CLAIM_STRENGTH_RULE,
     ].join('\n');
     const config: AgentConfig = {
         agentName: 'resume-expand', modelId: MODEL_ID, maxTokens: 8000, thinkingBudget: 0,

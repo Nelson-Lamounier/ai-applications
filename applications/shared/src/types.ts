@@ -166,7 +166,8 @@ export type AgentName =
     // free-tier narrative resume + cover letter writer.
     | 'free-resume-writer'
     // CRAG-style re-retrieval adjudicator for kb_present_not_retrieved gaps.
-    | 'corrective-retrieval';
+    | 'corrective-retrieval'
+    | 'summary-repair';
 
 /**
  * Model-agnostic configuration for a single agent.

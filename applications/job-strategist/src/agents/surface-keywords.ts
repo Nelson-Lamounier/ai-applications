@@ -15,6 +15,7 @@
  */
 
 import { runAgent, log } from '@bedrock/shared';
+import { CLAIM_STRENGTH_RULE } from '../lib/claim-strength.js';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData, SkillEvidenceEntry } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.js';
 import { citableFiles } from '../ats/tool-evidence-retrieval.js';
@@ -114,6 +115,7 @@ export async function surfaceKeywords(
         '   they are not resume content.',
         '',
         'Output plain text only: no markdown, no em-dashes (the pipeline normalizes em-dashes anyway).',
+        CLAIM_STRENGTH_RULE,
     ].join('\n');
 
     const config: AgentConfig = {
