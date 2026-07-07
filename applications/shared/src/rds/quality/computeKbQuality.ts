@@ -20,11 +20,22 @@
  *     NUMERIC(4,2) declaration without surprise rounding mid-pipeline.
  */
 
-import type { RawChunk } from '../types.js';
-
 // =============================================================================
 // PUBLIC TYPES
 // =============================================================================
+
+/**
+ * Minimal per-chunk view for quality scoring. Two interchangeable shapes:
+ * an in-memory RawChunk (carries `content`) or a lite DB row loaded via
+ * IVectorStore.loadQualityInputs (carries `contentChars` from char_length,
+ * so the full corpus can be scored without shipping chunk content).
+ */
+export type KbQualityInput = {
+    readonly filePath: string;
+    readonly tags?: readonly string[];
+    readonly fileType?: string;
+    readonly skills?: readonly string[];
+} & ({ readonly content: string } | { readonly contentChars: number });
 
 export interface KbQualityFactor {
     /** Raw measurement (chunk count, distinct skills, etc.). */
@@ -75,13 +86,19 @@ const W = {
 // PUBLIC API
 // =============================================================================
 
+/** Character length of a quality input, whichever shape it carries. */
+function chunkChars(c: KbQualityInput): number {
+    return 'content' in c ? c.content.length : c.contentChars;
+}
+
 /**
- * Compute the KB quality score for a freshly-ingested repo. Caller is
- * expected to pass the same RawChunk[] that the pipeline was about to upsert
- * (post-chunking, post-enrichment). Pure — safe to call before, during, or
- * after persistence.
+ * Compute the KB quality score for a repo. The input MUST represent the
+ * repo's FULL persisted corpus, not a single run's delta — an incremental
+ * sync's changed-file slice scores a large repo as tiny/undocumented (the
+ * same cumulative-vs-delta rule as IVectorStore.countChunks). Pure — safe
+ * to call before, during, or after persistence.
  */
-export function computeKbQuality(chunks: readonly RawChunk[]): KbQualityResult {
+export function computeKbQuality(chunks: readonly KbQualityInput[]): KbQualityResult {
     const chunkCount = chunks.length;
 
     // ----- chunk_count ----------------------------------------------------
@@ -94,7 +111,7 @@ export function computeKbQuality(chunks: readonly RawChunk[]): KbQualityResult {
     // didn't split well.
     const avgLen = chunkCount === 0
         ? 0
-        : chunks.reduce((s, c) => s + c.content.length, 0) / chunkCount;
+        : chunks.reduce((s, c) => s + chunkChars(c), 0) / chunkCount;
     const avgChunkLengthScore = scoreAvgLen(avgLen);
 
     // ----- readme_present -------------------------------------------------

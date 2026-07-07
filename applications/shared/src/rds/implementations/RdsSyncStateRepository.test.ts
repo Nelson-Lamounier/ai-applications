@@ -31,6 +31,20 @@ describe('RdsSyncStateRepository retrieval persistence', () => {
         expect(upsert!.params.some(p => typeof p === 'string' && p.includes('"status":"ok"'))).toBe(true);
     });
 
+    it('retains prior quality + retrieval values when a run omits them (COALESCE, no wipe)', async () => {
+        // Regression: a no-new-content incremental sync skips the retrieval
+        // probe, and markError omits quality entirely — both used to overwrite
+        // the stored scores with NULL. The DO UPDATE must retain prior values.
+        const pool = fakePool();
+        const repo = new RdsSyncStateRepository({} as never);
+        (repo as unknown as { pool: typeof pool }).pool = pool;
+        await repo.markComplete('u1', 'owner/repo', 1, 1);
+        const upsert = pool.calls.find(c => c.sql.includes('INSERT INTO repo_sync_state'))!;
+        for (const col of ['kb_quality_score', 'kb_quality_breakdown', 'retrieval_score', 'retrieval_breakdown']) {
+            expect(upsert.sql).toMatch(new RegExp(`${col}\\s*=\\s*COALESCE\\(EXCLUDED\\.${col}, repo_sync_state\\.${col}\\)`));
+        }
+    });
+
     it('passes null for both retrieval params when omitted', async () => {
         const pool = fakePool();
         const repo = new RdsSyncStateRepository({} as never);
