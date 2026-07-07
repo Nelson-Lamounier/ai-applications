@@ -24,6 +24,7 @@ describe('loadAchievementEvidence', () => {
 				],
 				decisions: [
 					{
+						title: 'Consolidate the edge',
 						decision: 'Migrate edge to EKS ALB, retire CloudFront',
 						consequences: 'cut an edge layer and its failure surface',
 					},
@@ -50,5 +51,21 @@ describe('loadAchievementEvidence', () => {
 	it('returns empty string when a query throws', async () => {
 		const pool = { query: async () => { throw new Error('db down'); } } as never;
 		expect(await loadAchievementEvidence(pool, 'u1')).toBe('');
+	});
+});
+
+describe('loadAchievementEvidence — decision framing', () => {
+	it('prefixes each decision line with its title so the writer gets the framing', async () => {
+		const out = await loadAchievementEvidence(
+			makePool({
+				decisions: [{
+					title: 'Retire all direct AWS data-plane calls',
+					decision: 'Migrated all data reads to the in-cluster BFF',
+					consequences: 'Eliminated the frontend credential surface',
+				}],
+			}),
+			'u1',
+		);
+		expect(out).toContain('- Retire all direct AWS data-plane calls: Migrated all data reads to the in-cluster BFF -> Eliminated the frontend credential surface');
 	});
 });
