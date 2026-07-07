@@ -102,6 +102,17 @@ describe('GET /api/articles/images/:file', () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  it('rejects a raw single-encoded path-traversal filename (a%2Fb.png) with 400', async () => {
+    // Hono's router decodes %2F to / before the handler sees the :file param,
+    // so the raw request path below is what actually exercises the decoded
+    // value against FILE_RE — this is distinct from the double-encoded case
+    // above (encodeURIComponent('a%2Fb.png')), which never reaches a decoded
+    // slash at all.
+    const res = await articleImages.request('/api/articles/images/a%2Fb.png');
+    expect(res.status).toBe(400);
+    expect(mockSend).toHaveBeenCalledTimes(0);
+  });
+
   it('returns 404 when the object does not exist', async () => {
     const err = Object.assign(new Error('no key'), { name: 'NoSuchKey' });
     mockSend.mockRejectedValueOnce(err);
