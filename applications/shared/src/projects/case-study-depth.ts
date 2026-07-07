@@ -108,19 +108,20 @@ export function deriveEvidenceMix(laneCounts: DepthSignals['laneCounts']): Evide
     return { appPct, infraPct: 100 - appPct, appFiles: app, infraFiles: infra };
 }
 
-/** Raw per-area row from the full-history fix-density SQL (counts as text). */
+/** Raw per-area row from the full-history fix-density SQL. node-postgres
+ *  returns timestamptz columns as Date objects; counts arrive as text. */
 export interface DifficultyAreaRow {
     readonly area:          string;
     readonly fix_commits:   string | number;
     readonly total_commits: string | number;
-    readonly first_at:      string;
-    readonly last_at:       string;
+    readonly first_at:      string | Date;
+    readonly last_at:       string | Date;
 }
 
 /** Raw whole-repo span row (min/max authored_at over ALL stored commits). */
 export interface CommitSpanRow {
-    readonly first_commit_at: string;
-    readonly last_commit_at:  string;
+    readonly first_commit_at: string | Date;
+    readonly last_commit_at:  string | Date;
     readonly total:           string | number;
 }
 
@@ -129,9 +130,9 @@ function bucket5(v: number): number {
     return Math.max(1, Math.round(v / 5) * 5);
 }
 
-/** ISO timestamp -> YYYY-MM. */
-function month(iso: string): string {
-    return iso.slice(0, 7);
+/** Timestamp -> YYYY-MM. node-postgres hands timestamptz back as Date. */
+function month(v: string | Date): string {
+    return (v instanceof Date ? v.toISOString() : String(v)).slice(0, 7);
 }
 
 /**

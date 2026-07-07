@@ -106,3 +106,18 @@ describe('deriveDifficultySignals', () => {
         expect(deriveDifficultySignals([{ area: 'a', fix_commits: '1', total_commits: '1', first_at: '2026-01-01T00:00:00Z', last_at: '2026-01-01T00:00:00Z' }], null)).toBeNull();
     });
 });
+
+describe('deriveDifficultySignals — pg Date handling', () => {
+    it('accepts Date objects as node-postgres returns for timestamptz (live crash: iso.slice is not a function)', async () => {
+        const { deriveDifficultySignals } = await import('./case-study-depth.js');
+        const out = deriveDifficultySignals(
+            [{ area: 'src/auth', fix_commits: '13', total_commits: '38', first_at: new Date('2026-01-15T10:00:00Z'), last_at: new Date('2026-06-02T10:00:00Z') }],
+            { first_commit_at: new Date('2025-11-29T00:00:00Z'), last_commit_at: new Date('2026-07-07T00:00:00Z'), total: '406' },
+        );
+        expect(out).toMatchObject({
+            firstCommitMonth: '2025-11',
+            lastCommitMonth:  '2026-07',
+            areas: [{ area: 'src/auth', firstMonth: '2026-01', lastMonth: '2026-06' }],
+        });
+    });
+});
