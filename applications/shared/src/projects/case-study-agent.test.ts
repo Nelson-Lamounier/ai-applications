@@ -214,3 +214,44 @@ describe('buildUserMessage — difficultySignals block', () => {
         expect(buildUserMessage({ ...baseCtx, difficultySignals: null })).not.toContain('<difficultySignals>');
     });
 });
+
+describe('system prompt — decision log quality rules', () => {
+    it('requires impact-first consequences with the tradeoff second', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/lead with what the decision\s+ACHIEVED/);
+        expect(prompt).toMatch(/only then state the honest\s+tradeoff/);
+    });
+
+    it('requires the rejected alternative (evidence-gated, never invented)', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/alternative option\(s\)\s+considered/);
+        expect(prompt).toMatch(/NEVER invent\s+an option/);
+        expect(prompt).toMatch(/state the constraint/);
+    });
+
+    it('calibrates confidence to production evidence', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/'high' ONLY when the consequence is\s+validated by production evidence/);
+    });
+
+    it('extends whole-history selection and the differentiator slot to decisions', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/proof of\s+JUDGEMENT across the project's WHOLE history/);
+        expect(prompt).toMatch(/at least one decision about\s+the product's differentiating capability/);
+    });
+
+    it('demands distinctness across decisions, challenges and highlights', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/Distinctness across sections/);
+        expect(prompt).toMatch(/at most one section/);
+        expect(prompt).toMatch(/Never repeat sentences/);
+    });
+
+    it('extends the evidence-mix balance to decisions', () => {
+        const prompt = buildSystemPrompt({
+            ...baseCtx,
+            evidenceMix: { appPct: 70, infraPct: 30, appFiles: 700, infraFiles: 300 },
+        });
+        expect(prompt).toMatch(/balance the\s+highlights and decisions/);
+    });
+});
