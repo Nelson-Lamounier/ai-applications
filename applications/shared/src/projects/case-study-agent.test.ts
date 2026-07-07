@@ -270,3 +270,19 @@ describe('emit_case_study — displayName (product name, never the repo slug)', 
         expect(prompt).toMatch(/kebab-case/);
     });
 });
+
+describe('emit_case_study — productStatement (README-derived, write-once)', () => {
+    it('asks the model for a nullable product statement', async () => {
+        const { CASE_STUDY_TOOL } = await import('./case-study-agent.js');
+        expect(CASE_STUDY_TOOL.inputSchema.properties).toHaveProperty('productStatement');
+        expect(CASE_STUDY_TOOL.inputSchema.required).toContain('productStatement');
+    });
+
+    it('gates the statement on supplied context and bans invention', () => {
+        const prompt = buildSystemPrompt(baseCtx);
+        expect(prompt).toMatch(/productStatement/);
+        expect(prompt).toMatch(/derived\s+ONLY from/);
+        expect(prompt).toMatch(/Emit null when/);
+        expect(prompt).toMatch(/NEVER invent one from code alone/);
+    });
+});

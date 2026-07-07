@@ -101,6 +101,14 @@ Rules:
      <productContext> is supplied, infer the product's purpose from the
      repositories/components and README-style KB passages — still lead
      with what it does, not how it's built.
+     Also emit \`productStatement\`: a 1–3 sentence statement of what
+     the product is, who it serves, and the problem it solves, derived
+     ONLY from the supplied <productContext> (repository descriptions
+     and root READMEs). It is persisted once as the project's
+     authoritative product description and feeds every future
+     regeneration as ground truth, so it must contain no claim the
+     READMEs do not support. Emit null when the supplied context does
+     not state the product's purpose — NEVER invent one from code alone.
   3. \`displayName\` is the project's recruiter-facing PRODUCT name
      (max 80 chars) — how its landing page would title it. NEVER a
      repository name or slug: no kebab-case or snake_case identifiers
@@ -471,7 +479,8 @@ export const CASE_STUDY_TOOL = {
     inputSchema: {
         type: 'object',
         properties: {
-            displayName:   { type: 'string', minLength: 1, maxLength: 80 },
+            displayName:      { type: 'string', minLength: 1, maxLength: 80 },
+            productStatement: { type: ['string', 'null'], maxLength: 600 },
             tagline:       { type: 'string', minLength: 1, maxLength: 200 },
             pitch:         { type: 'string', minLength: 1, maxLength: 4000 },
             stack:         { type: 'array', maxItems: 40, items: STACK_ITEM_SCHEMA },
@@ -489,8 +498,9 @@ export const CASE_STUDY_TOOL = {
             },
         },
         required: [
-            'displayName', 'tagline', 'pitch', 'stack', 'decisions',
-            'highlights', 'challenges', 'architecture', 'resumeBullets',
+            'displayName', 'productStatement', 'tagline', 'pitch', 'stack',
+            'decisions', 'highlights', 'challenges', 'architecture',
+            'resumeBullets',
         ],
         additionalProperties: false,
     },

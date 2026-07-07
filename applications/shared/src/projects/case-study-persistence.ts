@@ -136,12 +136,17 @@ async function upsertProjectTopFields(
     // 'name' (user renamed it themselves) always wins; absent displayName
     // (pre-rename cached artefact) leaves the name untouched.
     const updateName    = !isSticky(overrides, 'name') && Boolean(cs.displayName?.trim());
+    // WRITE-ONCE bootstrap of the ground-truth product description from the
+    // model's README-derived statement: the SQL only fills a NULL column, so a
+    // manually-set or previously-bootstrapped value is never overwritten.
+    const updateStatement = !isSticky(overrides, 'productDescription') && Boolean(cs.productStatement?.trim());
 
     await client.query(
         `UPDATE projects
             SET tagline = CASE WHEN $2 THEN $3 ELSE tagline END,
                 pitch   = CASE WHEN $4 THEN $5 ELSE pitch   END,
                 name    = CASE WHEN $11 THEN $12 ELSE name END,
+                product_description = CASE WHEN $13 AND product_description IS NULL THEN $14 ELSE product_description END,
                 case_study_status            = 'complete',
                 case_study_generated_at      = NOW(),
                 case_study_pipeline_run_id   = $6,
@@ -162,6 +167,7 @@ async function upsertProjectTopFields(
             input.computedArchetype ?? null,
             input.computedStage ?? null,
             updateName, cs.displayName ?? null,
+            updateStatement, cs.productStatement ?? null,
         ],
     );
     return { taglineUpdated: updateTagline, pitchUpdated: updatePitch, nameUpdated: updateName };

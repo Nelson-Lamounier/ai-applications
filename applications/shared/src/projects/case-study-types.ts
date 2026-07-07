@@ -209,6 +209,11 @@ export const CaseStudySchema = z.object({
     // ("frontend-portfolio") on every surface. Optional so pre-rename cached
     // artefacts keep validating; the tool schema requires it of the model.
     displayName: z.string().min(1).max(80).optional(),
+    // README-derived 1-3 sentence product purpose. Persisted WRITE-ONCE into
+    // projects.product_description when that column is NULL — bootstraps the
+    // ground-truth block for users who never set it manually. Null when the
+    // supplied productContext states no purpose (the model must not invent).
+    productStatement: z.string().min(20).max(600).nullable().optional(),
     tagline: z.string().min(1).max(200),
     pitch:   z.string().min(1).max(4000),
     stack:        z.array(StackItemSchema).max(40),

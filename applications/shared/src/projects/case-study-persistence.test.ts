@@ -340,3 +340,36 @@ describe('persistCaseStudy — displayName renames the project', () => {
         expect(upd!.params[nameFlagIdx]).toBe(false);
     });
 });
+
+describe('persistCaseStudy — productStatement bootstraps product_description', () => {
+    it('fills product_description ONLY when the column is NULL (write-once, never overwrites)', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     { ...emptyCaseStudy, productStatement: 'A platform that does X for Y.' },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        expect(upd?.sql).toMatch(/product_description\s*=\s*CASE WHEN \$\d+ AND product_description IS NULL/);
+        expect(upd?.params).toContain('A platform that does X for Y.');
+    });
+
+    it('passes a false flag when the model emitted null', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     { ...emptyCaseStudy, productStatement: null },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        const stmtIdx = upd!.params.length - 1;
+        expect(upd!.params[stmtIdx]).toBeNull();
+        expect(upd!.params[stmtIdx - 1]).toBe(false);
+    });
+});
