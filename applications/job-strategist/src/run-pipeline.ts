@@ -60,6 +60,16 @@ import { buildRetrievalPrefilter } from './ats/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
+import { stripDocumentSections } from './lib/strip-document-sections.js';
+
+/**
+ * GROUNDED echoes the verifier's (document-stripped) answer back — keep the
+ * full original analysis; only a NOT_GROUNDED fallback substitution replaces
+ * it. Extracted from main() to keep its complexity at the baseline.
+ */
+function resolveVerifiedAnalysis(original: string, g: { status: string; answer: string }): string {
+    return g.status === 'GROUNDED' ? original : g.answer;
+}
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
 import { attachSourceLanes, mergeRepoLane } from './ats/evidence-lane.js';
@@ -832,13 +842,17 @@ export async function main(): Promise<void> {
         let groundingStatus = 'GROUNDED';
         if (contextChunks.length > 0) {
             try {
+                // The resume JSON + cover letter have dedicated guards — strip
+                // them so the verifier judges only the analysis (smaller input,
+                // and resume phrasing can no longer trigger a false
+                // NOT_GROUNDED that block-replaces the whole analysis).
                 const g = await groundingVerifier.verify({
                     query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
                     contextChunks,
-                    answer: analysis.data.analysisXml,
+                    answer: stripDocumentSections(analysis.data.analysisXml),
                 }, { pool, userId: env.userId });
                 groundingStatus = g.status;
-                finalAnalysis = g.answer;
+                finalAnalysis = resolveVerifiedAnalysis(analysis.data.analysisXml, g);
             } catch (e) {
                 log.warn({
                     pipelineRunId: env.pipelineRunId,
@@ -1014,7 +1028,10 @@ export async function main(): Promise<void> {
                     // length budget, then FINAL-revalidate content (surface
                     // rewrites were observed reintroducing inventory numbers
                     // and unbridged claims) before persisting and re-checking.
-                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code }), { groundingFacts }).catch(() => surfaced);
+                    // No groundingFacts here: round 1 already expanded to fill;
+                    // this pass exists only to SHRINK keyword-rewrite overgrowth.
+                    // (Observed live: a second expand+revalidate round cost ~50s.)
+                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code })).catch(() => surfaced);
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     for (const v of reval.violations) resumeViolationsMetric.inc({ code: v.code });
