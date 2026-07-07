@@ -1,5 +1,5 @@
 /** @format */
-import { loadCaseStudyContext } from './case-study-loader.js';
+import { loadCaseStudyContext, kbRelevanceTerms } from './case-study-loader.js';
 
 interface QueryResult {
     rows: unknown[];
@@ -32,7 +32,10 @@ function makePool(canned: {
         [(s) => /FROM project_components/.test(s) && !/FROM project_repositories/.test(s), () => canned.components ?? []],
         [(s) => /FROM project_repositories/.test(s), () => canned.repositories ?? []],
         [(s) => /FROM repo_commit_files/.test(s), () => canned.fileChanges ?? []],
-        [(s) => /FROM document_embeddings/.test(s) && /fileClass/.test(s), () => canned.laneCounts ?? []],
+        // Lane-counts is the GROUP BY fileClass aggregate; the KB-chunk SELECT
+        // also mentions fileClass now (docs-lane preference), so match on the
+        // aggregation instead of the mere column reference.
+        [(s) => /FROM document_embeddings/.test(s) && /GROUP BY de\.metadata->>'fileClass'/.test(s), () => canned.laneCounts ?? []],
         [(s) => /FROM document_embeddings/.test(s), () => canned.embeddings ?? []],
         [(s) => /FROM repo_sync_state/.test(s), () => canned.syncState ?? []],
         [(s) => /FROM repo_commits/.test(s), () => canned.commits ?? []],
@@ -204,5 +207,16 @@ describe('loadCaseStudyContext — authorship', () => {
         expect(ctx.context.commits[0].authorLogin).toBe('nelson');
         expect(ctx.context.commits[1].authorLogin).toBeNull();
         expect(ctx.context.pulls[0].authorLogin).toBe('nelson');
+    });
+});
+
+describe('kbRelevanceTerms', () => {
+    it('derives OR-joined lowercase terms from name + tagline, deduped, ≥4 chars, ≤12', () => {
+        const t = kbRelevanceTerms('frontend-portfolio', 'Portfolio platform with a RAG chatbot on EKS!');
+        expect(t).toBe('frontend | portfolio | platform | with | chatbot');
+        expect(t).not.toMatch(/rag|eks/); // <4 chars filtered
+    });
+    it('returns empty string when nothing salient derives (caller falls back to recency)', () => {
+        expect(kbRelevanceTerms('a-b', 'x y z')).toBe('');
     });
 });
