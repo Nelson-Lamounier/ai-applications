@@ -32,6 +32,9 @@ export const AtsCheckResultSchema = z.object({
     staleForFinalResume:      z.boolean().optional(),
     // Rendered PDF page count — ground truth for the 2-page maximum.
     pageCount:                z.number().optional(),
+    // Weighted JD-keyword coverage (0.7 required / 0.3 rest, non-empty pools
+    // only). Additive, optional for back-compat; absent when nothing graded.
+    coverageScore:            z.number().min(0).max(1).optional(),
 });
 
 export type AtsCheckResult = z.infer<typeof AtsCheckResultSchema>;
