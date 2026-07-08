@@ -61,6 +61,7 @@ import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, p
 import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { stripDocumentSections } from './lib/strip-document-sections.js';
+import { dedupeSkillGaps } from './lib/dedupe-skill-gaps.js';
 import { ensureSummaryIntegrity } from './lib/summary-integrity.js';
 import { preserveResumeFields } from './lib/preserve-resume-fields.js';
 
@@ -799,7 +800,16 @@ export async function main(): Promise<void> {
             matching: yearsReconciled, pool, userId: env.userId, pipelineRunId: env.pipelineRunId,
             pipelineContext: ctx, retrievalPrefilter,
         });
-        const guardedResearch = { ...research, data: correctedMatching };
+        // One gap row per real-world skill: the matcher can emit the same
+        // requirement several ways (observed live: 'PHP/Hack' + 'PHP' + 'Hack').
+        const guardedResearch = {
+            ...research,
+            data: {
+                ...correctedMatching,
+                gaps: dedupeSkillGaps(correctedMatching.gaps, aliasToCanonical, (d) =>
+                    log.info({ pipelineRunId: env.pipelineRunId, ...d }, 'skill_gaps_deduped')),
+            },
+        };
 
         // Assemble StrategistResearchResult from jdExtraction (JdSignal) + guarded matching.
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
