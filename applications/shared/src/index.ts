@@ -192,6 +192,7 @@ export type {
     ResumeEslCorrection,
     ResumeSuggestions,
     StrategistAnalysisResult,
+    GapMitigation,
 
     // Interview Coach
     InterviewQuestion,

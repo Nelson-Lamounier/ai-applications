@@ -38,6 +38,7 @@ import type {
     StrategistPipelineContext,
     StrategistResearchResult,
     StrategistAnalysisResult,
+    GapMitigation,
     StructuredResumeData,
 } from '@bedrock/shared';
 
@@ -392,6 +393,35 @@ export function extractCoverLetter(xml: string): CoverLetter | null {
  * @param xml - Raw XML analysis output
  * @returns Array of structured addition suggestions
  */
+/**
+ * Extract phase-3 gap mitigations into structured data. Field-by-field per
+ * <mitigation> block (CDATA-tolerant, optional fields default to '') — the
+ * defences were previously trapped in the raw XML while the UI rendered the
+ * gap list without them.
+ */
+export function extractGapMitigations(xml: string): GapMitigation[] {
+    const out: GapMitigation[] = [];
+    const tag = (block: string, name: string): string => {
+        const m = new RegExp(`<${name}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${name}>`).exec(block);
+        return m ? m[1].trim() : '';
+    };
+    const blockRe = /<mitigation>([\s\S]*?)<\/mitigation>/g;
+    let match: RegExpExecArray | null;
+    while ((match = blockRe.exec(xml)) !== null) {
+        const gap = tag(match[1], 'gap');
+        const honestFraming = tag(match[1], 'honest_framing');
+        if (!gap || !honestFraming) continue;
+        out.push({
+            gap,
+            honestFraming,
+            bridgeNarrative: tag(match[1], 'bridge_narrative'),
+            proactiveAction: tag(match[1], 'proactive_action'),
+            goNoGo: tag(match[1], 'go_no_go') || 'conditional',
+        });
+    }
+    return out;
+}
+
 function extractAdditions(xml: string): ResumeAdditionSuggestion[] {
     const additions: ResumeAdditionSuggestion[] = [];
     const regex = /<addition>\s*<section>(.*?)<\/section>\s*<suggested_bullet>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/suggested_bullet>\s*<source_citation>(.*?)<\/source_citation>\s*<\/addition>/gs;
@@ -755,6 +785,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
         return {
             analysisXml: sanitisedXml,
             metadata,
+            gapMitigations: extractGapMitigations(sanitisedXml),
             coverLetter,
             archetypeSelection,
             tailoredResumeData,
