@@ -752,6 +752,20 @@ export interface CoverLetter {
  * This is the raw XML string; the handler parses specific sections
  * as needed. The full XML is persisted to DynamoDB for admin review.
  */
+/**
+ * One phase-3 gap defence: the honest framing, transfer bridge and prep
+ * action the strategist produced for a flagged skill gap. Extracted from the
+ * analysis XML so the UI can show the defence NEXT TO the gap instead of
+ * leaving it buried in the raw document.
+ */
+export interface GapMitigation {
+    readonly gap: string;
+    readonly honestFraming: string;
+    readonly bridgeNarrative: string;
+    readonly proactiveAction: string;
+    readonly goNoGo: string;
+}
+
 export interface StrategistAnalysisResult {
     /** The full XML analysis (raw string) */
     readonly analysisXml: string;
@@ -765,6 +779,9 @@ export interface StrategistAnalysisResult {
         readonly overallFitRating: FitRating;
         readonly applicationRecommendation: ApplicationRecommendation;
     };
+
+    /** Phase-3 gap defences, structured (empty for legacy runs). */
+    readonly gapMitigations: GapMitigation[];
 
     /** Generated cover letter (structured object, null when not requested) */
     readonly coverLetter: CoverLetter | null;
