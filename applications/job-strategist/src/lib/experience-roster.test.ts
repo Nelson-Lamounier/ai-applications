@@ -44,13 +44,34 @@ describe('reconcileExperienceRoster', () => {
         expect(out.experience[0]!.highlights).toEqual(['A1', 'A2', 'A3', 'A4', 'A5']);
     });
 
-    it('restores the career-history company on an invented label', () => {
+    it('keeps a descriptive label on a SELF-EMPLOYMENT role — that branding is tailoring surface the user wants ("Solo-built production SaaS platform (Tucaken)" says more than "Freelance")', () => {
         const r = resume([
             entry('Solo-built production SaaS platform (Tucaken)', 'Cloud & DevOps Engineer', '2022 – Present (Part-time)', ['A1']),
         ]);
         const { resume: out, violations } = reconcileExperienceRoster(r, CAREER);
-        expect(out.experience[0]!.company).toBe('Freelance');
+        expect(out.experience[0]!.company).toBe('Solo-built production SaaS platform (Tucaken)');
+        expect(violations).toEqual([]);
+    });
+
+    it('still restores a REAL employer name verbatim — company names of actual employers are facts', () => {
+        const r = resume([
+            entry('AWS Enterprise Support Division', 'Technical Customer Service Associate', '2022 – Present', ['aws']),
+        ]);
+        const { resume: out, violations } = reconcileExperienceRoster(r, CAREER);
+        expect(out.experience[0]!.company).toBe('Amazon Web Services (AWS)');
         expect(violations).toContain('experience_company_restored');
+    });
+
+    it('a merged self-employment duplicate keeps the descriptive label of the first entry', () => {
+        const r = resume([
+            entry('Solo-built production SaaS platform (Tucaken)', 'Cloud & DevOps Engineer', '2022 – Present (Part-time)', ['A1', 'A2']),
+            entry('Freelance', 'Cloud & DevOps Engineer', '2022 – Present (Part-time)', ['B1']),
+        ]);
+        const { resume: out, violations } = reconcileExperienceRoster(r, CAREER);
+        expect(out.experience).toHaveLength(1);
+        expect(out.experience[0]!.company).toBe('Solo-built production SaaS platform (Tucaken)');
+        expect(out.experience[0]!.highlights).toEqual(['A1', 'A2', 'B1']);
+        expect(violations).toEqual(['experience_roster_duplicate_merged']);
     });
 
     it('leaves a faithful roster untouched (same object, no violations)', () => {
