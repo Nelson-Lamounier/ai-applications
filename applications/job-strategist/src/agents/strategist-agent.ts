@@ -127,8 +127,7 @@ function groundedMetricsSection(groundedMetrics?: string): string[] {
     return [
         '',
         groundedMetrics,
-        'Surface the JD-relevant metrics above in experience/project bullets, each value EXACTLY as stated.',
-        'These lines and the other evidence blocks are the ONLY permitted sources of measured numbers.',
+        'Use the JD-relevant metrics above in bullets, each value EXACTLY as stated.',
     ];
 }
 

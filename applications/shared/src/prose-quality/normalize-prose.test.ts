@@ -19,3 +19,25 @@ describe('normalizeProse', () => {
         expect(normalizeProse('')).toBe('');
     });
 });
+
+describe('resume-unsafe symbols (2026-07-08: ≥/+ shipped in rendered resumes)', () => {
+    it('rewrites >= / <= comparisons into words', () => {
+        expect(normalizeProse('SonarCloud gate (statements ≥42%, branches ≥60%)'))
+            .toBe('SonarCloud gate (statements at least 42%, branches at least 60%)');
+        expect(normalizeProse('kept p95 ≤100 ms')).toBe('kept p95 at most 100 ms');
+    });
+
+    it('rewrites a digit-trailing plus into words', () => {
+        expect(normalizeProse('embedding 265+ CDK test assertions')).toBe('embedding more than 265 CDK test assertions');
+        expect(normalizeProse('3+ years')).toBe('more than 3 years');
+    });
+
+    it('never touches plus signs that are part of identifiers', () => {
+        expect(normalizeProse('C++ and Node.js')).toBe('C++ and Node.js');
+        expect(normalizeProse('CI/CD')).toBe('CI/CD');
+    });
+
+    it('rewrites arrows into words', () => {
+        expect(normalizeProse('recall rose 0.368 → 0.673')).toBe('recall rose 0.368 to 0.673');
+    });
+});
