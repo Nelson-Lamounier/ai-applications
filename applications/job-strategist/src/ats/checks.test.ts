@@ -81,3 +81,37 @@ describe('buildAtsCheck', () => {
         expect(r.passed).toBe(false);
     });
 });
+
+describe('buildAtsCheck — weighted coverage score', () => {
+	const base = {
+		text: 'Nelson Lamounier nelson@example.com Summary Experience Skills Projects Education Certifications',
+		sections: ['Summary', 'Experience', 'Skills', 'Projects', 'Education', 'Certifications'],
+		pages: 2,
+		profile: { name: 'Nelson Lamounier', email: 'nelson@example.com' },
+	};
+	const row = (term: string, present: boolean) => ({ term, present, grounded: true, tier: present ? 'literal' as const : 'none' as const });
+
+	it('weights required terms 0.7 and the rest 0.3 (evidence-fit convention)', () => {
+		const check = buildAtsCheck({
+			...base,
+			coverage: [row('Docker', true), row('Kubernetes', false), row('Datadog', true), row('Grafana', true)],
+			requiredSkills: ['Docker', 'Kubernetes'],
+		});
+		// required: 1/2, rest: 2/2 -> 0.7*0.5 + 0.3*1 = 0.65
+		expect(check.coverageScore).toBeCloseTo(0.65, 5);
+	});
+
+	it('renormalises when the JD names no required skills', () => {
+		const check = buildAtsCheck({
+			...base,
+			coverage: [row('Datadog', true), row('Grafana', false)],
+			requiredSkills: [],
+		});
+		expect(check.coverageScore).toBeCloseTo(0.5, 5);
+	});
+
+	it('omits the score when there is no coverage at all', () => {
+		const check = buildAtsCheck({ ...base, coverage: [], requiredSkills: [] });
+		expect(check.coverageScore).toBeUndefined();
+	});
+});
