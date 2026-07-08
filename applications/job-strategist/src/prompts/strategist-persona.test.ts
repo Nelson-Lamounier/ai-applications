@@ -63,3 +63,18 @@ describe('strategist-persona employment fidelity mandate', () => {
 		expect(joined).toMatch(/employer's name or industry/);
 	});
 });
+
+describe('strategist-persona metric grounding (v7)', () => {
+	it('carries no numeric example metrics — the 2026-07-08 run lifted "8 minutes to 30 seconds" from the persona example into the resume', () => {
+		expect(joined).not.toMatch(/30-second\s+deploys/i);
+		expect(joined).not.toMatch(/8-minute\s+manual/i);
+		expect(joined).not.toMatch(/16 stacks, 22 workflows/);
+		expect(joined).not.toMatch(/4 projects across 11 stacks/);
+		expect(joined).not.toMatch(/30 custom rules/);
+	});
+
+	it('points the measured-number rule at the GROUNDED METRICS block and bans prompt numbers as evidence', () => {
+		expect(joined).toMatch(/GROUNDED\s+METRICS/);
+		expect(joined).toMatch(/numbers?\s+in\s+these\s+instructions\s+are\s+not\s+evidence/i);
+	});
+});

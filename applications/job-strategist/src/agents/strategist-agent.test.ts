@@ -85,6 +85,22 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
         expect(msg).toContain('Achievement & Impact Evidence');
         expect(msg).toContain('Reduced latency by 40%');
     });
+
+    it('omits the grounded-metrics section when the ledger is empty', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '', '');
+        expect(msg).not.toContain('GROUNDED METRICS');
+    });
+
+    it('includes the grounded-metrics block verbatim with the exact-value directive', () => {
+        const msg = buildStrategistMessage(
+            MIN_RESEARCH,
+            CTX,
+            '', '', '', '', '', '', '',
+            '### GROUNDED METRICS\n- [portfolio] Pages render in 132 ms (LCP).',
+        );
+        expect(msg).toContain('- [portfolio] Pages render in 132 ms (LCP).');
+        expect(msg).toMatch(/EXACTLY as stated/);
+    });
 });
 
 describe('extractGapMitigations — phase 3 defences become structured data', () => {

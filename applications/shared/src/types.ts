@@ -157,6 +157,8 @@ export type AgentName =
     | 'resume-expand'
     // ATS feedback loop — surface attainable-but-missing keywords.
     | 'surface-keywords'
+    // grounded-metrics loop — weave ledger metrics into a number-free resume.
+    | 'surface-metrics'
     // doc-vs-code drift — reframe a superseded-tech bullet as a migration narrative.
     | 'migration-reframe'
     // grounded change-impact narration over a commit's diff facts.

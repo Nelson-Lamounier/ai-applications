@@ -509,6 +509,11 @@ export interface ResearchMatching {
     };
     /** Per-tool evidence ledger — built deterministically by run-pipeline; [] default from matcher. */
     readonly skillEvidenceLedger: SkillEvidenceEntry[];
+    /** Number-bearing sentences copied VERBATIM from cited KB passages — the
+     *  matcher's metric pass-through. One-line citations drop measured numbers,
+     *  so without this field the writer never sees the candidate's documented
+     *  metrics. [] on runs before the metric persona shipped. */
+    readonly quantifiedEvidence?: string[];
 }
 
 /** Assembled in run-pipeline as { ...JdSignal, ...ResearchMatching }. Members unchanged for back-compat. */
@@ -596,6 +601,10 @@ export interface StrategistResearchResult {
 
     /** Per-tool evidence ledger — built deterministically in run-pipeline; never model-produced. */
     readonly skillEvidenceLedger: SkillEvidenceEntry[];
+    /** Number-bearing sentences copied VERBATIM from cited KB passages — the
+     *  matcher's metric pass-through into the writer's GROUNDED METRICS block.
+     *  Absent on runs before the metric persona shipped. */
+    readonly quantifiedEvidence?: string[];
 }
 
 // =============================================================================
