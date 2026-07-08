@@ -58,7 +58,10 @@ import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type R
 import { detectStaleMigrations, reframeStaleMigrations } from './ats/migration-reframe.js';
 import { buildRetrievalPrefilter } from './ats/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
-import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
+import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/number-provenance.js';
+import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
+import { surfaceMetrics } from './agents/surface-metrics.js';
+import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from './prompts/strategist-persona.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
 import { stripDocumentSections } from './lib/strip-document-sections.js';
 import { dedupeSkillGaps } from './lib/dedupe-skill-gaps.js';
@@ -184,6 +187,50 @@ function jdHasYearsBar(yearsGap: YearsGapLite): boolean {
 function tenureFramingFor(yearsGap: YearsGapLite): string {
     if (!jdHasYearsBar(yearsGap) || !yearsGap) return '';
     return yearsGap.framingLine;
+}
+
+/** The persona's full instruction text — the number DENY source for leak scrubbing. */
+function personaInstructionText(): string {
+    return STRATEGIST_PERSONA_SYSTEM_PROMPT
+        .map((b) => ('text' in b && typeof b.text === 'string' ? b.text : ''))
+        .join('\n');
+}
+
+/**
+ * Strip instruction-leaked metrics from the writer's raw output (numbers that
+ * appear in the persona but in none of the evidence handed to the writer).
+ * Null-safe; reports via callback only when something was actually stripped.
+ * Extracted from main() to keep its complexity bounded.
+ */
+function scrubInstructionLeaks(
+    resume: StructuredResumeData | null,
+    evidenceText: string,
+    onStripped: () => void,
+): StructuredResumeData | null {
+    if (!resume) return null;
+    const scrubbed = stripInstructionMetrics(resume, { instructionText: personaInstructionText(), evidenceText });
+    if (JSON.stringify(scrubbed) !== JSON.stringify(resume)) onStripped();
+    return scrubbed;
+}
+
+/**
+ * Metric-presence enforcement: when the resume carries NO impact metric while
+ * the grounded-metrics block is non-empty, run ONE bounded surface-metrics
+ * rewrite (roster-preserving), then re-strip ungrounded numbers — ledger
+ * values are in `allowed`, so only drifted values are removed. Fail-open.
+ * Extracted from main() to keep its complexity bounded.
+ */
+async function enforceMetricPresence(
+    resume: StructuredResumeData,
+    groundedMetricsBlock: string,
+    groundingFacts: string,
+    allowed: Set<number>,
+    onFired: (code: string) => void,
+): Promise<StructuredResumeData> {
+    if (!groundedMetricsBlock || resumeHasMetric(resume)) return resume;
+    onFired('resume_missing_metrics');
+    const surfaced = preserveExperienceRoster(resume, await surfaceMetrics(resume, groundedMetricsBlock, { groundingFacts }).catch(() => resume));
+    return stripUngroundedNumbers(surfaced, allowed);
 }
 
 function buildCoverLetterNarrative(
@@ -651,7 +698,7 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock] = await Promise.all([
+        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
             loadProjectLaneIndex(pool, ctx.userId),
             loadProfileIntelligenceBlock(pool, ctx.userId),
@@ -660,6 +707,7 @@ export async function main(): Promise<void> {
             loadCareerHistory(pool, ctx.userId).catch(() => []),
             extractJobDescription(ctx.jobDescription, ctx),
             loadAchievementEvidence(pool, ctx.userId),
+            loadGroundedMetricsLedger(pool, ctx.userId),
         ]);
         // Candidate grounding fed to research + strategist: documented project case
         // studies PLUS the code-grounded Profile Intelligence (direction / undersold
@@ -864,7 +912,10 @@ export async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
-        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock);
+        // GROUNDED METRICS block: deterministic case-study ledger + the matcher's
+        // verbatim KB pass-through — the writer's ONLY source of measured numbers.
+        const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
+        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, groundedMetricsBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -908,8 +959,23 @@ export async function main(): Promise<void> {
             strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_skipped_no_context' });
         }
 
-        // Raw tailored resume from the Strategist (guard reads this as input).
-        const tailoredResumeData = analysis.data.tailoredResumeData ?? null;
+        // Raw tailored resume from the Strategist (guard reads this as input) —
+        // scrubbed of instruction-leaked metrics FIRST: the 2026-07-08 run lifted
+        // "8 minutes to 30 seconds" from the persona's own impact-metric example,
+        // a class the provenance guard cannot catch (its allowed set is seeded
+        // with the writer's own output). Prompt numbers are never evidence.
+        const writerEvidenceText = [
+            experienceFactsBlock, candidateGroundingBlock, educationBlock, roleEvidenceBlock,
+            codeStackContext, achievementEvidenceBlock, groundedMetricsBlock, JSON.stringify(researchData),
+        ].join('\n');
+        const tailoredResumeData = scrubInstructionLeaks(
+            analysis.data.tailoredResumeData ?? null,
+            writerEvidenceText,
+            () => {
+                resumeViolationsMetric.inc({ code: 'instruction_metric_stripped' });
+                log.warn({ pipelineRunId: env.pipelineRunId }, 'instruction_metric_stripped_from_writer_output');
+            },
+        );
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
         // ── Cover-letter guard (rule-based, fail-open, rewrite-on-violation) ──
@@ -952,6 +1018,7 @@ export async function main(): Promise<void> {
         const budgetGroundingFacts = [
             experienceFactsBlock,
             projectEvidenceBlock,
+            groundedMetricsBlock,
             // Server-computed years figure: without it the allowed-number set
             // has no years value and the stripper deletes "N years" from the
             // summary mid-sentence (observed live on run a428bdf4).
@@ -995,7 +1062,15 @@ export async function main(): Promise<void> {
             const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
             const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code }), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
             // Expansion may only add grounded numbers; strip anything else.
-            const numberSafe = stripUngroundedNumbers(budgeted, allowedNumbers);
+            const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
+            // Metric presence: a number-free resume while the candidate's own
+            // documentation supplies grounded metrics = supply failure, not
+            // honesty — one bounded rewrite surfaces ledger metrics, then the
+            // number strip re-runs (ledger values are in the allowed set).
+            const numberSafe = await enforceMetricPresence(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, (code) => {
+                resumeViolationsMetric.inc({ code });
+                log.warn({ pipelineRunId: env.pipelineRunId }, 'resume_missing_metrics_surfacing_ledger');
+            });
             // FINAL content re-validation: reframe/condense/expand can
             // reintroduce violations the early guard already repaired (the
             // A/B run regained 5 bullet-shared project numbers and a flat

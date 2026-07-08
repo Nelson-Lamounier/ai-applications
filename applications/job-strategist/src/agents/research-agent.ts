@@ -601,6 +601,10 @@ const RESEARCH_TOOL = {
             },
             overallFitRating: { type: 'string', enum: ['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH'] },
             fitSummary:        { type: 'string' },
+            quantifiedEvidence: {
+                type: 'array', items: { type: 'string' },
+                description: 'Number-bearing sentences copied VERBATIM from KB passages cited in assessments (max 8). Never alter a value; never include a number not present in a passage.',
+            },
             pillarClassification: {
                 type: 'object',
                 properties: {
@@ -664,6 +668,7 @@ const ResearchModelSchema = z.object({
     }).strict()).default([]),
     overallFitRating: z.enum(['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH']),
     fitSummary: z.string(),
+    quantifiedEvidence: z.array(z.string()).default([]),
     pillarClassification: z.object({
         primaryPillar: z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering']),
         secondaryPillars: z.array(z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering'])),
