@@ -60,6 +60,7 @@ import { buildRetrievalPrefilter } from './ats/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/number-provenance.js';
 import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
+import { reconcileExperienceRoster } from './lib/experience-roster.js';
 import { surfaceMetrics } from './agents/surface-metrics.js';
 import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from './prompts/strategist-persona.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
@@ -187,6 +188,22 @@ function jdHasYearsBar(yearsGap: YearsGapLite): boolean {
 function tenureFramingFor(yearsGap: YearsGapLite): string {
     if (!jdHasYearsBar(yearsGap) || !yearsGap) return '';
     return yearsGap.framingLine;
+}
+
+/**
+ * Anchor the writer's experience roster to career-history truth (merge
+ * duplicated roles, restore company names). Null-safe; reports each fix.
+ * Extracted from main() to keep its complexity bounded.
+ */
+function reconcileRosterAgainstCareer(
+    resume: StructuredResumeData | null,
+    career: Parameters<typeof reconcileExperienceRoster>[1],
+    onViolation: (code: string) => void,
+): StructuredResumeData | null {
+    if (!resume) return null;
+    const { resume: fixed, violations } = reconcileExperienceRoster(resume, career);
+    for (const v of violations) onViolation(v);
+    return fixed;
 }
 
 /** The persona's full instruction text — the number DENY source for leak scrubbing. */
@@ -968,12 +985,19 @@ export async function main(): Promise<void> {
             experienceFactsBlock, candidateGroundingBlock, educationBlock, roleEvidenceBlock,
             codeStackContext, achievementEvidenceBlock, groundedMetricsBlock, JSON.stringify(researchData),
         ].join('\n');
-        const tailoredResumeData = scrubInstructionLeaks(
-            analysis.data.tailoredResumeData ?? null,
-            writerEvidenceText,
-            () => {
-                resumeViolationsMetric.inc({ code: 'instruction_metric_stripped' });
-                log.warn({ pipelineRunId: env.pipelineRunId }, 'instruction_metric_stripped_from_writer_output');
+        const tailoredResumeData = reconcileRosterAgainstCareer(
+            scrubInstructionLeaks(
+                analysis.data.tailoredResumeData ?? null,
+                writerEvidenceText,
+                () => {
+                    resumeViolationsMetric.inc({ code: 'instruction_metric_stripped' });
+                    log.warn({ pipelineRunId: env.pipelineRunId }, 'instruction_metric_stripped_from_writer_output');
+                },
+            ),
+            careerEntries,
+            (code) => {
+                resumeViolationsMetric.inc({ code });
+                log.warn({ pipelineRunId: env.pipelineRunId, code }, 'experience_roster_reconciled');
             },
         );
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;

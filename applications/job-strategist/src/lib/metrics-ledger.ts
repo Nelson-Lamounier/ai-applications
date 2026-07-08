@@ -55,9 +55,7 @@ export interface MetricSourceRow {
 }
 
 const LEDGER_HEADER =
-    '### GROUNDED METRICS (measured numbers from the candidate\'s own documented work — ' +
-    'the ONLY measured numbers the resume may use; surface the JD-relevant ones with their ' +
-    'context, keeping each value EXACTLY as stated)';
+    '### GROUNDED METRICS (from the candidate\'s own documented work; use values EXACTLY as stated)';
 
 /**
  * Format the ledger block for the writer prompt: one `- [project] sentence`
