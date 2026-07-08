@@ -86,20 +86,9 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
         expect(msg).toContain('Reduced latency by 40%');
     });
 
-    it('omits the grounded-metrics section when the ledger is empty', () => {
-        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '', '');
+    it('never carries a grounded-metrics section — feeding the ledger to the writer tripled its extended thinking (13.9K -> 37-56K output tokens, measured 2026-07-08); metrics enter via the post-writer Haiku weave', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
         expect(msg).not.toContain('GROUNDED METRICS');
-    });
-
-    it('includes the grounded-metrics block verbatim with the exact-value directive', () => {
-        const msg = buildStrategistMessage(
-            MIN_RESEARCH,
-            CTX,
-            '', '', '', '', '', '', '',
-            '### GROUNDED METRICS\n- [portfolio] Pages render in 132 ms (LCP).',
-        );
-        expect(msg).toContain('- [portfolio] Pages render in 132 ms (LCP).');
-        expect(msg).toMatch(/EXACTLY as stated/);
     });
 });
 

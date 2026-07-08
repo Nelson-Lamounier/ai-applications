@@ -1,13 +1,17 @@
 /**
  * @format
- * Surface metrics — the enforcement half of the grounded-metrics loop.
+ * Surface metrics — the metric-weave stage of the grounded-metrics loop.
  *
- * Fires ONLY when the writer shipped a resume with no impact metric while the
- * candidate's own documentation supplied grounded numbers (the ledger). One
- * bounded Haiku rewrite weaves 2-4 JD-relevant ledger metrics into EXISTING
- * bullets — values verbatim, no new claims — mirroring surface-keywords'
- * honesty rails. The caller re-runs stripUngroundedNumbers afterwards, so any
- * value the rewrite alters is deterministically removed.
+ * Runs on EVERY resume when the candidate's documentation supplies grounded
+ * numbers (the ledger). Feeding the ledger to the WRITER tripled its extended
+ * thinking (13.9K -> 37-56K output tokens, 4 -> 12-17 min, measured across
+ * personas v6-v8 on 2026-07-08) because Sonnet treats the thinking budget as
+ * a target and deliberates over every number-to-bullet pairing — so the
+ * writer never sees the ledger; this one bounded Haiku rewrite weaves 2-4
+ * JD-relevant ledger metrics into EXISTING bullets afterwards — values
+ * verbatim, no new claims — mirroring surface-keywords' honesty rails. The
+ * caller re-runs stripUngroundedNumbers afterwards, so any value the rewrite
+ * alters is deterministically removed.
  *
  * FAIL-OPEN: empty ledger or any error → the input resume, unchanged.
  */
@@ -32,6 +36,8 @@ const CTX: BasePipelineContext = {
 export interface SurfaceMetricsOpts {
     /** Verbatim career facts + project evidence + verified-match citations. */
     readonly groundingFacts?: string;
+    /** Target role + required skills — steers WHICH ledger metrics are most JD-relevant. */
+    readonly jdContext?: string;
 }
 
 /**
@@ -47,10 +53,9 @@ export async function surfaceMetrics(
     if (!metricsLedger.trim()) return resume;
 
     const system = [
-        'The resume below contains NO measured impact metric, yet the candidate\'s own documentation',
-        '(the GROUNDED METRICS list) provides verified numbers. Strengthen the resume by weaving 2-4 of',
-        'the most JD-relevant metrics into EXISTING experience highlights or project descriptions. Call',
-        'emit_resume with the FULL resume JSON.',
+        'The candidate\'s own documentation (the GROUNDED METRICS list) provides verified numbers.',
+        'Strengthen the resume by weaving 2-4 of the most JD-relevant metrics into EXISTING experience',
+        'highlights or project descriptions. Call emit_resume with the FULL resume JSON.',
         '',
         '1. VALUES ARE IMMUTABLE — use each metric EXACTLY as stated in its ledger line: never invent,',
         '   alter, round, combine, or re-derive a number. If no ledger metric fits a bullet honestly,',
@@ -59,7 +64,8 @@ export async function surfaceMetrics(
         '2. NO NEW CLAIMS — a metric may only quantify work the bullet ALREADY describes and the ledger',
         '   attributes to the same project/work. Never attach a metric to unrelated work.',
         '3. NEVER GROW THE RESUME — same or fewer words: tighten wording in the same bullet to make room.',
-        '   Each bullet keeps at most one number (two only for a before/after pair stated in one ledger line).',
+        '   Each bullet keeps at most one number (two only for a before/after pair stated in one ledger',
+        '   line). Do NOT add a number to a bullet that already carries one; at most 4 woven metrics total.',
         '4. PRESERVE every company, title, period, and the profile identity. Leave education and',
         '   certifications unchanged.',
         '',
@@ -78,6 +84,7 @@ export async function surfaceMetrics(
     };
 
     const userMessage =
+        `<jd_context>${opts.jdContext ?? ''}</jd_context>\n` +
         `<grounded_metrics>${metricsLedger}</grounded_metrics>\n` +
         `<grounding_facts>${opts.groundingFacts ?? ''}</grounding_facts>\n` +
         `<resume>${JSON.stringify(resume)}</resume>`;

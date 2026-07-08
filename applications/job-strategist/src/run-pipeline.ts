@@ -231,23 +231,25 @@ function scrubInstructionLeaks(
 }
 
 /**
- * Metric-presence enforcement: when the resume carries NO impact metric while
- * the grounded-metrics block is non-empty, run ONE bounded surface-metrics
- * rewrite (roster-preserving), then re-strip ungrounded numbers — ledger
- * values are in `allowed`, so only drifted values are removed. Fail-open.
+ * Grounded-metric weave: ONE bounded surface-metrics rewrite on EVERY resume
+ * when the ledger is non-empty (roster-preserving), then re-strip ungrounded
+ * numbers — ledger values are in `allowed`, so only drifted values are
+ * removed. Reports when the weave leaves the resume metric-free. Fail-open.
  * Extracted from main() to keep its complexity bounded.
  */
-async function enforceMetricPresence(
+async function weaveGroundedMetrics(
     resume: StructuredResumeData,
     groundedMetricsBlock: string,
     groundingFacts: string,
     allowed: Set<number>,
-    onFired: (code: string) => void,
+    jdContext: string,
+    onEvent: (code: string) => void,
 ): Promise<StructuredResumeData> {
-    if (!groundedMetricsBlock || resumeHasMetric(resume)) return resume;
-    onFired('resume_missing_metrics');
-    const surfaced = preserveExperienceRoster(resume, await surfaceMetrics(resume, groundedMetricsBlock, { groundingFacts }).catch(() => resume));
-    return stripUngroundedNumbers(surfaced, allowed);
+    if (!groundedMetricsBlock) return resume;
+    const surfaced = preserveExperienceRoster(resume, await surfaceMetrics(resume, groundedMetricsBlock, { groundingFacts, jdContext }).catch(() => resume));
+    const woven = stripUngroundedNumbers(surfaced, allowed);
+    if (!resumeHasMetric(woven)) onEvent('resume_missing_metrics_after_weave');
+    return woven;
 }
 
 function buildCoverLetterNarrative(
@@ -930,9 +932,12 @@ export async function main(): Promise<void> {
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
         // GROUNDED METRICS block: deterministic case-study ledger + the matcher's
-        // verbatim KB pass-through — the writer's ONLY source of measured numbers.
+        // verbatim KB pass-through. NEVER shown to the writer — feeding it there
+        // tripled extended thinking (13.9K -> 37-56K output tokens, 4 -> 12-17 min,
+        // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
+        // composition. It feeds the post-writer Haiku weave + allowed-number sets.
         const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
-        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, groundedMetricsBlock);
+        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -1034,6 +1039,7 @@ export async function main(): Promise<void> {
             companyProblem:    jdExtraction.companyProblem,
             targetCompany:     researchData.targetCompany,
             projectPitches:    projectLaneIndex.projectPitches,
+            jdRequiredSkills:  jdExtraction.requiredSkills,
             verifiedCertifications: toVerifiedCerts(certificationEntries),
             verifiedEmployers: toVerifiedEmployers(careerEntries),
         };
@@ -1087,13 +1093,14 @@ export async function main(): Promise<void> {
             const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code }), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
             // Expansion may only add grounded numbers; strip anything else.
             const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
-            // Metric presence: a number-free resume while the candidate's own
-            // documentation supplies grounded metrics = supply failure, not
-            // honesty — one bounded rewrite surfaces ledger metrics, then the
-            // number strip re-runs (ledger values are in the allowed set).
-            const numberSafe = await enforceMetricPresence(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, (code) => {
+            // Metric weave (always-on when the ledger is non-empty): the writer
+            // never sees the ledger, so this Haiku pass is HOW grounded metrics
+            // enter the bullets. Values are protected by the allowed-number set;
+            // the number strip re-runs on its output.
+            const jdContextLine = `${researchData.targetRole}: ${jdExtraction.requiredSkills.join(', ')}`;
+            const numberSafe = await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
                 resumeViolationsMetric.inc({ code });
-                log.warn({ pipelineRunId: env.pipelineRunId }, 'resume_missing_metrics_surfacing_ledger');
+                log.warn({ pipelineRunId: env.pipelineRunId, code }, 'grounded_metric_weave');
             });
             // FINAL content re-validation: reframe/condense/expand can
             // reintroduce violations the early guard already repaired (the
