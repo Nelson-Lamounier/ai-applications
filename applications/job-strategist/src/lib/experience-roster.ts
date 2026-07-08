@@ -5,8 +5,8 @@
  * The career history is the identity ground truth for the experience section:
  * every resume entry must map onto exactly ONE career entry. Run 30fe4f66
  * (2026-07-08) split the single "Freelance | Cloud & DevOps Engineer" career
- * role into two entries — the career company AND an invented company label —
- * shipping the same job twice; earlier runs silently rebranded the company.
+ * role into two entries — the career company AND a descriptive company label —
+ * shipping the same job twice.
  * Neither #442's content-fidelity guard (per-entry prose grounding) nor
  * preserveExperienceRoster (protects the WRITER's roster across rewrites)
  * anchors the roster to career truth — this module does.
@@ -15,13 +15,21 @@
  * - Two entries anchored to the same career role are MERGED (first keeps its
  *   bullet order, second's bullets append, capped at the persona's 5/role).
  * - An anchored entry's company is restored to the career-history value
- *   verbatim (a company NAME is a fact, not tailoring surface).
+ *   verbatim for REAL employers (their names are facts) — but a
+ *   self-employment label (Freelance/Self-employed/...) is self-description,
+ *   so a truthful descriptive rebrand is legitimate tailoring and is kept.
  * - Entries that anchor to nothing are KEPT — never silently drop a job.
  */
 import type { StructuredResumeData } from '@bedrock/shared';
 import type { CareerEntry } from '../agents/career-history.js';
 
 const MAX_HIGHLIGHTS_PER_ROLE = 5;
+
+/** Career companies that are SELF-DESCRIPTIONS, not employer names — the
+ *  writer may replace them with a truthful descriptive label ("Solo-built
+ *  production SaaS platform (Tucaken)" says more than "Freelance"). Real
+ *  employer names remain facts and are always restored verbatim. */
+const SELF_EMPLOYMENT_RE = /^(freelance|self[- ]?employed|independent|contractor|contract)$/i;
 
 type ExperienceEntry = StructuredResumeData['experience'][number];
 
@@ -86,7 +94,7 @@ function placeEntry(e: ExperienceEntry, anchor: number, career: ReadonlyArray<Ca
     }
     const careerCompany = career[anchor]!.company;
     let entry = e;
-    if ((e.company ?? '').trim() !== careerCompany.trim()) {
+    if ((e.company ?? '').trim() !== careerCompany.trim() && !SELF_EMPLOYMENT_RE.test(careerCompany.trim())) {
         entry = { ...e, company: careerCompany };
         state.violations.push('experience_company_restored');
     }
