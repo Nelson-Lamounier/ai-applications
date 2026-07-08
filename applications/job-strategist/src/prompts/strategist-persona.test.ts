@@ -73,8 +73,8 @@ describe('strategist-persona metric grounding (v7)', () => {
 		expect(joined).not.toMatch(/30 custom rules/);
 	});
 
-	it('points the measured-number rule at the GROUNDED METRICS block and bans prompt numbers as evidence', () => {
-		expect(joined).toMatch(/GROUNDED\s+METRICS/);
+	it('bans prompt numbers as evidence and never mentions a GROUNDED METRICS block (v9: the ledger is post-writer only — feeding it to the writer tripled extended thinking)', () => {
+		expect(joined).not.toMatch(/GROUNDED\s+METRICS/);
 		expect(joined).toMatch(/numbers?\s+in\s+these\s+instructions\s+are\s+not\s+evidence/i);
 	});
 });

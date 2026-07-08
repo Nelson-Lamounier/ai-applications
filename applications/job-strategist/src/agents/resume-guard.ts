@@ -17,6 +17,8 @@ export interface ResumeGuardCtx {
     targetCompany?: string;
     /** Documented project pitches — the opening beat a project description must use. */
     projectPitches?: ReadonlyArray<{ name: string; pitch: string }>;
+    /** JD required skills — with targetRole, the vocabulary the JD-echo fidelity gate screens for. */
+    jdRequiredSkills?: ReadonlyArray<string>;
     /** Verified certifications (name + date string) — years are enforced, not trusted. */
     verifiedCertifications?: ReadonlyArray<{ name: string; date: string }>;
     /** Career-history employers + their verified highlight facts — the attribution boundary. */
@@ -792,8 +794,9 @@ export async function rewriteResume(
         'You repair a tailored resume, fixing ONLY the listed issues by REORDERING and REWORDING for prominence. Call emit_resume with the full resume JSON.',
         `NEVER fabricate, NEVER change a number or date, NEVER rename a degree — the verified degree names are: ${ctx.verifiedEducation.join('; ')}.`,
         `Make the summary's FIRST sentence lead with this identity differentiator: "${ctx.leadIdentity}" — never an infrastructure-first opener; never name or concede any experience gap.`,
+        'For experience_bullet_jd_echo: rewrite the flagged bullet using ONLY that employer\'s verified facts (rephrasing and emphasis are fine); JD vocabulary may appear only where those facts support it - never invent deeds or a new domain to fit the JD.',
         ctx.projectPitches?.length
-            ? `For project_restates_bullets: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${formatPitches(ctx.projectPitches)}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
+            ? `For project_restates_bullets and project_pitch_missing: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${formatPitches(ctx.projectPitches)}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
             : 'For project_restates_bullets: rewrite the flagged project description as pitch (what it is, who it is for, the problem it solves) + one JD-relevant differentiator + one fresh metric. Remove numbers duplicated from experience bullets and all stack enumerations.',
         ctx.companyProblem ? `For summary_restates_bullets: rewrite the summary at ALTITUDE — S1 identity anchor + capability ("<Role-family> engineer who builds…"), S2 ONE sentence bridging to this problem (paraphrased): "${ctx.companyProblem.slice(0, 400)}", S3 the concrete paid-experience anchor, S4 qualitative rigor close ("every change gated by automated tests and policy-as-code"). Remove EVERY number that also appears in an experience bullet — counts belong to bullets.` : 'For summary_restates_bullets: rewrite the summary at altitude — identity anchor, problem bridge, concrete paid-experience anchor, qualitative rigor close; remove every number that also appears in an experience bullet.',
         'For headline_is_title: rewrite profile.title as a DESCRIPTIVE domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect, Consultant…) — e.g. "Cloud & AI Operations · Python Automation & Incident Response". Never claim a role the candidate does not hold.',
@@ -957,6 +960,112 @@ function entryFidelityViolation(
     };
 }
 
+/** Light suffix stem so word forms match across texts (deployments/deployed -> deploy). */
+function stemToken(t: string): string {
+    return t.replace(/ments?$/, '').replace(/ings?$/, '').replace(/ed$/, '').replace(/s$/, '');
+}
+
+/** Stemmed distinctive tokens of a text (length/stoplist filtered first). */
+function stemmedTokens(text: string): Set<string> {
+    return new Set([...distinctiveTokens(text)].map(stemToken));
+}
+
+/** Loose project<->pitch name match (case/punctuation-insensitive containment). */
+function pitchForProject(
+    name: string,
+    pitches: ReadonlyArray<{ name: string; pitch: string }>,
+): { name: string; pitch: string } | undefined {
+    const norm = (x: string): string => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const n = norm(name);
+    return pitches.find((p) => n.includes(norm(p.name)) || norm(p.name).includes(n));
+}
+
+/** Overlap ratio of the description's opening with the documented pitch. */
+const PITCH_OPENING_CHARS = 220;
+const PITCH_MIN_OVERLAP = 0.3;
+
+/**
+ * Project descriptions must OPEN on the documented pitch (what it is, who it
+ * is for, the problem it solves) — the persona's three-beat rule. Run
+ * 048379a3 (2026-07-08) shipped 42-word stack-dump descriptions that ignored
+ * the pitch entirely and nothing flagged them: the only project check was
+ * reactive (bullet-number restating). Deterministic; the guard rewrite
+ * repairs flagged projects using the pitch it already receives.
+ */
+type ResumeProject = StructuredResumeData['projects'][number];
+
+/** Violation for one project's opening vs its documented pitch, or null. */
+function projectPitchViolation(
+    p: ResumeProject,
+    pitches: ReadonlyArray<{ name: string; pitch: string }>,
+): ResumeViolation | null {
+    const pitch = typeof p.description === 'string' ? pitchForProject(p.name ?? '', pitches) : undefined;
+    if (!pitch) return null;
+    const pitchTokens = stemmedTokens(pitch.pitch);
+    if (pitchTokens.size === 0) return null;
+    const opening = stemmedTokens(p.description.slice(0, PITCH_OPENING_CHARS));
+    let hit = 0;
+    for (const t of pitchTokens) if (opening.has(t)) hit++;
+    if (hit / pitchTokens.size >= PITCH_MIN_OVERLAP) return null;
+    return {
+        code: 'project_pitch_missing',
+        detail: `${p.name}: description does not open on the documented pitch (${hit}/${pitchTokens.size} pitch terms in the opening).`,
+    };
+}
+
+export function checkProjectPitchAlignment(
+    resume: StructuredResumeData,
+    pitches: ReadonlyArray<{ name: string; pitch: string }> | undefined,
+): ResumeViolation[] {
+    if (!pitches || pitches.length === 0) return [];
+    return (resume.projects ?? [])
+        .map((p) => projectPitchViolation(p, pitches))
+        .filter((v): v is ResumeViolation => v !== null);
+}
+
+/**
+ * Bullet-level JD-echo fidelity — the fabrication mechanism observed live on
+ * run 048379a3: under tailoring pressure the writer builds a career bullet
+ * from JD vocabulary ("Configured enterprise platform deployments" on a QA
+ * role) while enough honest paraphrase surrounds it to pass the ENTRY-level
+ * overlap check. A bullet on a verified employer that leans on 2+ JD terms
+ * absent from that employer's facts is flagged for a grounded rewrite.
+ */
+/** JD-echo violations for one career entry's bullets. */
+function entryJdEchoViolations(
+    entry: LooseExperienceEntry,
+    verifiedEmployers: ReadonlyArray<VerifiedEmployer>,
+    jdTokens: ReadonlySet<string>,
+): ResumeViolation[] {
+    const company = typeof entry.company === 'string' ? entry.company : '';
+    const employer = verifiedEmployers.find((e) =>
+        e.name.toLowerCase().includes(company.toLowerCase()) || company.toLowerCase().includes(e.name.toLowerCase()));
+    if (!company || !employer) return [];
+    const factTokens = stemmedTokens(employer.facts);
+    const out: ResumeViolation[] = [];
+    for (const bullet of (entry.highlights ?? []).filter((h): h is string => typeof h === 'string')) {
+        const echo = [...stemmedTokens(bullet)].filter((t) => jdTokens.has(t) && !factTokens.has(t));
+        if (echo.length >= 2) {
+            out.push({
+                code: 'experience_bullet_jd_echo',
+                detail: `${company}: "${bullet.slice(0, 90)}" leans on JD vocabulary (${echo.slice(0, 4).join(', ')}) absent from this role's verified facts.`,
+            });
+        }
+    }
+    return out;
+}
+
+export function checkBulletJdEcho(
+    resume: StructuredResumeData,
+    verifiedEmployers: ReadonlyArray<VerifiedEmployer> | undefined,
+    jdText: string,
+): ResumeViolation[] {
+    if (!verifiedEmployers || verifiedEmployers.length === 0 || !jdText.trim()) return [];
+    const jdTokens = stemmedTokens(jdText);
+    const view = resume as unknown as { experience?: ReadonlyArray<LooseExperienceEntry> };
+    return (view.experience ?? []).flatMap((entry) => entryJdEchoViolations(entry, verifiedEmployers, jdTokens));
+}
+
 export function checkExperienceFidelity(
     resume: StructuredResumeData,
     verifiedEmployers: ReadonlyArray<VerifiedEmployer> | undefined,
@@ -974,6 +1083,8 @@ export async function guardResume(
 ): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
     const violations = validateResume(resume, ctx);
     violations.push(...checkExperienceFidelity(resume, ctx.verifiedEmployers));
+    violations.push(...checkProjectPitchAlignment(resume, ctx.projectPitches));
+    violations.push(...checkBulletJdEcho(resume, ctx.verifiedEmployers, `${ctx.targetRole ?? ''}: ${(ctx.jdRequiredSkills ?? []).join(', ')}`));
     let rewritten = violations.length === 0 ? resume : await rewriteResume(resume, violations, ctx);
     rewritten = preserveExperienceRoster(resume, rewritten, (v) => violations.push(v));
     const scoped = enforceScopedClaims(rewritten);

@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection, summarySharedNumbers, enforceProhibitedClaims, revalidateResumeContent, summaryEchoSentences, enforceCertYears } from './resume-guard.js';
+import { guardResume, validateResume, enforceScopedClaims, dropKeyAchievementsSection, summarySharedNumbers, enforceProhibitedClaims, revalidateResumeContent, summaryEchoSentences, enforceCertYears, checkProjectPitchAlignment, checkBulletJdEcho } from './resume-guard.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const mockRun = runAgent as jest.Mock;
@@ -410,4 +410,89 @@ describe('checkExperienceFidelity — bullets must restate the ingested facts', 
 		const violations = checkExperienceFidelity(entry(['Anything at all here.']), [{ name: 'SomeOther Corp', facts: 'irrelevant facts' }]);
 		expect(violations).toEqual([]);
 	});
+});
+
+describe('checkProjectPitchAlignment — run 048379a3 shipped telegraphic projects ignoring the documented pitch', () => {
+    const PITCHES = [
+        { name: 'AI Applications Platform with Infrastructure-as-Code', pitch: 'Tucaken is a SaaS for software engineers who want a resume that is honest and tailored per job posting - grounded in what their actual code shows, not keyword stuffing. A job-seeker connects their GitHub account.' },
+        { name: 'frontend-portfolio', pitch: 'Most personal portfolios are static pages you scroll. This one you can interrogate. Recruiters and engineers visit nelsonlamounier.com to read technical articles on DevOps and cloud architecture.' },
+    ];
+
+    const project = (name: string, description: string) => base({
+        projects: [{ name, github: 'github.com/x/y', description }],
+    });
+
+    it('passes a description that opens on the documented pitch (the run-30fe4f66 shape)', () => {
+        const r = project(
+            'AI Applications Platform with Infrastructure-as-Code (Tucaken)',
+            'Tucaken is a SaaS for software engineers who ground resumes in verified code evidence, job-seeker connects their Git repository, Bedrock evidence-matching agent assesses code against requirements.',
+        );
+        expect(checkProjectPitchAlignment(r, PITCHES)).toEqual([]);
+    });
+
+    it('flags a telegraphic description that abandons the pitch (the run-048379a3 shape)', () => {
+        const r = project(
+            'AI Applications Platform with Infrastructure-as-Code (Tucaken)',
+            'SaaS integrating Git repository analysis with AWS CDK, GitHub Actions, and policy-as-code scanning to surface real infrastructure decisions. Migrated cluster edge from Traefik NLB to WAFv2 ALB.',
+        );
+        const v = checkProjectPitchAlignment(r, PITCHES);
+        expect(v).toHaveLength(1);
+        expect(v[0]!.code).toBe('project_pitch_missing');
+    });
+
+    it('flags a pipeline-only portfolio description', () => {
+        const r = project(
+            'Frontend Portfolio',
+            'Production Next.js portfolio deployed via automated GitOps blue-green rollouts. Quality gates: 307-test suite and SonarCloud scanning on every merge.',
+        );
+        expect(checkProjectPitchAlignment(r, PITCHES).map((x) => x.code)).toEqual(['project_pitch_missing']);
+    });
+
+    it('ignores projects with no documented pitch and empty pitch lists', () => {
+        const r = project('Unknown Side Project', 'Anything at all.');
+        expect(checkProjectPitchAlignment(r, PITCHES)).toEqual([]);
+        expect(checkProjectPitchAlignment(r, [])).toEqual([]);
+    });
+});
+
+describe('checkBulletJdEcho — run 048379a3 fabricated "Configured enterprise platform deployments" on the Meta QA role', () => {
+    const EMPLOYERS = [{
+        name: 'Meta via Accenture',
+        facts: 'Designed and documented cross-functional QA processes adopted across multiple operational teams, reducing escalation turnaround by implementing root-cause analysis workflows. Built HTML/CSS/JavaScript internal knowledge-base tooling covering QA processes and cross-team escalation paths, standardizing operational runbooks and enabling faster resolution through comprehensive documentation.',
+    }];
+    const JD_TOKENS = 'Deployment Engineer: Python, JavaScript, cloud platforms (AWS/GCP/Azure), system integration, APIs, networking, enterprise deployments';
+
+    it('flags a career bullet built from JD vocabulary absent from the employer facts', () => {
+        const r = base({
+            experience: [{
+                company: 'Meta via Accenture', title: 'Quality Assurance Analyst', period: '2021 - 2022',
+                highlights: ['Configured enterprise platform deployments and produced standardized operational procedures adopted across teams, reducing resolution times.'],
+            }],
+        });
+        const v = checkBulletJdEcho(r, EMPLOYERS, JD_TOKENS);
+        expect(v).toHaveLength(1);
+        expect(v[0]!.code).toBe('experience_bullet_jd_echo');
+    });
+
+    it('passes an honest paraphrase grounded in the employer facts (the run-30fe4f66 shape)', () => {
+        const r = base({
+            experience: [{
+                company: 'Meta via Accenture', title: 'Quality Assurance Analyst', period: '2021 - 2022',
+                highlights: [
+                    'Designed operational procedures for Meta content operations, reducing case resolution times and accelerating team onboarding.',
+                    'Collaborated with engineering teams to scope quality gates and document workflow improvements.',
+                ],
+            }],
+        });
+        expect(checkBulletJdEcho(r, EMPLOYERS, JD_TOKENS)).toEqual([]);
+    });
+
+    it('never flags entries with no matching employer, and tolerates empty inputs', () => {
+        const r = base({
+            experience: [{ company: 'Unknown Corp', title: 'X', period: 'p', highlights: ['Enterprise platform deployments everywhere.'] }],
+        });
+        expect(checkBulletJdEcho(r, EMPLOYERS, JD_TOKENS)).toEqual([]);
+        expect(checkBulletJdEcho(r, [], JD_TOKENS)).toEqual([]);
+        expect(checkBulletJdEcho(r, EMPLOYERS, '')).toEqual([]);
+    });
 });
