@@ -64,17 +64,14 @@ describe('strategist-persona employment fidelity mandate', () => {
 	});
 });
 
-describe('strategist-persona metric grounding (v7)', () => {
-	it('carries no numeric example metrics — the 2026-07-08 run lifted "8 minutes to 30 seconds" from the persona example into the resume', () => {
-		expect(joined).not.toMatch(/30-second\s+deploys/i);
-		expect(joined).not.toMatch(/8-minute\s+manual/i);
-		expect(joined).not.toMatch(/16 stacks, 22 workflows/);
-		expect(joined).not.toMatch(/4 projects across 11 stacks/);
-		expect(joined).not.toMatch(/30 custom rules/);
+describe('strategist-persona v10 — exact v6 restore (writer-duration bisect)', () => {
+	it('carries no GROUNDED METRICS reference and no OUTPUT BUDGET (both measured to balloon writer output)', () => {
+		expect(joined).not.toMatch(/GROUNDED\s+METRICS/);
+		expect(joined).not.toMatch(/OUTPUT BUDGET/);
 	});
 
-	it('bans prompt numbers as evidence and never mentions a GROUNDED METRICS block (v9: the ledger is post-writer only — feeding it to the writer tripled extended thinking)', () => {
-		expect(joined).not.toMatch(/GROUNDED\s+METRICS/);
-		expect(joined).toMatch(/numbers?\s+in\s+these\s+instructions\s+are\s+not\s+evidence/i);
+	it('is the exact v6 body — the only configuration measured fast (263s / 13.9K writer tokens, run 23d75e15); persona-example number leakage is handled deterministically by stripInstructionMetrics, not by prompt wording', () => {
+		expect(joined).toMatch(/30-second deploys vs 8-minute manual/);
+		expect(joined).not.toMatch(/numbers?\s+in\s+these\s+instructions\s+are\s+not\s+evidence/i);
 	});
 });
