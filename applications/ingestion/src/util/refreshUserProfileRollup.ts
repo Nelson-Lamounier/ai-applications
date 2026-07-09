@@ -23,7 +23,7 @@ import type { IDiagnosticInputsReadRepository, DiagnosticJson } from '@bedrock/s
 
 const tracer = trace.getTracer('ingestion-worker');
 
-const STAGE = { mirror: 'mirror', direction: 'direction', reconciliation: 'reconciliation', diagnostic: 'diagnostic' } as const;
+const STAGE = { mirror: 'mirror', direction: 'direction', reconciliation: 'reconciliation', diagnostic: 'diagnostic', upsert: 'upsert' } as const;
 const OUTCOME = { ok: 'ok', failed: 'failed', skipped: 'skipped' } as const;
 
 type SynthMetric = ReturnType<typeof synthesisOutcomeTotal>;
@@ -121,6 +121,49 @@ function reportPartialSynthesis(
 }
 
 /**
+ * Stage-config visibility: when a run produces only SOME layers (live
+ * 2026-07-08: mirror recorded, direction/reconciliation/diagnostic absent,
+ * rollup never stamped), the first question is "which stages were even
+ * enabled?" — answer it in the pod log.
+ */
+function logStageConfig(userId: string, stages: Record<string, unknown>): void {
+    const parts = Object.entries(stages).map(([name, enabled]) => `${name}=${enabled ? 'on' : 'off'}`);
+    console.info(`[refreshUserProfileRollup] user ${userId} synthesis stages: ${parts.join(' ')}`);
+}
+
+/**
+ * Persist the rollup + synthesis with ONE retry. The upsert is the only step
+ * that turns the paid LLM outputs into durable rows — a single transient DB
+ * error here used to silently discard an entire synthesis run (the outer
+ * best-effort catch recorded it on the span only, invisible in pod logs).
+ * Final failure is loud: metric + console.error + span error, no rethrow.
+ */
+async function upsertRollupLoudly(
+    span: Span,
+    metric: SynthMetric,
+    doUpsert: () => Promise<void>,
+    userId: string,
+): Promise<void> {
+    try {
+        try {
+            await doUpsert();
+        } catch {
+            await doUpsert();   // one retry — transient pool/RLS hiccups
+        }
+        metric.inc({ stage: STAGE.upsert, outcome: OUTCOME.ok });
+    } catch (err) {
+        metric.inc({ stage: STAGE.upsert, outcome: OUTCOME.failed });
+        span.setAttribute('profile_rollup.upsert_failed', true);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `rollup upsert failed: ${String(err)}` });
+        console.error(
+            `[refreshUserProfileRollup] rollup upsert FAILED for user ${userId} — ` +
+            `completed synthesis discarded (paid LLM output not persisted):`,
+            err,
+        );
+    }
+}
+
+/**
  * WS4 synthesis-skip gate: if the aggregate rollup hash is unchanged AND synthesis
  * already exists, re-stamp the rollup (COALESCE preserves prior synthesis) and
  * return true so the caller skips the 3-4 LLM calls. Keyed on the aggregate, so
@@ -148,6 +191,7 @@ export async function refreshUserProfileRollup(
     narrator?: DiagnosticNarrator,
     diagnosticInputsRepo?: IDiagnosticInputsReadRepository,
 ): Promise<void> {
+    const reconciliationEnabled = Boolean(reconciliationSynthesizer && careerRepo);
     await tracer.startActiveSpan('ingestion.profile_rollup', async (span) => {
         try {
             const rows   = await repo.listProfilesForRollup(userId);
@@ -166,6 +210,13 @@ export async function refreshUserProfileRollup(
             }
 
             const synthMetric = synthesisOutcomeTotal();
+
+            logStageConfig(userId, {
+                mirror:         synthesizer,
+                direction:      directionSynthesizer,
+                reconciliation: reconciliationEnabled,
+                diagnostic:     diagnosticInputsRepo,
+            });
 
             // Mirror, direction, and reconciliation are independent layers over
             // the same source rollup (none consumes another's output), so run
@@ -190,7 +241,9 @@ export async function refreshUserProfileRollup(
                 reconciliation: recon?.reconciliation ?? null,
             }, diagnosticInputsRepo, narrator);
 
-            await repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation, diagnostic, rollupHash);
+            await upsertRollupLoudly(span, synthMetric,
+                () => repo.upsert(userId, result, synth?.mirror, synth?.reveal, dir?.direction, recon?.reconciliation, diagnostic, rollupHash),
+                userId);
             span.setAttributes({
                 'profile_rollup.project_repos': result.projectRepoCount,
                 'profile_rollup.synthesized':   Boolean(synth),
@@ -205,8 +258,10 @@ export async function refreshUserProfileRollup(
                 { stage: STAGE.reconciliation, attempted: reconAttempted,                produced: Boolean(recon) },
             ]);
         } catch (err) {
-            // Best-effort: a rollup failure MUST NOT break ingestion.
-            // Log to the span, swallow, continue.
+            // Best-effort: a rollup failure MUST NOT break ingestion — but it
+            // must be LOUD. Span-only recording left the 2026-07-08 discarded
+            // synthesis invisible in pod logs; log to console as well.
+            console.error(`[refreshUserProfileRollup] rollup refresh failed for user ${userId} (swallowed, best-effort):`, err);
             span.recordException(err instanceof Error ? err : new Error(String(err)));
             span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
         } finally {
