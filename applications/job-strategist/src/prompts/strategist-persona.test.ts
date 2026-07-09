@@ -76,6 +76,24 @@ describe('strategist-persona v11 — v6-restored body (writer-duration bisect cl
 	});
 });
 
+describe('strategist-persona v12 — summary calibration (from the ResMed Associate-JD review of run 77e325ea)', () => {
+	it('S1 aligns to the JD role class and bans employer-name openings ("AWS … engineer" while employed at AWS reads as a title held there)', () => {
+		expect(joined).toMatch(/ALIGNED TO THE JD'S OWN ROLE CLASS/);
+		expect(joined).toMatch(/NEVER OPEN with an employer's name/);
+	});
+
+	it('caps rigor at ONE sentence per summary and gives associate/junior roles a forward-fit close (the live S3 slot was a second rigor close)', () => {
+		expect(joined).toMatch(/AT MOST ONE rigor\/gating sentence/);
+		expect(joined).toMatch(/grounded forward-fit close/);
+	});
+
+	it('calibrates tone to the JD level (depth + hunger for associate roles, ownership for senior) and names equivalence bridges explicitly (CDK -> CloudFormation)', () => {
+		expect(joined).toMatch(/SENIORITY TONE/);
+		expect(joined).toMatch(/EQUIVALENCE BRIDGES/);
+		expect(joined).toMatch(/CDK \(CloudFormation\)/);
+	});
+});
+
 describe('strategist-persona S3 <-> message-section cross-reference (v11)', () => {
 	it('S3 names the "### Profile Intelligence" section — and the message builder exposes a header starting with that exact name (run 77e325ea shipped no S3 angle because the persona referenced a section the message never labelled)', async () => {
 		const { PROFILE_INTELLIGENCE_HEADER } = await import('../agents/strategist-agent.js');
