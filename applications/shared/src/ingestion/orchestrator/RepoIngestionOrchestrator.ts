@@ -253,10 +253,16 @@ export class RepoIngestionOrchestrator {
         // -----------------------------------------------------------------
         // Step 4: Hand off to IngestionPipeline (hash-check → embed → upsert).
         // Pass the FULL included path set so unchanged files (not re-fetched
-        // this run) are NOT pruned from the vector store.
+        // this run) are NOT pruned from the vector store. Commit-history
+        // chunks live under synthetic `_commits/…` paths outside the file
+        // tree — include them so the whitelist is honest for ANY vector
+        // store (RdsVectorStore additionally hard-excludes the commit lane
+        // from tree pruning, which also covers the commit-fetch-failed case
+        // where commitChunks is empty).
         // -----------------------------------------------------------------
+        const commitPaths = [...new Set(commitChunks.map((c) => c.filePath))];
         const report = await this.ingestionPipeline.ingestChunks(
-            userId, repoFullName, rawChunks, { knownFilePaths: includedPaths },
+            userId, repoFullName, rawChunks, { knownFilePaths: [...includedPaths, ...commitPaths] },
         );
 
         // -----------------------------------------------------------------

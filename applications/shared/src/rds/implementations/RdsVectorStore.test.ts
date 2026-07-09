@@ -232,3 +232,27 @@ describe('RdsVectorStore.querySimilar (filter-then-rank)', () => {
         expect(sql).not.toMatch(/file_tech_stack/);
     });
 });
+
+describe('RdsVectorStore.pruneDeletedFiles (commit-history lane)', () => {
+    it('excludes _commits/ synthetic paths from tree-based pruning', async () => {
+        const query = jest.fn(async () => ({ rowCount: 2, rows: [] }));
+        const n = await store(query).pruneDeletedFiles('u1', 'o/r', ['a.ts', 'b.md']);
+
+        expect(n).toBe(2);
+        const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(sql).toMatch(/NOT starts_with\(file_path, \$3\)/);
+        expect(sql).toMatch(/file_path NOT IN \(\$4, \$5\)/);
+        expect(values).toEqual(['u1', 'o/r', '_commits/', 'a.ts', 'b.md']);
+    });
+
+    it('still deletes the whole repo (commit lane included) on an empty whitelist', async () => {
+        const query = jest.fn(async () => ({ rowCount: 7, rows: [] }));
+        const n = await store(query).pruneDeletedFiles('u1', 'o/r', []);
+
+        expect(n).toBe(7);
+        const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(sql).not.toMatch(/starts_with/);
+        expect(sql).toMatch(/DELETE FROM document_embeddings/);
+        expect(values).toEqual(['u1', 'o/r']);
+    });
+});

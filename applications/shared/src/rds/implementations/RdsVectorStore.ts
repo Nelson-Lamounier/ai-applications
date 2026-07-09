@@ -14,6 +14,7 @@
 import { Pool, type QueryResult } from 'pg';
 
 import { buildCroissant, type CroissantDataset } from '../../rag/croissant.js';
+import { COMMIT_HISTORY_PATH_PREFIX } from '../../ingestion/implementations/CommitChunker.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import type { KbQualityInput } from '../quality/computeKbQuality.js';
 import type {
@@ -756,17 +757,26 @@ export class RdsVectorStore implements IVectorStore {
             return this.deleteChunksByRepo(userId, repoFullName);
         }
 
-        // Build $3, $4, ... placeholders for the IN list
+        // Build $4, $5, ... placeholders for the IN list ($3 = commit prefix)
         const placeholders = currentFilePaths
-            .map((_, i) => `$${3 + i}`)
+            .map((_, i) => `$${4 + i}`)
             .join(', ');
 
+        // Commit-history chunks live under synthetic `_commits/…` paths that
+        // are never in the repo file tree, so a tree-derived whitelist would
+        // delete every commit chunk in the same run that embedded it — and
+        // the next sync would re-embed them ("missing" per hash check), an
+        // embed-and-delete loop paid on every sync. The commit lane is
+        // append-only here; forceReindex still clears it via
+        // deleteChunksByRepo, and the empty-whitelist branch above still
+        // deletes it when the whole repo is gone.
         const result = await this.execute(
             `DELETE FROM document_embeddings
              WHERE user_id        = $1
                AND repo_full_name = $2
+               AND NOT starts_with(file_path, $3)
                AND file_path NOT IN (${placeholders})`,
-            [userId, repoFullName, ...currentFilePaths],
+            [userId, repoFullName, COMMIT_HISTORY_PATH_PREFIX, ...currentFilePaths],
         );
 
         return result.rowCount ?? 0;
