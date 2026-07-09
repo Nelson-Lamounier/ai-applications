@@ -33,6 +33,7 @@ import { guardCoverLetter } from './agents/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
 import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
+import { createViolationLog } from './lib/violation-log.js';
 import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
 import { applyLengthBudget } from './ats/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
@@ -990,18 +991,24 @@ export async function main(): Promise<void> {
             experienceFactsBlock, candidateGroundingBlock, educationBlock, roleEvidenceBlock,
             codeStackContext, achievementEvidenceBlock, groundedMetricsBlock, JSON.stringify(researchData),
         ].join('\n');
+        // Guard-violation ledger: every (stage, code) pair fired below is
+        // collected for pipeline_runs.metadata.guard — Prometheus counters
+        // alone do not survive short-lived Job pods (run 77e325ea: three
+        // rewrites fired, zero increments visible after the pod exited).
+        const violationLog = createViolationLog((stage, code) =>
+            (stage === 'cover_letter' ? coverLetterViolations : resumeViolationsMetric).inc({ code }));
         const tailoredResumeData = reconcileRosterAgainstCareer(
             scrubInstructionLeaks(
                 analysis.data.tailoredResumeData ?? null,
                 writerEvidenceText,
                 () => {
-                    resumeViolationsMetric.inc({ code: 'instruction_metric_stripped' });
+                    violationLog.record('instruction_scrub', 'instruction_metric_stripped');
                     log.warn({ pipelineRunId: env.pipelineRunId }, 'instruction_metric_stripped_from_writer_output');
                 },
             ),
             careerEntries,
             (code) => {
-                resumeViolationsMetric.inc({ code });
+                violationLog.record('roster_reconcile', code);
                 log.warn({ pipelineRunId: env.pipelineRunId, code }, 'experience_roster_reconciled');
             },
         );
@@ -1023,7 +1030,7 @@ export async function main(): Promise<void> {
             letterFraming,
             buildCoverLetterNarrative(jdExtraction, projectLaneIndex.projectPitches, tailoredResumeData, hasYearsBar),
         );
-        for (const v of coverViolations) coverLetterViolations.inc({ code: v.code });
+        violationLog.recordAll('cover_letter', coverViolations);
 
         // ── Resume guard — F-pattern content checks (fail-open, rewrite-on-violation) ──
         // Validates the AI-authored resume against code-enforced rules (headline
@@ -1059,7 +1066,7 @@ export async function main(): Promise<void> {
         if (tailoredResumeData) {
             const guarded = await guardResume(tailoredResumeData, resumeGuardCtx);
             finalResume = guarded.resume;
-            for (const v of guarded.violations) resumeViolationsMetric.inc({ code: v.code });
+            violationLog.recordAll('resume_guard', guarded.violations);
         }
 
         // JD-priority context for length enforcement — required skills + the
@@ -1090,7 +1097,7 @@ export async function main(): Promise<void> {
             // keyword-surfacing rewrite — the last stage that can grow it.
             const preBudget = finalResume;
             const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
-            const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code }), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
+            const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
             // Expansion may only add grounded numbers; strip anything else.
             const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
             // Metric weave (always-on when the ledger is non-empty): the writer
@@ -1099,7 +1106,7 @@ export async function main(): Promise<void> {
             // the number strip re-runs on its output.
             const jdContextLine = `${researchData.targetRole}: ${jdExtraction.requiredSkills.join(', ')}`;
             const numberSafe = await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
-                resumeViolationsMetric.inc({ code });
+                violationLog.record('metric_weave', code);
                 log.warn({ pipelineRunId: env.pipelineRunId, code }, 'grounded_metric_weave');
             });
             // FINAL content re-validation: reframe/condense/expand can
@@ -1107,8 +1114,8 @@ export async function main(): Promise<void> {
             // A/B run regained 5 bullet-shared project numbers and a flat
             // "Terraform" claim). One bounded repair, then report residuals.
             const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
-            for (const v of revalidated.violations) resumeViolationsMetric.inc({ code: v.code });
-            finalResume = await applyResumeIntegrity(revalidated.resume, tailoredResumeData, allowedNumbers, (code) => resumeViolationsMetric.inc({ code }));
+            violationLog.recordAll('revalidate', revalidated.violations);
+            finalResume = await applyResumeIntegrity(revalidated.resume, tailoredResumeData, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
         }
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
@@ -1182,11 +1189,11 @@ export async function main(): Promise<void> {
                     // No groundingFacts here: round 1 already expanded to fill;
                     // this pass exists only to SHRINK keyword-rewrite overgrowth.
                     // (Observed live: a second expand+revalidate round cost ~50s.)
-                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => resumeViolationsMetric.inc({ code: v.code })).catch(() => surfaced);
+                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code)).catch(() => surfaced);
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
-                    for (const v of reval.violations) resumeViolationsMetric.inc({ code: v.code });
-                    surfaced = await applyResumeIntegrity(reval.resume, tailoredResumeData, allowed, (code) => resumeViolationsMetric.inc({ code }));
+                    violationLog.recordAll('revalidate_post_keywords', reval.violations);
+                    surfaced = await applyResumeIntegrity(reval.resume, tailoredResumeData, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
                         applicationId:  env.applicationId,
@@ -1259,10 +1266,18 @@ export async function main(): Promise<void> {
         // atsCheck is stashed here as well as on resumes.ats_check_json so the
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
+        // metadata.guard answers "which violations fired, at which stage?" per
+        // run — the counters alone die with the Job pod. One structured log
+        // line makes the same answer greppable in Loki.
+        const guardMeta = violationLog.toMetadata();
+        if (guardMeta) {
+            log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
+        }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
             analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
+            guard:   guardMeta,
             // LLM-agent cost (extraction + research + analysis + grounding); excludes embeddings/rerank.
             tokens:  ctx.cumulativeTokens,
             costUsd: ctx.cumulativeCostUsd,
