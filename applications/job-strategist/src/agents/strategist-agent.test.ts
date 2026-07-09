@@ -10,9 +10,10 @@ import type { buildStrategistMessage as BuildStrategistMessageFn } from './strat
 import type { StrategistResearchResult, StrategistPipelineContext } from '@bedrock/shared';
 
 let buildStrategistMessage: typeof BuildStrategistMessageFn;
+let PROFILE_INTELLIGENCE_HEADER: string;
 
 beforeAll(async () => {
-    ({ buildStrategistMessage } = await import('./strategist-agent.js'));
+    ({ buildStrategistMessage, PROFILE_INTELLIGENCE_HEADER } = await import('./strategist-agent.js'));
 });
 
 /** Minimal valid StrategistResearchResult — only required fields populated. */
@@ -89,6 +90,25 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
     it('never carries a grounded-metrics section — feeding the ledger to the writer tripled its extended thinking (13.9K -> 37-56K output tokens, measured 2026-07-08); metrics enter via the post-writer Haiku weave', () => {
         const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
         expect(msg).not.toContain('GROUNDED METRICS');
+    });
+});
+
+describe('buildStrategistMessage — profile intelligence section (the summary S3 source)', () => {
+    const PROFILE = 'CANDIDATE PROFILE INTELLIGENCE — derived from GitHub.\nCode-demonstrated direction:\n- Platform & Infrastructure: senior';
+
+    it('injects the profile block under its OWN labelled section, not the case-studies wrapper (run 77e325ea shipped a summary with no S3 angle because the block sat inside the case-studies delimiters)', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, 'project case study text', '', '', '', '', '', '', PROFILE);
+        expect(msg).toContain(PROFILE_INTELLIGENCE_HEADER);
+        expect(msg).toContain('--- BEGIN PROFILE INTELLIGENCE ---');
+        expect(msg).toContain('Platform & Infrastructure: senior');
+        // The profile block must NOT be inside the case-studies delimiters.
+        const caseStudies = msg.split('--- BEGIN PROJECT CASE STUDIES ---')[1]!.split('--- END PROJECT CASE STUDIES ---')[0]!;
+        expect(caseStudies).not.toContain('CANDIDATE PROFILE INTELLIGENCE');
+    });
+
+    it('omits the section entirely when no profile intelligence exists (fail-open users)', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        expect(msg).not.toContain('Profile Intelligence');
     });
 });
 

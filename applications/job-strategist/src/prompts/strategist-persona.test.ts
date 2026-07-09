@@ -64,14 +64,41 @@ describe('strategist-persona employment fidelity mandate', () => {
 	});
 });
 
-describe('strategist-persona v10 — exact v6 restore (writer-duration bisect)', () => {
+describe('strategist-persona v11 — v6-restored body (writer-duration bisect closed: the 4096 thinking budget was the cause, not wording)', () => {
 	it('carries no GROUNDED METRICS reference and no OUTPUT BUDGET (both measured to balloon writer output)', () => {
 		expect(joined).not.toMatch(/GROUNDED\s+METRICS/);
 		expect(joined).not.toMatch(/OUTPUT BUDGET/);
 	});
 
-	it('is the exact v6 body — the only configuration measured fast (263s / 13.9K writer tokens, run 23d75e15); persona-example number leakage is handled deterministically by stripInstructionMetrics, not by prompt wording', () => {
+	it('keeps the v6 numeric examples; persona-example number leakage is handled deterministically by stripInstructionMetrics, not by prompt wording', () => {
 		expect(joined).toMatch(/30-second deploys vs 8-minute manual/);
 		expect(joined).not.toMatch(/numbers?\s+in\s+these\s+instructions\s+are\s+not\s+evidence/i);
+	});
+});
+
+describe('strategist-persona v12 — summary calibration (from the ResMed Associate-JD review of run 77e325ea)', () => {
+	it('S1 aligns to the JD role class and bans employer-name openings ("AWS … engineer" while employed at AWS reads as a title held there)', () => {
+		expect(joined).toMatch(/ALIGNED TO THE JD'S OWN ROLE CLASS/);
+		expect(joined).toMatch(/NEVER OPEN with an employer's name/);
+	});
+
+	it('caps rigor at ONE sentence per summary and gives associate/junior roles a forward-fit close (the live S3 slot was a second rigor close)', () => {
+		expect(joined).toMatch(/AT MOST ONE rigor\/gating sentence/);
+		expect(joined).toMatch(/grounded forward-fit close/);
+	});
+
+	it('calibrates tone to the JD level (depth + hunger for associate roles, ownership for senior) and names equivalence bridges explicitly (CDK -> CloudFormation)', () => {
+		expect(joined).toMatch(/SENIORITY TONE/);
+		expect(joined).toMatch(/EQUIVALENCE BRIDGES/);
+		expect(joined).toMatch(/CDK \(CloudFormation\)/);
+	});
+});
+
+describe('strategist-persona S3 <-> message-section cross-reference (v11)', () => {
+	it('S3 names the "### Profile Intelligence" section — and the message builder exposes a header starting with that exact name (run 77e325ea shipped no S3 angle because the persona referenced a section the message never labelled)', async () => {
+		const { PROFILE_INTELLIGENCE_HEADER } = await import('../agents/strategist-agent.js');
+		expect(joined).toContain('"### Profile Intelligence" section');
+		expect(PROFILE_INTELLIGENCE_HEADER.startsWith('### Profile Intelligence')).toBe(true);
+		expect(joined).toMatch(/UNDERSOLD strengths/);
 	});
 });

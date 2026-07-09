@@ -307,8 +307,28 @@ export function stripIdentityProblemClause(
     return { ...resume, summary: [first, ...sentences.slice(1)].join(' ').trim() };
 }
 
-/** All three attribution checks — shared by the first guard pass and revalidation. */
+/**
+ * Employer alias the summary OPENS with, or ''. "AWS cloud and backend
+ * engineer" written by someone employed at Amazon Web Services reads as a job
+ * title held AT AWS (run 77e325ea) — a misread waiting to happen at reference
+ * stage. Employer names may still appear mid-sentence as work context
+ * ("three years inside AWS production operations").
+ */
+function summaryEmployerOpener(resume: StructuredResumeData, ctx: ResumeGuardCtx): string {
+    const summary = (resume.summary ?? '').trim().toLowerCase();
+    if (!summary) return '';
+    for (const variant of (ctx.verifiedEmployers ?? []).flatMap((e) => nameVariants(e.name))) {
+        if (variant && summary.startsWith(`${variant} `)) return variant;
+    }
+    return '';
+}
+
+/** All attribution checks — shared by the first guard pass and revalidation. */
 function checkSummaryAttribution(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
+    const employerOpener = summaryEmployerOpener(resume, ctx);
+    if (employerOpener) {
+        out.push({ code: 'summary_opens_with_employer', detail: `Summary opens with the employer name "${employerOpener}" and reads as a job title held at that employer — keep the identity differentiator's content but rephrase so it does not OPEN with an employer name (e.g. "Cloud engineer with three years inside AWS production operations", never "AWS cloud engineer").` });
+    }
     const conflated = summaryConflationSentences(resume, ctx);
     if (conflated.length > 0) {
         out.push({ code: 'summary_employer_project_conflation', detail: `Summary sentence names an employer AND a project in one predicate chain: "${conflated[0].slice(0, 140)}" — split into separate sentences; the employer sentence carries only that employer's verified facts; the project sentence opens with the solo framing.` });
@@ -797,6 +817,7 @@ export async function rewriteResume(
         'You repair a tailored resume, fixing ONLY the listed issues by REORDERING and REWORDING for prominence. Call emit_resume with the full resume JSON.',
         `NEVER fabricate, NEVER change a number or date, NEVER rename a degree — the verified degree names are: ${ctx.verifiedEducation.join('; ')}.`,
         `Make the summary's FIRST sentence lead with this identity differentiator: "${ctx.leadIdentity}" — never an infrastructure-first opener; never name or concede any experience gap.`,
+        'For summary_opens_with_employer: keep the differentiator\'s CONTENT but rephrase the opening so it does not START with an employer\'s name — a summary opening "AWS … engineer" written by someone employed at AWS reads as a title held there. Name the platform mid-sentence instead ("Cloud engineer … on AWS" / "inside AWS production operations").',
         'For experience_bullet_jd_echo: rewrite the flagged bullet using ONLY that employer\'s verified facts (rephrasing and emphasis are fine); JD vocabulary may appear only where those facts support it - never invent deeds or a new domain to fit the JD.',
         ctx.projectPitches?.length
             ? `For project_restates_bullets and project_pitch_missing: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${formatPitches(ctx.projectPitches)}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`

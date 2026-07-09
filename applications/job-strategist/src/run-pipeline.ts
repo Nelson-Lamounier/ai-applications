@@ -729,9 +729,14 @@ export async function main(): Promise<void> {
             loadAchievementEvidence(pool, ctx.userId),
             loadGroundedMetricsLedger(pool, ctx.userId),
         ]);
-        // Candidate grounding fed to research + strategist: documented project case
-        // studies PLUS the code-grounded Profile Intelligence (direction / undersold
-        // strengths / unsupported claims). Both fail-open to '' independently.
+        // Candidate grounding fed to RESEARCH (and the writer's evidence text):
+        // documented project case studies PLUS the code-grounded Profile
+        // Intelligence. Both fail-open to '' independently. The STRATEGIST now
+        // receives the two blocks SEPARATELY — concatenating them buried the
+        // profile block inside the case-studies wrapper (whose preamble scopes
+        // usage to bullet grounding), and the persona's S3 "drawn from the
+        // profile intelligence" instruction had no matching section to draw
+        // from (run 77e325ea: S3 slot filled with a second rigor close).
         const candidateGroundingBlock = [projectEvidenceBlock, profileIntelligenceBlock].filter(Boolean).join('\n\n');
         const educationBlock      = formatEducation(educationEntries);
         const certificationsBlock = formatCertifications(certificationEntries);
@@ -938,7 +943,7 @@ export async function main(): Promise<void> {
         // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
         // composition. It feeds the post-writer Haiku weave + allowed-number sets.
         const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
-        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock);
+        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 

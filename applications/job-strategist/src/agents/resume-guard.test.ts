@@ -496,3 +496,28 @@ describe('checkBulletJdEcho — run 048379a3 fabricated "Configured enterprise p
         expect(checkBulletJdEcho(r, EMPLOYERS, '')).toEqual([]);
     });
 });
+
+describe('summary_opens_with_employer — identity must not read as a job title at a career employer', () => {
+    const employerCtx = {
+        ...ctx,
+        verifiedEmployers: [
+            { name: 'Amazon Web Services (AWS)', facts: 'customer incident support' },
+            { name: 'Meta via Accenture', facts: 'ads platform operations' },
+        ],
+    };
+
+    it('flags a summary opening with an employer alias (live: "AWS cloud and backend engineer" while employed at AWS reads as engineer AT AWS — run 77e325ea)', () => {
+        const r = base({ summary: 'AWS cloud and backend engineer who ships production serverless services. Applies policy-as-code gating.' });
+        expect(validateResume(r, employerCtx).map((v) => v.code)).toContain('summary_opens_with_employer');
+    });
+
+    it('does not flag the employer named mid-sentence as work context', () => {
+        const r = base({ summary: 'Cloud engineer with three years inside AWS production operations. Ships production serverless services.' });
+        expect(validateResume(r, employerCtx).map((v) => v.code)).not.toContain('summary_opens_with_employer');
+    });
+
+    it('is silent without verifiedEmployers (fail-open)', () => {
+        const r = base({ summary: 'AWS cloud and backend engineer who ships production serverless services.' });
+        expect(validateResume(r, ctx).map((v) => v.code)).not.toContain('summary_opens_with_employer');
+    });
+});
