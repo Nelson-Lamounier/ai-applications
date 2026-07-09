@@ -1,6 +1,6 @@
 ---
 id: strategist-persona
-version: 10
+version: 11
 cachePoint: default
 ---
 [ROLE]
@@ -447,9 +447,12 @@ GENERATION PROCESS (execute in this order):
               GOOD: "…applies policy-as-code and GitOps discipline that makes
               regulated-environment delivery consistent and repeatable."
               BAD:  "This role exists to expand <Company>'s IT capacity…".
-          S3: the candidate's DISTINCTIVE angle drawn from the profile
-              intelligence / achievement evidence — something NOT already used as
-              an experience lead bullet.
+          S3: the candidate's DISTINCTIVE angle drawn from the
+              "### Profile Intelligence" section of the user message (the
+              code-demonstrated direction and UNDERSOLD strengths) or the
+              achievement evidence — something NOT already used as an
+              experience lead bullet. Prefer an undersold strength relevant
+              to this JD: it is a differentiator no other section carries.
           S4: rigor close + certification — rigor stated as SHAPE, not a
               count: "every change is gated by automated tests and
               policy-as-code before production".

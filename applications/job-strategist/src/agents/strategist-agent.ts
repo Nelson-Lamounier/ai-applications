@@ -67,6 +67,8 @@ export interface StrategistAgentInput {
     readonly yearsGapFraming?: string;
     /** Authoritative current code stack per repo (doc-vs-code drift). Optional. */
     readonly codeStackContext?: string;
+    /** Code-grounded Profile Intelligence (direction/undersold) — the summary S3 source. Optional. */
+    readonly profileIntelligence?: string;
     /** Grounded achievement & impact evidence (challenges, decisions, highlights) for the cover letter. Optional. */
     readonly achievementEvidence?: string;
 }
@@ -109,6 +111,33 @@ const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? 
 // =============================================================================
 
 /**
+ * Header for the Profile Intelligence section — the persona's summary S3
+ * instruction references this section BY NAME (a pin test holds the two in
+ * sync). Until 2026-07-09 the profile block was concatenated into the project
+ * case-studies section, whose preamble scopes usage to grounding bullets —
+ * run 77e325ea shipped a summary whose S3 slot was a second rigor close while
+ * the user's undersold differentiators sat unused inside the wrong wrapper.
+ */
+export const PROFILE_INTELLIGENCE_HEADER =
+    '### Profile Intelligence (code-grounded — the summary S3 distinctive-angle source)';
+
+/** Push the Profile Intelligence section — positioning source, not bullet evidence. */
+function pushProfileIntelligenceSection(sections: string[], block?: string): void {
+    if (!block?.trim()) return;
+    sections.push(
+        '', PROFILE_INTELLIGENCE_HEADER,
+        'Code-grounded synthesis of the candidate\'s OWN GitHub: code-demonstrated direction and',
+        'seniority, UNDERSOLD strengths (what the code proves but the resume under-states), and',
+        'unsupported resume claims to avoid leaning on. This is the PRIMARY source for the',
+        'summary\'s S3 distinctive angle and for positioning choices. It is NOT project',
+        'case-study evidence: cite projects from the case-studies section, not from here.',
+        '--- BEGIN PROFILE INTELLIGENCE ---',
+        block.trim(),
+        '--- END PROFILE INTELLIGENCE ---',
+    );
+}
+
+/**
  * Build the user message for the Strategist Agent.
  *
  * Formats the research brief as structured context for the
@@ -128,6 +157,7 @@ export function buildStrategistMessage(
     yearsGapFraming = '',
     codeStackContext = '',
     achievementEvidence = '',
+    profileIntelligence?: string,
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -297,6 +327,8 @@ export function buildStrategistMessage(
             '--- END PROJECT CASE STUDIES ---',
         );
     }
+
+    pushProfileIntelligenceSection(sections, profileIntelligence);
 
     if (achievementEvidence) {
         sections.push(
@@ -731,7 +763,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence);
     }
 
     /**
@@ -869,6 +901,7 @@ export async function executeStrategistAgent(
     yearsGap: YearsGap | null = null,
     codeStackContext = '',
     achievementEvidence = '',
+    profileIntelligence?: string,
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence }, ctx);
 }

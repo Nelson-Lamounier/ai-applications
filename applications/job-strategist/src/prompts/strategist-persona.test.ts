@@ -64,14 +64,23 @@ describe('strategist-persona employment fidelity mandate', () => {
 	});
 });
 
-describe('strategist-persona v10 — exact v6 restore (writer-duration bisect)', () => {
+describe('strategist-persona v11 — v6-restored body (writer-duration bisect closed: the 4096 thinking budget was the cause, not wording)', () => {
 	it('carries no GROUNDED METRICS reference and no OUTPUT BUDGET (both measured to balloon writer output)', () => {
 		expect(joined).not.toMatch(/GROUNDED\s+METRICS/);
 		expect(joined).not.toMatch(/OUTPUT BUDGET/);
 	});
 
-	it('is the exact v6 body — the only configuration measured fast (263s / 13.9K writer tokens, run 23d75e15); persona-example number leakage is handled deterministically by stripInstructionMetrics, not by prompt wording', () => {
+	it('keeps the v6 numeric examples; persona-example number leakage is handled deterministically by stripInstructionMetrics, not by prompt wording', () => {
 		expect(joined).toMatch(/30-second deploys vs 8-minute manual/);
 		expect(joined).not.toMatch(/numbers?\s+in\s+these\s+instructions\s+are\s+not\s+evidence/i);
+	});
+});
+
+describe('strategist-persona S3 <-> message-section cross-reference (v11)', () => {
+	it('S3 names the "### Profile Intelligence" section — and the message builder exposes a header starting with that exact name (run 77e325ea shipped no S3 angle because the persona referenced a section the message never labelled)', async () => {
+		const { PROFILE_INTELLIGENCE_HEADER } = await import('../agents/strategist-agent.js');
+		expect(joined).toContain('"### Profile Intelligence" section');
+		expect(PROFILE_INTELLIGENCE_HEADER.startsWith('### Profile Intelligence')).toBe(true);
+		expect(joined).toMatch(/UNDERSOLD strengths/);
 	});
 });
