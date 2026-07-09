@@ -24,6 +24,9 @@ import { extractNumbers } from '../ats/number-provenance.js';
 import { CLAIM_STRENGTH_RULE } from './claim-strength.js';
 
 const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const SUMMARY_REPAIR_PROMPT_META = { id: 'summary-repair', version: '1' } as const;
 const CTX = { pipelineId: 'resume-summary-repair', environment: process.env['ENVIRONMENT'] ?? 'development', cumulativeTokens: { input: 0, output: 0, thinking: 0 }, cumulativeCostUsd: 0 };
 
 export interface SummaryLintIssue { readonly code: string; readonly detail: string }
@@ -80,6 +83,7 @@ async function llmRepair(current: string, original: string | null, allowed: Read
 	].join('\n');
 	const config: AgentConfig = {
 		agentName: 'summary-repair', modelId: MODEL_ID, maxTokens: 1200, thinkingBudget: 0,
+		promptId: SUMMARY_REPAIR_PROMPT_META.id, promptVersion: SUMMARY_REPAIR_PROMPT_META.version,
 		systemPrompt: [{ text: system }], pipeline: 'job-strategist',
 		tool: REPAIR_TOOL,
 	};

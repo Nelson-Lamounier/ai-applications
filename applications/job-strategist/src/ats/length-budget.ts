@@ -178,6 +178,11 @@ export function hardTrim(resume: StructuredResumeData): StructuredResumeData {
 // =============================================================================
 
 const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+
+/** Ledger identities for the two inline prompts below (condense + expand) — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const RESUME_CONDENSE_PROMPT_META = { id: 'resume-condense', version: '1' } as const;
+export const RESUME_EXPAND_PROMPT_META = { id: 'resume-expand', version: '1' } as const;
+
 const TOOL = buildEmitResumeTool('Return the condensed resume as structured JSON (plain-text strings, NO markdown).');
 const CTX: BasePipelineContext = { pipelineId: 'length-budget', environment: process.env['DEPLOY_ENV'] ?? 'dev', cumulativeTokens: { input: 0, output: 0, thinking: 0 }, cumulativeCostUsd: 0 };
 
@@ -214,6 +219,7 @@ export async function condenseResume(
 
     const config: AgentConfig = {
         agentName: 'resume-condense', modelId: MODEL_ID, maxTokens: 8000, thinkingBudget: 0,
+        promptId: RESUME_CONDENSE_PROMPT_META.id, promptVersion: RESUME_CONDENSE_PROMPT_META.version,
         systemPrompt: [{ text: system }], pipeline: 'job-strategist',
         tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
     };
@@ -269,6 +275,7 @@ export async function expandResume(
     ].join('\n');
     const config: AgentConfig = {
         agentName: 'resume-expand', modelId: MODEL_ID, maxTokens: 8000, thinkingBudget: 0,
+        promptId: RESUME_EXPAND_PROMPT_META.id, promptVersion: RESUME_EXPAND_PROMPT_META.version,
         systemPrompt: [{ text: system }], pipeline: 'job-strategist',
         tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
     };

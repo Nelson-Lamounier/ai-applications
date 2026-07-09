@@ -23,6 +23,9 @@ import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.j
 
 const MODEL_ID = process.env['SURFACE_KEYWORDS_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const SURFACE_METRICS_PROMPT_META = { id: 'surface-metrics', version: '1' } as const;
+
 const TOOL = buildEmitResumeTool('Return the resume as structured JSON with grounded metrics surfaced (plain-text strings, NO markdown).');
 
 const CTX: BasePipelineContext = {
@@ -75,6 +78,8 @@ export async function surfaceMetrics(
 
     const config: AgentConfig = {
         agentName: 'surface-metrics',
+        promptId: SURFACE_METRICS_PROMPT_META.id,
+        promptVersion: SURFACE_METRICS_PROMPT_META.version,
         modelId: MODEL_ID,
         maxTokens: 8000,
         thinkingBudget: 0,

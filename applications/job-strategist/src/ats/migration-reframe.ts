@@ -30,6 +30,9 @@ import { ResumeRewriteSchema, buildEmitResumeTool } from '../agents/resume-tool-
 // for nuanced structured output). Override per-env if a cheaper model is ever verified.
 const MODEL_ID = process.env['MIGRATION_REFRAME_MODEL'] ?? 'eu.anthropic.claude-sonnet-4-6';
 
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const MIGRATION_REFRAME_PROMPT_META = { id: 'migration-reframe', version: '1' } as const;
+
 /** Space-pad a phrase to a lowercased alnum token stream for whole-word containment. */
 function padded(text: string): string {
     return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
@@ -175,6 +178,8 @@ export async function reframeStaleMigrations(
 
     const config: AgentConfig = {
         agentName: 'migration-reframe',
+        promptId: MIGRATION_REFRAME_PROMPT_META.id,
+        promptVersion: MIGRATION_REFRAME_PROMPT_META.version,
         modelId: MODEL_ID,
         maxTokens: 8000,
         thinkingBudget: 0,
