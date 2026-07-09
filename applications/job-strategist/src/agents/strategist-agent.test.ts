@@ -112,6 +112,20 @@ describe('buildStrategistMessage — profile intelligence section (the summary S
     });
 });
 
+describe('buildStrategistMessage — candidate contact section (per-user identity, any tenant)', () => {
+    it('injects the contact block under its labelled section (the persona signoff placeholders reference it by name)', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '', undefined,
+            'name: Grace Hopper\nemail: grace@navy.example');
+        expect(msg).toContain('### Candidate Contact');
+        expect(msg).toContain('name: Grace Hopper');
+    });
+
+    it('omits the section when no contact exists — the persona instructs empty fields, never invention', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        expect(msg).not.toContain('Candidate Contact');
+    });
+});
+
 describe('extractGapMitigations — phase 3 defences become structured data', () => {
 	const XML = [
 		'<phase_3_strategy>',

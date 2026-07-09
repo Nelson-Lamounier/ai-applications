@@ -42,11 +42,13 @@ describe('strategist-persona cover-letter JSON schema rules', () => {
         expect(lower).toContain('never self-label with the');
     });
 
-    it('preserves the fixed sign-off identity', () => {
-        expect(joined).toContain('Nelson Lamounier');
-        expect(joined).toContain('lamounierleao@outlook.com');
-        expect(joined).toContain('linkedin.com/in/nelson-lamounier-leao');
-        expect(joined).toContain('github.com/Nelson-Lamounier');
+    it('carries NO hardcoded user identity — contact comes from the Candidate Contact section (multi-tenant: the v12-era persona shipped one user\'s literal name/email as the signoff example, which any other tenant\'s writer would have copied)', () => {
+        expect(joined).not.toContain('Nelson Lamounier');
+        expect(joined).not.toContain('lamounierleao@outlook.com');
+        expect(joined).not.toContain('linkedin.com/in/nelson-lamounier-leao');
+        expect(joined).not.toContain('github.com/Nelson-Lamounier');
+        expect(joined).toContain("### Candidate Contact");
+        expect(joined).toContain('NEVER invent or alter');
     });
 });
 
