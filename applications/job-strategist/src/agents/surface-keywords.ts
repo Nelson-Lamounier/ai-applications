@@ -22,6 +22,9 @@ import { citableFiles } from '../ats/tool-evidence-retrieval.js';
 
 const MODEL_ID = process.env['SURFACE_KEYWORDS_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const SURFACE_KEYWORDS_PROMPT_META = { id: 'surface-keywords', version: '1' } as const;
+
 const ResumeSchema = ResumeRewriteSchema;
 
 const TOOL = buildEmitResumeTool('Return the resume as structured JSON with the keywords surfaced (plain-text strings, NO markdown).');
@@ -120,6 +123,8 @@ export async function surfaceKeywords(
 
     const config: AgentConfig = {
         agentName: 'surface-keywords',
+        promptId: SURFACE_KEYWORDS_PROMPT_META.id,
+        promptVersion: SURFACE_KEYWORDS_PROMPT_META.version,
         modelId: MODEL_ID,
         maxTokens: 8000,
         thinkingBudget: 0,

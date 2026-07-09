@@ -79,6 +79,9 @@ function reconcileMatchedYears(line: string, m: RegExpExecArray, relevantYears: 
 
 const MODEL_ID = process.env['YEARS_RELEVANCE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const YEARS_RELEVANCE_PROMPT_META = { id: 'years-relevance', version: '1' } as const;
+
 export interface YearsGapRole {
     title: string; company: string; period: string;
     family: string | null; roleClass: string | null;
@@ -124,6 +127,7 @@ async function selectRelevant(roles: YearsGapRole[], yearsExpected: string): Pro
     ].join('\n');
     const config: AgentConfig = {
         agentName: 'years-relevance', modelId: MODEL_ID, maxTokens: 512, thinkingBudget: 0,
+        promptId: YEARS_RELEVANCE_PROMPT_META.id, promptVersion: YEARS_RELEVANCE_PROMPT_META.version,
         systemPrompt: [{ text: system }], pipeline: 'job-strategist',
         tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
     };

@@ -182,6 +182,9 @@ export function stripEmDashes(cl: CoverLetter): CoverLetter {
 
 const MODEL_ID = process.env['COVER_LETTER_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const COVER_LETTER_REWRITE_PROMPT_META = { id: 'cover-letter-rewrite', version: '1' } as const;
+
 const SignoffSchema = z.object({ name: z.string(), email: z.string(), linkedin: z.string(), github: z.string() });
 const RewriteSchema = z.object({ greeting: z.string(), paragraphs: z.array(z.string()), signoff: SignoffSchema });
 
@@ -227,6 +230,7 @@ export async function rewriteCoverLetter(
 
     const config: AgentConfig = {
         agentName: 'cover-letter-rewrite', modelId: MODEL_ID, maxTokens: 1500, thinkingBudget: 0,
+        promptId: COVER_LETTER_REWRITE_PROMPT_META.id, promptVersion: COVER_LETTER_REWRITE_PROMPT_META.version,
         systemPrompt: [{ text: system }], pipeline: 'job-strategist',
         tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
     };

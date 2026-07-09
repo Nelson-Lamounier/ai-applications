@@ -192,6 +192,9 @@ const ADJUDICATOR_SYSTEM = [
     'answer stand. You MUST respond by calling record_corrective_verdicts.',
 ].join('\n');
 
+/** Ledger identity for ADJUDICATOR_SYSTEM above — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const CORRECTIVE_RETRIEVAL_PROMPT_META = { id: 'corrective-retrieval', version: '1' } as const;
+
 /** Build the production adjudicator: one batched Haiku call for all candidates. */
 export function buildBedrockAdjudicator(opts: {
     pipelineContext: BasePipelineContext;
@@ -210,6 +213,8 @@ export function buildBedrockAdjudicator(opts: {
         const result = await runAgent<{ verdicts: CorrectiveVerdict[] }>({
             config: {
                 agentName: 'corrective-retrieval',
+                promptId: CORRECTIVE_RETRIEVAL_PROMPT_META.id,
+                promptVersion: CORRECTIVE_RETRIEVAL_PROMPT_META.version,
                 modelId,
                 maxTokens: 2048,
                 thinkingBudget: 0,

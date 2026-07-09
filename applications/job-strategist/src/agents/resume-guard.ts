@@ -757,6 +757,9 @@ export function stripEmDashes(resume: StructuredResumeData): StructuredResumeDat
 
 const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const RESUME_REWRITE_PROMPT_META = { id: 'resume-rewrite', version: '1' } as const;
+
 const RewriteSchema = ResumeRewriteSchema;
 
 const TOOL = buildEmitResumeTool('Return the corrected resume as structured JSON (plain text strings, NO markdown).');
@@ -823,6 +826,8 @@ export async function rewriteResume(
 
     const config: AgentConfig = {
         agentName: 'resume-rewrite',
+        promptId: RESUME_REWRITE_PROMPT_META.id,
+        promptVersion: RESUME_REWRITE_PROMPT_META.version,
         modelId: MODEL_ID,
         maxTokens: 8000,
         thinkingBudget: 0,
