@@ -69,6 +69,8 @@ export interface StrategistAgentInput {
     readonly codeStackContext?: string;
     /** Code-grounded Profile Intelligence (direction/undersold) — the summary S3 source. Optional. */
     readonly profileIntelligence?: string;
+    /** Per-user contact details (resume profile + cover-letter signoff source). Optional. */
+    readonly candidateContact?: string;
     /** Grounded achievement & impact evidence (challenges, decisions, highlights) for the cover letter. Optional. */
     readonly achievementEvidence?: string;
 }
@@ -121,6 +123,21 @@ const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? 
 export const PROFILE_INTELLIGENCE_HEADER =
     '### Profile Intelligence (code-grounded — the summary S3 distinctive-angle source)';
 
+/**
+ * Header for the per-user contact section — the persona's cover-letter signoff
+ * and resume profile placeholders reference this section BY NAME. The persona
+ * previously carried one user's literal contact details as the signoff
+ * example (a multi-tenant identity leak for every other user).
+ */
+export const CANDIDATE_CONTACT_HEADER =
+    '### Candidate Contact (VERBATIM source for the resume profile and cover-letter signoff)';
+
+/** Push the per-user contact section. Omitted entirely when no contact exists. */
+function pushCandidateContactSection(sections: string[], block?: string): void {
+    if (!block?.trim()) return;
+    sections.push('', CANDIDATE_CONTACT_HEADER, block.trim());
+}
+
 /** Push the Profile Intelligence section — positioning source, not bullet evidence. */
 function pushProfileIntelligenceSection(sections: string[], block?: string): void {
     if (!block?.trim()) return;
@@ -158,6 +175,7 @@ export function buildStrategistMessage(
     codeStackContext = '',
     achievementEvidence = '',
     profileIntelligence?: string,
+    candidateContact?: string,
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -329,6 +347,7 @@ export function buildStrategistMessage(
     }
 
     pushProfileIntelligenceSection(sections, profileIntelligence);
+    pushCandidateContactSection(sections, candidateContact);
 
     if (achievementEvidence) {
         sections.push(
@@ -763,7 +782,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence, input.candidateContact);
     }
 
     /**
@@ -902,6 +921,7 @@ export async function executeStrategistAgent(
     codeStackContext = '',
     achievementEvidence = '',
     profileIntelligence?: string,
+    candidateContact?: string,
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence, candidateContact }, ctx);
 }

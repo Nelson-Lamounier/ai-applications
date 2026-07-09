@@ -34,6 +34,7 @@ import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
 import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { createViolationLog } from './lib/violation-log.js';
+import { loadCandidateContactBlock } from './lib/candidate-contact.js';
 import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
 import { applyLengthBudget } from './ats/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
@@ -718,7 +719,7 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock] = await Promise.all([
+        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContactBlock] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
             loadProjectLaneIndex(pool, ctx.userId),
             loadProfileIntelligenceBlock(pool, ctx.userId),
@@ -728,6 +729,7 @@ export async function main(): Promise<void> {
             extractJobDescription(ctx.jobDescription, ctx),
             loadAchievementEvidence(pool, ctx.userId),
             loadGroundedMetricsLedger(pool, ctx.userId),
+            loadCandidateContactBlock(pool, ctx.userId),
         ]);
         // Candidate grounding fed to RESEARCH (and the writer's evidence text):
         // documented project case studies PLUS the code-grounded Profile
@@ -943,7 +945,7 @@ export async function main(): Promise<void> {
         // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
         // composition. It feeds the post-writer Haiku weave + allowed-number sets.
         const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
-        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock);
+        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
