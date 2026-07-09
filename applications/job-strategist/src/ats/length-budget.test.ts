@@ -152,3 +152,18 @@ describe('applyLengthBudget — expand direction', () => {
         expect(m.thinRoles).toEqual(['Cloud & DevOps Engineer']);
     });
 });
+
+describe('condense prompt — project pitch protection (run 9216cf25)', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('the condense system prompt PROTECTS project pitch openings — "cut non-JD content first" made the guard-restored pitches the first casualty on the live run', async () => {
+        const fixed = base();
+        mockRun.mockResolvedValue({ data: fixed });
+        const fat = base({ projects: [{ name: 'P', description: sentence(300), github: '' }] } as never);
+        await applyLengthBudget(fat, jd, () => {});
+        const config = mockRun.mock.calls[0]![0].config;
+        const system = config.systemPrompt.map((b: { text?: string }) => b.text ?? '').join('\n');
+        expect(system).toContain('PITCH OPENINGS ARE PROTECTED');
+        expect(system).toMatch(/opening sentence/i);
+    });
+});

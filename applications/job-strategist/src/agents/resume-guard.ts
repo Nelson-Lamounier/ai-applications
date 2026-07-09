@@ -901,6 +901,11 @@ export async function revalidateResumeContent(
     checkSummaryAttribution(inventory, out, ctx);
     checkComplianceOverclaim(inventory, out);
     checkMetricStuffedBullets(inventory, out);
+    // Pitch alignment must hold through the WHOLE chain: run 9216cf25's first
+    // guard pass repaired both project pitches, then the condense pass cut
+    // them ("non-JD content is cut FIRST") and both revalidations were blind
+    // to the loss — stack-led descriptions shipped despite the repair.
+    inventory.push(...checkProjectPitchAlignment(out, ctx.projectPitches));
     const needsRepair = [
         ...inventory,
         ...violations.filter((v) => v.code === 'unbridged_transferable_claim'),
@@ -922,6 +927,7 @@ export async function revalidateResumeContent(
         checkSummaryAttribution(residual, out, ctx);
         checkComplianceOverclaim(residual, out);
         checkMetricStuffedBullets(residual, out);
+        residual.push(...checkProjectPitchAlignment(out, ctx.projectPitches));
         if (residual.length > 0) {
             violations.push({ code: 'content_revalidation_residual', detail: `After one bounded repair, still violating: ${residual.map((r) => r.code).join(', ')}.` });
         }
