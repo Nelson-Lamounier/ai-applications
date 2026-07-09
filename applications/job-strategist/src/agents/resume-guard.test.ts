@@ -521,3 +521,28 @@ describe('summary_opens_with_employer — identity must not read as a job title 
         expect(validateResume(r, ctx).map((v) => v.code)).not.toContain('summary_opens_with_employer');
     });
 });
+
+describe('revalidateResumeContent — project pitch durability (run 9216cf25)', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+    const PITCHES = [{ name: 'Tucaken', pitch: 'Tucaken is a SaaS for software engineers who want a resume that is honest and grounded in their real work.' }];
+
+    it('flags a project that LOST its pitch opening after a later stage rewrote it (live: guard repaired both pitches, condense cut them as non-JD content, both revalidations were blind)', async () => {
+        const fixed = base();
+        mockRun.mockResolvedValue({ data: fixed });
+        const dirty = base({
+            projects: [{ name: 'Tucaken', description: 'Multi-account AWS infrastructure provisioned by AWS CDK spanning managed EKS, Lambda event pipelines, and DynamoDB backing four Bedrock AI applications.' }],
+        });
+        const { violations } = await revalidateResumeContent(dirty, { ...ctx, projectPitches: PITCHES });
+        expect(violations.map((v) => v.code)).toContain('project_pitch_missing');
+        expect(mockRun).toHaveBeenCalledTimes(1);
+    });
+
+    it('a pitch-led project stays silent (no repair call)', async () => {
+        const r = base({
+            projects: [{ name: 'Tucaken', description: 'Tucaken is a SaaS for software engineers who want a resume that is honest and grounded in their real work. Multi-account AWS infrastructure via CDK.' }],
+        });
+        const { violations } = await revalidateResumeContent(r, { ...ctx, projectPitches: PITCHES });
+        expect(violations.map((v) => v.code)).not.toContain('project_pitch_missing');
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+});

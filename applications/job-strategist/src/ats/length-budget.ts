@@ -180,7 +180,7 @@ export function hardTrim(resume: StructuredResumeData): StructuredResumeData {
 const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 /** Ledger identities for the two inline prompts below (condense + expand) — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
-export const RESUME_CONDENSE_PROMPT_META = { id: 'resume-condense', version: '1' } as const;
+export const RESUME_CONDENSE_PROMPT_META = { id: 'resume-condense', version: '2' } as const;
 export const RESUME_EXPAND_PROMPT_META = { id: 'resume-expand', version: '1' } as const;
 
 const TOOL = buildEmitResumeTool('Return the condensed resume as structured JSON (plain-text strings, NO markdown).');
@@ -212,6 +212,7 @@ export async function condenseResume(
         '- IMPACT CLAUSES ARE PROTECTED: every bullet keeps exactly ONE impact clause (its measured number or qualitative benefit, e.g. "eliminating static credentials"). When cutting, remove scope enumerations, adjectives, and tool lists FIRST — never the benefit.',
         `- skills total <= ${LENGTH_BUDGET.skillsWords} (currently ${measure.skills}); a skill is a NAME (<= ${LENGTH_BUDGET.perSkillItemWords} words), never a sentence; max ${LENGTH_BUDGET.maxSkillItemsPerCategory} items per category; keep JD-required skills first, cut the rest.`,
         `- projects total <= ${LENGTH_BUDGET.projectsWords} (currently ${measure.projects}); each description <= ${LENGTH_BUDGET.perProjectWords} words — what it is, the JD-relevant proof, one metric. No stack dumps.`,
+        '- PROJECT PITCH OPENINGS ARE PROTECTED: each project description KEEPS its opening sentence stating what the project is and who it serves (it rarely contains JD keywords — that does NOT make it cuttable). Cut stack enumerations and secondary clauses first, never the opening pitch.',
         `- grand total <= ${LENGTH_BUDGET.totalWords} (currently ${measure.total}).`,
         'Style: industry-standard, terse, no adjectives without evidence, no repeated technology lists across sections.',
         CLAIM_STRENGTH_RULE,
