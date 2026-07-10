@@ -66,7 +66,6 @@ const BASE_CONFIG: Config = {
   pgPassword: 'secret',
   port:       3001,
   allowedOrigins:          ['http://localhost:3000'],
-  bedrockApiUrl:           'https://api.execute-api.eu-west-1.amazonaws.com/v1/',
   bedrockApiKeySecretArn:  SECRET_ARN,
   bedrockPublicApiUrl:     'https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-public',
   bedrockAuthApiUrl:       'https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-authenticated',

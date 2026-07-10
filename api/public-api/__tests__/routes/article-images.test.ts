@@ -60,7 +60,6 @@ const BASE_CONFIG: Config = {
   pgPassword: 'secret',
   port: 3001,
   allowedOrigins: ['http://localhost:3000'],
-  bedrockApiUrl: undefined,
   bedrockApiKeySecretArn: undefined,
   bedrockPublicApiUrl: undefined,
   bedrockAuthApiUrl: undefined,

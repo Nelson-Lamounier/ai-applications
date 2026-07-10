@@ -31,23 +31,23 @@ async function ask(url: string, body: object, headers: Record<string, string> = 
 
 describe('chatbots', () => {
   it('public chatbot answers', async () => {
-    // Deployed agent API exposes a single POST /invoke; public vs
-    // authenticated is distinguished by body/headers, not by path.
-    const { status, text, json } = await ask(`${ep.chatbotPublicUrl}/invoke`,
+    // Post-decommission routes: /invoke-public (stateless) and
+    // /invoke-authenticated (session-aware); both serve from RDS pgvector.
+    const { status, text, json } = await ask(`${ep.chatbotPublicUrl}/invoke-public`,
       { prompt: QUESTION });
     expect(status).toBe(200);
     expect((json.response ?? json.message ?? text).length).toBeGreaterThan(2);
   }, 120_000);
 
   it('default chatbot answers', async () => {
-    const { status, text, json } = await ask(`${ep.chatbotUrl}/invoke`,
+    const { status, text, json } = await ask(`${ep.chatbotUrl}/invoke-authenticated`,
       { prompt: QUESTION, sessionId: randomUUID() });
     expect(status).toBe(200);
     expect((json.response ?? json.message ?? text).length).toBeGreaterThan(2);
   }, 120_000);
 
   (ep.cognitoIdToken ? it : it.skip)('authenticated chatbot answers and persists a session', async () => {
-    const { status, json } = await ask(`${ep.chatbotAuthenticatedUrl}/invoke`,
+    const { status, json } = await ask(`${ep.chatbotAuthenticatedUrl}/invoke-authenticated`,
       { prompt: QUESTION, callerRole: 'user' },
       { Authorization: `Bearer ${ep.cognitoIdToken}` });
     expect(status).toBe(200);
