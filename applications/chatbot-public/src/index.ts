@@ -18,8 +18,12 @@ import { invokeClaude } from './invoke-claude.js';
 import type { InvokeRequestBody, InvokeResponseBody, ErrorResponseBody, CallerRole } from './types.js';
 
 // ─── Feature flag ──────────────────────────────────────────────────────────────
+// Default is rds-pgvector: the Pinecone-backed Bedrock Agent KB is
+// decommissioned, so an environment missing this var must not silently fall
+// back to the stale agent path. Set CHATBOT_RETRIEVAL_SOURCE=bedrock-agent
+// only for a deliberate rollback while the agent still exists.
 const CHATBOT_RETRIEVAL_SOURCE = (): string =>
-    process.env['CHATBOT_RETRIEVAL_SOURCE'] ?? 'bedrock-agent';
+    process.env['CHATBOT_RETRIEVAL_SOURCE'] ?? 'rds-pgvector';
 
 // ─── Module-scoped singletons ─────────────────────────────────────────────────
 const inputSanitiser  = new InputSanitiser();
