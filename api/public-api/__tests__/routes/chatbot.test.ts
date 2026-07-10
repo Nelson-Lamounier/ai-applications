@@ -11,7 +11,7 @@
  * hoisted jest.mock() closures.
  *
  * Coverage:
- *   POST /api/chatbot/invoke        — proxies to bedrockApiUrl/invoke
+ *   POST /api/chatbot/invoke        — proxies to bedrockAuthApiUrl (pgvector)
  *   POST /api/chat                  — normalises response to { message, sessionId }
  *   POST /api/chatbot/public        — proxies to bedrockPublicApiUrl (full URL)
  *   POST /api/chatbot/authenticated — proxies to bedrockAuthApiUrl (full URL)
@@ -115,10 +115,10 @@ describe('POST /api/chatbot/invoke', () => {
     expect(body['response']).toBe('Hello');
   });
 
-  it('appends /invoke to bedrockApiUrl', async () => {
+  it('proxies to bedrockAuthApiUrl (pgvector upstream — never the legacy /invoke)', async () => {
     await chatbot.request('/api/chatbot/invoke', { method: 'POST', body: '{}' });
     const fetchCall = jest.mocked(globalThis.fetch).mock.calls[0];
-    expect(fetchCall?.[0]).toBe('https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke');
+    expect(fetchCall?.[0]).toBe('https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-authenticated');
   });
 
   it('injects x-api-key header', async () => {
@@ -127,8 +127,8 @@ describe('POST /api/chatbot/invoke', () => {
     expect(headers?.['x-api-key']).toBe(API_KEY);
   });
 
-  it('returns 503 when bedrockApiUrl is absent', async () => {
-    jest.mocked(loadConfig).mockReturnValue({ ...BASE_CONFIG, bedrockApiUrl: undefined });
+  it('returns 503 when bedrockAuthApiUrl is absent', async () => {
+    jest.mocked(loadConfig).mockReturnValue({ ...BASE_CONFIG, bedrockAuthApiUrl: undefined });
     const res = await chatbot.request('/api/chatbot/invoke', { method: 'POST', body: '{}' });
     expect(res.status).toBe(503);
   });
@@ -193,10 +193,16 @@ describe('POST /api/chat', () => {
     expect(body['error']).toBe('BadRequest');
   });
 
-  it('returns 503 when bedrockApiUrl is absent', async () => {
-    jest.mocked(loadConfig).mockReturnValue({ ...BASE_CONFIG, bedrockApiUrl: undefined });
+  it('returns 503 when bedrockAuthApiUrl is absent', async () => {
+    jest.mocked(loadConfig).mockReturnValue({ ...BASE_CONFIG, bedrockAuthApiUrl: undefined });
     const res = await chatbot.request('/api/chat', { method: 'POST', body: '{}' });
     expect(res.status).toBe(503);
+  });
+
+  it('sends /api/chat traffic to the pgvector upstream', async () => {
+    await chatbot.request('/api/chat', { method: 'POST', body: '{}' });
+    const fetchCall = jest.mocked(globalThis.fetch).mock.calls[0];
+    expect(fetchCall?.[0]).toBe('https://api.execute-api.eu-west-1.amazonaws.com/v1/invoke-authenticated');
   });
 });
 
