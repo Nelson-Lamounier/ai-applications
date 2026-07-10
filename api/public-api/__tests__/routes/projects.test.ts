@@ -41,7 +41,6 @@ const BASE_CONFIG = {
     pgPassword:          'secret',
     port:                3001,
     allowedOrigins:      ['*'],
-    bedrockApiUrl:       undefined,
     bedrockApiKeySecretArn: undefined,
     bedrockAuthApiUrl:   undefined,
     oauthTokenKmsKeyArn: 'arn',

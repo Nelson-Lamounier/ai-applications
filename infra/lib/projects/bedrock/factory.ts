@@ -2,18 +2,18 @@
  * @format
  * Bedrock Project Factory
  *
- * Creates the Amazon Bedrock Agent (chatbot) infrastructure using a
- * 4-stack architecture (post-Phase-5 cleanup):
- * - DataStack:  S3 bucket for Knowledge Base source documents
- * - KbStack:    Bedrock Knowledge Base backed by Pinecone
- * - AgentStack: Bedrock Agent, Guardrail, Action Group
- * - ApiStack:   API Gateway + Lambda for agent invocation (BFF, API key protected)
+ * Creates the Bedrock chatbot infrastructure using a 2-stack architecture
+ * (post Pinecone/Agent decommission — every chatbot serves from RDS pgvector):
+ * - DataStack: S3 bucket + inference profiles
+ * - ApiStack:  API Gateway + RAG chatbot Lambdas (BFF, API key protected)
  *
  * Stacks created:
  * - Bedrock-Data-{environment}
- * - Bedrock-Kb-{environment}
- * - Bedrock-Agent-{environment}
  * - Bedrock-Api-{environment}
+ *
+ * The former KbStack (Pinecone-backed Bedrock KB) and AgentStack (Bedrock
+ * Agent + Guardrail) were decommissioned 2026-07 — retrieval moved to the
+ * platform RDS pgvector store.
  *
  * Article pipeline, job strategist pipeline, ingestion pipeline, RDS,
  * DynamoDB data layers, and the public API have been migrated to
@@ -35,8 +35,6 @@ import type {
 } from '../../factories/project-interfaces';
 import {
     BedrockDataStack,
-    BedrockKbStack,
-    BedrockAgentStack,
     BedrockApiStack,
 } from '../../stacks/bedrock';
 import { stackId, flatName } from '../../utilities/naming';
@@ -45,20 +43,13 @@ import { stackId, flatName } from '../../utilities/naming';
 // Factory Context
 // =========================================================================
 
-/**
- * Extended factory context with Bedrock-specific overrides.
- */
-export interface BedrockFactoryContext extends ProjectFactoryContext {
-    /** Override agent instruction from config */
-    agentInstruction?: string;
-    /** Override foundation model from config */
-    foundationModel?: string;
-}
+/** Bedrock factory context — no project-specific overrides remain. */
+export type BedrockFactoryContext = ProjectFactoryContext;
 
 /**
  * Bedrock project factory.
- * Creates Amazon Bedrock Agent (chatbot) infrastructure with Guardrails,
- * Action Groups, Knowledge Base, and an API Gateway frontend.
+ * Creates the pgvector-backed chatbot infrastructure: data layer plus the
+ * API Gateway + Lambda frontend.
  */
 export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryContext> {
     readonly project = Project.BEDROCK;
@@ -70,7 +61,7 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
         this.namespace = getProjectConfig(Project.BEDROCK).namespace;
     }
 
-    createAllStacks(scope: cdk.App, context: BedrockFactoryContext): ProjectStackFamily {
+    createAllStacks(scope: cdk.App, _context: BedrockFactoryContext): ProjectStackFamily {
         // -------------------------------------------------------------
         // Load typed config for this environment
         // -------------------------------------------------------------
@@ -81,10 +72,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
         const env = cdkEnvironment(this.environment);
 
         const namePrefix = flatName('bedrock', '', this.environment);
-
-        // Context overrides > typed config defaults
-        const agentInstruction = context.agentInstruction ?? configs.agentInstruction;
-        const foundationModel = context.foundationModel ?? allocs.agent.foundationModel;
 
         // =================================================================
         // Stack 1: Data (S3 bucket for Knowledge Base source documents)
@@ -111,58 +98,9 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
         );
 
         // =================================================================
-        // Stack 2: Knowledge Base (Pinecone-backed vector store)
+        // Stack 2: API (API Gateway + RAG chatbot Lambdas)
         //
-        // Creates the Bedrock KB that embeds and retrieves repo docs.
-        // Uses Pinecone free tier — zero idle cost.
-        // Must be created before Agent so it can be associated.
-        // =================================================================
-        const kbStack = new BedrockKbStack(
-            scope,
-            stackId(this.namespace, 'Kb', this.environment),
-            {
-                namePrefix,
-                embeddingsModel: allocs.knowledgeBase.embeddingsModel,
-                // dataBucketArn omitted — KbStack reads from SSM at deploy time
-                pineconeConnectionString: allocs.knowledgeBase.pineconeConnectionString,
-                pineconeSecretName: configs.knowledgeBase.pineconeSecretName,
-                pineconeNamespace: allocs.knowledgeBase.pineconeNamespace,
-                kbDescription: configs.knowledgeBase.description,
-                kbInstruction: configs.knowledgeBase.instruction,
-                removalPolicy: configs.removalPolicy,
-                env,
-            }
-        );
-
-        // =================================================================
-        // Stack 3: Agent (Bedrock Agent + Guardrail + KB)
-        //
-        // Core AI resources. Knowledge Base is wired here so the chatbot
-        // can answer portfolio questions from Pinecone-indexed documents.
-        // =================================================================
-        const agentStack = new BedrockAgentStack(
-            scope,
-            stackId(this.namespace, 'Agent', this.environment),
-            {
-                namePrefix,
-                foundationModel,
-                agentInstruction,
-                agentDescription: configs.agentDescription,
-                idleSessionTtlInSeconds: allocs.agent.idleSessionTtlInSeconds,
-                enableContentFilters: configs.guardrail.enableContentFilters,
-                blockedInputMessaging: configs.guardrail.blockedInputMessaging,
-                blockedOutputsMessaging: configs.guardrail.blockedOutputMessaging,
-                removalPolicy: configs.removalPolicy,
-                // knowledgeBase omitted — AgentStack reads KB ID/ARN from SSM at deploy time
-                knowledgeBaseDescription: configs.knowledgeBase.description,
-                env,
-            },
-        );
-
-        // =================================================================
-        // Stack 4: API (API Gateway + Lambda for agent invocation)
-        //
-        // Serverless frontend. References Agent stack outputs.
+        // Serverless frontend over the RDS pgvector store.
         // =================================================================
         const apiStack = new BedrockApiStack(
             scope,
@@ -183,7 +121,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
                 portfolioOwnerUserIdParameterName: configs.api.portfolioOwnerUserIdParameterName,
                 rdsSsmPrefix: configs.api.rdsSsmPrefix,
                 rdsCredentialsSecretName: configs.api.rdsCredentialsSecretName,
-                chatbotRetrievalSource: configs.api.chatbotRetrievalSource,
                 chatbotVpc: configs.api.chatbotVpc,
                 env,
             }
@@ -191,8 +128,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
 
         const stacks: cdk.Stack[] = [
             dataStack,
-            kbStack,
-            agentStack,
             apiStack,
         ];
 
@@ -204,8 +139,6 @@ export class BedrockProjectFactory implements IProjectFactory<BedrockFactoryCont
             stacks,
             stackMap: {
                 data: dataStack,
-                kb: kbStack,
-                agent: agentStack,
                 api: apiStack,
             },
         };

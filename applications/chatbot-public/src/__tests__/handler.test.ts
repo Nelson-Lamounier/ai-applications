@@ -28,17 +28,10 @@ jest.mock('../invoke-claude.js', () => ({
     invokeClaude: jest.fn<() => Promise<string>>().mockResolvedValue('{"prose":"ok","metrics":[],"tags":[],"followUp":"?"}'),
 }));
 
-jest.mock('@aws-sdk/client-bedrock-agent-runtime', () => ({
-    BedrockAgentRuntimeClient: jest.fn(() => ({ send: jest.fn() })),
-    InvokeAgentCommand:        jest.fn(),
-}));
-
 jest.mock('../env.js', () => ({
     getEnv: jest.fn(() => ({
         portfolioOwnerUserId: 'owner-uuid',
         chatbotModel:         'model-id',
-        agentId:              'agent-id',
-        agentAliasId:         'alias-id',
         allowedOrigins:       '*',
     })),
     resetEnvCache: jest.fn(),
@@ -81,14 +74,6 @@ describe('chatbot-public handler', () => {
     beforeAll(() => {
         const instance = (InputSanitiser as jest.Mock).mock.results[0] as { value: { sanitise: jest.Mock } };
         sanitiseMock = instance.value.sanitise;
-    });
-
-    beforeEach(() => {
-        process.env['CHATBOT_RETRIEVAL_SOURCE'] = 'rds-pgvector';
-    });
-
-    afterEach(() => {
-        delete process.env['CHATBOT_RETRIEVAL_SOURCE'];
     });
 
     it('returns 200 with response and sessionId on valid prompt', async () => {

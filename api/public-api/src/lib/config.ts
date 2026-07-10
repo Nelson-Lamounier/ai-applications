@@ -38,14 +38,6 @@ export interface Config {
   /** Allowed CORS origins — comma-separated from ALLOWED_ORIGINS env var. */
   readonly allowedOrigins: string[];
   /**
-   * DEPRECATED — no route reads this any more. It pointed at the legacy
-   * Bedrock Agent `/invoke` upstream (Pinecone-backed KB, decommissioned);
-   * all conversational routes now use bedrockAuthApiUrl. Parsing is kept so
-   * an older public-api-bedrock secret cannot break boot; remove the field
-   * together with the BEDROCK_API_URL secret key and the /invoke API route.
-   */
-  readonly bedrockApiUrl: string | undefined;
-  /**
    * Secrets Manager ARN for the Bedrock chatbot API key.
    * Sourced from BEDROCK_API_KEY_SECRET_ARN (ConfigMap).
    * The value is fetched at runtime via the EC2 instance profile — never
@@ -132,7 +124,6 @@ export function loadConfig(): Config {
     pgPassword: process.env['PG_PASSWORD'] as string,
     port: parseInt(process.env['PORT'] ?? '3001', 10),
     allowedOrigins: (process.env['ALLOWED_ORIGINS'] ?? 'https://nelsonlamounier.com,http://localhost:3000').split(',').map(s => s.trim()),
-    bedrockApiUrl: process.env['BEDROCK_API_URL'] ?? undefined,
     bedrockApiKeySecretArn: process.env['BEDROCK_API_KEY_SECRET_ARN'] ?? undefined,
     bedrockPublicApiUrl: process.env['BEDROCK_PUBLIC_API_URL'] ?? undefined,
     bedrockAuthApiUrl: process.env['BEDROCK_AUTH_API_URL'] ?? undefined,

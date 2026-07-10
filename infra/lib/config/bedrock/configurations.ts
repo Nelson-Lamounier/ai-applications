@@ -9,7 +9,7 @@
  * ```typescript
  * import { getBedrockConfigs } from '../../config/bedrock';
  * const configs = getBedrockConfigs(Environment.PRODUCTION);
- * const instruction = configs.agentInstruction;
+ * const origins = configs.api.allowedOrigins;
  * ```
  */
 
@@ -18,23 +18,11 @@ import * as cdk from 'aws-cdk-lib/core';
 
 import { type DeployableEnvironment, Environment } from '../environments';
 
-import { CHATBOT_AGENT_INSTRUCTION } from './chatbot-persona';
 
 // =============================================================================
 // TYPE DEFINITIONS
 // =============================================================================
 
-/**
- * Guardrail configuration
- */
-export interface GuardrailConfig {
-    /** Whether to enable content filtering */
-    readonly enableContentFilters: boolean;
-    /** Blocked input messaging */
-    readonly blockedInputMessaging: string;
-    /** Blocked output messaging */
-    readonly blockedOutputMessaging: string;
-}
 
 /**
  * Shared-VPC attributes for the RAG chatbot Lambdas. Resolved WITHOUT a
@@ -79,24 +67,10 @@ export interface ApiConfig {
     readonly rdsSsmPrefix: string;
     /** SecretsManager secret name containing RDS username/password */
     readonly rdsCredentialsSecretName: string;
-    /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
-    readonly chatbotRetrievalSource: string;
     /** SSM parameter holding the portfolio owner user ID for sessions + RLS */
     readonly portfolioOwnerUserIdParameterName: string;
     /** Shared VPC wiring for the RAG Lambdas (omit to skip VPC attachment). */
     readonly chatbotVpc?: ChatbotVpcConfig;
-}
-
-/**
- * Knowledge Base configuration
- */
-export interface KnowledgeBaseConfig {
-    /** Secrets Manager secret name for Pinecone API key */
-    readonly pineconeSecretName: string;
-    /** Knowledge Base description */
-    readonly description: string;
-    /** Knowledge Base instruction for agent interaction */
-    readonly instruction: string;
 }
 
 /**
@@ -117,14 +91,6 @@ export interface ArticleAssetsRolesConfig {
  * Complete resource configurations for Bedrock project
  */
 export interface BedrockConfigs {
-    /** Agent instruction prompt — defines agent behavior */
-    readonly agentInstruction: string;
-    /** Agent description */
-    readonly agentDescription: string;
-    /** Guardrail configuration */
-    readonly guardrail: GuardrailConfig;
-    /** Knowledge Base configuration */
-    readonly knowledgeBase: KnowledgeBaseConfig;
     /** API Gateway configuration */
     readonly api: ApiConfig;
     /** CloudWatch log retention */
@@ -145,37 +111,15 @@ export interface BedrockConfigs {
 
 /**
  * Bedrock resource configurations by environment.
- *
- * Agent instruction prompt is imported from the canonical source:
- * @see applications/chatbot/src/prompts/chatbot-persona.ts
  */
 
 export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
     [Environment.DEVELOPMENT]: {
-        agentInstruction: CHATBOT_AGENT_INSTRUCTION,
-        agentDescription: 'Portfolio AI assistant (development)',
-        guardrail: {
-            enableContentFilters: true,
-            blockedInputMessaging: 'Sorry, I cannot process that request.',
-            blockedOutputMessaging: 'Sorry, I cannot provide that response.',
-        },
-        knowledgeBase: {
-            pineconeSecretName: 'bedrock-dev/pinecone-api-key',
-            description: 'Portfolio repository documentation knowledge base (development)',
-            // Gap A7: Precise retrieval instruction — guides the agent to search across
-            // all portfolio topic areas listed in the agent instruction (KB TOPICS section).
-            instruction:
-                'Answers portfolio questions: AWS CDK, Kubernetes, AI/ML, CI/CD, Next.js, ' +
-                'observability, AWS certs. Always retrieve context before answering. No general knowledge.',
-        },
         api: {
             enableApiKey: true,
             allowedOrigins: ['http://localhost:3000', 'https://nelsonlamounier.com'],
             rdsSsmPrefix: '/k8s/development/platform-rds',
             rdsCredentialsSecretName: 'k8s-development/platform-rds/credentials',
-            // Pinecone-backed Bedrock Agent KB decommissioned — dev now reads the
-            // same RDS pgvector store as staging/production (returns chunk text, not refs).
-            chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserIdParameterName: '/bedrock-dev/portfolio-owner-user-id',
             // Shared VPC wiring read entirely from tucaken-infra's SSM exports
             // (/shared/vpc/development/*) at deploy time -- no hardcoded subnet
@@ -205,27 +149,11 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
     },
 
     [Environment.STAGING]: {
-        agentInstruction: CHATBOT_AGENT_INSTRUCTION,
-        agentDescription: 'Portfolio AI assistant (staging)',
-        guardrail: {
-            enableContentFilters: true,
-            blockedInputMessaging: 'Sorry, I cannot process that request.',
-            blockedOutputMessaging: 'Sorry, I cannot provide that response.',
-        },
-        knowledgeBase: {
-            pineconeSecretName: 'bedrock-stg/pinecone-api-key',
-            description: 'Portfolio repository documentation knowledge base (staging)',
-            // Gap A7: Consistent with development — precise retrieval guidance.
-            instruction:
-                'Answers portfolio questions: AWS CDK, Kubernetes, AI/ML, CI/CD, Next.js, ' +
-                'observability, AWS certs. Always retrieve context before answering. No general knowledge.',
-        },
         api: {
             enableApiKey: true,
             allowedOrigins: ['https://staging.nelsonlamounier.com'],
             rdsSsmPrefix: '/k8s/staging/platform-rds',
             rdsCredentialsSecretName: 'k8s-staging/platform-rds/credentials',
-            chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserIdParameterName: '/bedrock-stg/portfolio-owner-user-id',
         },
         logRetention: logs.RetentionDays.ONE_MONTH,
@@ -243,27 +171,11 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
     },
 
     [Environment.PRODUCTION]: {
-        agentInstruction: CHATBOT_AGENT_INSTRUCTION,
-        agentDescription: 'Portfolio AI assistant',
-        guardrail: {
-            enableContentFilters: true,
-            blockedInputMessaging: 'Sorry, I cannot process that request.',
-            blockedOutputMessaging: 'Sorry, I cannot provide that response.',
-        },
-        knowledgeBase: {
-            pineconeSecretName: 'bedrock-prd/pinecone-api-key',
-            description: 'Portfolio repository documentation knowledge base',
-            // Gap A7: Production instruction adds citation requirement for higher grounding precision.
-            instruction:
-                'Answers portfolio questions: AWS, K8s, AI/ML, CI/CD, Next.js, observability. ' +
-                'Retrieve context before answering and cite specific documents. No general knowledge.',
-        },
         api: {
             enableApiKey: true,
             allowedOrigins: ['https://nelsonlamounier.com'],
             rdsSsmPrefix: '/k8s/production/platform-rds',
             rdsCredentialsSecretName: 'k8s-production/platform-rds/credentials',
-            chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserIdParameterName: '/bedrock-prd/portfolio-owner-user-id',
         },
         logRetention: logs.RetentionDays.THREE_MONTHS,

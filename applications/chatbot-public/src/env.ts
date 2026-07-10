@@ -1,8 +1,6 @@
 export interface PublicChatbotEnv {
     readonly portfolioOwnerUserId: string;
     readonly chatbotModel:         string;
-    readonly agentId:              string;
-    readonly agentAliasId:         string;
     readonly allowedOrigins:       string;
 }
 
@@ -19,8 +17,6 @@ export function getEnv(): PublicChatbotEnv {
     cached = {
         portfolioOwnerUserId: required('PORTFOLIO_OWNER_USER_ID'),
         chatbotModel:         required('CHATBOT_MODEL'),
-        agentId:              process.env['AGENT_ID']      ?? '',
-        agentAliasId:         process.env['AGENT_ALIAS_ID'] ?? '',
         allowedOrigins:       process.env['ALLOWED_ORIGINS'] ?? '*',
     };
     return cached;

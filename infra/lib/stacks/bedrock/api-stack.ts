@@ -2,8 +2,8 @@
  * @format
  * Bedrock API Stack
  *
- * API Gateway + Lambda frontend for the Bedrock Agent.
- * Provides a secured REST endpoint to invoke the agent.
+ * API Gateway + Lambda frontend for the RAG chatbots (RDS pgvector).
+ * The former Bedrock Agent /invoke path was decommissioned 2026-07.
  *
  * Security features:
  * - API Key stored in Secrets Manager — value injected via CF dynamic reference
@@ -68,8 +68,6 @@ export interface BedrockApiStackProps extends cdk.StackProps {
     readonly rdsSsmPrefix: string;
     /** SecretsManager secret name containing RDS username/password */
     readonly rdsCredentialsSecretName: string;
-    /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
-    readonly chatbotRetrievalSource: string;
     /** Shared VPC wiring for RAG Lambdas that need private RDS access. */
     readonly chatbotVpc?: ChatbotVpcConfig;
 }
@@ -84,10 +82,7 @@ export class BedrockApiStack extends cdk.Stack {
     /** The API Gateway REST API */
     public readonly api: apigateway.RestApi;
 
-    /** The invoke Lambda function */
-    public readonly invokeFunction: lambdaNode.NodejsFunction;
-
-    /** Public RAG chatbot Lambda (stateless, supports bedrock-agent fallback) */
+    /** Public RAG chatbot Lambda (stateless, RDS pgvector) */
     public readonly chatbotPublicFunction: lambdaNode.NodejsFunction;
 
     /** Authenticated RAG chatbot Lambda (session-aware, always uses pgvector) */
@@ -113,87 +108,8 @@ export class BedrockApiStack extends cdk.Stack {
 
         const { namePrefix } = props;
 
-        // Resolve Agent IDs from SSM (avoids cross-stack exports from AgentStack)
-        const agentId = ssm.StringParameter.valueForStringParameter(
-            this, `/${namePrefix}/agent-id`,
-        );
-        const agentAliasId = ssm.StringParameter.valueForStringParameter(
-            this, `/${namePrefix}/agent-alias-id`,
-        );
-
-        // =================================================================
-        // Invoke Lambda — Calls Bedrock Agent via SDK
-        //
-        // Uses NodejsFunction for esbuild bundling from the
-        // lambda/bedrock/invoke-agent/ directory.
-        // =================================================================
-        this.invokeFunction = new lambdaNode.NodejsFunction(this, 'InvokeFunction', {
-            functionName: `${namePrefix}-invoke-agent`,
-            runtime: lambda.Runtime.NODEJS_22_X,
-            tracing: lambda.Tracing.ACTIVE,
-            entry: path.join(__dirname, '..', '..', '..', '..', 'applications', 'chatbot', 'src', 'index.ts'),
-            handler: 'handler',
-            memorySize: props.lambdaMemoryMb,
-            timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
-            environment: {
-                AGENT_ID: agentId,
-                AGENT_ALIAS_ID: agentAliasId,
-                ALLOWED_ORIGINS: props.allowedOrigins.join(','),
-            },
-            description: `Agent invocation handler for ${namePrefix}`,
-            logGroup: new logs.LogGroup(this, 'InvokeFunctionLogGroup', {
-                logGroupName: `/aws/lambda/${namePrefix}-invoke-agent`,
-                retention: props.logRetention,
-                removalPolicy: props.removalPolicy,
-            }),
-            bundling: {
-                minify: true,
-                sourceMap: true,
-                externalModules: [
-                    // AWS SDK v3 is included in the Lambda runtime
-                    '@aws-sdk/*',
-                    // K8s-only deps reached via @bedrock/shared barrel.
-                    ...OBSERVABILITY_EXTERNAL_MODULES,
-                ],
-            },
-        });
-
-        // CDK-Nag suppression: NODEJS_22_X is the latest Node.js LTS runtime;
-        // AwsSolutions-L1 may not recognize it as latest yet.
-        NagSuppressions.addResourceSuppressions(
-            this.invokeFunction,
-            [{ id: 'AwsSolutions-L1', reason: 'Using NODEJS_22_X which is the latest Node.js LTS runtime' }],
-            true,
-        );
-
-        // ADOT layer + OTel env vars → X-Ray. The handler is also wrapped
-        // with withSpan() in source code as a belt-and-braces — a top-level
-        // span is guaranteed even if auto-instrumentation misses the ESM
-        // entrypoint.
-        addLambdaObservability(this, this.invokeFunction, {
-            serviceName: `${namePrefix}-chatbot`,
-            environment: props.environmentName,
-        });
-
-        // Grant Bedrock Agent invoke permissions
-        this.invokeFunction.addToRolePolicy(new iam.PolicyStatement({
-            sid: 'InvokeBedrockAgent',
-            effect: iam.Effect.ALLOW,
-            actions: [
-                'bedrock:InvokeAgent',
-            ],
-            resources: [
-                `arn:aws:bedrock:${this.region}:${this.account}:agent-alias/${agentId}/${agentAliasId}`,
-            ],
-        }));
-
         // =================================================================
         // RDS connection params — read from SSM, injected into RAG Lambdas
-        //
-        // Lambdas run OUTSIDE the VPC (no NAT Gateway in V1 dev), so
-        // chatbotRetrievalSource must stay 'bedrock-agent' for chatbot-public
-        // until a Bedrock VPC endpoint and private subnets are added.
-        // chatbot-authenticated always needs VPC; wire in follow-up PR.
         // =================================================================
         const rdsHost     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/host`);
         const rdsPort     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/port`);
@@ -240,7 +156,7 @@ export class BedrockApiStack extends cdk.Stack {
         ];
 
         // =================================================================
-        // chatbot-public Lambda — stateless RAG + Bedrock Agent fallback
+        // chatbot-public Lambda — stateless RAG (RDS pgvector)
         // =================================================================
         this.chatbotPublicFunction = new lambdaNode.NodejsFunction(this, 'ChatbotPublicFunction', {
             functionName: `${namePrefix}-chatbot-public`,
@@ -252,12 +168,9 @@ export class BedrockApiStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
             ...chatbotVpcProps,
             environment: {
-                AGENT_ID: agentId,
-                AGENT_ALIAS_ID: agentAliasId,
                 CHATBOT_MODEL: props.chatbotModel,
                 PORTFOLIO_OWNER_USER_ID: portfolioOwnerUserId,
                 ALLOWED_ORIGINS: props.allowedOrigins.join(','),
-                CHATBOT_RETRIEVAL_SOURCE: props.chatbotRetrievalSource,
                 ...rdsEnvVars,
             },
             description: `Public RAG chatbot handler for ${namePrefix}`,
@@ -287,11 +200,8 @@ export class BedrockApiStack extends cdk.Stack {
         this.chatbotPublicFunction.addToRolePolicy(new iam.PolicyStatement({
             sid: 'ChatbotPublicBedrockAccess',
             effect: iam.Effect.ALLOW,
-            actions: ['bedrock:InvokeAgent', 'bedrock:Converse', 'bedrock:InvokeModel'],
-            resources: [
-                `arn:aws:bedrock:${this.region}:${this.account}:agent-alias/${agentId}/${agentAliasId}`,
-                ...chatbotModelResources,
-            ],
+            actions: ['bedrock:Converse', 'bedrock:InvokeModel'],
+            resources: chatbotModelResources,
         }));
 
         // =================================================================
@@ -361,7 +271,7 @@ export class BedrockApiStack extends cdk.Stack {
         // and eliminates the need to distribute x-api-key to the client.
         this.api = new apigateway.RestApi(this, 'AgentApi', {
             restApiName: `${namePrefix}-agent-api`,
-            description: `REST API for ${namePrefix} Bedrock Agent`,
+            description: `REST API for the ${namePrefix} RAG chatbots (RDS pgvector)`,
             deployOptions: {
                 stageName: 'v1',
                 tracingEnabled: true,
@@ -384,35 +294,13 @@ export class BedrockApiStack extends cdk.Stack {
         });
 
         // =================================================================
-        // Request Validator — Validate body on POST /invoke
+        // Request Validator — Validate body on the chatbot POST routes
         // =================================================================
         const requestValidator = new apigateway.RequestValidator(this, 'InvokeRequestValidator', {
             restApi: this.api,
             requestValidatorName: `${namePrefix}-invoke-validator`,
             validateRequestBody: true,
             validateRequestParameters: false,
-        });
-
-        // Define request model for the invoke endpoint
-        const invokeModel = this.api.addModel('InvokeRequestModel', {
-            contentType: 'application/json',
-            modelName: 'InvokeRequest',
-            schema: {
-                type: apigateway.JsonSchemaType.OBJECT,
-                required: ['prompt'],
-                properties: {
-                    prompt: {
-                        type: apigateway.JsonSchemaType.STRING,
-                        minLength: 1,
-                        maxLength: 10000,
-                        description: 'The user prompt to send to the Bedrock Agent',
-                    },
-                    sessionId: {
-                        type: apigateway.JsonSchemaType.STRING,
-                        description: 'Optional session ID for conversation continuity',
-                    },
-                },
-            },
         });
 
         // Define chatbot request model (prompt + optional sessionId + optional callerRole)
@@ -432,23 +320,6 @@ export class BedrockApiStack extends cdk.Stack {
                     callerRole: { type: apigateway.JsonSchemaType.STRING },
                 },
             },
-        });
-
-        // =================================================================
-        // POST /invoke — Invoke the agent
-        // =================================================================
-        const invokeResource = this.api.root.addResource('invoke');
-        invokeResource.addMethod('POST', new apigateway.LambdaIntegration(this.invokeFunction), {
-            apiKeyRequired: props.enableApiKey,
-            requestValidator,
-            requestModels: {
-                'application/json': invokeModel,
-            },
-            methodResponses: [
-                { statusCode: '200' },
-                { statusCode: '400' },
-                { statusCode: '500' },
-            ],
         });
 
         // =================================================================
@@ -566,14 +437,14 @@ export class BedrockApiStack extends cdk.Stack {
         // level as a default; suppress since it is explicitly wired per-method.
         NagSuppressions.addResourceSuppressions(
             this.api,
-            [{ id: 'AwsSolutions-APIG2', reason: 'Request validation is configured per-method with RequestValidator and InvokeRequestModel on POST /invoke' }],
+            [{ id: 'AwsSolutions-APIG2', reason: 'Request validation is configured per-method with RequestValidator and ChatbotInvokeRequestModel on the chatbot POST routes' }],
             true,
         );
 
         // APIG4 + COG4: This API uses API Key authentication with Usage Plan
         // throttling — Cognito authorizer is not applicable for this
         // machine-to-machine integration pattern.
-        for (const resource of [invokeResource, invokePublicResource, invokeAuthResource]) {
+        for (const resource of [invokePublicResource, invokeAuthResource]) {
             NagSuppressions.addResourceSuppressions(
                 resource,
                 [

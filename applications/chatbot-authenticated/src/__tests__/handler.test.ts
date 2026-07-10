@@ -87,11 +87,9 @@ describe('chatbot-authenticated handler', () => {
     });
 
     beforeEach(() => {
-        process.env['CHATBOT_RETRIEVAL_SOURCE'] = 'rds-pgvector';
     });
 
     afterEach(() => {
-        delete process.env['CHATBOT_RETRIEVAL_SOURCE'];
     });
 
     it('records a zero-result retrieval when retrieval returns no passages', async () => {

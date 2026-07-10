@@ -1,14 +1,12 @@
 # @format
 # @description Deploy Bedrock + Self-Healing AI Infrastructure to Development
 #
-# Deploys the 4-stack Bedrock architecture then the 2-stack Self-Healing
+# Deploys the 2-stack Bedrock architecture then the 2-stack Self-Healing
 # system in dependency order:
 #   1. Bedrock-Data              — S3 bucket for Knowledge Base source documents
-#   2. Bedrock-Kb                — Bedrock Knowledge Base (Pinecone vector store)
-#   3. Bedrock-Agent             — Bedrock Agent + Guardrail (KB associated)
-#   4. Bedrock-Api               — API Gateway + Lambda for agent invocation
-#   5. SelfHealing-Gateway       — AgentCore MCP Gateway with cluster inspection tools
-#   6. SelfHealing-Agent         — Bedrock agentic loop + SNS report topic
+#   2. Bedrock-Api               — API Gateway + RAG chatbot Lambdas (RDS pgvector)
+#   3. SelfHealing-Gateway       — AgentCore MCP Gateway with cluster inspection tools
+#   4. SelfHealing-Agent         — Bedrock agentic loop + SNS report topic
 #
 # Prerequisites for self-healing stacks:
 #   - SSM param /k8s/development/ops-email must exist (creates SNS subscription)
@@ -22,7 +20,6 @@
 # Article pipeline, job strategist, ingestion, public-api, and DynamoDB
 # data layers have moved to Kubernetes (kubernetes-platform / -bootstrap).
 #
-# For KB document syncing without redeploying stacks, use sync-kb-docs.yml.
 
 name: Deploy Bedrock + Self-Healing (Dev)
 
@@ -70,50 +67,12 @@ jobs:
       AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
 
   # ===========================================================================
-  # Stack 2: KB (Bedrock Knowledge Base backed by Pinecone)
-  # Depends on: Data (S3 bucket for KB data source)
-  # ===========================================================================
-  deploy-kb:
-    name: Deploy KB Stack
-    needs: [deploy-data]
-    uses: ./.github/workflows/_deploy-stack.yml
-    with:
-      stack-name: Bedrock-Kb-development
-      project: bedrock
-      environment: development
-      aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
-      aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
-      require-approval: never
-      use-container: false
-    secrets:
-      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
-
-  # ===========================================================================
-  # Stack 3: Agent (Bedrock Agent + Guardrail; KB associated via SSM)
-  # Depends on: KB (knowledge-base-id + execution-role-arn SSM params)
-  # ===========================================================================
-  deploy-agent:
-    name: Deploy Agent Stack
-    needs: [deploy-kb]
-    uses: ./.github/workflows/_deploy-stack.yml
-    with:
-      stack-name: Bedrock-Agent-development
-      project: bedrock
-      environment: development
-      aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
-      aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
-      require-approval: never
-      use-container: false
-    secrets:
-      AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
-
-  # ===========================================================================
-  # Stack 4: API (API Gateway + Lambda for agent invocation)
-  # Depends on: Agent (agent alias ARN for Lambda)
+  # Stack 2: API (API Gateway + RAG chatbot Lambdas, RDS pgvector)
+  # Depends on: Data (inference profiles)
   # ===========================================================================
   deploy-api:
     name: Deploy API Stack
-    needs: [deploy-agent]
+    needs: [deploy-data]
     uses: ./.github/workflows/_deploy-stack.yml
     with:
       stack-name: Bedrock-Api-development
@@ -127,7 +86,7 @@ jobs:
       AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
 
   # ===========================================================================
-  # Stack 5: Self-Healing Gateway (AgentCore MCP + cluster inspection tools)
+  # Stack 3: Self-Healing Gateway (AgentCore MCP + cluster inspection tools)
   # Depends on: API (ensures Bedrock stacks are stable before self-healing)
   # ===========================================================================
   deploy-self-healing-gateway:
@@ -146,7 +105,7 @@ jobs:
       AWS_OIDC_ROLE: ${{ secrets.AWS_OIDC_ROLE }}
 
   # ===========================================================================
-  # Stack 6: Self-Healing Agent (Bedrock agentic loop + SNS report topic)
+  # Stack 4: Self-Healing Agent (Bedrock agentic loop + SNS report topic)
   # Depends on: Gateway (exports MCP gateway URL consumed by agent Lambda)
   # Prereq:     SSM /k8s/development/ops-email must exist → SNS subscription
   # ===========================================================================
@@ -316,7 +275,7 @@ jobs:
 
   deploy-marker:
     name: Loki deploy marker
-    needs: [deploy-data, deploy-kb, deploy-agent, deploy-api, deploy-self-healing-gateway, deploy-self-healing-agent, smoke-test-subscriptions]
+    needs: [deploy-data, deploy-api, deploy-self-healing-gateway, deploy-self-healing-agent, smoke-test-subscriptions]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

@@ -77,7 +77,9 @@ const KB_AUGMENTED_THRESHOLD = 500;
 /** Maximum KB passages to retrieve (Bedrock KB path — fixed depth). */
 const MAX_KB_PASSAGES = 10;
 
-const RESEARCH_RETRIEVAL_SOURCE = (): string => process.env['RESEARCH_RETRIEVAL_SOURCE'] ?? 'bedrock-kb';
+// Default pgvector: the Bedrock/Pinecone KB was decommissioned 2026-07, so a
+// missing env var must never select the deleted KB path.
+const RESEARCH_RETRIEVAL_SOURCE = (): string => process.env['RESEARCH_RETRIEVAL_SOURCE'] ?? 'pgvector';
 
 /** Maximum characters to include from previous version content */
 const PREVIOUS_VERSION_CONTENT_CAP = 3000;

@@ -20,7 +20,6 @@ function stubConfig(overrides: Partial<Config> = {}): Config {
         pgPassword:             'p',
         port:                   3001,
         allowedOrigins:         [],
-        bedrockApiUrl:          undefined,
         bedrockApiKeySecretArn: undefined,
         bedrockPublicApiUrl:    undefined,
         bedrockAuthApiUrl:      undefined,

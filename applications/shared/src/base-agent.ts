@@ -22,7 +22,7 @@
  *
  * Excluded agents (by design):
  * - **Self-healing** — multi-turn conversation loop with MCP tool use
- * - **Chatbot** — uses `InvokeAgentCommand`, not `ConverseCommand`
+ * - **Chatbots** — session/context assembly handled in their own handlers
  *
  * @example
  * ```typescript
