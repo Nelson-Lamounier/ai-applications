@@ -462,6 +462,25 @@ describe('RepoIngestionOrchestrator incremental resync', () => {
         expect(watermarkStore.setLastSyncedCommitSha).toHaveBeenCalledWith('u', 'o/a', 'head-1');
     });
 
+    it('includes synthetic _commits/ paths in knownFilePaths so commit chunks survive pruning', async () => {
+        class CommitResyncAdapter extends ResyncAdapter {
+            override async listCommits(): Promise<RepoCommit[]> { return [SAMPLE_COMMIT]; }
+        }
+        const adapter = new CommitResyncAdapter(TREE, 'head-1');
+        const { pipeline, lastOpts } = fakePipelineWithOpts();
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), fakeChunkerRegistry(), pipeline, {},   // default CommitChunker
+        );
+
+        await orch.ingestRepo('u', 'o/a');
+
+        const known = lastOpts()?.knownFilePaths ?? [];
+        expect(known).toEqual(expect.arrayContaining(ALL_PATHS));
+        const commitPaths = known.filter((f) => f.startsWith('_commits/'));
+        expect(commitPaths).toHaveLength(1);
+        expect(commitPaths[0]).toMatch(/^_commits\/\d{4}-W\d{2}\.commit_history$/);
+    });
+
     it('tier-1: HEAD unchanged → fetches nothing, knownFilePaths still full set', async () => {
         const adapter = new ResyncAdapter(TREE, 'head-1');
         const fileStateStore = makeFileStateStore(
