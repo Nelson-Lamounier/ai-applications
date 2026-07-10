@@ -1,6 +1,7 @@
 /** @format */
 import type { Pool } from 'pg';
 import { RdsProjectEvidenceRepository, formatProjectEvidence, log } from '@bedrock/shared';
+import { withUserRls } from '../lib/rls.js';
 
 /**
  * Load + format the user's documented project case studies into a prompt block
@@ -41,13 +42,21 @@ export async function loadProjectEvidenceBlock(pool: Pool, userId: string): Prom
  */
 export async function loadProjectResumeBulletsBlock(pool: Pool, userId: string): Promise<string> {
     try {
-        const { rows } = await pool.query<{ name: string; angle: string; bullets: unknown }>(
-            `SELECT p.name, prb.angle, prb.bullets
-               FROM project_resume_bullets prb
-               JOIN projects p ON p.id = prb.project_id
-              WHERE prb.user_id = $1
-              ORDER BY p.name, prb.angle`,
-            [userId],
+        // project_resume_bullets carries per-user RLS keyed on the
+        // `app.current_user_id` GUC. Under pgbouncer transaction-pooling a bare
+        // pool.query lands on a connection with no (or a stale) context, so RLS
+        // silently matches 0 rows — the bullets never reach the writer. Run
+        // inside withUserRls so the GUC is set in the SAME transaction (see
+        // lib/rls.ts), exactly like the other per-user reads.
+        const { rows } = await withUserRls(pool, userId, (client) =>
+            client.query<{ name: string; angle: string; bullets: unknown }>(
+                `SELECT p.name, prb.angle, prb.bullets
+                   FROM project_resume_bullets prb
+                   JOIN projects p ON p.id = prb.project_id
+                  WHERE prb.user_id = $1
+                  ORDER BY p.name, prb.angle`,
+                [userId],
+            ),
         );
         if (rows.length === 0) return '';
 
