@@ -105,9 +105,46 @@ describe('relocateProjectExperience', () => {
         expect(tuca.description).toContain('code-grounded');
     });
 
-    it('is a no-op when there are no strays (all experience is verified)', () => {
+    it('leaves experience untouched when there are no strays (all verified)', () => {
         const clean = { ...RESUME, experience: RESUME.experience.slice(0, 2) } as StructuredResumeData;
         const res = relocateProjectExperience(clean, VERIFIED, BULLETS);
         expect(res.experience).toHaveLength(2);
+    });
+});
+
+describe('relocateProjectExperience — deterministic highlights fill', () => {
+    // The writer emitted rich descriptions but ZERO bullets and NO fabricated
+    // experience (live: National Facilities run 101cfa43). The project is also
+    // RENAMED vs the DB bullet set, so the fill must match by token overlap.
+    const RENAMED = {
+        ...RESUME,
+        experience: RESUME.experience.slice(0, 2),
+        projects: [
+            { name: 'Tucaken: AI Applications Platform', github: 'github.com/Nelson-Lamounier/ai-applications', description: 'SaaS grounding resumes in real GitHub code; EKS, Karpenter, CDK, Checkov policy gates, migration ledger.', highlights: [] },
+            { name: 'Technical Portfolio with Bedrock RAG', github: 'github.com/Nelson-Lamounier/frontend-portfolio', description: 'Portfolio with a production RAG chatbot; blue-green deploys, 307-test Jest suite, SonarCloud gates.', highlights: [] },
+        ],
+    } as unknown as StructuredResumeData;
+
+    const out = relocateProjectExperience(RENAMED, VERIFIED, BULLETS);
+
+    it('fills each empty project from its best-overlap DB bullet set (rename-tolerant)', () => {
+        const tuca = out.projects.find((p) => p.name === 'Tucaken: AI Applications Platform')!;
+        const fe = out.projects.find((p) => p.name === 'Technical Portfolio with Bedrock RAG')!;
+        expect((tuca.highlights ?? []).length).toBeGreaterThan(0);
+        expect((fe.highlights ?? []).length).toBeGreaterThan(0);
+        // Correct assignment despite the rename: Tucaken gets the platform bullets,
+        // the portfolio gets the blue-green/Jest bullets.
+        expect(tuca.highlights).toEqual(expect.arrayContaining([expect.stringContaining('Karpenter autoscaling')]));
+        expect(fe.highlights).toEqual(expect.arrayContaining([expect.stringContaining('blue-green')]));
+        expect((tuca.highlights ?? []).some((h) => /blue-green/.test(h))).toBe(false);
+    });
+
+    it('caps the fill and never overwrites a project the writer already populated', () => {
+        const tuca = out.projects.find((p) => p.name === 'Tucaken: AI Applications Platform')!;
+        expect((tuca.highlights ?? []).length).toBeLessThanOrEqual(6);
+        // A project that already has highlights is left as-is.
+        const prefilled = { ...RENAMED, projects: [{ ...(RENAMED.projects[0] as object), highlights: ['Hand-written bullet'] }] } as unknown as StructuredResumeData;
+        const res = relocateProjectExperience(prefilled, VERIFIED, BULLETS);
+        expect(res.projects[0].highlights).toEqual(['Hand-written bullet']);
     });
 });
