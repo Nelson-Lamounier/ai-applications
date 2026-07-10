@@ -7,7 +7,6 @@
     "applications/shared",
     "applications/article-pipeline",
     "applications/job-strategist",
-    "applications/chatbot",
     "applications/chatbot-public",
     "applications/chatbot-authenticated",
     "applications/self-healing",
