@@ -208,29 +208,17 @@ jobs:
             --type String \
             --overwrite
 
-      - name: Patch K8s Secret (bypass ESO poll delay)
-        # ESO polls SSM every 15 min. Directly patching the secret here ensures
-        # the admin-api file mount picks up the new image within ~60s via kubelet
-        # sync, rather than waiting up to 16 min for ESO + kubelet.
-        # The secret key name is derived from app-name (matches ESO secretKey).
-        # ESO will overwrite this with the same value on its next cycle.
-        if: ${{ inputs.image-ssm-path != '' }}
-        env:
-          ECR_URL: ${{ steps.resolve-ecr.outputs.ecr-url }}
-        run: |
-          aws eks update-kubeconfig \
-            --name "$EKS_CLUSTER_NAME" \
-            --region "$AWS_REGION"
-
-          IMAGE_URI="${ECR_URL}:${IMAGE_TAG}"
-          IMAGE_URI_B64=$(echo -n "$IMAGE_URI" | base64 -w 0)
-
-          kubectl patch secret "$K8S_SECRET_NAME" \
-            -n "$K8S_SECRET_NAMESPACE" \
-            --type='json' \
-            -p="[{\"op\":\"replace\",\"path\":\"/data/${APP_NAME}\",\"value\":\"${IMAGE_URI_B64}\"}]"
-
-          echo "Patched ${K8S_SECRET_NAMESPACE}/${K8S_SECRET_NAME}[${APP_NAME}] → ${IMAGE_URI}"
+      # NOTE: the new image is delivered SOLELY via SSM + External Secrets
+      # Operator. ESO (ExternalSecret admin-api-job-images, store aws-ssm)
+      # syncs the SSM param above into the admin-api-job-images secret on its
+      # refresh cycle; admin-api file-mounts it (no pod restart) and dispatches
+      # Jobs with the new image. A previous "kubectl patch secret" step tried to
+      # skip ESO's poll delay, but the dev EKS API is PRIVATE and the
+      # GitHub-hosted runner has no route into the VPC, so it failed every run
+      # (dial tcp 10.0.x.x:443 i/o timeout) — turning a working, eventually-
+      # consistent deploy into a red one. Removed; lower the ESO refreshInterval
+      # if faster activation is needed. Instant patching would require a
+      # self-hosted/in-VPC runner.
 
       - name: Push Summary
         env:
