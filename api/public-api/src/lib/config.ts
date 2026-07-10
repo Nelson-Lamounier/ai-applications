@@ -38,9 +38,11 @@ export interface Config {
   /** Allowed CORS origins — comma-separated from ALLOWED_ORIGINS env var. */
   readonly allowedOrigins: string[];
   /**
-   * Bedrock chatbot API Gateway URL (e.g. https://id.execute-api.eu-west-1.amazonaws.com/v1/).
-   * Sourced from BEDROCK_API_URL (ConfigMap).
-   * Optional — if absent the /api/chatbot/invoke route returns 503.
+   * DEPRECATED — no route reads this any more. It pointed at the legacy
+   * Bedrock Agent `/invoke` upstream (Pinecone-backed KB, decommissioned);
+   * all conversational routes now use bedrockAuthApiUrl. Parsing is kept so
+   * an older public-api-bedrock secret cannot break boot; remove the field
+   * together with the BEDROCK_API_URL secret key and the /invoke API route.
    */
   readonly bedrockApiUrl: string | undefined;
   /**

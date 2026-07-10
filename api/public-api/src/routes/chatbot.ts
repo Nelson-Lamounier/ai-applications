@@ -5,10 +5,18 @@
  * Injects the API key server-side so the browser never sees it.
  *
  * Routes:
- *   POST /api/chatbot/invoke       — legacy authenticated chatbot (BEDROCK_API_URL)
- *   POST /api/chat                 — alias for /invoke, normalises response shape
+ *   POST /api/chatbot/invoke       — legacy path, now proxies to BEDROCK_AUTH_API_URL
+ *   POST /api/chat                 — normalising alias used by direct API-host
+ *                                    callers (api.nelsonlamounier.com); the site
+ *                                    widget reaches the same upstream via the
+ *                                    Next.js /api/chat handler -> /authenticated
  *   POST /api/chatbot/public       — stateless RAG chatbot (BEDROCK_PUBLIC_API_URL)
  *   POST /api/chatbot/authenticated — session-aware RAG chatbot (BEDROCK_AUTH_API_URL)
+ *
+ * The old `${BEDROCK_API_URL}/invoke` upstream (Bedrock Agent + the decommissioned
+ * Pinecone KB) is gone: /api/chat and /api/chatbot/invoke aliased it, so any
+ * caller reaching public-api directly kept getting answers from the stale
+ * Pinecone index. Every conversational route now lands on the RDS pgvector store.
  *
  * All routes return 503 when the backing URL or API key secret is not configured.
  */
@@ -149,37 +157,39 @@ const chatbot = new Hono();
 /**
  * POST /api/chatbot/invoke
  *
- * Legacy authenticated chatbot proxy. Appends `/invoke` to BEDROCK_API_URL.
+ * Legacy route kept for API compatibility; proxies to the session-aware
+ * pgvector Lambda (BEDROCK_AUTH_API_URL) — same upstream as /authenticated.
  * Accepts: { prompt: string, sessionId?: string, callerRole?: string }
  */
 chatbot.post('/api/chatbot/invoke', async (c) => {
   const cfg = loadConfig();
-  if (!cfg.bedrockApiUrl || !cfg.bedrockApiKeySecretArn) {
-    console.error('[chatbot-bff] BEDROCK_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
+  if (!cfg.bedrockAuthApiUrl || !cfg.bedrockApiKeySecretArn) {
+    console.error('[chatbot-bff] BEDROCK_AUTH_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
     const { status, data } = unconfigured503();
     return c.json(data, status as Parameters<typeof c.json>[1]);
   }
-  const url = cfg.bedrockApiUrl.endsWith('/') ? `${cfg.bedrockApiUrl}invoke` : `${cfg.bedrockApiUrl}/invoke`;
-  const { status, data } = await proxyToEndpoint(url, cfg.bedrockApiKeySecretArn, await c.req.text());
+  const { status, data } = await proxyToEndpoint(cfg.bedrockAuthApiUrl, cfg.bedrockApiKeySecretArn, await c.req.text());
   return c.json(data, status as Parameters<typeof c.json>[1]);
 });
 
 /**
  * POST /api/chat
  *
- * Alias for /api/chatbot/invoke. Normalises response to { message, sessionId }
- * for the frontend ChatResponse contract. Traefik routes /api/* here so the
- * Next.js handler is unreachable in production.
+ * Normalising alias for callers that hit public-api directly on
+ * api.nelsonlamounier.com (the ALB sends nelsonlamounier.com/* to the
+ * Next.js app, whose /api/chat handler calls /api/chatbot/authenticated
+ * here). Proxies to the session-aware pgvector Lambda
+ * (BEDROCK_AUTH_API_URL) and normalises the response to
+ * { message, sessionId } for the ChatResponse contract.
  */
 chatbot.post('/api/chat', async (c) => {
   const cfg = loadConfig();
-  if (!cfg.bedrockApiUrl || !cfg.bedrockApiKeySecretArn) {
-    console.error('[chatbot-bff] BEDROCK_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
+  if (!cfg.bedrockAuthApiUrl || !cfg.bedrockApiKeySecretArn) {
+    console.error('[chatbot-bff] BEDROCK_AUTH_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
     const { status, data } = unconfigured503();
     return c.json(data, status as Parameters<typeof c.json>[1]);
   }
-  const url = cfg.bedrockApiUrl.endsWith('/') ? `${cfg.bedrockApiUrl}invoke` : `${cfg.bedrockApiUrl}/invoke`;
-  const { status, data } = await proxyToEndpoint(url, cfg.bedrockApiKeySecretArn, await c.req.text());
+  const { status, data } = await proxyToEndpoint(cfg.bedrockAuthApiUrl, cfg.bedrockApiKeySecretArn, await c.req.text());
 
   if (status >= 400) {
     return c.json(data, status as Parameters<typeof c.json>[1]);
