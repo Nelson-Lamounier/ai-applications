@@ -43,9 +43,8 @@ describe('loadProjectResumeBulletsBlock — RLS-scoped read', () => {
         expect(gucIdx).toBeLessThan(selIdx);
         expect(release).toHaveBeenCalledTimes(1);
 
-        // Formats the block by project + angle.
+        // Formats the block per project (angles flattened + de-duplicated).
         expect(block).toContain('## Tucaken');
-        expect(block).toContain('[angle: infrastructure]');
         expect(block).toContain('- Provisioned EKS with Karpenter autoscaling');
     });
 
