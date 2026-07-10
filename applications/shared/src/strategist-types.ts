@@ -150,6 +150,13 @@ export interface ResumeCertification {
 export interface ResumeProject {
     readonly name: string;
     readonly description: string;
+    /**
+     * JD-aligned technical bullets, selected by the Strategist from the
+     * per-angle `project_resume_bullets` evidence. Optional for back-compat:
+     * cached resumes and the free-tier writer omit it, and the render falls
+     * back to `description` when absent.
+     */
+    readonly highlights?: readonly string[];
     readonly github?: string;
 }
 

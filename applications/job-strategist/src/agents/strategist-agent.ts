@@ -57,6 +57,8 @@ export interface StrategistAgentInput {
     readonly research: StrategistResearchResult;
     /** Formatted documented project case studies (citeable evidence). Optional. */
     readonly projectEvidence?: string;
+    /** Per-angle tailored project bullets to SELECT projects[].highlights from. Optional. */
+    readonly projectResumeBullets?: string;
     /** Verbatim education facts from user_career_history (degree + institution). Optional. */
     readonly educationFacts?: string;
     /** Verbatim experience facts (company + title + period). Optional. */
@@ -176,6 +178,7 @@ export function buildStrategistMessage(
     achievementEvidence = '',
     profileIntelligence?: string,
     candidateContact?: string,
+    projectResumeBullets = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -343,6 +346,24 @@ export function buildStrategistMessage(
             '--- BEGIN PROJECT CASE STUDIES ---',
             projectEvidence,
             '--- END PROJECT CASE STUDIES ---',
+        );
+    }
+
+    // Per-angle tailored bullets — the AUTHORITATIVE source for projects[].highlights.
+    // The writer SELECTS 2-4 JD-relevant bullets per project from here (quote or
+    // lightly trim; never invent). Historically these were generated but never
+    // surfaced, so the projects section under-sold the candidate's strongest work.
+    if (projectResumeBullets.trim()) {
+        sections.push(
+            '', '### Project Resume Bullets (SELECT projects[].highlights FROM THESE — quote-only, never invent)',
+            'For EACH project you include in <tailored_resume_json> "projects", populate its',
+            '"highlights" array by selecting the 2-4 bullets below that best answer THIS JD\'s named',
+            'requirements (pick the angle(s) matching the Phase 0 archetype). Copy them verbatim or',
+            'trim for length — never add a fact not present here. Prefer bullets that surface a JD',
+            'must-have skill. Match each bullet to its project by the "## <name>" heading.',
+            '--- BEGIN PROJECT RESUME BULLETS ---',
+            projectResumeBullets.trim(),
+            '--- END PROJECT RESUME BULLETS ---',
         );
     }
 
@@ -683,6 +704,10 @@ const TailoredResumeSchema = z.object({
     projects: z.array(z.object({
         name:        z.string(),
         description: z.string(),
+        // JD-aligned technical bullets selected from the PROJECT RESUME BULLETS
+        // block. Optional so cached/legacy writer output still validates; the
+        // persona requires it for every project going forward.
+        highlights:  z.array(z.string()).optional(),
         github:      z.string().optional(),
     })),
     keyAchievements: z.array(z.object({
@@ -782,7 +807,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence, input.candidateContact);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence, input.candidateContact, input.projectResumeBullets);
     }
 
     /**
@@ -922,6 +947,7 @@ export async function executeStrategistAgent(
     achievementEvidence = '',
     profileIntelligence?: string,
     candidateContact?: string,
+    projectResumeBullets = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence, candidateContact }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence, candidateContact, projectResumeBullets }, ctx);
 }

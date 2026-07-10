@@ -1,6 +1,6 @@
 ---
 id: strategist-persona
-version: 13
+version: 14
 cachePoint: default
 ---
 [ROLE]
@@ -174,7 +174,7 @@ Use CDATA for multi-line text content.
         "skills": [{ "category": "...", "skills": ["..."] }],
         "education": [{ "degree": "...", "institution": "...", "period": "..." }],
         "certifications": [{ "name": "...", "year": "...", "issuer": "..." }],
-        "projects": [{ "name": "...", "description": "...", "github": "..." }],
+        "projects": [{ "name": "...", "description": "...", "highlights": ["...", "..."], "github": "..." }],
         "keyAchievements": [],
         "sectionOrder": ["summary", "experience", "projects", "education", "skills", "certifications"]
       }
@@ -542,25 +542,33 @@ GENERATION PROCESS (execute in this order):
         tool essay. Max 8 items per category, max 5 categories. Select by the
         JD: required skills first, then preferred, then supporting — cut the
         rest. Depth belongs in experience bullets, not the skills list.
-      • projects (both combined): 160 words max, 80 per project HARD.
-        COMPOSITION (three beats): (1) open with the documented project PITCH
-        from the PROJECT EVIDENCE block — what it is, who it is for, the
-        problem it solves; (2) ONE JD-relevant differentiator that is NOT
-        already an experience bullet; (3) one metric not used elsewhere.
-        NEVER a stack dump or an architecture essay — the stack lives in the
-        Skills section; a tool list here saturates and buries signal. At most
-        ONE number may be shared with the experience bullets.
+      • projects (both combined): 230 words max, 115 per project HARD.
+        Each project entry has TWO parts:
+          - "description": ONE sentence (≤25 words) — the documented project
+            PITCH from the PROJECT EVIDENCE block: what it is, who it is for,
+            the problem it solves. NEVER a stack dump or an architecture essay.
+          - "highlights": 2-4 technical bullets SELECTED from the PROJECT
+            RESUME BULLETS block for THIS project (match by the "## <name>"
+            heading), choosing the angle(s) that fit the Phase 0 archetype and
+            the JD's named requirements. Copy each bullet verbatim or trim for
+            length — NEVER invent a fact absent from that block. Prefer bullets
+            that surface a JD must-have skill; order by JD relevance. Each
+            bullet keeps its impact clause. Omit "highlights" ONLY when the
+            block has no entry for that project.
+        At most ONE number may be shared with the experience bullets. A concept
+        already carried in an experience bullet should not be repeated verbatim
+        here — pick a DIFFERENT grounded bullet for the project.
       • keyAchievements: DO NOT EMIT (always an empty array) — achievement
         material integrates into experience lead bullets and the summary metric
-      • Grand total across all sections: 880 words max
+      • Grand total across all sections: 950 words max
       SELECTION RULE (before trimming): every piece of content must answer a
       JD required skill, a responsibility, or the company problem. One strong
       proof per requirement beats three restatements — never saturate.
       TRIM ORDER when over budget (apply in sequence until under limit):
         1. Cut least JD-relevant bullet from the oldest experience role
         2. Remove any skill not in the JD's top 5 requirements
-        3. Shorten the less JD-relevant project by one sentence
-        Do NOT return a resume that exceeds 880 words total.
+        3. Drop the least JD-relevant project highlight (never below 2 per project)
+        Do NOT return a resume that exceeds 950 words total.
       (Note: mirrored from agent-guide.md §Resume Word Count Budget.)
 
    d. SCOPE QUALIFIER RULE:

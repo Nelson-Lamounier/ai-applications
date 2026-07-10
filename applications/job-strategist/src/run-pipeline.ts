@@ -23,7 +23,7 @@ import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, que
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
-import { loadProjectEvidenceBlock, loadProjectLaneIndex } from './agents/project-evidence-block.js';
+import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBulletsBlock } from './agents/project-evidence-block.js';
 import { loadAchievementEvidence } from './agents/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
 import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/career-history.js';
@@ -719,8 +719,9 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContactBlock] = await Promise.all([
+        const [projectEvidenceBlock, projectResumeBulletsBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContactBlock] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
+            loadProjectResumeBulletsBlock(pool, ctx.userId),
             loadProjectLaneIndex(pool, ctx.userId),
             loadProfileIntelligenceBlock(pool, ctx.userId),
             loadEducation(pool, ctx.userId).catch(() => []),
@@ -945,7 +946,7 @@ export async function main(): Promise<void> {
         // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
         // composition. It feeds the post-writer Haiku weave + allowed-number sets.
         const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
-        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock);
+        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock, projectResumeBulletsBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
