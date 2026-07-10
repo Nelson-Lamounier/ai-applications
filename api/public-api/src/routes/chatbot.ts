@@ -148,6 +148,20 @@ function unconfigured503(): ProxyResult {
   };
 }
 
+/**
+ * Guard + proxy shared by every route that targets the session-aware
+ * pgvector Lambda (BEDROCK_AUTH_API_URL): /api/chatbot/invoke, /api/chat,
+ * and /api/chatbot/authenticated all land on the same upstream.
+ */
+async function proxyToAuthUpstream(body: string | null): Promise<ProxyResult> {
+  const cfg = loadConfig();
+  if (!cfg.bedrockAuthApiUrl || !cfg.bedrockApiKeySecretArn) {
+    console.error('[chatbot-bff] BEDROCK_AUTH_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
+    return unconfigured503();
+  }
+  return proxyToEndpoint(cfg.bedrockAuthApiUrl, cfg.bedrockApiKeySecretArn, body);
+}
+
 // =============================================================================
 // Routes
 // =============================================================================
@@ -162,13 +176,7 @@ const chatbot = new Hono();
  * Accepts: { prompt: string, sessionId?: string, callerRole?: string }
  */
 chatbot.post('/api/chatbot/invoke', async (c) => {
-  const cfg = loadConfig();
-  if (!cfg.bedrockAuthApiUrl || !cfg.bedrockApiKeySecretArn) {
-    console.error('[chatbot-bff] BEDROCK_AUTH_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
-    const { status, data } = unconfigured503();
-    return c.json(data, status as Parameters<typeof c.json>[1]);
-  }
-  const { status, data } = await proxyToEndpoint(cfg.bedrockAuthApiUrl, cfg.bedrockApiKeySecretArn, await c.req.text());
+  const { status, data } = await proxyToAuthUpstream(await c.req.text());
   return c.json(data, status as Parameters<typeof c.json>[1]);
 });
 
@@ -183,13 +191,7 @@ chatbot.post('/api/chatbot/invoke', async (c) => {
  * { message, sessionId } for the ChatResponse contract.
  */
 chatbot.post('/api/chat', async (c) => {
-  const cfg = loadConfig();
-  if (!cfg.bedrockAuthApiUrl || !cfg.bedrockApiKeySecretArn) {
-    console.error('[chatbot-bff] BEDROCK_AUTH_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
-    const { status, data } = unconfigured503();
-    return c.json(data, status as Parameters<typeof c.json>[1]);
-  }
-  const { status, data } = await proxyToEndpoint(cfg.bedrockAuthApiUrl, cfg.bedrockApiKeySecretArn, await c.req.text());
+  const { status, data } = await proxyToAuthUpstream(await c.req.text());
 
   if (status >= 400) {
     return c.json(data, status as Parameters<typeof c.json>[1]);
@@ -238,13 +240,7 @@ chatbot.post('/api/chatbot/public', async (c) => {
  * Accepts: { prompt: string, sessionId?: string }
  */
 chatbot.post('/api/chatbot/authenticated', async (c) => {
-  const cfg = loadConfig();
-  if (!cfg.bedrockAuthApiUrl || !cfg.bedrockApiKeySecretArn) {
-    console.error('[chatbot-bff] BEDROCK_AUTH_API_URL or BEDROCK_API_KEY_SECRET_ARN not configured');
-    const { status, data } = unconfigured503();
-    return c.json(data, status as Parameters<typeof c.json>[1]);
-  }
-  const { status, data } = await proxyToEndpoint(cfg.bedrockAuthApiUrl, cfg.bedrockApiKeySecretArn, await c.req.text());
+  const { status, data } = await proxyToAuthUpstream(await c.req.text());
   return c.json(data, status as Parameters<typeof c.json>[1]);
 });
 
