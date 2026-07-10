@@ -19,7 +19,6 @@ COPY applications/tech-extractor/package.json   ./applications/tech-extractor/
 COPY applications/synthetic-monitor/package.json ./applications/synthetic-monitor/
 COPY applications/article-pipeline/package.json ./applications/article-pipeline/
 COPY applications/ingestion/package.json        ./applications/ingestion/
-COPY applications/chatbot/package.json          ./applications/chatbot/
 COPY applications/chatbot-public/package.json   ./applications/chatbot-public/
 COPY applications/chatbot-authenticated/package.json ./applications/chatbot-authenticated/
 COPY applications/self-healing/package.json          ./applications/self-healing/
