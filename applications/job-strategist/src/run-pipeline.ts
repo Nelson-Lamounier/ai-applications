@@ -23,7 +23,8 @@ import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, que
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
-import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBulletsBlock } from './agents/project-evidence-block.js';
+import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/project-evidence-block.js';
+import { relocateProjectExperience } from './agents/relocate-project-experience.js';
 import { loadAchievementEvidence } from './agents/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
 import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/career-history.js';
@@ -719,9 +720,9 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, projectResumeBulletsBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContactBlock] = await Promise.all([
+        const [projectEvidenceBlock, projectResumeBullets, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContactBlock] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
-            loadProjectResumeBulletsBlock(pool, ctx.userId),
+            loadProjectResumeBullets(pool, ctx.userId),
             loadProjectLaneIndex(pool, ctx.userId),
             loadProfileIntelligenceBlock(pool, ctx.userId),
             loadEducation(pool, ctx.userId).catch(() => []),
@@ -741,6 +742,9 @@ export async function main(): Promise<void> {
         // profile intelligence" instruction had no matching section to draw
         // from (run 77e325ea: S3 slot filled with a second rigor close).
         const candidateGroundingBlock = [projectEvidenceBlock, profileIntelligenceBlock].filter(Boolean).join('\n\n');
+        // Writer prompt block for projects[].highlights selection; the structured
+        // form (projectResumeBullets) also anchors the post-writer relocation.
+        const projectResumeBulletsBlock = formatProjectResumeBulletsBlock(projectResumeBullets);
         const educationBlock      = formatEducation(educationEntries);
         const certificationsBlock = formatCertifications(certificationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
@@ -1070,9 +1074,15 @@ export async function main(): Promise<void> {
             formatVerifiedYearsFact(careerEntries),
             researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
         ].filter(Boolean).join('\n\n');
-        let finalResume = tailoredResumeData;
-        if (tailoredResumeData) {
-            const guarded = await guardResume(tailoredResumeData, resumeGuardCtx);
+        // Keep Experience to verified employers: relocate any project the writer
+        // mis-filed as a "Solo <role> — <Project>" experience entry back into
+        // projects[].highlights (its github link + description live there). Runs
+        // BEFORE the guard so every downstream pass sees the corrected structure.
+        let finalResume = tailoredResumeData
+            ? relocateProjectExperience(tailoredResumeData, resumeGuardCtx.verifiedEmployers, projectResumeBullets)
+            : tailoredResumeData;
+        if (finalResume) {
+            const guarded = await guardResume(finalResume, resumeGuardCtx);
             finalResume = guarded.resume;
             violationLog.recordAll('resume_guard', guarded.violations);
         }

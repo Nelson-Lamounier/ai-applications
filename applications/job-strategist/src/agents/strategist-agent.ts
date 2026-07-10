@@ -349,18 +349,20 @@ export function buildStrategistMessage(
         );
     }
 
-    // Per-angle tailored bullets — the AUTHORITATIVE source for projects[].highlights.
-    // The writer SELECTS 2-4 JD-relevant bullets per project from here (quote or
-    // lightly trim; never invent). Historically these were generated but never
-    // surfaced, so the projects section under-sold the candidate's strongest work.
+    // Tailored bullets — the AUTHORITATIVE source for projects[].highlights.
+    // The writer SELECTS JD-relevant bullets per project from here (quote or
+    // lightly trim; never invent). These belong in the PROJECTS section only —
+    // NEVER as Experience entries (see the Experience-purity rule in the persona).
     if (projectResumeBullets.trim()) {
         sections.push(
             '', '### Project Resume Bullets (SELECT projects[].highlights FROM THESE — quote-only, never invent)',
             'For EACH project you include in <tailored_resume_json> "projects", populate its',
-            '"highlights" array by selecting the 2-4 bullets below that best answer THIS JD\'s named',
-            'requirements (pick the angle(s) matching the Phase 0 archetype). Copy them verbatim or',
-            'trim for length — never add a fact not present here. Prefer bullets that surface a JD',
-            'must-have skill. Match each bullet to its project by the "## <name>" heading.',
+            '"highlights" array by selecting the 3-6 bullets below that best answer THIS JD\'s named',
+            'requirements. Copy them verbatim or trim for length — never add a fact not present here.',
+            'Prefer bullets that surface a JD must-have skill. Match each bullet to its project by the',
+            '"## <name>" heading. These bullets are PROJECT work: they go ONLY in "projects", NEVER as',
+            'an Experience entry — do NOT invent a job title (e.g. "Solo SRE Engineer") or a "Project"',
+            'period to host them. One "projects" entry per "## <name>" — never split one project in two.',
             '--- BEGIN PROJECT RESUME BULLETS ---',
             projectResumeBullets.trim(),
             '--- END PROJECT RESUME BULLETS ---',

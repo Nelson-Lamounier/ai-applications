@@ -40,7 +40,20 @@ export async function loadProjectEvidenceBlock(pool: Pool, userId: string): Prom
  * matching the JD archetype. Fail-open: returns '' on any error so the
  * pipeline proceeds on the case-study prose as before.
  */
-export async function loadProjectResumeBulletsBlock(pool: Pool, userId: string): Promise<string> {
+/** A documented project's flattened tailored bullets (all angles), for wiring + relocation. */
+export interface ProjectResumeBulletSet {
+    readonly name: string;
+    /** All angle bullets flattened + de-duplicated, order-preserving. */
+    readonly bullets: readonly string[];
+}
+
+/**
+ * Structured variant of {@link loadProjectResumeBulletsBlock}: the tailored
+ * bullets grouped per documented project (angles flattened + de-duplicated).
+ * Used both to build the writer's prompt block AND to relocate any bullet the
+ * writer mis-files under Experience back to the correct project.
+ */
+export async function loadProjectResumeBullets(pool: Pool, userId: string): Promise<ProjectResumeBulletSet[]> {
     try {
         // project_resume_bullets carries per-user RLS keyed on the
         // `app.current_user_id` GUC. Under pgbouncer transaction-pooling a bare
@@ -58,36 +71,49 @@ export async function loadProjectResumeBulletsBlock(pool: Pool, userId: string):
                 [userId],
             ),
         );
-        if (rows.length === 0) return '';
 
         const byProject = new Map<string, string[]>();
+        const seen = new Map<string, Set<string>>();
         for (const r of rows) {
             const bullets = Array.isArray(r.bullets)
                 ? (r.bullets as unknown[]).filter((b): b is string => typeof b === 'string' && b.trim().length > 0)
                 : [];
             if (bullets.length === 0) continue;
-            const lines = byProject.get(r.name) ?? [];
-            lines.push(`[angle: ${r.angle}]`);
-            for (const b of bullets) lines.push(`- ${b.trim()}`);
-            byProject.set(r.name, lines);
+            const list = byProject.get(r.name) ?? [];
+            const dedup = seen.get(r.name) ?? new Set<string>();
+            for (const b of bullets) {
+                const t = b.trim();
+                const key = t.toLowerCase();
+                if (!dedup.has(key)) { dedup.add(key); list.push(t); }
+            }
+            byProject.set(r.name, list);
+            seen.set(r.name, dedup);
         }
-        if (byProject.size === 0) return '';
-
-        const block = Array.from(byProject.entries())
-            .map(([name, lines]) => [`## ${name}`, ...lines].join('\n'))
-            .join('\n\n');
-
-        log('INFO', 'Project resume bullets loaded', {
-            agent: 'strategist',
-            projects: byProject.size,
-            angleSets: rows.length,
-            blockKb: (block.length / 1024).toFixed(1),
-        });
-        return block;
+        return Array.from(byProject.entries()).map(([name, bullets]) => ({ name, bullets }));
     } catch (e) {
         log('WARN', 'project resume bullets load failed (non-fatal)', { agent: 'strategist', error: (e as Error).message });
-        return '';
+        return [];
     }
+}
+
+/** Format the per-project bullet sets into the writer prompt block. */
+export function formatProjectResumeBulletsBlock(sets: ReadonlyArray<ProjectResumeBulletSet>): string {
+    if (sets.length === 0) return '';
+    const block = sets
+        .map((s) => [`## ${s.name}`, ...s.bullets.map((b) => `- ${b}`)].join('\n'))
+        .join('\n\n');
+    log('INFO', 'Project resume bullets loaded', {
+        agent: 'strategist',
+        projects: sets.length,
+        bullets: sets.reduce((n, s) => n + s.bullets.length, 0),
+        blockKb: (block.length / 1024).toFixed(1),
+    });
+    return block;
+}
+
+/** Convenience: load + format in one call (writer prompt block). */
+export async function loadProjectResumeBulletsBlock(pool: Pool, userId: string): Promise<string> {
+    return formatProjectResumeBulletsBlock(await loadProjectResumeBullets(pool, userId));
 }
 
 /**
