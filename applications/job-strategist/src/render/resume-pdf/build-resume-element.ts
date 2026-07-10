@@ -65,17 +65,15 @@ export function buildResumeElement(rp: ReactPdfPrimitives, data: StructuredResum
     if (data.projects.length) {
         children.push(sectionHeader('Projects'));
         data.projects.forEach((pr, i) => {
+            // Always structured: name header, github link, pitch, then any
+            // JD-aligned technical bullets (mirrors the Experience layout). The
+            // github link is part of the section's trust signal and must show
+            // even when a project carries no highlights.
             const highlights = pr.highlights ?? [];
-            if (highlights.length === 0) {
-                // Back-compat: no selected bullets → the legacy one-line render.
-                children.push(text(s.bullet, `${pr.name}: ${pr.description}`, `pr-${i}`));
-                return;
-            }
-            // Name + one-line pitch header, then the JD-aligned technical bullets
-            // (mirrors the Experience layout so Projects reads as real evidence).
             children.push(
-                h(View, { style: s.item, wrap: false, key: `pr-${i}` }, [
+                h(View, { style: s.item, key: `pr-${i}` }, [
                     h(Text, { style: s.itemHead, key: 'head' }, pr.name),
+                    ...(pr.github ? [h(Text, { style: s.contact, key: 'gh' }, pr.github)] : []),
                     ...(pr.description ? [h(Text, { key: 'desc' }, pr.description)] : []),
                     ...highlights.map((hl, j) => h(Text, { style: s.bullet, key: `pr-hl-${j}` }, `• ${hl}`)),
                 ]),

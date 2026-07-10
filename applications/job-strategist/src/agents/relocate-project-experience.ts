@@ -96,27 +96,64 @@ function mergeHighlights(target: MutableProject, entry: Experience): void {
     }
 }
 
+/** Upper bound on deterministically-filled bullets per project. */
+const MAX_FILL_HIGHLIGHTS = 6;
+
+/**
+ * Backstop for projects the writer left with NO highlights: fill from that
+ * project's tailored DB bullets. The writer is inconsistent — some runs leave
+ * projects[].highlights empty (rich description only), so without this the
+ * Projects section renders without its strongest technical evidence. Matches by
+ * token overlap because the writer often renames a project (DB "AI Applications
+ * Platform with Infrastructure-as-Code" → resume "Tucaken: AI Applications
+ * Platform"). Projects the writer already populated are left untouched.
+ */
+function fillEmptyHighlights(
+    projects: ReadonlyArray<MutableProject>,
+    projectBullets: ReadonlyArray<ProjectResumeBulletSet>,
+): void {
+    if (projectBullets.length === 0) return;
+    const setTokens = projectBullets.map((s) => tokens(`${s.name} ${s.bullets.join(' ')}`));
+    for (const p of projects) {
+        if (p.highlights.length > 0) continue;
+        const pTok = tokens(`${p.name} ${p.description ?? ''}`);
+        let best = -1;
+        let bestScore = 0;
+        for (let i = 0; i < projectBullets.length; i++) {
+            const score = overlap(pTok, setTokens[i]);
+            if (score > bestScore) { bestScore = score; best = i; }
+        }
+        if (best >= 0) p.highlights.push(...projectBullets[best].bullets.slice(0, MAX_FILL_HIGHLIGHTS));
+    }
+}
+
 export function relocateProjectExperience(
     resume: Resume,
     verifiedEmployers: ReadonlyArray<{ name: string }>,
     projectBullets: ReadonlyArray<ProjectResumeBulletSet> = [],
 ): Resume {
     const projects: MutableProject[] = (resume.projects ?? []).map((p) => ({ ...p, highlights: [...(p.highlights ?? [])] }));
+    if (projects.length === 0) return resume;
+
+    let experience = resume.experience ?? [];
     const employerNorms = verifiedEmployers.map((e) => norm(e.name)).filter((n) => n.length > 0);
-    // Without a roster to compare against, or no projects to receive strays,
-    // relocation is unsafe — leave the resume untouched.
-    if (projects.length === 0 || employerNorms.length === 0) return resume;
 
-    const kept: Experience[] = [];
-    const strays: Experience[] = [];
-    for (const e of resume.experience ?? []) {
-        (matchesEmployer(e.company, employerNorms) ? kept : strays).push(e);
+    // Relocate project-as-experience strays — only with a roster to judge against
+    // (else a real employer can't be told from a mis-filed project).
+    if (employerNorms.length > 0) {
+        const kept: Experience[] = [];
+        const strays: Experience[] = [];
+        for (const e of experience) (matchesEmployer(e.company, employerNorms) ? kept : strays).push(e);
+        if (strays.length > 0) {
+            const projectNames = projects.map((p) => norm(p.name));
+            const projTokens = buildProjectTokens(projects, projectBullets);
+            for (const e of strays) mergeHighlights(projects[pickTargetProject(e, projectNames, projTokens)], e);
+            experience = kept;
+        }
     }
-    if (strays.length === 0) return resume;
 
-    const projectNames = projects.map((p) => norm(p.name));
-    const projTokens = buildProjectTokens(projects, projectBullets);
-    for (const e of strays) mergeHighlights(projects[pickTargetProject(e, projectNames, projTokens)], e);
+    // Guarantee every documented project shows its technical bullets.
+    fillEmptyHighlights(projects, projectBullets);
 
-    return { ...resume, experience: kept, projects };
+    return { ...resume, experience, projects };
 }
