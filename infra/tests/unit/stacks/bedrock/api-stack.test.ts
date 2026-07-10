@@ -6,8 +6,8 @@
  * - API Gateway REST API with correct name
  * - API Key and Usage Plan (throttling)
  * - Request Validator configured
- * - Invoke Lambda with correct env vars and runtime
- * - IAM policy for bedrock:InvokeAgent
+ * - RAG chatbot Lambdas with correct env vars and runtime
+ * - IAM policy for bedrock:Converse / InvokeModel
  * - CloudWatch access log group
  * - SSM parameter exports
  * - Stack outputs
@@ -55,7 +55,6 @@ function createApiStack(
             portfolioOwnerUserId: '00000000-0000-0000-0000-000000000001',
             rdsSsmPrefix: '/k8s/development/platform-rds',
             rdsCredentialsSecretName: 'k8s-development/platform-rds/credentials',
-            chatbotRetrievalSource: 'bedrock-agent',
             env: TEST_ENV_EU,
             ...overrides,
         },
@@ -126,40 +125,31 @@ describe('BedrockApiStack', () => {
             });
         });
 
-        it('should define a request model', () => {
+        it('should define the chatbot request model', () => {
             template.hasResourceProperties('AWS::ApiGateway::Model', {
                 ContentType: 'application/json',
-                Name: 'InvokeRequest',
+                Name: 'ChatbotInvokeRequest',
             });
         });
     });
 
     // =========================================================================
-    // Lambda — Invoke Function
+    // Lambda — runtime + sizing (RAG chatbot Lambdas)
     // =========================================================================
-    describe('Lambda InvokeFunction', () => {
+    describe('Lambda runtime and sizing', () => {
         const { template } = createApiStack();
 
-        it('should create a Lambda with correct name', () => {
-            template.hasResourceProperties('AWS::Lambda::Function', {
-                FunctionName: `${NAME_PREFIX}-invoke-agent`,
-            });
+        it('should NOT create the legacy invoke-agent Lambda', () => {
+            const lambdas = template.findResources('AWS::Lambda::Function');
+            const names = Object.values(lambdas)
+                .map((l) => (l as { Properties?: { FunctionName?: string } }).Properties?.FunctionName)
+                .filter(Boolean);
+            expect(names).not.toContain(`${NAME_PREFIX}-invoke-agent`);
         });
 
         it('should use Node.js 22 runtime', () => {
             template.hasResourceProperties('AWS::Lambda::Function', {
                 Runtime: 'nodejs22.x',
-            });
-        });
-
-        it('should configure agent environment variables from SSM parameters', () => {
-            template.hasResourceProperties('AWS::Lambda::Function', {
-                Environment: {
-                    Variables: Match.objectLike({
-                        AGENT_ID: Match.anyValue(),
-                        AGENT_ALIAS_ID: Match.anyValue(),
-                    }),
-                },
             });
         });
 
@@ -177,22 +167,15 @@ describe('BedrockApiStack', () => {
     });
 
     // =========================================================================
-    // IAM — Bedrock InvokeAgent permission
+    // IAM — decommissioned agent permissions must be absent
     // =========================================================================
     describe('IAM Policies', () => {
         const { template } = createApiStack();
 
-        it('should grant Bedrock InvokeAgent permission', () => {
-            template.hasResourceProperties('AWS::IAM::Policy', {
-                PolicyDocument: {
-                    Statement: Match.arrayWith([
-                        Match.objectLike({
-                            Action: 'bedrock:InvokeAgent',
-                            Effect: 'Allow',
-                        }),
-                    ]),
-                },
-            });
+        it('should NOT grant bedrock:InvokeAgent anywhere', () => {
+            const policies = template.findResources('AWS::IAM::Policy');
+            const actions = JSON.stringify(policies);
+            expect(actions).not.toContain('bedrock:InvokeAgent');
         });
     });
 
@@ -248,10 +231,6 @@ describe('BedrockApiStack', () => {
             expect(stack.api).toBeDefined();
         });
 
-        it('should expose invokeFunction', () => {
-            expect(stack.invokeFunction).toBeDefined();
-        });
-
         it('should expose chatbotPublicFunction', () => {
             expect(stack.chatbotPublicFunction).toBeDefined();
         });
@@ -288,7 +267,6 @@ describe('BedrockApiStack', () => {
                     Variables: Match.objectLike({
                         CHATBOT_MODEL: 'eu.anthropic.claude-sonnet-4-6',
                         PORTFOLIO_OWNER_USER_ID: '00000000-0000-0000-0000-000000000001',
-                        CHATBOT_RETRIEVAL_SOURCE: 'bedrock-agent',
                     }),
                 },
             });
@@ -309,13 +287,12 @@ describe('BedrockApiStack', () => {
             });
         });
 
-        it('should grant Bedrock Converse + InvokeModel + InvokeAgent permissions', () => {
+        it('should grant Bedrock Converse + InvokeModel permissions', () => {
             template.hasResourceProperties('AWS::IAM::Policy', {
                 PolicyDocument: {
                     Statement: Match.arrayWith([
                         Match.objectLike({
                             Action: Match.arrayWith([
-                                'bedrock:InvokeAgent',
                                 'bedrock:Converse',
                                 'bedrock:InvokeModel',
                             ]),
@@ -358,6 +335,13 @@ describe('BedrockApiStack', () => {
     // =========================================================================
     describe('API Routes', () => {
         const { template } = createApiStack();
+
+        it('should NOT create the legacy /invoke resource', () => {
+            const resources = template.findResources('AWS::ApiGateway::Resource');
+            const paths = Object.values(resources)
+                .map((r) => (r as { Properties?: { PathPart?: string } }).Properties?.PathPart);
+            expect(paths).not.toContain('invoke');
+        });
 
         it('should create POST /invoke-public resource', () => {
             template.hasResourceProperties('AWS::ApiGateway::Resource', {
