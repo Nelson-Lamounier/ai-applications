@@ -275,7 +275,7 @@ jobs:
 
   deploy-marker:
     name: Loki deploy marker
-    needs: [deploy-data, deploy-kb, deploy-agent, deploy-api, deploy-self-healing-gateway, deploy-self-healing-agent, smoke-test-subscriptions]
+    needs: [deploy-data, deploy-api, deploy-self-healing-gateway, deploy-self-healing-agent, smoke-test-subscriptions]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
