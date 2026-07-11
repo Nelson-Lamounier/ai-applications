@@ -1,35 +1,37 @@
 /**
  * @format
- * Shared resume structured-output schema — the single source of truth for the
- * `emit_resume` Haiku rewrite tool used by BOTH the resume guard
- * (resume-guard.ts) and the keyword-surfacing rewrite (surface-keywords.ts).
+ * Shared resume structured-output schema for the `emit_resume` Haiku rewrite
+ * tool used by BOTH the resume guard (resume-guard.ts) and the
+ * keyword-surfacing rewrite (surface-keywords.ts).
  *
- * Keeping the Zod safety-net and the Bedrock tool input schema here means the two
- * rewrite paths can never drift, and there is exactly one place to evolve the
- * resume shape. `buildEmitResumeTool` lets each caller supply its own tool
- * description while reusing the identical input schema.
+ * Section shapes DERIVE from the canonical bases in schemas/resume-sections.ts
+ * (the single source of truth) — tolerant variants here: `.passthrough()` so a
+ * model-added key survives, `.partial()` where the net must accept sparse
+ * output rather than void a paid invocation. The hand-written Bedrock JSON
+ * `input_schema` below is pinned to the same bases by the drift test.
+ * `buildEmitResumeTool` lets each caller supply its own tool description while
+ * reusing the identical input schema.
  */
 
 import { z } from 'zod';
+import {
+    ProfileBaseSchema,
+    ExperienceBaseSchema,
+    SkillCategoryBaseSchema,
+    EducationBaseSchema,
+    CertificationBaseSchema,
+    ProjectBaseSchema,
+    AchievementBaseSchema,
+    SECTION_SHAPE_KEYS,
+} from '../schemas/resume-sections.js';
 
-export const ProfileSchema = z.object({
-    name: z.string(),
-    title: z.string(),
-    email: z.string(),
-    location: z.string(),
-    linkedin: z.string().optional(),
-    github: z.string().optional(),
-}).passthrough();
+export { SECTION_SHAPE_KEYS };
 
-export const ExperienceSchema = z.object({
-    company: z.string(),
-    title: z.string(),
-    period: z.string(),
-    highlights: z.array(z.string()),
-}).passthrough();
+export const ProfileSchema = ProfileBaseSchema.passthrough();
 
-export const SkillCategorySchema = z.object({
-    category: z.string(),
+export const ExperienceSchema = ExperienceBaseSchema.passthrough();
+
+export const SkillCategorySchema = SkillCategoryBaseSchema.extend({
     // Haiku rewrite passes occasionally emit the skill list as ONE
     // comma-joined string ("CDK, Docker, Kubernetes") — that shape failure
     // made the resume-expand pass fail-open and left a run under-filled.
@@ -40,11 +42,7 @@ export const SkillCategorySchema = z.object({
     ),
 }).passthrough();
 
-export const EducationSchema = z.object({
-    degree: z.string(),
-    institution: z.string(),
-    period: z.string(),
-}).passthrough();
+export const EducationSchema = EducationBaseSchema.passthrough();
 
 /** Full resume Zod schema — the runtime safety-net for the Haiku emit_resume output. */
 export const ResumeRewriteSchema = z.object({
@@ -53,12 +51,14 @@ export const ResumeRewriteSchema = z.object({
     experience: z.array(ExperienceSchema),
     skills: z.array(SkillCategorySchema),
     education: z.array(EducationSchema),
-    certifications: z.array(z.object({}).passthrough()),
-    projects: z.array(z.object({}).passthrough()),
+    // Tolerant: sparse model output must not void a paid invocation (consumers
+    // safeParse + fail-open), but the keys are DECLARED so nothing is stripped.
+    certifications: z.array(CertificationBaseSchema.partial().passthrough()),
+    projects: z.array(ProjectBaseSchema.partial().passthrough()),
     // keyAchievements items MUST carry the achievement string — the
     // number-provenance guard scrubs it, and an unshaped item let the
     // resume-expand model emit `{title}`-only entries (run 850b81d0).
-    keyAchievements: z.array(z.object({ achievement: z.string() }).passthrough()),
+    keyAchievements: z.array(AchievementBaseSchema.passthrough()),
     sectionOrder: z.array(z.string()).optional(),
 });
 
@@ -71,6 +71,7 @@ export const RESUME_EMIT_INPUT_SCHEMA = {
             properties: {
                 name: { type: 'string' }, title: { type: 'string' }, email: { type: 'string' },
                 location: { type: 'string' }, linkedin: { type: 'string' }, github: { type: 'string' },
+                website: { type: 'string' },
             },
             required: ['name', 'title', 'email', 'location'],
         },
@@ -102,7 +103,13 @@ export const RESUME_EMIT_INPUT_SCHEMA = {
                 required: ['degree', 'institution', 'period'],
             },
         },
-        certifications: { type: 'array', items: { type: 'object' } },
+        certifications: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: { name: { type: 'string' }, year: { type: 'string' }, issuer: { type: 'string' } },
+            },
+        },
         // Shape projects so re-emit passes (surface-metrics/keywords, condense)
         // PRESERVE the technical bullets. With an unshaped `{type:'object'}` the
         // Haiku model dropped projects[].highlights on every re-emit, blanking

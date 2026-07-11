@@ -14,6 +14,15 @@
 
 import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
+import {
+    ProfileBaseSchema,
+    ExperienceBaseSchema,
+    SkillCategoryBaseSchema,
+    EducationBaseSchema,
+    CertificationBaseSchema,
+    ProjectBaseSchema,
+    AchievementBaseSchema,
+} from '../schemas/resume-sections.js';
 import { formatResumeForPrompt } from '../services/resume-service.js';
 import { STRATEGIST_PERSONA_META, STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
 import type { YearsGap } from './years-gap.js';
@@ -672,49 +681,22 @@ export function extractArchetypeSelection(xml: string): RoleArchetypeSelection |
  * (with Job retries) re-spending it. Stripping keeps the run successful on additive
  * drift while still failing on missing/wrong-type required data.
  */
-const TailoredResumeSchema = z.object({
-    profile: z.object({
-        name:     z.string(),
-        title:    z.string(),
-        email:    z.string(),
-        location: z.string(),
-        linkedin: z.string().optional(),
-        github:   z.string().optional(),
-        website:  z.string().optional(),
-    }),
+// Section shapes derive from schemas/resume-sections.ts — the single source of
+// truth. Re-declaring them inline is how projects[].highlights drifted out of
+// the sibling schemas and got silently stripped downstream. Exported so the
+// schema drift test can pin every layer to the same shapes.
+export const TailoredResumeSchema = z.object({
+    profile: ProfileBaseSchema,
     summary: z.string(),
-    experience: z.array(z.object({
-        company:    z.string(),
-        title:      z.string(),
-        period:     z.string(),
-        highlights: z.array(z.string()),
-    })),
-    skills: z.array(z.object({
-        category: z.string(),
-        skills:   z.array(z.string()),
-    })),
-    education: z.array(z.object({
-        degree:      z.string(),
-        institution: z.string(),
-        period:      z.string(),
-    })),
-    certifications: z.array(z.object({
-        name:   z.string(),
-        year:   z.string(),
-        issuer: z.string(),
-    })),
-    projects: z.array(z.object({
-        name:        z.string(),
-        description: z.string(),
-        // JD-aligned technical bullets selected from the PROJECT RESUME BULLETS
-        // block. Optional so cached/legacy writer output still validates; the
-        // persona requires it for every project going forward.
-        highlights:  z.array(z.string()).optional(),
-        github:      z.string().optional(),
-    })),
-    keyAchievements: z.array(z.object({
-        achievement: z.string(),
-    })),
+    experience: z.array(ExperienceBaseSchema),
+    skills: z.array(SkillCategoryBaseSchema),
+    education: z.array(EducationBaseSchema),
+    certifications: z.array(CertificationBaseSchema),
+    // projects[].highlights: JD-aligned technical bullets selected from the
+    // PROJECT RESUME BULLETS block. Optional in the base (cached/legacy writer
+    // output still validates); the persona requires it going forward.
+    projects: z.array(ProjectBaseSchema),
+    keyAchievements: z.array(AchievementBaseSchema),
     // Section render order (archetype/restructure decision). Kept (not stripped)
     // because the UI consumes it; other unknown keys are dropped harmlessly.
     sectionOrder: z.array(z.string()).optional(),
