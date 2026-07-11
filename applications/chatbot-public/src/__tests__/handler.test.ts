@@ -18,6 +18,7 @@ jest.mock('@bedrock/shared', () => ({
     buildChatContext:      jest.fn(() => '<retrieved_context/>'),
     recordZeroResultRetrieval: jest.fn(),
     resolvePortfolioOwnerId: jest.fn(async (_pool: unknown, fallback: string) => fallback),
+    hydrateRdsEnv:         jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
 }));
 
 jest.mock('../retrieval.js', () => ({

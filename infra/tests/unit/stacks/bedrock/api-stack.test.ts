@@ -272,16 +272,19 @@ describe('BedrockApiStack', () => {
             });
         });
 
-        it('should inject RDS connection env vars', () => {
+        it('should inject RDS runtime-resolution pointers, not host or plaintext password', () => {
             template.hasResourceProperties('AWS::Lambda::Function', {
                 FunctionName: `${NAME_PREFIX}-chatbot-public`,
                 Environment: {
                     Variables: Match.objectLike({
-                        RDS_HOST: Match.anyValue(),
                         RDS_PORT: Match.anyValue(),
                         RDS_DB_NAME: Match.anyValue(),
                         RDS_USER: Match.anyValue(),
-                        RDS_PASSWORD: Match.anyValue(),
+                        RDS_SSM_PREFIX: Match.anyValue(),
+                        RDS_SECRET_NAME: Match.anyValue(),
+                        // Resolved at runtime by hydrateRdsEnv — never baked in.
+                        RDS_HOST: Match.absent(),
+                        RDS_PASSWORD: Match.absent(),
                     }),
                 },
             });
@@ -323,7 +326,9 @@ describe('BedrockApiStack', () => {
                     Variables: Match.objectLike({
                         CHATBOT_MODEL: 'eu.anthropic.claude-sonnet-4-6',
                         PORTFOLIO_OWNER_USER_ID: '00000000-0000-0000-0000-000000000001',
-                        RDS_HOST: Match.anyValue(),
+                        RDS_SSM_PREFIX: Match.anyValue(),
+                        RDS_SECRET_NAME: Match.anyValue(),
+                        RDS_PASSWORD: Match.absent(),
                     }),
                 },
             });

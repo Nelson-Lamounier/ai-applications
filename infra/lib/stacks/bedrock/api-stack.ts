@@ -111,18 +111,22 @@ export class BedrockApiStack extends cdk.Stack {
         // =================================================================
         // RDS connection params — read from SSM, injected into RAG Lambdas
         // =================================================================
-        const rdsHost     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/host`);
         const rdsPort     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/port`);
         const rdsDatabase = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/database`);
         const rdsUser     = ssm.StringParameter.valueForStringParameter(this, `${props.rdsSsmPrefix}/user`);
         const rdsSecret   = secretsmanager.Secret.fromSecretNameV2(this, 'RdsCredentialsSecret', props.rdsCredentialsSecretName);
 
+        // Host and password are resolved at RUNTIME by hydrateRdsEnv() from the
+        // pointers below, not baked into the function environment at deploy time —
+        // so a database endpoint rename (snapshot-restore migration) or a master
+        // password rotation is picked up on the next cold start without a redeploy,
+        // and no plaintext password ever lands in the Lambda environment.
         const rdsEnvVars = {
-            RDS_HOST:     rdsHost,
-            RDS_PORT:     rdsPort,
-            RDS_DB_NAME:  rdsDatabase,
-            RDS_USER:     rdsUser,
-            RDS_PASSWORD: rdsSecret.secretValueFromJson('password').unsafeUnwrap(),
+            RDS_PORT:        rdsPort,
+            RDS_DB_NAME:     rdsDatabase,
+            RDS_USER:        rdsUser,
+            RDS_SSM_PREFIX:  props.rdsSsmPrefix,
+            RDS_SECRET_NAME: props.rdsCredentialsSecretName,
         };
         const portfolioOwnerUserId = props.portfolioOwnerUserId ??
             ssm.StringParameter.valueForStringParameter(
@@ -252,6 +256,22 @@ export class BedrockApiStack extends cdk.Stack {
             actions: ['bedrock:Converse', 'bedrock:InvokeModel'],
             resources: chatbotModelResources,
         }));
+
+        // Runtime credential access for hydrateRdsEnv(): both chatbot Lambdas read
+        // the RDS host SSM parameter and the credentials secret at cold start,
+        // replacing the deploy-time valueForStringParameter / secretValueFromJson
+        // injection so a host rename or password rotation needs no redeploy.
+        for (const fn of [this.chatbotPublicFunction, this.chatbotAuthFunction]) {
+            rdsSecret.grantRead(fn);
+            fn.addToRolePolicy(new iam.PolicyStatement({
+                sid: 'ReadRdsHostParam',
+                effect: iam.Effect.ALLOW,
+                actions: ['ssm:GetParameter'],
+                resources: [
+                    `arn:aws:ssm:${this.region}:${this.account}:parameter${props.rdsSsmPrefix}/host`,
+                ],
+            }));
+        }
 
         // =================================================================
         // CloudWatch Log Group — API Gateway Access Logging
