@@ -1,5 +1,5 @@
 -- =============================================================================
--- 104_repo_sync_state_enrichment_mode.sql
+-- 118_repo_sync_state_enrichment_mode.sql
 -- =============================================================================
 -- Adds per-repo enrichment provenance and backfills the LLM ledger's repo id.
 --

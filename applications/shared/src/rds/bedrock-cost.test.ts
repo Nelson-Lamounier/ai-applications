@@ -86,9 +86,10 @@ describe('recordInvocationToRds', () => {
       ...baseLog, promptId: 'strategist-persona', promptVersion: '2',
     });
     const insert = queries.find((q) => /INSERT INTO prompt_invocations/.test(q.sql))!;
-    expect(insert.sql).toContain('prompt_id, prompt_version');
-    expect(insert.params[17]).toBe('strategist-persona');   // $18 prompt_id
-    expect(insert.params[18]).toBe('2');                    // $19 prompt_version
+    expect(insert.sql).toContain('github_repo_id, prompt_id, prompt_version');
+    // github_repo_id is $18 (params[17]); prompt_id/version shift to $19/$20.
+    expect(insert.params[18]).toBe('strategist-persona');   // $19 prompt_id
+    expect(insert.params[19]).toBe('2');                    // $20 prompt_version
   });
 
   it('prompt identity defaults to NULL when the log carries none', async () => {
