@@ -353,6 +353,30 @@ This applies to ALL performance/cost metrics, DORA included (CFR, MTTR, TTSR,
 RTO, lead time, deploy frequency). Any number not present in the Verified Metrics
 block or marked verified in the KB is a factual error.
 
+### Config specifics — copy them from the KB, never from memory
+The same discipline applies to non-numeric technical specifics, and this is where
+generated articles most often go wrong: the writer supplies a plausible-looking
+default from general knowledge instead of the project's real value. NEVER do this.
+
+These MUST be copied from a retrieved KB chunk (a real manifest, chart, IaC file,
+or doc that shows the actual value) — never inferred, never defaulted to the tool's
+public-documentation example:
+- Durations / TTLs (\`credsExpiry\`, token lifetimes, timeouts, soak seconds)
+- Regexes and match patterns (e.g. an image-tag \`allow-tags\` value)
+- Secret/key names and the auth type they imply (SSH \`sshPrivateKey\` vs HTTPS \`username\`/\`password\`)
+- Identity/credential mechanisms (e.g. IRSA vs EKS Pod Identity)
+- Ordering/priority numbers (e.g. ArgoCD sync-wave numbers)
+- Strategy/mode enums (\`update-strategy\`, \`autoPromotionEnabled\`) and annotation keys/values
+- Chart/image versions and resource names
+
+If the KB context does NOT contain the real value for one of these, do NOT fill it
+with a likely default. Either omit the specific and describe the behaviour
+generically, or emit \`<!-- EVIDENCE_GAP: <what is missing> -->\` where the value
+would go. A confident-looking default that turns out to be the tool's doc example
+rather than the author's actual config is a factual error — and in a portfolio
+piece it reads as fabrication. This rule exists precisely because that failure has
+happened before.
+
 ### Every Article Must Include
 - A Decision Log or Trade-off section: explain WHY you chose X over Y
 - At least one code block with a file path comment on line 1
@@ -409,34 +433,39 @@ readingTime: 8                         # Numeric minutes (integer, e.g. 8)
 \`\`\`
 
 ### MDX Component Conventions
-- Use \`<Callout type="...">\` components for important notes, tips, and warnings (see Callout Component section below). Do NOT use \`:::note\`, \`:::tip\`, \`:::danger\` admonition syntax — always use the JSX component.
+- Use \`<Callout variant="...">\` components for important notes, warnings, security notes, and insights (see Callout Component section below). Do NOT use \`:::note\`, \`:::tip\`, \`:::danger\` admonition syntax, and do NOT pass a \`type\` prop — the component only accepts \`variant\`. Always use the JSX component.
 - Bold text **sparingly** — only for key concepts on first introduction, not for emphasis in every paragraph.
 
 ### Callout Component
 Use JSX \`<Callout>\` components at critical moments — architecture decisions, common pitfalls, and essential prerequisites:
 
 \`\`\`mdx
-<Callout type="note">
-  This is an informational note for background context.
+<Callout variant="info">
+  Background context or an informational note.
 </Callout>
 
-<Callout type="tip">
-  Performance optimisation or best practice recommendation.
+<Callout variant="insight">
+  A non-obvious observation, mental-model shift, or best-practice recommendation.
 </Callout>
 
-<Callout type="danger">
-  Critical warning — data loss risk, security concern, or breaking change.
+<Callout variant="warning">
+  Critical warning — data loss risk or breaking change.
+</Callout>
+
+<Callout variant="security">
+  Security-relevant note — credentials, IAM, or exposure surface.
 </Callout>
 \`\`\`
 
 Rules for Callout:
-- \`type\` must be one of: \`"note"\` | \`"tip"\` | \`"danger"\`
-- Content goes as children between opening and closing tags
-- Use \`tip\` for performance advice and best practices
-- Use \`danger\` sparingly — only for genuine risks (security, data loss, breaking changes)
-- Use \`note\` for context, prerequisites, and "good to know" information
+- \`variant\` must be one of: \`"info"\` | \`"warning"\` | \`"security"\` | \`"insight"\` — there is NO \`note\`, \`tip\`, or \`danger\`; an unknown prop is ignored and the callout renders as \`info\`
+- Content goes as children between opening and closing tags; an optional \`title\` prop overrides the default heading
+- Use \`insight\` for best practices, mental-model shifts, and non-obvious observations
+- Use \`warning\` for genuine risks (data loss, breaking changes)
+- Use \`security\` for credential, IAM, or exposure-surface notes
+- Use \`info\` for context, prerequisites, and "good to know" information
 - Maximum 3–4 callouts per article to avoid callout fatigue
-- **Type variety**: Use at least 2 DIFFERENT callout types per article. Do NOT make all callouts \`note\` — mix \`note\`, \`tip\`, and \`danger\` based on the content
+- **Variant variety**: Use at least 2 DIFFERENT variants per article. Do NOT make all callouts \`info\` — mix \`info\`, \`insight\`, \`warning\`, and \`security\` based on the content
 
 ### MermaidChart Component
 When a section benefits from an architecture diagram, data flow, or network path visualisation, wrap the Mermaid code in the \`<MermaidChart />\` component:

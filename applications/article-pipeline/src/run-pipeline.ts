@@ -363,7 +363,8 @@ async function writeAndReview(
 ): Promise<{ writer: WriterOut; qa: QaOut }> {
     const writer = await timed('writing', () => executeWriterAgent(ctx, researchData, revisionNotes));
     const qa = await timed('qa', () => executeQaAgent(
-        ctx, writer.data, researchData.technicalFacts, researchData.mode,
+        ctx, writer.data, researchData.technicalFacts,
+        (researchData.kbPassages ?? []).map((p) => p.text), researchData.mode,
     ));
     attempts.push(recordAttempt(attemptNo, qa.data, QA_PASS_THRESHOLD));
     emitQaAttemptMetric(qa.data);

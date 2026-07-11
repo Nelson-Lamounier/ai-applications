@@ -48,6 +48,8 @@ export interface QaAgentInput {
     readonly writer: WriterResult;
     /** Technical facts from Research Agent for cross-referencing */
     readonly technicalFacts: string[];
+    /** Raw retrieved KB passages, so QA can verify config specifics against source */
+    readonly kbEvidence: string[];
     /** Pipeline mode (kb-augmented or legacy-transform) */
     readonly mode: string;
 }
@@ -190,6 +192,7 @@ export const QA_PASS_THRESHOLD = 80;
 function buildQaMessage(
     writer: WriterResult,
     technicalFacts: string[],
+    kbEvidence: string[],
     mode: string,
 ): string {
     const baseParts = [
@@ -218,6 +221,21 @@ function buildQaMessage(
           ]
         : [];
 
+    const evidenceParts = kbEvidence.length > 0
+        ? [
+              ``,
+              `## Retrieved KB Evidence (authoritative source for config specifics)`,
+              `These are the actual retrieved chunks from the author's own repositories.`,
+              `Any config specific in the article — TTL/duration, regex, secret/key name and`,
+              `auth type, identity mechanism (IRSA vs Pod Identity), sync-wave number,`,
+              `update-strategy/mode, annotation key/value, chart/image version — MUST match a`,
+              `value shown here. A specific that is plausible but ABSENT from this evidence is`,
+              `a fabrication: flag it "error". Do NOT rely on your own training knowledge of`,
+              `how a tool "usually" works — these chunks are ground truth.`,
+              ...kbEvidence.map((c, i) => `--- EVIDENCE ${i + 1} ---\n${c}`),
+          ]
+        : [];
+
     const footerParts = [
         ``,
         `## Full Article Content`,
@@ -229,7 +247,7 @@ function buildQaMessage(
         `Perform your quality review and return the JSON result object.`
     ];
 
-    return [...baseParts, ...techParts, ...footerParts].join('\n');
+    return [...baseParts, ...techParts, ...evidenceParts, ...footerParts].join('\n');
 }
 
 // =============================================================================
@@ -325,7 +343,7 @@ const QA_CONFIG: AgentConfig = {
  *
  * @example
  * ```typescript
- * const result = await qaAgent.execute({ writer, technicalFacts, mode }, ctx);
+ * const result = await qaAgent.execute({ writer, technicalFacts, kbEvidence, mode }, ctx);
  * ```
  */
 class QaAgent extends BaseAgent<QaAgentInput, QaValidationResult, PipelineContext> {
@@ -347,7 +365,7 @@ class QaAgent extends BaseAgent<QaAgentInput, QaValidationResult, PipelineContex
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: QaAgentInput): string {
-        return buildQaMessage(input.writer, input.technicalFacts, input.mode);
+        return buildQaMessage(input.writer, input.technicalFacts, input.kbEvidence, input.mode);
     }
 
     /**
@@ -415,6 +433,7 @@ export { qaAgent, QaAgent };
  * @param ctx - Pipeline context
  * @param writer - Writer result to validate
  * @param technicalFacts - Facts from Research Agent for cross-referencing
+ * @param kbEvidence - Raw retrieved KB passages for verifying config specifics against source
  * @param mode - Pipeline mode for context
  * @returns QA validation result with scores, issues, and recommendation
  */
@@ -422,7 +441,8 @@ export async function executeQaAgent(
     ctx: PipelineContext,
     writer: WriterResult,
     technicalFacts: string[],
+    kbEvidence: string[],
     mode: string,
 ): Promise<AgentResult<QaValidationResult>> {
-    return qaAgent.execute({ writer, technicalFacts, mode }, ctx);
+    return qaAgent.execute({ writer, technicalFacts, kbEvidence, mode }, ctx);
 }
