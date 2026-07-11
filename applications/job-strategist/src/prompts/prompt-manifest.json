@@ -32,16 +32,16 @@
         "sha256": "3ac4c92db2186686c741721e992bc0f94ce3ae1b8c513007a959a90cf773d5f8"
     },
     "strategist/_base_1": {
-        "version": "1",
-        "sha256": "b054b8a1c806df3093e63823c225c25a0221b763161c516e730f0c71b8696a78"
+        "version": "2",
+        "sha256": "ba2abdd7a0b050c37d797aeebaf039c4e5758f8e3e49b9d9b42a39fd28dff39a"
     },
     "strategist/_base_2": {
         "version": "1",
         "sha256": "7d3ce23ea95bd76e81cbfba151d82105808430b40b258711592d63b5bb4d5ab5"
     },
     "strategist/_base_3": {
-        "version": "1",
-        "sha256": "1f20e7d6e99607fdf3214743f4096530fa38f1fa35247a976bf12528fd0da844"
+        "version": "2",
+        "sha256": "908e565254581c75300ac979c44e4a9f57e145acfb05dea3cc87ad6b8c346909"
     },
     "strategist/_base_4": {
         "version": "1",

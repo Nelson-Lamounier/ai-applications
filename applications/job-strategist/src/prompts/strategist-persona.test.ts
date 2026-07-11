@@ -42,18 +42,6 @@ describe('strategist-persona cover-letter JSON schema rules', () => {
         expect(lower).toContain('never self-label with the');
     });
 
-    it('derives the resume summary from the Fit Summary (outward translation, gap language stripped)', () => {
-        // v16: S1-S4 must anchor on the matcher's Fit Summary thesis, translated
-        // to positive positioning. Keeps the resume summary consistent with the
-        // grounded viability assessment without importing its gap/viability voice.
-        expect(joined).toContain('DERIVE FROM THE FIT SUMMARY');
-        expect(joined).toContain('OUTWARD-FACING TRANSLATION');
-        const lower = joined.toLowerCase();
-        // must instruct BOTH: keep the same thesis AND strip gap/viability wording
-        expect(lower).toContain('same central thesis');
-        expect(lower).toContain('strip every');
-    });
-
     it('carries NO hardcoded user identity — contact comes from the Candidate Contact section (multi-tenant: the v12-era persona shipped one user\'s literal name/email as the signoff example, which any other tenant\'s writer would have copied)', () => {
         expect(joined).not.toContain('Nelson Lamounier');
         expect(joined).not.toContain('lamounierleao@outlook.com');
@@ -90,29 +78,8 @@ describe('strategist-persona v11 — v6-restored body (writer-duration bisect cl
 	});
 });
 
-describe('strategist-persona v12 — summary calibration (from the ResMed Associate-JD review of run 77e325ea)', () => {
-	it('S1 aligns to the JD role class and bans employer-name openings ("AWS … engineer" while employed at AWS reads as a title held there)', () => {
-		expect(joined).toMatch(/ALIGNED TO THE JD'S OWN ROLE CLASS/);
-		expect(joined).toMatch(/NEVER OPEN with an employer's name/);
-	});
-
-	it('caps rigor at ONE sentence per summary and gives associate/junior roles a forward-fit close (the live S3 slot was a second rigor close)', () => {
-		expect(joined).toMatch(/AT MOST ONE rigor\/gating sentence/);
-		expect(joined).toMatch(/grounded forward-fit close/);
-	});
-
-	it('calibrates tone to the JD level (depth + hunger for associate roles, ownership for senior) and names equivalence bridges explicitly (CDK -> CloudFormation)', () => {
-		expect(joined).toMatch(/SENIORITY TONE/);
-		expect(joined).toMatch(/EQUIVALENCE BRIDGES/);
-		expect(joined).toMatch(/CDK \(CloudFormation\)/);
-	});
-});
-
-describe('strategist-persona S3 <-> message-section cross-reference (v11)', () => {
-	it('S3 names the "### Profile Intelligence" section — and the message builder exposes a header starting with that exact name (run 77e325ea shipped no S3 angle because the persona referenced a section the message never labelled)', async () => {
-		const { PROFILE_INTELLIGENCE_HEADER } = await import('../agents/writer/strategist-agent.js');
-		expect(joined).toContain('"### Profile Intelligence" section');
-		expect(PROFILE_INTELLIGENCE_HEADER.startsWith('### Profile Intelligence')).toBe(true);
-		expect(joined).toMatch(/UNDERSOLD strengths/);
-	});
-});
+// v12 summary calibration + S3 <-> Profile Intelligence cross-reference
+// relocated to __tests__/strategist-summary-persona.test.ts: the body no
+// longer composes the summary (summary.md / STRATEGIST_SUMMARY_SYSTEM_PROMPT
+// is now the sole home of these rules), so asserting them here would pin
+// text this prompt no longer carries.
