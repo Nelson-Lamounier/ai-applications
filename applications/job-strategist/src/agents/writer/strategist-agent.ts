@@ -83,7 +83,12 @@ export interface StrategistAgentInput {
     readonly yearsGapFraming?: string;
     /** Authoritative current code stack per repo (doc-vs-code drift). Optional. */
     readonly codeStackContext?: string;
-    /** Code-grounded Profile Intelligence (direction/undersold) — the summary S3 source. Optional. */
+    /**
+     * Code-grounded Profile Intelligence (direction/undersold) — informs the
+     * body's profile headline, positioning, and cover-letter emphasis. The
+     * summary's S3 distinctive angle is composed by the separate summary
+     * agent (summary-agent.ts) from its own copy of this evidence. Optional.
+     */
     readonly profileIntelligence?: string;
     /** Per-user contact details (resume profile + cover-letter signoff source). Optional. */
     readonly candidateContact?: string;

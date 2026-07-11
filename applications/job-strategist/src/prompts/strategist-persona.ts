@@ -17,12 +17,16 @@
  * what the strategist-persona-assembly test proves byte-for-byte against
  * the pre-split golden fixture.
  *
- * `summary` is a duplicate, not a cut: the summary-composition rules stay
- * inline in `_base_3` (this is a lossless refactor — the strategist body
- * must not change), and are ALSO copied into `strategist/summary.md` as a
- * standalone persona for the separate summary agent (a later task). It is
- * therefore intentionally excluded from BODY_MODULES to avoid duplicating
- * that text in the assembled body.
+ * `summary` was a duplicate, not a cut, at the time this module split from
+ * the monolithic prompt: the summary-composition rules stayed inline in
+ * `_base_3` (lossless refactor — the strategist body did not change) and
+ * were ALSO copied into `strategist/summary.md` as a standalone persona for
+ * a planned separate summary agent. That summary agent now exists
+ * (summary-agent.ts / summary-message.ts) and `_base_3` has since been
+ * updated to tell the body to leave `summary` as `""` — a dedicated summary
+ * pass composes it from `strategist/summary.md`. `strategist/summary` stays
+ * excluded from BODY_MODULES so its rules are not duplicated in the
+ * assembled body.
  */
 import type { SystemContentBlock } from '@aws-sdk/client-bedrock-runtime';
 import { createHash } from 'node:crypto';
