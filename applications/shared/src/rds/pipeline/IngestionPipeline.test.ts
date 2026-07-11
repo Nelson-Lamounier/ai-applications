@@ -677,3 +677,16 @@ describe('IngestionPipeline — chunk-packing (feature 004)', () => {
         expect(store.upserts[0][0].skills).toEqual(['per-chunk']);
     });
 });
+
+describe('IngestionPipeline — records enrichment mode', () => {
+    it('passes enrichmentMode + model to markComplete', async () => {
+        const store = new FakeVectorStore();
+        const sync = new FakeSyncState();
+        const embed = new FakeEmbedder();
+        const pipeline = new IngestionPipeline(store, sync, embed, { enrichmentMode: 'llm', enrichmentModel: 'anthropic.x' });
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)]);
+        const args = sync.markCompleteCalls[0];
+        expect(args[8]).toBe('llm');
+        expect(args[9]).toBe('anthropic.x');
+    });
+});

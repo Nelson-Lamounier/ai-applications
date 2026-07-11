@@ -96,6 +96,10 @@ export interface ChunkEnricherCostContext {
     // 'initial' | 'full_reindex' | 'incremental' — distinguishes an initial
     // repo ingest from a resync on the per-repo Cost breakdown (migration 082).
     syncKind?: string;
+    // Immutable GitHub numeric repo id — carried into prompt_invocations so
+    // chunk-enrich spend can be attributed to a specific repo. Null on
+    // legacy/pre-backfill runs where the dispatcher did not supply the id.
+    githubRepoId?: number | null;
 }
 
 export class BedrockChunkEnricher implements IChunkEnricher {
@@ -160,6 +164,7 @@ export class BedrockChunkEnricher implements IChunkEnricher {
                 outputTokens: parsed.usage?.output_tokens ?? 0,
                 repoName:     this.costCtx.repoName,
                 syncKind:     this.costCtx.syncKind,
+                githubRepoId: this.costCtx.githubRepoId,
             }).catch((err) => console.warn('[BedrockChunkEnricher] cost record failed (non-fatal)', err)),
         );
     }

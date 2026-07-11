@@ -51,13 +51,14 @@ describe('RdsSyncStateRepository retrieval persistence', () => {
         (repo as unknown as { pool: typeof pool }).pool = pool;
         await repo.markComplete('u1', 'owner/repo', 1, 1, 0.5, { version: 1 });
         const upsert = pool.calls.find(c => c.sql.includes('INSERT INTO repo_sync_state'))!;
-        // retrieval pair now precedes the trailing github_repo_id param.
-        expect(upsert.params.slice(-3, -1)).toEqual([null, null]);
+        // retrieval pair precedes github_repo_id, enrichment_mode, enrichment_model.
+        // Params: [..., retrieval_score=$10, retrieval_breakdown=$11, github_repo_id=$12, enrichment_mode=$13, enrichment_model=$14]
+        expect(upsert.params.slice(-5, -3)).toEqual([null, null]);
     });
 });
 
 describe('RdsSyncStateRepository github_repo_id dual-write', () => {
-    it('binds the injected github_repo_id as the trailing upsert param', async () => {
+    it('binds the injected github_repo_id as param $12 in the upsert', async () => {
         const pool = fakePool();
         const repo = new RdsSyncStateRepository({} as never, 4242);
         (repo as unknown as { pool: typeof pool }).pool = pool;
@@ -65,7 +66,11 @@ describe('RdsSyncStateRepository github_repo_id dual-write', () => {
         const upsert = pool.calls.find(c => c.sql.includes('INSERT INTO repo_sync_state'))!;
         expect(upsert.sql).toContain('github_repo_id');
         expect(upsert.sql).toContain('COALESCE(EXCLUDED.github_repo_id, repo_sync_state.github_repo_id)');
-        expect(upsert.params.at(-1)).toBe(4242);
+        // Param order: userId=$1, repoFullName=$2, syncStatus=$3, lastSyncedAt=$4,
+        // fileCount=$5, chunkCount=$6, errorMessage=$7, kbQualityScore=$8,
+        // kbQualityBreakdown=$9, retrievalScore=$10, retrievalBreakdown=$11,
+        // github_repo_id=$12, enrichmentMode=$13, enrichmentModel=$14
+        expect(upsert.params[11]).toBe(4242);
     });
 
     it('binds null when no github_repo_id is injected (pre-backfill run)', async () => {
@@ -74,7 +79,7 @@ describe('RdsSyncStateRepository github_repo_id dual-write', () => {
         (repo as unknown as { pool: typeof pool }).pool = pool;
         await repo.markComplete('u1', 'owner/repo', 1, 1);
         const upsert = pool.calls.find(c => c.sql.includes('INSERT INTO repo_sync_state'))!;
-        expect(upsert.params.at(-1)).toBeNull();
+        expect(upsert.params[11]).toBeNull();
     });
 });
 

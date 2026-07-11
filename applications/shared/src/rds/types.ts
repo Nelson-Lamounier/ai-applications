@@ -207,6 +207,14 @@ export interface RepoSyncState {
     readonly phaseDone?: number;
     /** Total items in the current phase (undefined when indeterminate). */
     readonly phaseTotal?: number;
+    /**
+     * Enrichment mode used for this sync run. Stored as a narrow enum:
+     * 'llm' = Bedrock LLM enrichment, 'tier1' = deterministic only,
+     * 'none' = enrichment disabled. Nullable for back-compat.
+     */
+    readonly enrichmentMode?: string;
+    /** Model ID of the LLM enricher used in this run (e.g. 'anthropic.claude-…'). Nullable. */
+    readonly enrichmentModel?: string | null;
 }
 
 /** Coarse pipeline phase surfaced to the onboarding UI for progress display. */

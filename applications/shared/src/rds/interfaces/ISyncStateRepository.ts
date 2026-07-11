@@ -42,6 +42,8 @@ export interface ISyncStateRepository {
      * runs that pre-date pick #4 (KB quality scoring).
      * retrievalScore / retrievalBreakdown are nullable for back-compat with
      * runs that pre-date the retrieval-quality probe.
+     * enrichmentMode / enrichmentModel are nullable for back-compat with
+     * runs that pre-date enrichment-mode persistence.
      */
     markComplete(
         userId: string,
@@ -52,6 +54,8 @@ export interface ISyncStateRepository {
         kbQualityBreakdown?: Record<string, unknown>,
         retrievalScore?: number,
         retrievalBreakdown?: Record<string, unknown>,
+        enrichmentMode?: string,
+        enrichmentModel?: string | null,
     ): Promise<void>;
 
     /**
