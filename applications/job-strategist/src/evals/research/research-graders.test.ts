@@ -11,7 +11,7 @@ import {
     type ResearchEvalOutput,
 } from './research-graders.js';
 import { FIXTURES, GOLDEN_OUTPUT } from './fixtures.js';
-import { assessmentsToMatching } from '../../agents/research-assessment.js';
+import { assessmentsToMatching } from '../../agents/research/research-assessment.js';
 
 const CASE = FIXTURES[0]!; // devops-sre-mixed
 

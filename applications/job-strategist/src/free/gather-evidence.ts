@@ -9,18 +9,18 @@ import type { Pool } from 'pg';
 import { TechnologyOntologyRepository } from '@bedrock/shared';
 import type { JdSignal } from '@bedrock/shared';
 import type { StrategistEnv } from '../env.js';
-import { jdRetrievalQueries } from '../agents/jd-extractor.js';
-import { loadProjectEvidenceBlock } from '../agents/project-evidence-block.js';
+import { jdRetrievalQueries } from '../agents/jd/jd-extractor.js';
+import { loadProjectEvidenceBlock } from '../agents/evidence/project-evidence-block.js';
 import {
     loadCareerHistory,
     formatExperienceFacts,
     loadEducation,
     formatEducation,
-} from '../agents/career-history.js';
+} from '../agents/evidence/career-history.js';
 import { buildCodeStackContext } from '../ats/code-truth.js';
 import { loadCommitPrEvidence } from './commit-pr-evidence.js';
 import { loadProfilePositioning } from './profile-intelligence.js';
-import { loadAchievementEvidence } from '../agents/achievement-evidence.js';
+import { loadAchievementEvidence } from '../agents/evidence/achievement-evidence.js';
 
 export interface FreeEvidence {
     readonly kbPassages: string[];

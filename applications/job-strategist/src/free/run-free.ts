@@ -20,14 +20,14 @@ import type { Pool } from 'pg';
 import type { BasePipelineContext, JdSignal, CoverLetter } from '@bedrock/shared';
 import type { StrategistEnv } from '../env.js';
 import type { FreeEvidence } from './gather-evidence.js';
-import type { FreeWriter, FreeResumeOutput } from '../agents/free-resume-writer.js';
+import type { FreeWriter, FreeResumeOutput } from '../agents/writer/free-resume-writer.js';
 import type { AtsCoverage } from '../ats/grounded-coverage.js';
 import type { AtsCheckResult } from '../ats/ats-check.schema.js';
 import type { EvidenceFit } from '../ats/evidence-fit.js';
 import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
 import { evidenceFitScore } from '../ats/evidence-fit.js';
 import { jdAtsKeywords } from '../ats/jd-keywords-union.js';
-import { guardCoverLetter } from '../agents/cover-letter-guard.js';
+import { guardCoverLetter } from '../agents/quality/cover-letter-guard.js';
 
 // =============================================================================
 // DEPENDENCY INJECTION INTERFACES

@@ -19,20 +19,20 @@ import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetr
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
-import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research-agent.js';
-import { executeStrategistAgent } from './agents/strategist-agent.js';
-import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
-import { formatRoleEvidence } from './agents/role-evidence-block.js';
-import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/project-evidence-block.js';
-import { relocateProjectExperience, restoreProjectHighlights } from './agents/relocate-project-experience.js';
-import { loadAchievementEvidence } from './agents/achievement-evidence.js';
-import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
-import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/career-history.js';
-import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js';
-import { buildYearsGap } from './agents/years-gap.js';
-import { guardCoverLetter } from './agents/cover-letter-guard.js';
-import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
-import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/resume-guard.js';
+import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research/research-agent.js';
+import { executeStrategistAgent } from './agents/writer/strategist-agent.js';
+import { resolveRoleFamilies, stageJdLearning } from './agents/jd/resolve-role-families.js';
+import { formatRoleEvidence } from './agents/evidence/role-evidence-block.js';
+import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/evidence/project-evidence-block.js';
+import { relocateProjectExperience, restoreProjectHighlights } from './agents/quality/relocate-project-experience.js';
+import { loadAchievementEvidence } from './agents/evidence/achievement-evidence.js';
+import { loadProfileIntelligenceBlock } from './agents/evidence/profile-intelligence-block.js';
+import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/evidence/career-history.js';
+import { extractJobDescription, extractJdSignal } from './agents/jd/jd-extractor.js';
+import { buildYearsGap } from './agents/writer/years-gap.js';
+import { guardCoverLetter } from './agents/quality/cover-letter-guard.js';
+import type { CoverLetterNarrativeOpts } from './agents/quality/cover-letter-guard.js';
+import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/quality/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { createViolationLog } from './lib/violation-log.js';
 import { loadCandidateContactBlock } from './lib/candidate-contact.js';
@@ -64,9 +64,9 @@ import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, p
 import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/number-provenance.js';
 import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
 import { reconcileExperienceRoster } from './lib/experience-roster.js';
-import { surfaceMetrics } from './agents/surface-metrics.js';
+import { surfaceMetrics } from './agents/quality/surface-metrics.js';
 import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from './prompts/strategist-persona.js';
-import { surfaceKeywords } from './agents/surface-keywords.js';
+import { surfaceKeywords } from './agents/quality/surface-keywords.js';
 import { stripDocumentSections } from './lib/strip-document-sections.js';
 import { dedupeSkillGaps } from './lib/dedupe-skill-gaps.js';
 import { ensureSummaryIntegrity } from './lib/summary-integrity.js';
@@ -116,7 +116,7 @@ import { applyDegreeReconcile } from './ats/education-reconcile.js';
 import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
 import { runFreeTier }             from './free/run-free.js';
 import { gatherFreeEvidence }      from './free/gather-evidence.js';
-import { bedrockFreeResumeWriter } from './agents/free-resume-writer.js';
+import { bedrockFreeResumeWriter } from './agents/writer/free-resume-writer.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.

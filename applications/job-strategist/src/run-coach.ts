@@ -35,7 +35,7 @@ import type {
 } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 
-import { executeCoachAgent, buildSkillCandidateBlock, buildConcernWalkthroughBlock } from './agents/coach-agent.js';
+import { executeCoachAgent, buildSkillCandidateBlock, buildConcernWalkthroughBlock } from './agents/coach/coach-agent.js';
 import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough, stageUsesBarRaiserWalkthrough, stageUsesFinalPrep } from './prompts/coach/stages/index.js';
 import { validateFinalPrep } from './lib/final-validation.js';
 import {

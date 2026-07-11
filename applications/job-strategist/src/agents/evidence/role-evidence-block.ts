@@ -1,6 +1,6 @@
 /** @format */
 import type { CompanyType } from '@bedrock/shared';
-import type { ResolvedRole } from './resolve-role-families.js';
+import type { ResolvedRole } from '../jd/resolve-role-families.js';
 
 const HEADER = [
     'ROLE EVIDENCE — use to TRANSLATE the candidate\'s real work into the target',

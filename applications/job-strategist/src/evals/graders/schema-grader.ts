@@ -1,5 +1,5 @@
 /** @format */
-import { CoachOutputSchema, PHONE_SCREEN_FIELDS } from '../../agents/coach-agent.js';
+import { CoachOutputSchema, PHONE_SCREEN_FIELDS } from '../../agents/coach/coach-agent.js';
 import { mkResult } from '../graders.js';
 import type { Grader } from '../graders.js';
 

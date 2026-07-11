@@ -13,13 +13,13 @@
  * recorded per invocation) pairs with the version to expose unbumped edits.
  */
 import { describe, it, expect } from '@jest/globals';
-import { SURFACE_KEYWORDS_PROMPT_META } from './surface-keywords.js';
-import { SURFACE_METRICS_PROMPT_META } from './surface-metrics.js';
-import { ROLE_CLASSIFIER_PROMPT_META } from './role-classifier.js';
-import { YEARS_RELEVANCE_PROMPT_META } from './years-gap.js';
-import { COVER_LETTER_REWRITE_PROMPT_META } from './cover-letter-guard.js';
-import { RESUME_REWRITE_PROMPT_META } from './resume-guard.js';
-import { COACH_PROMPT_META } from './coach-agent.js';
+import { SURFACE_KEYWORDS_PROMPT_META } from './quality/surface-keywords.js';
+import { SURFACE_METRICS_PROMPT_META } from './quality/surface-metrics.js';
+import { ROLE_CLASSIFIER_PROMPT_META } from './jd/role-classifier.js';
+import { YEARS_RELEVANCE_PROMPT_META } from './writer/years-gap.js';
+import { COVER_LETTER_REWRITE_PROMPT_META } from './quality/cover-letter-guard.js';
+import { RESUME_REWRITE_PROMPT_META } from './quality/resume-guard.js';
+import { COACH_PROMPT_META } from './coach/coach-agent.js';
 import { RESUME_CONDENSE_PROMPT_META, RESUME_EXPAND_PROMPT_META } from '../ats/length-budget.js';
 import { MIGRATION_REFRAME_PROMPT_META } from '../ats/migration-reframe.js';
 import { CORRECTIVE_RETRIEVAL_PROMPT_META } from '../lib/corrective-retrieval.js';

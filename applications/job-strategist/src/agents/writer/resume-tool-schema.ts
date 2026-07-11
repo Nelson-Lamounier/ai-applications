@@ -23,7 +23,7 @@ import {
     ProjectBaseSchema,
     AchievementBaseSchema,
     SECTION_SHAPE_KEYS,
-} from '../schemas/resume-sections.js';
+} from '../../schemas/resume-sections.js';
 
 export { SECTION_SHAPE_KEYS };
 

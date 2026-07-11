@@ -16,7 +16,7 @@
  * for ever migrating the delta prose to content/*.md.
  */
 import { describe, it, expect } from '@jest/globals';
-import { coachToolForStage } from '../../../agents/coach-agent.js';
+import { coachToolForStage } from '../../../agents/coach/coach-agent.js';
 import { COACH_BASE_TEXT } from '../base.js';
 import { PHONE_SCREEN_DELTA } from './phone-screen.js';
 import { TECHNICAL_DELTA } from './technical.js';

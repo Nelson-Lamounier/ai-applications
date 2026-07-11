@@ -12,7 +12,7 @@ import { parsePdfBack } from './parse-back.js';
 import { storeAtsArtifacts } from './store-ats-artifacts.js';
 import { withUserRls } from '../lib/rls.js';
 import { renderResumePdf } from '../render/render-resume-pdf.js';
-import type { JdExtraction } from '../agents/jd-extractor.js';
+import type { JdExtraction } from '../agents/jd/jd-extractor.js';
 
 /** Minimal structured logger surface (pino-compatible). */
 export interface AtsLogger {

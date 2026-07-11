@@ -226,14 +226,14 @@ describe('executeResearchAgent KB-matcher contract', () => {
                 };
             });
 
-            jest.mock('../services/resume-service.js', () => ({
+            jest.mock('../../services/resume-service.js', () => ({
                 formatResumeForPrompt: jest.fn().mockReturnValue(''),
             }));
-            jest.mock('../prompts/research-persona.js', () => ({
+            jest.mock('../../prompts/research-persona.js', () => ({
                 RESEARCH_PERSONA_SYSTEM_PROMPT: 'stub-system-prompt',
                 RESEARCH_PERSONA_META: { id: 'research-persona', version: '1', cachePoint: 'default' },
             }));
-            jest.mock('../prompts/resume-constraints.js', () => ({
+            jest.mock('../../prompts/resume-constraints.js', () => ({
                 RESUME_CONSTRAINTS: '',
             }));
 

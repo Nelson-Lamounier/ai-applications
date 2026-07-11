@@ -11,7 +11,7 @@
 import { describe, it, expect } from '@jest/globals';
 import type { StructuredResumeData } from '@bedrock/shared';
 import { relocateProjectExperience, restoreProjectHighlights } from './relocate-project-experience.js';
-import type { ProjectResumeBulletSet } from './project-evidence-block.js';
+import type { ProjectResumeBulletSet } from '../evidence/project-evidence-block.js';
 
 const VERIFIED = [{ name: 'Amazon Web Services (AWS)' }, { name: 'Meta via Accenture' }];
 

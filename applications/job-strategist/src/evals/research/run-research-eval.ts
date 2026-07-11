@@ -37,8 +37,8 @@ async function main(): Promise<void> {
     // Lazy imports: research-agent reads RESEARCH_MODEL at module load, so the env
     // must be set before this import — which it is by the time main() runs.
     const [{ extractJdSignal }, { executeResearchAgent }, { canonicalJdSkills }] = await Promise.all([
-        import('../../agents/jd-extractor.js'),
-        import('../../agents/research-agent.js'),
+        import('../../agents/jd/jd-extractor.js'),
+        import('../../agents/research/research-agent.js'),
         import('../../ats/canonical-jd-skills.js'),
     ]);
 

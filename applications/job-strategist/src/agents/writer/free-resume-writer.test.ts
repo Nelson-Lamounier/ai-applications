@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from '@jest/globals';
 import { gradeFreeResume, parseFreeResumeResponse } from './free-resume-writer.js';
-import type { FreeEvidence } from '../free/gather-evidence.js';
+import type { FreeEvidence } from '../../free/gather-evidence.js';
 import type { FreeResumeOutput } from './free-resume-writer.js';
 
 // ---------------------------------------------------------------------------

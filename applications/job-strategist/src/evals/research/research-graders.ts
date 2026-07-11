@@ -16,7 +16,7 @@
  */
 import type { GraderResult } from '../graders.js';
 import { mkResult } from '../graders.js';
-import type { SkillAssessment, Verdict } from '../../agents/research-assessment.js';
+import type { SkillAssessment, Verdict } from '../../agents/research/research-assessment.js';
 
 /** One eval case: the fixed skill list + (optional) the expected verdict per skill. */
 export interface ResearchEvalCase {

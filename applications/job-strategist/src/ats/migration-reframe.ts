@@ -20,7 +20,7 @@
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { buildReverseAliasMap, mentionsCanonical } from './keyword-match.js';
-import { ResumeRewriteSchema, buildEmitResumeTool } from '../agents/resume-tool-schema.js';
+import { ResumeRewriteSchema, buildEmitResumeTool } from '../agents/writer/resume-tool-schema.js';
 
 // Sonnet, not Haiku: this is nuanced multi-section structured generation — rewrite ONLY
 // the flagged bullets, return the FULL resume byte-for-byte otherwise, via a forced tool

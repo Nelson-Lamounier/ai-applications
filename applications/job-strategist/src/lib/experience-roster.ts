@@ -21,7 +21,7 @@
  * - Entries that anchor to nothing are KEPT — never silently drop a job.
  */
 import type { StructuredResumeData } from '@bedrock/shared';
-import type { CareerEntry } from '../agents/career-history.js';
+import type { CareerEntry } from '../agents/evidence/career-history.js';
 
 const MAX_HIGHLIGHTS_PER_ROLE = 5;
 

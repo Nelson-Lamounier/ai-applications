@@ -26,11 +26,11 @@ import {
     RdsDsaTopicRepository,
     log,
 } from '@bedrock/shared';
-import { loadCareerHistory, formatCareerHistory, type CareerEntry } from './career-history.js';
-import { jdRetrievalQueries, formatJdExtraction } from './jd-extractor.js';
+import { loadCareerHistory, formatCareerHistory, type CareerEntry } from '../evidence/career-history.js';
+import { jdRetrievalQueries, formatJdExtraction } from '../jd/jd-extractor.js';
 import { assessmentsToMatching } from './research-assessment.js';
-import { canonicalJdSkills } from '../ats/canonical-jd-skills.js';
-import { computeKbStats } from '../lib/kb-stats.js';
+import { canonicalJdSkills } from '../../ats/canonical-jd-skills.js';
+import { computeKbStats } from '../../lib/kb-stats.js';
 import type { Pool } from 'pg';
 import type {
     AgentConfig,
@@ -47,9 +47,9 @@ import type {
     StructuredResumeData,
     StrategistPipelineContext,
 } from '@bedrock/shared';
-import { formatResumeForPrompt } from '../services/resume-service.js';
-import { RESEARCH_PERSONA_META, RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
-import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
+import { formatResumeForPrompt } from '../../services/resume-service.js';
+import { RESEARCH_PERSONA_META, RESEARCH_PERSONA_SYSTEM_PROMPT } from '../../prompts/research-persona.js';
+import { RESUME_CONSTRAINTS } from '../../prompts/resume-constraints.js';
 
 /** Delimiter used to join and later split deduplicated KB passages. */
 export const KB_CONTEXT_SEPARATOR = '\n\n---\n\n';
