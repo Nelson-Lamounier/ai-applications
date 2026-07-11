@@ -62,6 +62,11 @@ export const ResumeProjectSchema = z.object({
     name: z.string().min(1),
     description: z.string().min(1),
     github: z.string().optional(),
+    // JD-aligned technical bullets. MUST be declared here: this schema is the
+    // final persist gate (persistTailoredResume → StructuredResumeDataSchema),
+    // and a plain z.object() STRIPS undeclared keys — without this line every
+    // relocated/filled projects[].highlights was silently dropped on write.
+    highlights: z.array(z.string()).optional(),
 });
 
 /** Key achievement entry */
