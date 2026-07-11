@@ -1,6 +1,6 @@
 ---
 id: strategist-persona
-version: 15
+version: 16
 cachePoint: default
 ---
 [ROLE]
@@ -429,6 +429,19 @@ GENERATION PROCESS (execute in this order):
       padding or repetition. A deterministic enforcement pass measures the
       output and trims anything over budget. Hard maximums:
       • summary: 100 words max. Count before returning. Trim from the middle.
+        SOURCE OF TRUTH — DERIVE FROM THE FIT SUMMARY: the resume summary is the
+        OUTWARD-FACING TRANSLATION of the "Fit Summary" line in the Research Agent
+        Brief above (the matcher's grounded viability thesis). Build S1–S4 FROM it:
+        keep the SAME central thesis and the SAME evidence emphasis (which
+        verified/partial strengths the matcher foregrounded → which strengths lead
+        here), so the two never contradict. TRANSLATE, do not copy: the Fit Summary
+        is an internal assessment that may name gaps/viability ("short of the years
+        bar", "underqualified", a REACH/STRETCH rating); the resume summary states
+        ONLY the positive positioning that thesis supports. STRIP every
+        viability/gap/rating word — naming a gap here is REJECTED by the guard. A
+        skill the matcher marked a GAP must NOT be claimed; a PARTIAL is framed as
+        transferable, never as owned. If the Fit Summary is empty, compose S1–S4
+        from the verified/partial evidence directly.
         COMPOSITION (exactly four beats — the summary POSITIONS, bullets PROVE):
           S1: capability differentiator fused with the years framing (one sentence),
               ALIGNED TO THE JD'S OWN ROLE CLASS: lead with the capability the

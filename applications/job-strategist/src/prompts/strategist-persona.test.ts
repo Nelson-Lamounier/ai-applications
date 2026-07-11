@@ -42,6 +42,18 @@ describe('strategist-persona cover-letter JSON schema rules', () => {
         expect(lower).toContain('never self-label with the');
     });
 
+    it('derives the resume summary from the Fit Summary (outward translation, gap language stripped)', () => {
+        // v16: S1-S4 must anchor on the matcher's Fit Summary thesis, translated
+        // to positive positioning. Keeps the resume summary consistent with the
+        // grounded viability assessment without importing its gap/viability voice.
+        expect(joined).toContain('DERIVE FROM THE FIT SUMMARY');
+        expect(joined).toContain('OUTWARD-FACING TRANSLATION');
+        const lower = joined.toLowerCase();
+        // must instruct BOTH: keep the same thesis AND strip gap/viability wording
+        expect(lower).toContain('same central thesis');
+        expect(lower).toContain('strip every');
+    });
+
     it('carries NO hardcoded user identity — contact comes from the Candidate Contact section (multi-tenant: the v12-era persona shipped one user\'s literal name/email as the signoff example, which any other tenant\'s writer would have copied)', () => {
         expect(joined).not.toContain('Nelson Lamounier');
         expect(joined).not.toContain('lamounierleao@outlook.com');
