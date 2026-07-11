@@ -45,13 +45,20 @@ export interface StrategistMessageSection {
  * case-studies section, whose preamble scopes usage to grounding bullets —
  * run 77e325ea shipped a summary whose S3 slot was a second rigor close while
  * the user's undersold differentiators sat unused inside the wrong wrapper.
- * That is why it is its own labelled section, not why it is here at all:
- * since the summary-agent split, the BODY no longer composes the summary, so
- * this copy now feeds the body's profile headline, positioning, and
- * cover-letter emphasis. The summary's S3 distinctive angle is composed by
- * the separate summary agent (summary-message.ts) from its OWN "## Profile
+ * That is why it is its own labelled section.
+ *
+ * Since the summary-agent split, the BODY no longer composes the resume
+ * summary itself: the summary's S3 distinctive angle is composed by the
+ * separate summary agent (summary-message.ts) from its OWN "## Profile
  * Intelligence" section — a different pin relationship (see
- * strategist-summary-persona.test.ts), not this header.
+ * strategist-summary-persona.test.ts), not this header. NOTE: the body's
+ * Profile Intelligence prompt wording below (this header, plus the
+ * instructional text in buildProfileIntelligence) still tells the body's
+ * model that this section is "the summary S3 distinctive-angle source" /
+ * the "PRIMARY source for the summary's S3 distinctive angle". That wording
+ * is stale relative to control flow but is left unchanged here: retuning it
+ * is a prompt change requiring its own eval (CLAUDE.md §5) and is deferred
+ * to that follow-up / a UI A-B, not a comment cleanup.
  */
 export const PROFILE_INTELLIGENCE_HEADER =
     '### Profile Intelligence (code-grounded — the summary S3 distinctive-angle source)';
@@ -282,11 +289,9 @@ function buildProfileIntelligence(out: string[], { profileIntelligence }: Strate
         '', PROFILE_INTELLIGENCE_HEADER,
         'Code-grounded synthesis of the candidate\'s OWN GitHub: code-demonstrated direction and',
         'seniority, UNDERSOLD strengths (what the code proves but the resume under-states), and',
-        'unsupported resume claims to avoid leaning on. Use it for positioning choices — the',
-        'profile headline and cover-letter emphasis. (The summary\'s S3 distinctive angle is',
-        'composed by a separate downstream agent from its own Profile Intelligence copy; this',
-        'section does not feed that step.) It is NOT project case-study evidence: cite projects',
-        'from the case-studies section, not from here.',
+        'unsupported resume claims to avoid leaning on. This is the PRIMARY source for the',
+        'summary\'s S3 distinctive angle and for positioning choices. It is NOT project',
+        'case-study evidence: cite projects from the case-studies section, not from here.',
         '--- BEGIN PROFILE INTELLIGENCE ---',
         profileIntelligence.trim(),
         '--- END PROFILE INTELLIGENCE ---',
