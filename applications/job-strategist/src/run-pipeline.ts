@@ -111,6 +111,45 @@ async function applyResumeIntegrity(
 function resolveVerifiedAnalysis(original: string, g: { status: string; answer: string }): string {
     return g.status === 'GROUNDED' ? original : g.answer;
 }
+
+/**
+ * Summary agent — fills the body's empty summary field. The body writer emits
+ * an empty summary; a dedicated Sonnet call (S1-S4 beats, constrained
+ * decoding) produces the positioning summary from the research verdicts +
+ * finished resume body. On failure (schema/network/etc.) fall back to a
+ * deterministic, guard-safe summary derived from the Fit Summary so the
+ * pipeline never persists an empty or ungrounded summary. Fail-open by
+ * design — never throws into the pipeline. Extracted from main() to keep its
+ * complexity at the baseline.
+ */
+async function fillResumeSummary(
+    ctx: StrategistPipelineContext,
+    tailoredResumeData: StructuredResumeData | null,
+    researchData: StrategistResearchResult,
+    profileIntelligence: string,
+    yearsGap: YearsGapLite,
+    achievementEvidence: string,
+    metric: Counter<'outcome'>,
+    onFallback: (err: unknown) => void,
+): Promise<void> {
+    if (!tailoredResumeData) return;
+    try {
+        const summaryRes = await executeSummaryAgent(ctx, {
+            research: researchData,
+            body: tailoredResumeData,
+            profileIntelligence,
+            yearsGapFraming: framingDirective(yearsGap) ?? '',
+            achievementEvidence,
+        });
+        (tailoredResumeData as { summary: string }).summary = summaryRes.data.summary;
+        metric.inc({ outcome: 'agent' });
+    } catch (err) {
+        (tailoredResumeData as { summary: string }).summary =
+            deterministicSummary(researchData.fitSummary, researchData.targetRole);
+        metric.inc({ outcome: 'fallback' });
+        onFallback(err);
+    }
+}
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
 import { attachSourceLanes, mergeRepoLane } from './ats/evidence-lane.js';
@@ -1034,35 +1073,16 @@ export async function main(): Promise<void> {
         );
 
         // ── Summary agent — fills the body's empty summary field ──
-        // The body writer emits an empty summary; a dedicated Sonnet call
-        // (S1-S4 beats, constrained decoding) produces the positioning
-        // summary from the research verdicts + finished resume body. On
-        // failure (schema/network/etc.) fall back to a deterministic,
-        // guard-safe summary derived from the Fit Summary so the pipeline
-        // never persists an empty or ungrounded summary. Fail-open by design
-        // — never throws into the pipeline.
-        if (tailoredResumeData) {
-            try {
-                const summaryRes = await executeSummaryAgent(ctx, {
-                    research: researchData,
-                    body: tailoredResumeData,
-                    profileIntelligence: profileIntelligenceBlock,
-                    yearsGapFraming: framingDirective(yearsGap) ?? '',
-                    achievementEvidence: achievementEvidenceBlock,
-                });
-                (tailoredResumeData as { summary: string }).summary = summaryRes.data.summary;
-                summaryOutcomeMetric.inc({ outcome: 'agent' });
-            } catch (err) {
-                (tailoredResumeData as { summary: string }).summary =
-                    deterministicSummary(researchData.fitSummary, researchData.targetRole);
-                summaryOutcomeMetric.inc({ outcome: 'fallback' });
-                log.warn({
-                    pipelineRunId: env.pipelineRunId,
-                    agent: 'strategist-summary',
-                    error: err instanceof Error ? err.message : String(err),
-                }, 'summary_agent_failed_deterministic_fallback_used');
-            }
-        }
+        await fillResumeSummary(
+            ctx, tailoredResumeData, researchData, profileIntelligenceBlock,
+            yearsGap, achievementEvidenceBlock,
+            summaryOutcomeMetric,
+            (err) => log.warn({
+                pipelineRunId: env.pipelineRunId,
+                agent: 'strategist-summary',
+                error: err instanceof Error ? err.message : String(err),
+            }, 'summary_agent_failed_deterministic_fallback_used'),
+        );
 
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
