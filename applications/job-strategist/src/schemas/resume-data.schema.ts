@@ -2,75 +2,81 @@
  * @format
  * Resume Data Schema — Zod Runtime Validation (Option A: Full)
  *
- * Complete Zod schema for the `StructuredResumeData` type, validating
- * every field of the resume data loaded from DynamoDB.
+ * The PERSIST GATE for `StructuredResumeData`: persistTailoredResume writes
+ * `JSON.stringify(validated.data)`, and a plain z.object() strips undeclared
+ * keys — so this schema decides what actually reaches the DB.
  *
- * Used in the trigger handler to replace the unsafe
- * `as StructuredResumeData` cast on DynamoDB read results.
+ * Every section derives from the canonical base shapes in resume-sections.ts
+ * (single source of truth), tightened here with non-empty / email constraints.
+ * Deriving (rather than re-declaring) is what prevents the
+ * projects[].highlights class of bug: a field added to the base propagates
+ * here automatically instead of being silently deleted on the DB write.
  *
- * @see trigger-handler.ts line 169
+ * @see resume-sections.ts — canonical shapes + the drift-test contract
  * @see shared/src/strategist-types.ts StructuredResumeData
  */
 
 import { z } from 'zod';
+import {
+    ProfileBaseSchema,
+    ExperienceBaseSchema,
+    SkillCategoryBaseSchema,
+    EducationBaseSchema,
+    CertificationBaseSchema,
+    ProjectBaseSchema,
+    AchievementBaseSchema,
+} from './resume-sections.js';
 
 // =============================================================================
-// NESTED SCHEMAS
+// NESTED SCHEMAS — base shapes tightened for persistence
 // =============================================================================
 
 /** Profile/contact information from the resume */
-export const ResumeProfileSchema = z.object({
+export const ResumeProfileSchema = ProfileBaseSchema.extend({
     name: z.string().min(1),
     title: z.string().min(1),
     email: z.string().email(),
     location: z.string().min(1),
-    linkedin: z.string().optional(),
-    github: z.string().optional(),
-    website: z.string().optional(),
 });
 
 /** A single professional experience entry */
-export const ResumeExperienceSchema = z.object({
+export const ResumeExperienceSchema = ExperienceBaseSchema.extend({
     company: z.string().min(1),
     title: z.string().min(1),
     period: z.string().min(1),
-    highlights: z.array(z.string()),
 });
 
 /** A skill category with grouped skills */
-export const ResumeSkillCategorySchema = z.object({
+export const ResumeSkillCategorySchema = SkillCategoryBaseSchema.extend({
     category: z.string().min(1),
-    skills: z.array(z.string()),
 });
 
 /** Education entry */
-export const ResumeEducationSchema = z.object({
+export const ResumeEducationSchema = EducationBaseSchema.extend({
     degree: z.string().min(1),
     institution: z.string().min(1),
     period: z.string().min(1),
 });
 
 /** Certification entry */
-export const ResumeCertificationSchema = z.object({
+export const ResumeCertificationSchema = CertificationBaseSchema.extend({
     name: z.string().min(1),
     year: z.string().min(1),
     issuer: z.string().min(1),
 });
 
-/** Project entry */
-export const ResumeProjectSchema = z.object({
+/**
+ * Project entry — inherits `highlights` from the base. The field whose
+ * omission HERE (while the type and writer schema had it) silently deleted
+ * every project bullet on the DB write.
+ */
+export const ResumeProjectSchema = ProjectBaseSchema.extend({
     name: z.string().min(1),
     description: z.string().min(1),
-    github: z.string().optional(),
-    // JD-aligned technical bullets. MUST be declared here: this schema is the
-    // final persist gate (persistTailoredResume → StructuredResumeDataSchema),
-    // and a plain z.object() STRIPS undeclared keys — without this line every
-    // relocated/filled projects[].highlights was silently dropped on write.
-    highlights: z.array(z.string()).optional(),
 });
 
 /** Key achievement entry */
-export const ResumeAchievementSchema = z.object({
+export const ResumeAchievementSchema = AchievementBaseSchema.extend({
     achievement: z.string().min(1),
 });
 
