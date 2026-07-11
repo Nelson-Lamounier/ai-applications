@@ -28,8 +28,8 @@
         "sha256": "3afc3476d2a72e41fcdd517683d5fc5113462d7fe9ff497c1ce3c125c421dd29"
     },
     "research-persona": {
-        "version": "2",
-        "sha256": "ddddb047ba8662194566bd0d7b9a52b985b08d912c9ddb7b6e0c28e0ebd075fd"
+        "version": "3",
+        "sha256": "3ac4c92db2186686c741721e992bc0f94ce3ae1b8c513007a959a90cf773d5f8"
     },
     "strategist-persona": {
         "version": "15",
