@@ -1,487 +1,88 @@
-/** @format */
-import { CLAIM_STRENGTH_RULE } from '../lib/claim-strength.js';
-import { runAgent, log, normalizeProse } from '@bedrock/shared';
-import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
-import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.js';
-
-export interface ResumeViolation { code: string; detail: string; }
-export interface VerifiedEmployer { readonly name: string; readonly facts: string; }
-export interface ResumeGuardCtx {
-    targetRole: string;
-    leadIdentity: string;
-    verifiedEducation: string[];
-    archetypeSkillLead: string;
-    /** The JD's company problem — the summary's mandatory bridge target. */
-    companyProblem?: string;
-    /** The JD's company name — the bridge sentence's attribution anchor. */
-    targetCompany?: string;
-    /** Documented project pitches — the opening beat a project description must use. */
-    projectPitches?: ReadonlyArray<{ name: string; pitch: string }>;
-    /** JD required skills — with targetRole, the vocabulary the JD-echo fidelity gate screens for. */
-    jdRequiredSkills?: ReadonlyArray<string>;
-    /** Verified certifications (name + date string) — years are enforced, not trusted. */
-    verifiedCertifications?: ReadonlyArray<{ name: string; date: string }>;
-    /** Career-history employers + their verified highlight facts — the attribution boundary. */
-    verifiedEmployers?: ReadonlyArray<VerifiedEmployer>;
-}
-
-const GAP_PHRASE_RE = /falls?\s+short|do(?:es)?\s*not\s+yet\s+have/i;
-const GAP_YEARS_RE = /\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)/i;
-const namesGap = (text: string): boolean => GAP_PHRASE_RE.test(text) || GAP_YEARS_RE.test(text);
-
 /**
- * Generic stop-words that appear in many identities and are not differentiating
- * (e.g. "engineer", "builds", "years", "with", "who").
+ * @format
+ * Resume guard — facade + orchestrators.
+ *
+ * The rule families live in guards/ (one module per concern):
+ *   - guards/types.ts          shared interfaces (ResumeViolation, ResumeGuardCtx, …)
+ *   - guards/text.ts           tokenisers / name variants / sentence split
+ *   - guards/summary-rules.ts  summary inventory, echo, bridge, attribution
+ *   - guards/roster.ts         experience-roster invariant
+ *   - guards/claims-rules.ts   cert years, compliance, prohibited/scoped claims
+ *   - guards/fidelity-rules.ts experience/pitch/JD-echo grounding fidelity
+ *   - guards/rewrite.ts        the bounded Haiku repair pass
+ *
+ * This file keeps the three orchestrators (validateResume, guardResume,
+ * revalidateResumeContent) and re-exports every rule so existing consumers
+ * (run-pipeline, ats/length-budget, tests) keep importing from
+ * './resume-guard.js' unchanged. The monolith this replaces had grown past
+ * 1,100 lines and its rules repeatedly slipped during review.
  */
-const GENERIC_TOKENS = new Set(['engineer', 'builds', 'build', 'years', 'with', 'from', 'that', 'this', 'have', 'been', 'into', 'your', 'their', 'where', 'what', 'will', 'more', 'over', 'about', 'some', 'when', 'than', 'like']);
+import type { StructuredResumeData } from '@bedrock/shared';
+import type { ResumeViolation, ResumeGuardCtx } from './guards/types.js';
+import {
+    TITLE_NOUNS, namesGap, leadClusterTokens, findMisplacedSelectedWork,
+    checkSummaryInventory, checkProjectInventory, checkSummaryEcho,
+    checkProblemBridge, checkSummaryAttribution,
+    stripJobDescribingSentences, stripIdentityProblemClause,
+} from './guards/summary-rules.js';
+import {
+    enforceCertYears, enforceProhibitedClaims, enforceScopedClaims,
+    dropKeyAchievementsSection, stripEmDashes,
+    checkComplianceOverclaim, checkMetricStuffedBullets,
+} from './guards/claims-rules.js';
+import { preserveExperienceRoster } from './guards/roster.js';
+import {
+    checkProjectPitchAlignment, checkBulletJdEcho, checkExperienceFidelity,
+} from './guards/fidelity-rules.js';
+import { rewriteResume } from './guards/rewrite.js';
 
-/** Job-title nouns that must not appear in a positioning headline's lead segment. */
-const TITLE_NOUNS = new Set(['engineer', 'engineering', 'associate', 'analyst', 'manager', 'developer', 'specialist', 'lead', 'architect', 'consultant', 'administrator', 'coordinator', 'technician', 'officer', 'director', 'assistant', 'representative', 'agent', 'scientist']);
+// Re-export the full rule surface — consumers import from './resume-guard.js'.
+export type { ResumeViolation, VerifiedEmployer, ResumeGuardCtx } from './guards/types.js';
+export {
+    summarySharedNumbers, summaryEchoSentences, summaryConflationSentences,
+    identityProblemPhrases, jobDescribingSentences, targetCompanySentences,
+    stripJobDescribingSentences, stripIdentityProblemClause,
+} from './guards/summary-rules.js';
+export { preserveExperienceRoster } from './guards/roster.js';
+export {
+    enforceCertYears, enforceProhibitedClaims, enforceScopedClaims,
+    dropKeyAchievementsSection, stripEmDashes,
+    PROHIBITED_CLAIMS, SCOPED_CLAIMS,
+} from './guards/claims-rules.js';
+export type { ProhibitedClaim, ScopedClaim } from './guards/claims-rules.js';
+export {
+    checkProjectPitchAlignment, checkBulletJdEcho, checkExperienceFidelity,
+} from './guards/fidelity-rules.js';
+export { rewriteResume, RESUME_REWRITE_PROMPT_META } from './guards/rewrite.js';
 
-/** A "Selected work"/GitHub highlight must not sit under a support/customer/QA role. */
-const SUPPORT_ROLE_RE = /support|customer|service|associate|quality assurance|\bqa\b|help\s?desk|technician/i;
-const SELECTED_WORK_RE = /selected work|github\.com/i;
-
-/**
- * Returns the distinctive lead tokens from the identity string — words that
- * identify the archetype cluster (e.g. "support", "production") — by taking
- * the first token that is not in GENERIC_TOKENS.
- */
-function leadClusterTokens(leadIdentity: string): string[] {
-    const all = leadIdentity.toLowerCase().split(/[^a-z]+/).filter((t) => t.length > 3);
-    return all.filter((t) => !GENERIC_TOKENS.has(t));
-}
-
-/** Returns the support/customer role title whose highlights hold a Selected-work/GitHub line, else null. */
-function findMisplacedSelectedWork(resume: StructuredResumeData): string | null {
-    for (const e of resume.experience ?? []) {
-        if (SUPPORT_ROLE_RE.test(e.title) && (e.highlights ?? []).some((h) => SELECTED_WORK_RE.test(h))) {
-            return e.title;
-        }
-    }
-    return null;
-}
-
-/** Numbers (integers with optional +) appearing in a prose string. */
-function numbersIn(text: string): Set<string> {
-    return new Set((text.match(/\d+(?:[.,]\d+)?\+?/g) ?? []).map((n) => n.replace(/[,+]/g, '')));
-}
-
-/** Distinct numbers the summary shares with experience bullets. */
-export function summarySharedNumbers(resume: StructuredResumeData): string[] {
-    const summaryNums = numbersIn(resume.summary ?? '');
-    if (summaryNums.size === 0) return [];
-    const bulletNums = numbersIn((resume.experience ?? []).flatMap((e) => e.highlights ?? []).join(' '));
-    return [...summaryNums].filter((n) => bulletNums.has(n));
-}
-
-/**
- * The summary POSITIONS, bullets PROVE — a summary that restates bullet
- * headline numbers is an inventory, not a positioning statement (the
- * Accenture run's summary repeated 16-CDK-stack + 30 Checkov rules from
- * bullets 2 and 4). One shared number is allowed: the closing metric.
- */
-function checkSummaryInventory(out: ResumeViolation[], resume: StructuredResumeData): void {
-    const sharedNumbers = summarySharedNumbers(resume);
-    if (sharedNumbers.length > 0) {
-        out.push({ code: 'summary_restates_bullets', detail: `Summary repeats ${sharedNumbers.length} number(s) already used in experience bullets (${sharedNumbers.join(', ')}) — the ladder rule: summary states the shape, bullets substantiate; convey rigor qualitatively and keep counts in the bullets.` });
-    }
-}
-
-/**
- * Projects share the summary's contract: they POSITION (pitch + differentiator
- * + one fresh metric); bullets PROVE. A description sharing more than one
- * number with the experience bullets is a restated inventory (the Accenture
- * run's AI-Platform description repeated 16-CDK-stack and 25 ArgoCD apps).
- */
-function checkProjectInventory(out: ResumeViolation[], resume: StructuredResumeData): void {
-    const bulletNums = numbersIn((resume.experience ?? []).flatMap((e) => e.highlights ?? []).join(' '));
-    for (const p of resume.projects ?? []) {
-        const shared = [...numbersIn(p.description ?? '')].filter((n) => bulletNums.has(n));
-        if (shared.length > 1) {
-            out.push({ code: 'project_restates_bullets', detail: `Project "${p.name}" repeats ${shared.length} numbers already used in experience bullets (${shared.join(', ')}) — open with the documented pitch, add one JD-relevant differentiator, one fresh metric.` });
-        }
-    }
-}
-
-const ECHO_STOPWORDS = new Set([
-    'production', 'platform', 'platforms', 'systems', 'infrastructure', 'engineering', 'delivery',
-    'through', 'across', 'every', 'before', 'spanning', 'applies', 'builds', 'build', 'built',
-    'and', 'the', 'via', 'end', 'with', 'for', 'from', 'that', 'this', 'into', 'are', 'has',
-    'have', 'was', 'were', 'per', 'all', 'one', 'two', 'its', 'our', 'their', 'work', 'using',
-]);
-
-/** Content tokens (len >= 3 so tech acronyms like EKS/CDK/IaC count; non-generic). */
-function contentTokens(text: string): string[] {
-    return (text.toLowerCase().match(/[a-z][a-z0-9+-]{2,}/g) ?? []).filter((t) => !ECHO_STOPWORDS.has(t));
-}
-
-/**
- * Summary sentences that topically ECHO the experience bullets (>= 60% of a
- * sentence's content tokens already appear in bullets, min 4 hits). Number
- * overlap catches restated metrics; this catches restated TOPICS — the run
- * that motivated it summarised "secure CI/CD, Kubernetes on EKS, multi-account
- * IaC, observability": four bullet headlines re-listed with one shared number.
- */
-export function summaryEchoSentences(resume: StructuredResumeData): string[] {
-    const bulletTokens = new Set(contentTokens((resume.experience ?? []).flatMap((e) => e.highlights ?? []).join(' ')));
-    if (bulletTokens.size === 0) return [];
-    return (resume.summary ?? '').split(/(?<=[.!?])\s+/).filter((sentence) => {
-        const tokens = contentTokens(sentence);
-        if (tokens.length < 4) return false;
-        const hits = tokens.filter((t) => bulletTokens.has(t)).length;
-        return hits >= 4 && hits / tokens.length >= 0.6;
-    });
-}
-
-function checkSummaryEcho(out: ResumeViolation[], resume: StructuredResumeData): void {
-    const echoes = summaryEchoSentences(resume);
-    if (echoes.length > 0) {
-        out.push({ code: 'summary_echoes_bullets', detail: `Summary sentence(s) topically restate experience bullets: "${echoes[0].slice(0, 120)}…" — the summary positions (problem bridge, distinctive angle); bullets prove.` });
-    }
-}
-
-/** The summary must visibly bridge to the JD's company problem (>= 2 distinctive problem tokens present). */
-function checkProblemBridge(out: ResumeViolation[], resume: StructuredResumeData, companyProblem?: string): void {
-    if (!companyProblem) return;
-    const problemTokens = new Set(contentTokens(companyProblem));
-    if (problemTokens.size < 3) return;
-    const summaryTokens = new Set(contentTokens(resume.summary ?? ''));
-    const hits = [...problemTokens].filter((t) => summaryTokens.has(t)).length;
-    if (hits < 2) {
-        out.push({ code: 'summary_missing_problem_bridge', detail: 'Summary never bridges to the JD\'s company problem — one sentence must connect the candidate\'s approach to the problem this role exists to solve.' });
-    }
-}
-
-// =============================================================================
-// SUMMARY ATTRIBUTION (deterministic) — employer vs solo project, JD-problem
-// language placement, bridge attribution. Motivated by the Accenture DevOps run
-// whose summary welded "At AWS I triaged production failures; building Tucaken,
-// I eliminated…" (AWS role is customer support — everything after the semicolon
-// read as AWS platform work) and re-used the companyProblem's "cross-functional
-// teams … bottleneck" phrasing as the candidate's own identity claim.
-// =============================================================================
-
-/** Prose name variants for an entity ("Amazon Web Services (AWS)" → both forms; "Meta via Accenture" → each employer). */
-function nameVariants(name: string): string[] {
-    const inner: string[] = [];
-    let outer = '';
-    let depth = 0;
-    let buf = '';
-    for (const ch of name) {
-        if (ch === '(') { depth += 1; buf = ''; continue; }
-        if (ch === ')' && depth > 0) { depth -= 1; inner.push(buf); outer += ' '; continue; }
-        if (depth > 0) buf += ch; else outer += ch;
-    }
-    const collapsed = outer.toLowerCase().replaceAll(/\s+/g, ' ');
-    const raw = [...collapsed.split(' via '), ...inner].map((v) => v.trim().toLowerCase());
-    // "The Mater Private Network" must match "Mater Private Network's" in prose.
-    const dearticled = raw.filter((v) => v.startsWith('the ')).map((v) => v.slice(4));
-    return [...raw, ...dearticled].filter((v) => v.length >= 3);
-}
-
-function escapeRe(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-}
-
-/** Whole-word presence of any variant in the sentence. */
-function anyVariantIn(sentence: string, variants: string[]): boolean {
-    return variants.some((v) => new RegExp(String.raw`\b${escapeRe(v)}\b`, 'i').test(sentence));
-}
-
-/**
- * Summary sentences that name a verified employer AND a project in the same
- * sentence — one predicate chain makes the reader attribute the project's
- * platform claims to the employer. Employer anchor and solo-project bridge
- * must be separate sentences.
- */
-export function summaryConflationSentences(resume: StructuredResumeData, ctx: ResumeGuardCtx): string[] {
-    const employerVariants = (ctx.verifiedEmployers ?? []).flatMap((e) => nameVariants(e.name));
-    const projectVariants = (ctx.projectPitches ?? []).flatMap((p) => nameVariants(p.name));
-    if (employerVariants.length === 0 || projectVariants.length === 0) return [];
-    return (resume.summary ?? '').split(SENTENCE_SPLIT).filter(
-        (s) => anyVariantIn(s, employerVariants) && anyVariantIn(s, projectVariants),
-    );
-}
-
-/** Adjacent content-token pairs — phrase-level fingerprint of a text. */
-function contentBigrams(text: string): Set<string> {
-    const tokens = contentTokens(text);
-    const out = new Set<string>();
-    for (let i = 0; i < tokens.length - 1; i += 1) out.add(`${tokens[i]} ${tokens[i + 1]}`);
-    return out;
-}
-
-/**
- * companyProblem phrases (bigrams) appearing in the summary's FIRST sentence —
- * the identity beat. JD-problem language in the identity claim reads as the
- * candidate's delivered track record ("so cross-functional teams ship
- * reliably"); problem vocabulary belongs in the attributed bridge sentence.
- */
-export function identityProblemPhrases(resume: StructuredResumeData, companyProblem?: string): string[] {
-    if (!companyProblem) return [];
-    const first = (resume.summary ?? '').split(SENTENCE_SPLIT)[0] ?? '';
-    const problemBigrams = contentBigrams(companyProblem);
-    return [...contentBigrams(first)].filter((b) => problemBigrams.has(b));
-}
-/**
- * Job-describing phrases — BANNED in a summary. A summary describes the
- * candidate (what they bring), never the job (what the employer needs): the
- * reader already knows their own mission. This is the INVERSE of the original
- * bridge-attribution rule, which produced "This role exists to expand Mater
- * Private Network's IT capacity…" — an employer-named mission recitation
- * (run f133155f). Tailoring surfaces through which capabilities the summary
- * foregrounds, never through sentences about the employer.
- */
-const JOB_DESCRIBING_RE = /\bthis role\b|\bthe role\b|\brole exists\b|\bthey need\b|\bis hiring\b|\btheir (?:team|teams|platform|engineers|mission)\b|\bthe problem:/i;
-
-/** Summary sentences that describe the JOB rather than the candidate. */
-export function jobDescribingSentences(resume: StructuredResumeData): string[] {
-    return (resume.summary ?? '').split(SENTENCE_SPLIT).filter((s) => JOB_DESCRIBING_RE.test(s));
-}
-
-/**
- * Target-company name variants that are safe to flag: variants shared with a
- * verified employer stay legal (e.g. target Accenture while the career history
- * holds "Meta via Accenture" — the employer anchor may name it).
- */
-function flaggableTargetVariants(ctx: ResumeGuardCtx): string[] {
-    const target = ctx.targetCompany ? nameVariants(ctx.targetCompany) : [];
-    if (target.length === 0) return [];
-    const employerVariants = new Set((ctx.verifiedEmployers ?? []).flatMap((e) => nameVariants(e.name)));
-    return target.filter((v) => !employerVariants.has(v));
-}
-
-/** Summary sentences naming the target company (single-use resume + recitation smell). */
-export function targetCompanySentences(resume: StructuredResumeData, ctx: ResumeGuardCtx): string[] {
-    const variants = flaggableTargetVariants(ctx);
-    if (variants.length === 0) return [];
-    return (resume.summary ?? '').split(SENTENCE_SPLIT).filter((s) => anyVariantIn(s, variants));
-}
-
-/**
- * Deterministic backstop: DELETE summary sentences that describe the job or
- * name the target company. Runs when the bounded repair leaves them behind —
- * same precedent as the cover letter's third-person sentence strip. A summary
- * must never ship describing the employer's mission.
- */
-export function stripJobDescribingSentences(
-    resume: StructuredResumeData,
-    ctx: ResumeGuardCtx,
-    onViolation?: (v: ResumeViolation) => void,
-): StructuredResumeData {
-    const variants = flaggableTargetVariants(ctx);
-    const sentences = (resume.summary ?? '').split(SENTENCE_SPLIT);
-    const kept = sentences.filter((s) => !JOB_DESCRIBING_RE.test(s) && !anyVariantIn(s, variants));
-    if (kept.length === sentences.length) return resume;
-    onViolation?.({ code: 'summary_job_sentence_stripped', detail: `Deterministically removed ${sentences.length - kept.length} summary sentence(s) describing the job / naming the target company after the bounded repair left them in.` });
-    return { ...resume, summary: kept.join(' ').trim() };
-}
-
-/**
- * Deterministic backstop for identity-echo residuals: remove the clause
- * carrying a companyProblem bigram from the FIRST sentence (e.g. "…foundations
- * for cross-functional teams" -> "…foundations"). Falls back to deleting the
- * bigram words when no clause boundary wraps them.
- */
-export function stripIdentityProblemClause(
-    resume: StructuredResumeData,
-    companyProblem: string | undefined,
-    onViolation?: (v: ResumeViolation) => void,
-): StructuredResumeData {
-    const leaked = identityProblemPhrases(resume, companyProblem);
-    if (leaked.length === 0) return resume;
-    const sentences = (resume.summary ?? '').split(SENTENCE_SPLIT);
-    let first = sentences[0] ?? '';
-    for (const bigram of leaked) {
-        const [a, b] = bigram.split(' ');
-        const clause = new RegExp(String.raw`,?\s*(?:for|so that|so|enabling|supporting|helping|that)\s+[^,.]*${escapeRe(a)}[^,.]*${escapeRe(b)}[^,.]*`, 'i');
-        if (clause.test(first)) {
-            first = first.replace(clause, '');
-        } else {
-            first = first.replace(new RegExp(String.raw`${escapeRe(a)}[\s-]+${escapeRe(b)}`, 'i'), '');
-        }
-    }
-    first = first.replaceAll(/\s{2,}/g, ' ').replaceAll(/\s+([,.])/g, '$1').replace(/,\s*\./, '.').trim();
-    onViolation?.({ code: 'summary_identity_clause_stripped', detail: `Deterministically removed companyProblem phrasing (${leaked.join('; ')}) from the identity sentence after the bounded repair left it in.` });
-    return { ...resume, summary: [first, ...sentences.slice(1)].join(' ').trim() };
-}
-
-/**
- * Employer alias the summary OPENS with, or ''. "AWS cloud and backend
- * engineer" written by someone employed at Amazon Web Services reads as a job
- * title held AT AWS (run 77e325ea) — a misread waiting to happen at reference
- * stage. Employer names may still appear mid-sentence as work context
- * ("three years inside AWS production operations").
- */
-function summaryEmployerOpener(resume: StructuredResumeData, ctx: ResumeGuardCtx): string {
-    const summary = (resume.summary ?? '').trim().toLowerCase();
-    if (!summary) return '';
-    for (const variant of (ctx.verifiedEmployers ?? []).flatMap((e) => nameVariants(e.name))) {
-        if (variant && summary.startsWith(`${variant} `)) return variant;
-    }
-    return '';
-}
-
-/** All attribution checks — shared by the first guard pass and revalidation. */
-function checkSummaryAttribution(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
-    const employerOpener = summaryEmployerOpener(resume, ctx);
-    if (employerOpener) {
-        out.push({ code: 'summary_opens_with_employer', detail: `Summary opens with the employer name "${employerOpener}" and reads as a job title held at that employer — keep the identity differentiator's content but rephrase so it does not OPEN with an employer name (e.g. "Cloud engineer with three years inside AWS production operations", never "AWS cloud engineer").` });
-    }
-    const conflated = summaryConflationSentences(resume, ctx);
-    if (conflated.length > 0) {
-        out.push({ code: 'summary_employer_project_conflation', detail: `Summary sentence names an employer AND a project in one predicate chain: "${conflated[0].slice(0, 140)}" — split into separate sentences; the employer sentence carries only that employer's verified facts; the project sentence opens with the solo framing.` });
-    }
-    const leaked = identityProblemPhrases(resume, ctx.companyProblem);
-    if (leaked.length > 0) {
-        out.push({ code: 'summary_identity_echoes_problem', detail: `Identity sentence re-uses the JD companyProblem's phrasing (${leaked.slice(0, 3).join('; ')}) as the candidate's own track record — problem language belongs in the attributed bridge sentence.` });
-    }
-    const jobSentences = jobDescribingSentences(resume);
-    if (jobSentences.length > 0) {
-        out.push({ code: 'summary_describes_job', detail: `Summary sentence describes the JOB, not the candidate: "${jobSentences[0].slice(0, 140)}" — a summary states what the candidate brings; rewrite in candidate voice (the capabilities that meet this problem class) and delete role/mission recitation.` });
-    }
-    const namesTarget = targetCompanySentences(resume, ctx);
-    if (namesTarget.length > 0) {
-        out.push({ code: 'summary_names_target_company', detail: `Summary names the target company ("${namesTarget[0].slice(0, 140)}") — a summary naming the employer is single-use and reads as mission recitation; remove the name, keep the capability.` });
-    }
-}
-
-// =============================================================================
-// EXPERIENCE ROSTER INVARIANT (deterministic)
-// =============================================================================
-
-type ExperienceEntry = StructuredResumeData['experience'][number];
-
-/** A before-role is present in `after` when a role shares its title or a company name variant. */
-function rosterHasRole(after: ReadonlyArray<ExperienceEntry>, role: ExperienceEntry): boolean {
-    const title = role.title.trim().toLowerCase();
-    const companyVariants = new Set(nameVariants(role.company));
-    return after.some((e) => {
-        if (e.title.trim().toLowerCase() === title) return true;
-        return nameVariants(e.company).some((v) => companyVariants.has(v));
-    });
-}
-
-/**
- * No pass may REMOVE an experience role. Every mutating LLM pass (guard
- * rewrite, condense, expand, reframe, surface-keywords) returns a full resume
- * JSON, and Haiku was observed dropping a whole role while "fixing" other
- * issues (run 8830a239 lost Meta via Accenture). Matching is rename-tolerant
- * (title OR company-variant overlap) because repairs legitimately relabel
- * companies (e.g. the solo-platform framing). Dropped roles are reinserted
- * verbatim at their original index.
- */
-export function preserveExperienceRoster(
-    before: StructuredResumeData,
-    after: StructuredResumeData,
-    onViolation?: (v: ResumeViolation) => void,
-): StructuredResumeData {
-    const beforeRoles = before.experience ?? [];
-    const merged = [...(after.experience ?? [])];
-    let changed = false;
-    beforeRoles.forEach((role, idx) => {
-        if (rosterHasRole(merged, role)) return;
-        merged.splice(Math.min(idx, merged.length), 0, role);
-        changed = true;
-        onViolation?.({ code: 'experience_role_dropped', detail: `A rewrite pass removed the "${role.title}" role at "${role.company}" — reinserted verbatim. Every career-history role must appear on the resume.` });
-    });
-    return changed ? { ...after, experience: merged } : after;
-}
-
-/**
- * Certification years are verified facts, not model output — the strategist
- * emitted (2024) for a 2025 certification, borrowing the year from education
- * dates. Enforce the verified date in both the certifications array and any
- * "Name (YYYY)" prose mention.
- */
-export function enforceCertYears(resume: StructuredResumeData, verified: ReadonlyArray<{ name: string; date: string }>): { resume: StructuredResumeData; violations: ResumeViolation[] } {
-    if (verified.length === 0) return { resume, violations: [] };
-    let changed = false;
-    let out = resume;
-    for (const v of verified) {
-        const year = /\b(20\d{2})\b/.exec(v.date)?.[1];
-        if (!year) continue;
-        const certs = (out.certifications ?? []).map((c) => {
-            const entry = c as { name?: string; year?: string };
-            if (entry.name && entry.name.toLowerCase().includes(v.name.toLowerCase().slice(0, 20)) && entry.year !== year) {
-                changed = true;
-                return { ...c, year };
-            }
-            return c;
-        });
-        const namePattern = v.name.slice(0, 25).replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-        const proseRe = new RegExp(String.raw`(${namePattern}[^()]{0,30}\()(20\d{2})(\))`, 'i');
-        const summary = (out.summary ?? '').replace(proseRe, (m, pre, y, post) => {
-            if (y !== year) { changed = true; return `${pre}${year}${post}`; }
-            return m;
-        });
-        out = { ...out, certifications: certs, summary };
-    }
-    if (!changed) return { resume, violations: [] };
-    return { resume: out, violations: [{ code: 'cert_year_corrected', detail: 'Certification year did not match the verified career-history date — corrected deterministically.' }] };
-}
-
-const COMPLIANCE_FRAMEWORK_RE = /\b(hipaa|pci[\s-]?dss|nist[\s-]?800-53)\b/i;
-const COMPLIANCE_CLAIM_RE = /\bcomplian(?:ce|t)\b|\benforcing\b/i;
-const RULE_PACK_RE = /rule\s*packs?|policy-as-code/i;
-
-/**
- * Naming a framework next to "compliance"/"enforcing" without rule-pack
- * framing implies regulated compliance the candidate does not have — an
- * interviewer probes PCI scope and the whole resume loses credibility.
- */
-function checkComplianceOverclaim(out: ResumeViolation[], resume: StructuredResumeData): void {
-    const texts = [
-        resume.summary ?? '',
-        ...(resume.experience ?? []).flatMap((e) => e.highlights ?? []),
-        ...(resume.projects ?? []).map((p) => p.description ?? ''),
-    ];
-    for (const text of texts) {
-        for (const sentence of text.split(/(?<=[.!?])\s+/)) {
-            if (COMPLIANCE_FRAMEWORK_RE.test(sentence) && COMPLIANCE_CLAIM_RE.test(sentence) && !RULE_PACK_RE.test(sentence)) {
-                out.push({ code: 'compliance_overclaim', detail: `"${sentence.slice(0, 110)}…" implies regulated compliance — reframe as the mechanism: policy-as-code gate with CDK-Nag RULE PACKS (named as packs), failing the pipeline on CRITICAL/HIGH.` });
-                return;
-            }
-        }
-    }
-}
-
-/** A bullet carrying 3+ distinct numbers is an inventory, not evidence. */
-function checkMetricStuffedBullets(out: ResumeViolation[], resume: StructuredResumeData): void {
-    for (const e of resume.experience ?? []) {
-        for (const h of e.highlights ?? []) {
-            if (numbersIn(h).size >= 3) {
-                out.push({ code: 'bullet_metric_stuffed', detail: `Bullet carries ${numbersIn(h).size} numbers ("${h.slice(0, 90)}…") — keep the strongest IMPACT metric (or one before/after pair) and cut the inventory counts; when everything is quantified nothing stands out.` });
-                return;
-            }
-        }
-    }
-}
-
-export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
-    const out: ResumeViolation[] = [];
+/** profile.title must be a capability headline, never a job-title claim. */
+function checkHeadline(out: ResumeViolation[], resume: StructuredResumeData): void {
     const title = resume.profile.title.trim();
-
+    if (!title) return;
     const hasSeparator = /[·—|]/.test(title);
     const employmentTitles = new Set(resume.experience.map((e) => e.title.toLowerCase().trim()));
     const leadSeg = title.split(/[·—|]/)[0].trim().toLowerCase();
     const hasTitleNoun = leadSeg.split(/\s+/).some((w) => TITLE_NOUNS.has(w));
-    if (title && (!hasSeparator || employmentTitles.has(title.toLowerCase()) || hasTitleNoun)) {
+    if (!hasSeparator || employmentTitles.has(title.toLowerCase()) || hasTitleNoun) {
         out.push({ code: 'headline_is_title', detail: `profile.title "${title}" reads as a job-title claim — it must be a descriptive domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect…).` });
     }
+}
 
+/** Summary opener must lead the archetype cluster and never concede the gap. */
+function checkSummaryOpener(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
     const summary = resume.summary.trim();
     const firstSentence = summary.split(/(?<=[.!?])\s/)[0]?.toLowerCase() ?? '';
     const tokens = leadClusterTokens(ctx.leadIdentity);
     if (summary && tokens.length > 0 && !tokens.some((t) => firstSentence.includes(t))) {
         out.push({ code: 'summary_wrong_cluster', detail: 'Summary opener does not lead with the archetype lead-identity differentiator.' });
     }
-
     if (namesGap(summary)) {
         out.push({ code: 'summary_names_gap', detail: 'Summary names/concedes the experience gap.' });
     }
+}
 
+/** Every education degree must appear in the verified facts. */
+function checkEducation(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
     const verifiedLower = new Set(ctx.verifiedEducation.map((v) => v.toLowerCase()));
     for (const ed of resume.education) {
         const deg = ed.degree.toLowerCase();
@@ -490,13 +91,24 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
             break;
         }
     }
+}
 
-    if (ctx.archetypeSkillLead) {
-        const firstCat = (resume.skills[0]?.category ?? '').toLowerCase();
-        if (firstCat && firstCat !== ctx.archetypeSkillLead.toLowerCase()) {
-            out.push({ code: 'skills_lead_mismatch', detail: `First skill group "${resume.skills[0]?.category}" is not the archetype lead "${ctx.archetypeSkillLead}".` });
-        }
+/** The archetype's lead skill group must come first. */
+function checkSkillsLead(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
+    if (!ctx.archetypeSkillLead) return;
+    const firstCat = (resume.skills[0]?.category ?? '').toLowerCase();
+    if (firstCat && firstCat !== ctx.archetypeSkillLead.toLowerCase()) {
+        out.push({ code: 'skills_lead_mismatch', detail: `First skill group "${resume.skills[0]?.category}" is not the archetype lead "${ctx.archetypeSkillLead}".` });
     }
+}
+
+export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
+    const out: ResumeViolation[] = [];
+
+    checkHeadline(out, resume);
+    checkSummaryOpener(out, resume, ctx);
+    checkEducation(out, resume, ctx);
+    checkSkillsLead(out, resume, ctx);
 
     checkSummaryInventory(out, resume);
     checkProjectInventory(out, resume);
@@ -514,365 +126,22 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
     return out;
 }
 
-// =============================================================================
-// PROHIBITED / BRIDGE-REQUIRED CLAIMS (deterministic)
-// =============================================================================
-
-/**
- * Hard factual prohibitions, mirrored from the persona's ABSOLUTE RULES —
- * enforced in code because the prompt version was violated in production
- * (the A/B run's summary claimed "Terraform" flat; the transfer graph made
- * it attainable-transferable, but the mandatory bridge framing was dropped).
- *
- * Two classes:
- * - `replacement`: never claimable — deterministically substituted.
- * - `bridge`: claimable ONLY with transfer framing in the same sentence
- *   (e.g. "CDK, transferable to Terraform"); flat mentions are removed
- *   from skill lists and repaired in prose.
- */
-export interface ProhibitedClaim {
-    readonly term: RegExp;
-    readonly label: string;
-    /** Deterministic substitution (never-claimable class). */
-    readonly replacement?: string;
-    /** Same-sentence markers that make the mention honest (bridge class). */
-    readonly bridge?: RegExp;
-}
-
-export const PROHIBITED_CLAIMS: readonly ProhibitedClaim[] = [
-    { term: /\bservice\s+mesh\b/gi, label: 'service mesh', replacement: 'Traefik v3 ingress and cross-namespace routing' },
-    { term: /\bterraform\b/gi,       label: 'Terraform',    bridge: /transferable|equivalent|similar to|analogous|via (aws )?cdk/i },
-    { term: /\bgke\b/gi,             label: 'GKE',          bridge: /transferable|equivalent|similar to|analogous|via (aws )?eks/i },
-    { term: /\baks\b/gi,             label: 'AKS',          bridge: /transferable|equivalent|similar to|analogous|via (aws )?eks/i },
-    { term: /\bfine[- ]tuning\b|\bRLHF\b/gi, label: 'fine-tuning/RLHF', replacement: 'Bedrock API integration' },
-    { term: /\bon[- ]call\b/gi,      label: 'on-call',      replacement: 'solo-operated' },
-    { term: /\benterprise[- ]scale\b/gi, label: 'enterprise-scale', replacement: 'production' },
-];
-
-const SENTENCE_SPLIT = /(?<=[.!?])\s+/;
-
-function sentenceHonest(sentence: string, claim: ProhibitedClaim): boolean {
-    if (claim.replacement !== undefined) return false;
-    return claim.bridge ? claim.bridge.test(sentence) : true;
-}
-
-/** Fix one prose string: substitute never-claimables; report unbridged mentions. */
-function fixProse(text: string, claim: ProhibitedClaim, unbridged: string[]): string {
-    if (claim.replacement !== undefined) {
-        claim.term.lastIndex = 0;
-        return text.replace(claim.term, claim.replacement);
-    }
-    for (const sentence of text.split(SENTENCE_SPLIT)) {
-        claim.term.lastIndex = 0;
-        if (claim.term.test(sentence) && !sentenceHonest(sentence, claim)) unbridged.push(claim.label);
-    }
-    return text;
-}
-
-/** Skill-list items: a flat prohibited/bridge-less term is removed from the item. */
-function fixSkillItem(item: string, claim: ProhibitedClaim): string {
-    claim.term.lastIndex = 0;
-    if (!claim.term.test(item)) return item;
-    if (claim.replacement !== undefined) { claim.term.lastIndex = 0; return item.replace(claim.term, claim.replacement); }
-    if (claim.bridge?.test(item)) return item;
-    claim.term.lastIndex = 0;
-    return item.replace(claim.term, '').replaceAll(/,\s*,/g, ',').replaceAll(/\(\s*,|,\s*\)/g, (m) => m.includes('(') ? '(' : ')').replaceAll(/\s{2,}/g, ' ').trim().replace(/^,|,$/g, '').trim();
-}
-
-/**
- * Deterministic prohibited-claims pass over every prose surface. Skill lists
- * are fixed in place; prose sentences with unbridged bridge-class terms are
- * reported for the bounded repair (deleting mid-sentence words mangles prose).
- */
-export function enforceProhibitedClaims(resume: StructuredResumeData): { resume: StructuredResumeData; violations: ResumeViolation[] } {
-    const unbridged: string[] = [];
-    let out = resume;
-    for (const claim of PROHIBITED_CLAIMS) {
-        out = {
-            ...out,
-            summary: typeof out.summary === 'string' ? fixProse(out.summary, claim, unbridged) : out.summary,
-            experience: (out.experience ?? []).map((e) => ({ ...e, highlights: (e.highlights ?? []).map((h) => fixProse(h, claim, unbridged)) })),
-            projects: (out.projects ?? []).map((pr) => ({ ...pr, description: typeof pr.description === 'string' ? fixProse(pr.description, claim, unbridged) : pr.description })),
-            skills: (out.skills ?? []).map((g) => ({ ...g, skills: (g.skills ?? []).map((it) => fixSkillItem(it, claim)).filter((it) => it.length > 0) })),
-        };
-    }
-    const violations: ResumeViolation[] = [];
-    if (JSON.stringify(out) !== JSON.stringify(resume)) {
-        violations.push({ code: 'prohibited_claim_fixed', detail: 'Never-claimable terms substituted / flat bridge-class terms removed from skill lists.' });
-    }
-    const distinct = [...new Set(unbridged)];
-    if (distinct.length > 0) {
-        violations.push({ code: 'unbridged_transferable_claim', detail: `Flat mention of ${distinct.join(', ')} without transfer framing — restate with the honest bridge (e.g. "CDK, transferable to Terraform") or remove.` });
-    }
-    return { resume: out, violations };
-}
-
-// =============================================================================
-// SCOPED-CLAIM ENFORCEMENT (deterministic)
-// =============================================================================
-
-/**
- * Evidence metrics that carry a mandatory scope qualifier. A claim using the
- * metric WITHOUT its qualifier overstates scope (the exact failure the
- * anti-fabrication positioning exists to prevent). Enforcement is section-
- * aware: sections that allow qualifiers get the qualifier appended; sections
- * where qualifiers are banned (summary, skills, projects) lose the metric.
- */
-export interface ScopedClaim {
-    /** Topic words that identify the claim in prose (with metricCore in the same string). */
-    readonly context: RegExp;
-    /** The metric's numeric core (e.g. inside a parenthetical). */
-    readonly metricCore: RegExp;
-    /** Present ⇒ the claim is properly scoped. */
-    readonly qualifier: RegExp;
-    /** Text appended when qualifying is allowed. */
-    readonly qualifierText: string;
-    readonly label: string;
-}
-
-export const SCOPED_CLAIMS: readonly ScopedClaim[] = [
-    {
-        context:       /cach|prompt/i,
-        metricCore:    /~?\s{0,5}90\s{0,5}%/,
-        qualifier:     /writer\s+lambda/i,
-        qualifierText: '(Writer Lambda)',
-        label:         'prompt-cache cost reduction',
-    },
-];
-
-function isUnqualified(text: string, claim: ScopedClaim): boolean {
-    return claim.metricCore.test(text) && claim.context.test(text) && !claim.qualifier.test(text);
-}
-
-/** Append the scope qualifier to the sentence carrying the metric. */
-function qualifyClaim(text: string, claim: ScopedClaim): string {
-    return text
-        .split(/(?<=[.!?])\s+/)
-        .map((s) => {
-            if (!isUnqualified(s, claim)) return s;
-            const trimmed = s.replace(/([.!?])$/, '');
-            const punct = s.endsWith(trimmed) ? '' : s.slice(trimmed.length);
-            return `${trimmed} ${claim.qualifierText}${punct}`;
-        })
-        .join(' ');
-}
-
-/**
- * Remove an unqualified scoped metric from prose: first drop a parenthetical
- * carrying it, then (if it survives outside parentheses) drop the sentence.
- */
-function stripClaimFromProse(text: string, claim: ScopedClaim): string {
-    const withoutParen = text.replace(/ ?\([^)]*\)/g, (m) => (claim.metricCore.test(m) ? '' : m));
-    if (!isUnqualified(withoutParen, claim)) return withoutParen.trim();
-    return withoutParen
-        .split(/(?<=[.!?])\s+/)
-        .filter((s) => !isUnqualified(s, claim))
-        .join(' ')
-        .trim();
-}
-
-function enforceClaimOnSkills(resume: StructuredResumeData, claim: ScopedClaim): StructuredResumeData {
-    if (!Array.isArray(resume.skills)) return resume;
-    const skills = resume.skills.map((group) => ({
-        ...group,
-        skills: (group.skills ?? [])
-            .map((s) => (isUnqualified(s, claim) ? stripClaimFromProse(s, claim) : s))
-            .filter((s) => s.length > 0 && !isUnqualified(s, claim)),
-    }));
-    return { ...resume, skills };
-}
-
-function enforceClaimOnHighlights(resume: StructuredResumeData, claim: ScopedClaim): StructuredResumeData {
-    if (!Array.isArray(resume.experience)) return resume;
-    const experience = resume.experience.map((e) => ({
-        ...e,
-        highlights: (e.highlights ?? []).map((h) => (isUnqualified(h, claim) ? qualifyClaim(h, claim) : h)),
-    }));
-    const keyAchievements = Array.isArray(resume.keyAchievements)
-        ? resume.keyAchievements.map((k) => (
-            typeof k.achievement === 'string' && isUnqualified(k.achievement, claim)
-                ? { ...k, achievement: qualifyClaim(k.achievement, claim) }
-                : k))
-        : resume.keyAchievements;
-    return { ...resume, experience, keyAchievements };
-}
-
-function enforceClaimOnProse(resume: StructuredResumeData, claim: ScopedClaim): StructuredResumeData {
-    const summary = typeof resume.summary === 'string' && isUnqualified(resume.summary, claim)
-        ? stripClaimFromProse(resume.summary, claim)
-        : resume.summary;
-    const projects = Array.isArray(resume.projects)
-        ? resume.projects.map((p) => (
-            typeof p.description === 'string' && isUnqualified(p.description, claim)
-                ? { ...p, description: stripClaimFromProse(p.description, claim) }
-                : p))
-        : resume.projects;
-    return { ...resume, summary, projects };
-}
-
-/**
- * There is NO separate Key Achievements section on the resume — achievement
- * material integrates into experience lead bullets and the summary metric
- * (prompt rule). When the model emits the section anyway, drop it and scrub
- * `sectionOrder`; the violation code keeps the event observable.
- */
-export function dropKeyAchievementsSection(resume: StructuredResumeData): { resume: StructuredResumeData; violations: ResumeViolation[] } {
-    const emitted = Array.isArray(resume.keyAchievements) && resume.keyAchievements.length > 0;
-    const inOrder = Array.isArray(resume.sectionOrder) && resume.sectionOrder.includes('keyAchievements');
-    if (!emitted && !inOrder) return { resume, violations: [] };
-    const out: StructuredResumeData = {
-        ...resume,
-        keyAchievements: [],
-        ...(Array.isArray(resume.sectionOrder)
-            ? { sectionOrder: resume.sectionOrder.filter((k) => k !== 'keyAchievements') }
-            : {}),
-    };
-    return {
-        resume: out,
-        violations: [{ code: 'key_achievements_emitted', detail: 'Strategist emitted a keyAchievements section — dropped; achievement material must be integrated into experience bullets and the summary metric.' }],
-    };
-}
-
-/**
- * Deterministic, always-on pass: qualify scoped metrics where qualifiers are
- * allowed (experience highlights, key achievements), strip them where
- * qualifiers are banned (summary, skills, projects). Emits one violation per
- * claim that needed enforcement so the fix is observable.
- */
-export function enforceScopedClaims(resume: StructuredResumeData): { resume: StructuredResumeData; violations: ResumeViolation[] } {
-    let out = resume;
-    const violations: ResumeViolation[] = [];
-    for (const claim of SCOPED_CLAIMS) {
-        const before = JSON.stringify(out);
-        out = enforceClaimOnProse(enforceClaimOnSkills(enforceClaimOnHighlights(out, claim), claim), claim);
-        if (JSON.stringify(out) !== before) {
-            violations.push({ code: 'scoped_claim_unqualified', detail: `"${claim.label}" appeared without its scope qualifier — qualified in experience/achievements, removed from summary/skills/projects.` });
-        }
-    }
-    return { resume: out, violations };
-}
-
-/** Normalize em-dashes in all prose fields of a StructuredResumeData. Defensive +
- *  shape-preserving: only transforms fields that are actually present (the guard is
- *  fail-open infra — never throw on a resume missing an optional array). */
-export function stripEmDashes(resume: StructuredResumeData): StructuredResumeData {
-    return {
-        ...resume,
-        ...(typeof resume.summary === 'string' ? { summary: normalizeProse(resume.summary) } : {}),
-        ...(Array.isArray(resume.experience)
-            ? { experience: resume.experience.map((e) => ({ ...e, highlights: Array.isArray(e.highlights) ? e.highlights.map((h) => normalizeProse(h)) : e.highlights })) }
-            : {}),
-        ...(Array.isArray(resume.projects)
-            ? { projects: resume.projects.map((p) => ({ ...p, description: typeof p.description === 'string' ? normalizeProse(p.description) : p.description })) }
-            : {}),
-        ...(Array.isArray(resume.keyAchievements)
-            ? { keyAchievements: resume.keyAchievements.map((k) => ({ ...k, achievement: typeof k.achievement === 'string' ? normalizeProse(k.achievement) : k.achievement })) }
-            : {}),
-    } as StructuredResumeData;
-}
-
-// =============================================================================
-// HAIKU REWRITE + GUARD ORCHESTRATOR
-// =============================================================================
-
-const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
-
-/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
-export const RESUME_REWRITE_PROMPT_META = { id: 'resume-rewrite', version: '1' } as const;
-
-const RewriteSchema = ResumeRewriteSchema;
-
-const TOOL = buildEmitResumeTool('Return the corrected resume as structured JSON (plain text strings, NO markdown).');
-
-const CTX: BasePipelineContext = {
-    pipelineId: 'resume-guard',
-    environment: process.env['DEPLOY_ENV'] ?? 'dev',
-    cumulativeTokens: { input: 0, output: 0, thinking: 0 },
-    cumulativeCostUsd: 0,
-};
-
-/** One-line pitch roster for the repair prompt (extracted: no nested template literals). */
-function formatPitches(pitches: ReadonlyArray<{ name: string; pitch: string }>): string {
-    return pitches.map((p) => '"' + p.name + ': ' + p.pitch.slice(0, 200) + '"').join(' | ');
-}
-
-/** One-line employer-facts roster for the repair prompt. */
-function formatEmployerFacts(employers: ReadonlyArray<VerifiedEmployer>): string {
-    return employers.map((e) => '[' + e.name + ': ' + e.facts.slice(0, 220) + ']').join(' ');
-}
-
-/** Haiku rewrite that fixes ONLY the flagged issues. FAIL-OPEN: returns the input on error. */
-/** Rewrite instruction for experience_ungrounded, '' when no employer facts. */
-function experienceFidelityRule(ctx: ResumeGuardCtx): string {
-    if (!ctx.verifiedEmployers?.length) return '';
-    return `For experience_ungrounded: REBUILD that employer's bullets ONLY from its verified facts below - JD-aligned vocabulary is fine, new deeds/systems/domains are not: ${formatEmployerFacts(ctx.verifiedEmployers)}`;
-}
-
-export async function rewriteResume(
-    resume: StructuredResumeData,
-    violations: ResumeViolation[],
-    ctx: ResumeGuardCtx,
-): Promise<StructuredResumeData> {
-    const system = [
-        'You repair a tailored resume, fixing ONLY the listed issues by REORDERING and REWORDING for prominence. Call emit_resume with the full resume JSON.',
-        `NEVER fabricate, NEVER change a number or date, NEVER rename a degree — the verified degree names are: ${ctx.verifiedEducation.join('; ')}.`,
-        `Make the summary's FIRST sentence lead with this identity differentiator: "${ctx.leadIdentity}" — never an infrastructure-first opener; never name or concede any experience gap.`,
-        'For summary_opens_with_employer: keep the differentiator\'s CONTENT but rephrase the opening so it does not START with an employer\'s name — a summary opening "AWS … engineer" written by someone employed at AWS reads as a title held there. Name the platform mid-sentence instead ("Cloud engineer … on AWS" / "inside AWS production operations").',
-        'For experience_bullet_jd_echo: rewrite the flagged bullet using ONLY that employer\'s verified facts (rephrasing and emphasis are fine); JD vocabulary may appear only where those facts support it - never invent deeds or a new domain to fit the JD.',
-        ctx.projectPitches?.length
-            ? `For project_restates_bullets and project_pitch_missing: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${formatPitches(ctx.projectPitches)}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
-            : 'For project_restates_bullets: rewrite the flagged project description as pitch (what it is, who it is for, the problem it solves) + one JD-relevant differentiator + one fresh metric. Remove numbers duplicated from experience bullets and all stack enumerations.',
-        ctx.companyProblem ? `For summary_restates_bullets: rewrite the summary at ALTITUDE — S1 identity anchor + capability ("<Role-family> engineer who builds…"), S2 ONE sentence bridging to this problem (paraphrased): "${ctx.companyProblem.slice(0, 400)}", S3 the concrete paid-experience anchor, S4 qualitative rigor close ("every change gated by automated tests and policy-as-code"). Remove EVERY number that also appears in an experience bullet — counts belong to bullets.` : 'For summary_restates_bullets: rewrite the summary at altitude — identity anchor, problem bridge, concrete paid-experience anchor, qualitative rigor close; remove every number that also appears in an experience bullet.',
-        'For headline_is_title: rewrite profile.title as a DESCRIPTIVE domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect, Consultant…) — e.g. "Cloud & AI Operations · Python Automation & Incident Response". Never claim a role the candidate does not hold.',
-        'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
-        `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,
-        'Within each experience role, lead with the strongest number-led bullet.',
-        'For compliance_overclaim: reframe as the MECHANISM — "policy-as-code gate (Checkov custom rules + CDK-Nag rule packs: HIPAA, NIST 800-53, PCI DSS) failing the pipeline on CRITICAL/HIGH misconfigurations". Frameworks named ONLY as rule packs, never as achieved compliance.',
-        'For bullet_metric_stuffed: rewrite the flagged bullet(s) around ONE idea with the strongest IMPACT metric (or one before/after pair, e.g. "30 seconds vs 8 minutes"); move or drop inventory counts (N stacks, N workflows, N rules) — keep at most 3 inventory numbers across the whole experience section.',
-        'For summary_echoes_bullets: DELETE the echoing sentence(s) and replace with (a) one sentence bridging to the company problem and (b) one distinctive angle that is NOT an experience bullet. The summary positions; bullets prove.',
-        'For summary_missing_problem_bridge: add ONE sentence connecting the candidate\'s proven approach to the company problem (paraphrased, first sentence or second).',
-        ctx.verifiedEmployers?.length
-            ? `For summary_employer_project_conflation: SPLIT the flagged sentence — the employer sentence may carry ONLY that employer's verified facts: ${formatEmployerFacts(ctx.verifiedEmployers)}. The project sentence is SEPARATE and opens with the solo framing ("Solo-building Tucaken, …"). Never join employer and project claims with a semicolon or comma chain.`
-            : 'For summary_employer_project_conflation: split the flagged sentence so the employer anchor and the solo-project bridge are separate sentences; each claim stays with the entity it belongs to.',
-        'For summary_identity_echoes_problem: rewrite the FIRST sentence using ONLY the candidate\'s own capability vocabulary — remove every phrase borrowed from the company problem (no "so <their> teams ship…", no bottleneck framing). The candidate is a solo builder: never claim outcomes delivered for internal teams.',
-        'For summary_describes_job: rewrite the flagged sentence in CANDIDATE voice — state what the candidate brings to this problem class, never what the role/employer needs. Delete "this role exists to…"/"they need…" phrasing and any mission recitation; a summary describes the candidate, the reader already knows their own mission.',
-        `For summary_names_target_company: remove the target company's name ("${ctx.targetCompany ?? ''}") from the summary entirely — keep the capability content, drop the name. A summary naming the employer is single-use and reads as recitation.`,
-        'For unbridged_transferable_claim: restate each flagged term with its honest transfer framing in the same clause (e.g. "AWS CDK, transferable to Terraform") — or remove the term. Never leave a flat claim of a tool the candidate has not used.',
-        experienceFidelityRule(ctx),
-        'NEVER increase total length: the corrected resume must have the SAME or FEWER total words than the input. A fix rewrites in place; it never adds new prose elsewhere.',
-        'NEVER remove an entire experience role — every role in the input resume must appear in the output, even when trimming.',
-        'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
-        CLAIM_STRENGTH_RULE,
-    ].join('\n');
-
-    const config: AgentConfig = {
-        agentName: 'resume-rewrite',
-        promptId: RESUME_REWRITE_PROMPT_META.id,
-        promptVersion: RESUME_REWRITE_PROMPT_META.version,
-        modelId: MODEL_ID,
-        maxTokens: 8000,
-        thinkingBudget: 0,
-        systemPrompt: [{ text: system }],
-        pipeline: 'job-strategist',
-        tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
-    };
-
-    const userMessage = `<issues>${violations.map((v) => v.code).join(', ')}</issues>\n<resume>${JSON.stringify(resume)}</resume>`;
-
-    try {
-        const result = await runAgent<StructuredResumeData>({
-            config, userMessage, pipelineContext: CTX,
-            parseResponse: (s) => {
-                const parsed = RewriteSchema.safeParse(JSON.parse(s));
-                if (!parsed.success) throw new Error(`resume-rewrite: ${parsed.error.message}`);
-                return parsed.data as unknown as StructuredResumeData;
-            },
-        });
-        return result.data;
-    } catch (e) {
-        log('WARN', 'resume rewrite failed — keeping original', { error: e instanceof Error ? e.message : String(e) });
-        return resume;
-    }
+/** All deterministic content checks shared by revalidation's two sweeps. */
+function collectContentViolations(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
+    const out: ResumeViolation[] = [];
+    checkSummaryInventory(out, resume);
+    checkProjectInventory(out, resume);
+    checkSummaryEcho(out, resume);
+    checkProblemBridge(out, resume, ctx.companyProblem);
+    checkSummaryAttribution(out, resume, ctx);
+    checkComplianceOverclaim(out, resume);
+    checkMetricStuffedBullets(out, resume);
+    // Pitch alignment must hold through the WHOLE chain: run 9216cf25's first
+    // guard pass repaired both project pitches, then the condense pass cut
+    // them ("non-JD content is cut FIRST") and both revalidations were blind
+    // to the loss — stack-led descriptions shipped despite the repair.
+    out.push(...checkProjectPitchAlignment(resume, ctx.projectPitches));
+    return out;
 }
 
 /**
@@ -893,19 +162,7 @@ export async function revalidateResumeContent(
     let out = scoped.resume;
     const violations: ResumeViolation[] = [...prohibited.violations, ...certs.violations, ...scoped.violations];
 
-    const inventory: ResumeViolation[] = [];
-    checkSummaryInventory(inventory, out);
-    checkProjectInventory(inventory, out);
-    checkSummaryEcho(inventory, out);
-    checkProblemBridge(inventory, out, ctx.companyProblem);
-    checkSummaryAttribution(inventory, out, ctx);
-    checkComplianceOverclaim(inventory, out);
-    checkMetricStuffedBullets(inventory, out);
-    // Pitch alignment must hold through the WHOLE chain: run 9216cf25's first
-    // guard pass repaired both project pitches, then the condense pass cut
-    // them ("non-JD content is cut FIRST") and both revalidations were blind
-    // to the loss — stack-led descriptions shipped despite the repair.
-    inventory.push(...checkProjectPitchAlignment(out, ctx.projectPitches));
+    const inventory = collectContentViolations(out, ctx);
     const needsRepair = [
         ...inventory,
         ...violations.filter((v) => v.code === 'unbridged_transferable_claim'),
@@ -919,15 +176,7 @@ export async function revalidateResumeContent(
         out = enforceProhibitedClaims(out).resume;
         out = enforceCertYears(out, ctx.verifiedCertifications ?? []).resume;
         out = enforceScopedClaims(out).resume;
-        const residual: ResumeViolation[] = [];
-        checkSummaryInventory(residual, out);
-        checkProjectInventory(residual, out);
-        checkSummaryEcho(residual, out);
-        checkProblemBridge(residual, out, ctx.companyProblem);
-        checkSummaryAttribution(residual, out, ctx);
-        checkComplianceOverclaim(residual, out);
-        checkMetricStuffedBullets(residual, out);
-        residual.push(...checkProjectPitchAlignment(out, ctx.projectPitches));
+        const residual = collectContentViolations(out, ctx);
         if (residual.length > 0) {
             violations.push({ code: 'content_revalidation_residual', detail: `After one bounded repair, still violating: ${residual.map((r) => r.code).join(', ')}.` });
         }
@@ -941,174 +190,6 @@ export async function revalidateResumeContent(
 }
 
 /** Validate → rewrite on violation → deterministic scoped-claim + section passes → return. Never throws. */
-/** Role-generic words that overlap in ANY two tech-job descriptions — they
- *  must not count as grounding evidence. */
-const GENERIC_EXPERIENCE_WORDS = new Set([
-    'engineering', 'operations', 'teams', 'systems', 'platform', 'platforms',
-    'infrastructure', 'technical', 'support', 'across', 'working', 'worked',
-    'procedures', 'processes', 'process', 'quality', 'assurance', 'analyst',
-    'documentation', 'workflows', 'standardised', 'standardized', 'collaborated',
-]);
-
-function distinctiveTokens(text: string): Set<string> {
-    const out = new Set<string>();
-    for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
-        if (raw.length >= 5 && !GENERIC_EXPERIENCE_WORDS.has(raw)) out.add(raw);
-    }
-    return out;
-}
-
-/**
- * Experience fidelity — bullets for an employer must RESTATE work the
- * ingested career-history facts describe; JD-tailoring is rephrasing and
- * emphasis, never new deeds or a new domain. Observed live (Meta via
- * Accenture): the ingested facts describe ads-platform operations, but
- * generated bullets claimed "content moderation workflows" (world-knowledge
- * stereotype) and, on another run, invented test-strategy/quality-gate design
- * work. Deterministic: an entry whose bullets share fewer than 2 distinctive
- * tokens with its employer's verified facts is flagged for a grounded rewrite.
- */
-type LooseExperienceEntry = { company?: unknown; highlights?: readonly unknown[] };
-
-/** Violation for one entry, or null when grounded / not matchable. */
-function entryFidelityViolation(
-    entry: LooseExperienceEntry,
-    verifiedEmployers: ReadonlyArray<VerifiedEmployer>,
-): ResumeViolation | null {
-    const company = typeof entry.company === 'string' ? entry.company : '';
-    if (!company) return null;
-    const employer = verifiedEmployers.find((e) =>
-        e.name.toLowerCase().includes(company.toLowerCase()) || company.toLowerCase().includes(e.name.toLowerCase()));
-    if (!employer) return null;
-    const bulletText = (entry.highlights ?? []).filter((h): h is string => typeof h === 'string').join(' ');
-    if (bulletText.length === 0) return null;
-    const factTokens = distinctiveTokens(employer.facts);
-    let overlap = 0;
-    for (const t of distinctiveTokens(bulletText)) if (factTokens.has(t)) overlap++;
-    if (overlap >= 2) return null;
-    return {
-        code: 'experience_ungrounded',
-        detail: `${company}: bullets share ${overlap} distinctive terms with the ingested career facts - the work described is not the work on record.`,
-    };
-}
-
-/** Light suffix stem so word forms match across texts (deployments/deployed -> deploy). */
-function stemToken(t: string): string {
-    return t.replace(/ments?$/, '').replace(/ings?$/, '').replace(/ed$/, '').replace(/s$/, '');
-}
-
-/** Stemmed distinctive tokens of a text (length/stoplist filtered first). */
-function stemmedTokens(text: string): Set<string> {
-    return new Set([...distinctiveTokens(text)].map(stemToken));
-}
-
-/** Loose project<->pitch name match (case/punctuation-insensitive containment). */
-function pitchForProject(
-    name: string,
-    pitches: ReadonlyArray<{ name: string; pitch: string }>,
-): { name: string; pitch: string } | undefined {
-    const norm = (x: string): string => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    const n = norm(name);
-    return pitches.find((p) => n.includes(norm(p.name)) || norm(p.name).includes(n));
-}
-
-/** Overlap ratio of the description's opening with the documented pitch. */
-const PITCH_OPENING_CHARS = 220;
-const PITCH_MIN_OVERLAP = 0.3;
-
-/**
- * Project descriptions must OPEN on the documented pitch (what it is, who it
- * is for, the problem it solves) — the persona's three-beat rule. Run
- * 048379a3 (2026-07-08) shipped 42-word stack-dump descriptions that ignored
- * the pitch entirely and nothing flagged them: the only project check was
- * reactive (bullet-number restating). Deterministic; the guard rewrite
- * repairs flagged projects using the pitch it already receives.
- */
-type ResumeProject = StructuredResumeData['projects'][number];
-
-/** Violation for one project's opening vs its documented pitch, or null. */
-function projectPitchViolation(
-    p: ResumeProject,
-    pitches: ReadonlyArray<{ name: string; pitch: string }>,
-): ResumeViolation | null {
-    const pitch = typeof p.description === 'string' ? pitchForProject(p.name ?? '', pitches) : undefined;
-    if (!pitch) return null;
-    const pitchTokens = stemmedTokens(pitch.pitch);
-    if (pitchTokens.size === 0) return null;
-    const opening = stemmedTokens(p.description.slice(0, PITCH_OPENING_CHARS));
-    let hit = 0;
-    for (const t of pitchTokens) if (opening.has(t)) hit++;
-    if (hit / pitchTokens.size >= PITCH_MIN_OVERLAP) return null;
-    return {
-        code: 'project_pitch_missing',
-        detail: `${p.name}: description does not open on the documented pitch (${hit}/${pitchTokens.size} pitch terms in the opening).`,
-    };
-}
-
-export function checkProjectPitchAlignment(
-    resume: StructuredResumeData,
-    pitches: ReadonlyArray<{ name: string; pitch: string }> | undefined,
-): ResumeViolation[] {
-    if (!pitches || pitches.length === 0) return [];
-    return (resume.projects ?? [])
-        .map((p) => projectPitchViolation(p, pitches))
-        .filter((v): v is ResumeViolation => v !== null);
-}
-
-/**
- * Bullet-level JD-echo fidelity — the fabrication mechanism observed live on
- * run 048379a3: under tailoring pressure the writer builds a career bullet
- * from JD vocabulary ("Configured enterprise platform deployments" on a QA
- * role) while enough honest paraphrase surrounds it to pass the ENTRY-level
- * overlap check. A bullet on a verified employer that leans on 2+ JD terms
- * absent from that employer's facts is flagged for a grounded rewrite.
- */
-/** JD-echo violations for one career entry's bullets. */
-function entryJdEchoViolations(
-    entry: LooseExperienceEntry,
-    verifiedEmployers: ReadonlyArray<VerifiedEmployer>,
-    jdTokens: ReadonlySet<string>,
-): ResumeViolation[] {
-    const company = typeof entry.company === 'string' ? entry.company : '';
-    const employer = verifiedEmployers.find((e) =>
-        e.name.toLowerCase().includes(company.toLowerCase()) || company.toLowerCase().includes(e.name.toLowerCase()));
-    if (!company || !employer) return [];
-    const factTokens = stemmedTokens(employer.facts);
-    const out: ResumeViolation[] = [];
-    for (const bullet of (entry.highlights ?? []).filter((h): h is string => typeof h === 'string')) {
-        const echo = [...stemmedTokens(bullet)].filter((t) => jdTokens.has(t) && !factTokens.has(t));
-        if (echo.length >= 2) {
-            out.push({
-                code: 'experience_bullet_jd_echo',
-                detail: `${company}: "${bullet.slice(0, 90)}" leans on JD vocabulary (${echo.slice(0, 4).join(', ')}) absent from this role's verified facts.`,
-            });
-        }
-    }
-    return out;
-}
-
-export function checkBulletJdEcho(
-    resume: StructuredResumeData,
-    verifiedEmployers: ReadonlyArray<VerifiedEmployer> | undefined,
-    jdText: string,
-): ResumeViolation[] {
-    if (!verifiedEmployers || verifiedEmployers.length === 0 || !jdText.trim()) return [];
-    const jdTokens = stemmedTokens(jdText);
-    const view = resume as unknown as { experience?: ReadonlyArray<LooseExperienceEntry> };
-    return (view.experience ?? []).flatMap((entry) => entryJdEchoViolations(entry, verifiedEmployers, jdTokens));
-}
-
-export function checkExperienceFidelity(
-    resume: StructuredResumeData,
-    verifiedEmployers: ReadonlyArray<VerifiedEmployer> | undefined,
-): ResumeViolation[] {
-    if (!verifiedEmployers || verifiedEmployers.length === 0) return [];
-    const view = resume as unknown as { experience?: ReadonlyArray<LooseExperienceEntry> };
-    return (view.experience ?? [])
-        .map((entry) => entryFidelityViolation(entry, verifiedEmployers))
-        .filter((v): v is ResumeViolation => v !== null);
-}
-
 export async function guardResume(
     resume: StructuredResumeData,
     ctx: ResumeGuardCtx,
