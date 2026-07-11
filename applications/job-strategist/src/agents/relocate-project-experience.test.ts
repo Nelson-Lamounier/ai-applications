@@ -10,7 +10,7 @@
  */
 import { describe, it, expect } from '@jest/globals';
 import type { StructuredResumeData } from '@bedrock/shared';
-import { relocateProjectExperience } from './relocate-project-experience.js';
+import { relocateProjectExperience, restoreProjectHighlights } from './relocate-project-experience.js';
 import type { ProjectResumeBulletSet } from './project-evidence-block.js';
 
 const VERIFIED = [{ name: 'Amazon Web Services (AWS)' }, { name: 'Meta via Accenture' }];
@@ -146,5 +146,34 @@ describe('relocateProjectExperience — deterministic highlights fill', () => {
         const prefilled = { ...RENAMED, projects: [{ ...(RENAMED.projects[0] as object), highlights: ['Hand-written bullet'] }] } as unknown as StructuredResumeData;
         const res = relocateProjectExperience(prefilled, VERIFIED, BULLETS);
         expect(res.projects[0].highlights).toEqual(['Hand-written bullet']);
+    });
+});
+
+describe('restoreProjectHighlights — undo Haiku re-emit stripping', () => {
+    const before = {
+        projects: [
+            { name: 'Tucaken: AI Applications Platform', github: 'gh/a', description: 'd', highlights: ['b1', 'b2', 'b3'] },
+            { name: 'frontend-portfolio', github: 'gh/b', description: 'd', highlights: ['c1', 'c2'] },
+        ],
+    } as unknown as StructuredResumeData;
+
+    it('restores highlights a downstream pass blanked (matched by name)', () => {
+        // Simulate surface-metrics dropping projects[].highlights entirely.
+        const after = { projects: before.projects.map((p) => ({ ...p, highlights: [] })) } as unknown as StructuredResumeData;
+        const res = restoreProjectHighlights(before, after);
+        expect(res.projects[0].highlights).toEqual(['b1', 'b2', 'b3']);
+        expect(res.projects[1].highlights).toEqual(['c1', 'c2']);
+    });
+
+    it('is rename-tolerant and never removes bullets a pass legitimately kept', () => {
+        const after = {
+            projects: [
+                { name: 'Tucaken Platform', github: 'gh/a', description: 'd', highlights: [] },           // renamed + stripped
+                { name: 'frontend-portfolio', github: 'gh/b', description: 'd', highlights: ['c1', 'c2', 'c3-new'] }, // grew — keep
+            ],
+        } as unknown as StructuredResumeData;
+        const res = restoreProjectHighlights(before, after);
+        expect(res.projects[0].highlights).toEqual(['b1', 'b2', 'b3']); // restored despite rename
+        expect(res.projects[1].highlights).toEqual(['c1', 'c2', 'c3-new']); // untouched (had >= before)
     });
 });
