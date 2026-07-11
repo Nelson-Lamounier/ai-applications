@@ -20,7 +20,9 @@ import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research/research-agent.js';
-import { executeStrategistAgent } from './agents/writer/strategist-agent.js';
+import { executeStrategistAgent, framingDirective } from './agents/writer/strategist-agent.js';
+import { executeSummaryAgent } from './agents/writer/summary-agent.js';
+import { deterministicSummary } from './agents/writer/summary-fallback.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/jd/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/evidence/role-evidence-block.js';
 import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/evidence/project-evidence-block.js';
@@ -388,6 +390,12 @@ const gapCauseMetric = new Counter({
     name:       'job_strategist_gap_cause_total',
     help:       'Research gap causes: kb_present_not_retrieved (retrieval tuning lead) vs kb_no_evidence (document-or-build signal).',
     labelNames: ['cause'] as const,
+    registers:  [obs.registry],
+});
+const summaryOutcomeMetric = new Counter({
+    name:       'job_strategist_summary_agent_outcome_total',
+    help:       'Summary agent outcomes: agent (dedicated summary agent filled the resume summary) vs fallback (agent call failed, deterministic summary used).',
+    labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
 const correctiveRetrievalMetric = new Counter({
@@ -1024,6 +1032,38 @@ export async function main(): Promise<void> {
                 log.warn({ pipelineRunId: env.pipelineRunId, code }, 'experience_roster_reconciled');
             },
         );
+
+        // ── Summary agent — fills the body's empty summary field ──
+        // The body writer emits an empty summary; a dedicated Sonnet call
+        // (S1-S4 beats, constrained decoding) produces the positioning
+        // summary from the research verdicts + finished resume body. On
+        // failure (schema/network/etc.) fall back to a deterministic,
+        // guard-safe summary derived from the Fit Summary so the pipeline
+        // never persists an empty or ungrounded summary. Fail-open by design
+        // — never throws into the pipeline.
+        if (tailoredResumeData) {
+            try {
+                const summaryRes = await executeSummaryAgent(ctx, {
+                    research: researchData,
+                    body: tailoredResumeData,
+                    profileIntelligence: profileIntelligenceBlock,
+                    yearsGapFraming: framingDirective(yearsGap) ?? '',
+                    achievementEvidence: achievementEvidenceBlock,
+                });
+                (tailoredResumeData as { summary: string }).summary = summaryRes.data.summary;
+                summaryOutcomeMetric.inc({ outcome: 'agent' });
+            } catch (err) {
+                (tailoredResumeData as { summary: string }).summary =
+                    deterministicSummary(researchData.fitSummary, researchData.targetRole);
+                summaryOutcomeMetric.inc({ outcome: 'fallback' });
+                log.warn({
+                    pipelineRunId: env.pipelineRunId,
+                    agent: 'strategist-summary',
+                    error: err instanceof Error ? err.message : String(err),
+                }, 'summary_agent_failed_deterministic_fallback_used');
+            }
+        }
+
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
         // ── Cover-letter guard (rule-based, fail-open, rewrite-on-violation) ──

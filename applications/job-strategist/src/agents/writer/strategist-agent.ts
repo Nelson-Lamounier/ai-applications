@@ -641,7 +641,7 @@ export { strategistAgent, StrategistAgent };
  * Tenure framing is conditional: with no years bar in the JD the framing may
  * shape the SUMMARY only — the cover letter must not mention tenure at all.
  */
-function framingDirective(yearsGap: { framingLine: string; requiredYears: number | null } | null | undefined): string | undefined {
+export function framingDirective(yearsGap: { framingLine: string; requiredYears: number | null } | null | undefined): string | undefined {
     if (!yearsGap) return undefined;
     if (yearsGap.requiredYears == null) {
         return `${yearsGap.framingLine} [NO YEARS BAR IN THIS JD: summary only — the cover letter must NOT mention years or tenure]`;
