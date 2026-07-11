@@ -20,7 +20,7 @@
  * unchanged.
  */
 import type { StructuredResumeData } from '@bedrock/shared';
-import type { ProjectResumeBulletSet } from './project-evidence-block.js';
+import type { ProjectResumeBulletSet } from '../evidence/project-evidence-block.js';
 
 type Resume = StructuredResumeData;
 type Experience = Resume['experience'][number];

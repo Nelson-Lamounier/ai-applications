@@ -7,11 +7,11 @@
  */
 import { describe, it, expect } from '@jest/globals';
 import { gradeFreeResume, parseFreeResumeResponse } from './free-resume-writer.js';
-import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
-import { validateCoverLetter } from './cover-letter-guard.js';
-import type { FreeEvidence } from '../free/gather-evidence.js';
+import { groundedAtsCoverage } from '../../ats/grounded-coverage.js';
+import { validateCoverLetter } from '../quality/cover-letter-guard.js';
+import type { FreeEvidence } from '../../free/gather-evidence.js';
 import type { FreeResumeOutput } from './free-resume-writer.js';
-import type { CoverLetter } from './cover-letter-guard.js';
+import type { CoverLetter } from '../quality/cover-letter-guard.js';
 
 /** Serialise a FreeResumeOutput as the raw JSON the emit_free_resume tool returns. */
 const toToolJson = (out: FreeResumeOutput): string => JSON.stringify(out);

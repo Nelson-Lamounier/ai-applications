@@ -19,8 +19,8 @@ import { describe, it, expect } from '@jest/globals';
 import type { StructuredResumeData } from '@bedrock/shared';
 import { SECTION_SHAPE_KEYS } from './resume-sections.js';
 import { StructuredResumeDataSchema } from './resume-data.schema.js';
-import { TailoredResumeSchema } from '../agents/strategist-agent.js';
-import { ResumeRewriteSchema, RESUME_EMIT_INPUT_SCHEMA } from '../agents/resume-tool-schema.js';
+import { TailoredResumeSchema } from '../agents/writer/strategist-agent.js';
+import { ResumeRewriteSchema, RESUME_EMIT_INPUT_SCHEMA } from '../agents/writer/resume-tool-schema.js';
 
 /** Every canonical field populated — any layer that strips one fails below. */
 const FIXTURE = {

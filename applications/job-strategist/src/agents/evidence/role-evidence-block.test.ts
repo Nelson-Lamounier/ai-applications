@@ -1,7 +1,7 @@
 /** @format */
 import { formatRoleEvidence } from './role-evidence-block.js';
 import type { CompanyType } from '@bedrock/shared';
-import type { ResolvedRole } from './resolve-role-families.js';
+import type { ResolvedRole } from '../jd/resolve-role-families.js';
 
 const resolved: ResolvedRole[] = [
     { title: 'Technical Customer Service Associate', company: 'AWS', matchVia: 'alias',

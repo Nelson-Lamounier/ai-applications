@@ -18,7 +18,7 @@
 import { z } from 'zod';
 import { PiiScrubber, runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, JdSignal } from '@bedrock/shared';
-import { loadPrompt } from '../prompts/prompt-loader.js';
+import { loadPrompt } from '../../prompts/prompt-loader.js';
 
 const piiScrubber = new PiiScrubber();
 // jd-extractor is now the SINGLE source of truth for the JD: its canonical skill

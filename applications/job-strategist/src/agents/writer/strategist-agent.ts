@@ -22,18 +22,18 @@ import {
     CertificationBaseSchema,
     ProjectBaseSchema,
     AchievementBaseSchema,
-} from '../schemas/resume-sections.js';
-import { formatResumeForPrompt } from '../services/resume-service.js';
-import { STRATEGIST_PERSONA_META, STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
+} from '../../schemas/resume-sections.js';
+import { formatResumeForPrompt } from '../../services/resume-service.js';
+import { STRATEGIST_PERSONA_META, STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../../prompts/strategist-persona.js';
 import type { YearsGap } from './years-gap.js';
-import { capHighlights } from './experience-cap.js';
+import { capHighlights } from '../quality/experience-cap.js';
 
 /** Module-scoped output sanitiser (default patterns — superset of all redaction rules) */
 const outputSanitiser = new OutputSanitiser();
 import {
     FitRatingSchema,
     ApplicationRecommendationSchema,
-} from '../schemas/dynamo-record.schema.js';
+} from '../../schemas/dynamo-record.schema.js';
 import type {
     AgentConfig,
     AgentResult,

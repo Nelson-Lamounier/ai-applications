@@ -1,7 +1,7 @@
 /** @format */
 import type { Pool } from 'pg';
 import { RdsProjectEvidenceRepository, formatProjectEvidence, log } from '@bedrock/shared';
-import { withUserRls } from '../lib/rls.js';
+import { withUserRls } from '../../lib/rls.js';
 
 /**
  * Load + format the user's documented project case studies into a prompt block

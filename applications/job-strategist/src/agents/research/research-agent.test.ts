@@ -13,7 +13,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { parseJsonResponse } from '../../../shared/src/agent-runner';
+import { parseJsonResponse } from '../../../../shared/src/agent-runner';
 
 // =============================================================================
 // TEST CONSTANTS
@@ -203,14 +203,14 @@ async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
         });
 
         // Mock sub-dependencies that research-agent imports transitively.
-        jest.mock('../services/resume-service.js', () => ({
+        jest.mock('../../services/resume-service.js', () => ({
             formatResumeForPrompt: jest.fn().mockReturnValue(''),
         }));
-        jest.mock('../prompts/research-persona.js', () => ({
+        jest.mock('../../prompts/research-persona.js', () => ({
             RESEARCH_PERSONA_SYSTEM_PROMPT: 'stub-system-prompt',
             RESEARCH_PERSONA_META: { id: 'research-persona', version: '1', cachePoint: 'default' },
         }));
-        jest.mock('../prompts/resume-constraints.js', () => ({
+        jest.mock('../../prompts/resume-constraints.js', () => ({
             RESUME_CONSTRAINTS: '',
         }));
 

@@ -98,7 +98,7 @@ describe('strategist-persona v12 — summary calibration (from the ResMed Associ
 
 describe('strategist-persona S3 <-> message-section cross-reference (v11)', () => {
 	it('S3 names the "### Profile Intelligence" section — and the message builder exposes a header starting with that exact name (run 77e325ea shipped no S3 angle because the persona referenced a section the message never labelled)', async () => {
-		const { PROFILE_INTELLIGENCE_HEADER } = await import('../agents/strategist-agent.js');
+		const { PROFILE_INTELLIGENCE_HEADER } = await import('../agents/writer/strategist-agent.js');
 		expect(joined).toContain('"### Profile Intelligence" section');
 		expect(PROFILE_INTELLIGENCE_HEADER.startsWith('### Profile Intelligence')).toBe(true);
 		expect(joined).toMatch(/UNDERSOLD strengths/);
