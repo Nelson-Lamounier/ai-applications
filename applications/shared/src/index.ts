@@ -375,6 +375,9 @@ export { TechnologyCandidateRepository }    from './rds/index.js';
 export { TechnologyParityRunRepository }    from './rds/index.js';
 export { ArticleTopicCandidateRepository }  from './rds/index.js';
 export { CONFIDENCE_BY_LAYER }             from './rds/index.js';
+
+// Runtime RDS credential hydration (SSM host + Secrets Manager password)
+export { hydrateRdsEnv }                   from './rds/index.js';
 export type {
     SourceLayer, RawTechnologyEvidence, TechnologyEvidenceRow,
     OntologyRow, ParityRunRow, CandidateUpsertInput,
