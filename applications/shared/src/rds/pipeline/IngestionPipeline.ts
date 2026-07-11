@@ -33,7 +33,7 @@ import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { assignSkillsToChunks } from '../enrichment/assignSkillsToChunks.js';
 import { groupChunksByFile } from '../enrichment/groupChunksByFile.js';
 import { packChunks } from '../enrichment/packChunks.js';
-import { computeKbQuality } from '../quality/computeKbQuality.js';
+import { computeKbQuality, type KbQualityInput } from '../quality/computeKbQuality.js';
 import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
     DocumentChunk,
@@ -117,6 +117,18 @@ export interface IngestionPipelineOptions {
      * path. Set via DEFER_ENRICHMENT by run-ingestion. Default false (inline).
      */
     readonly deferEnrichment?: boolean;
+    /**
+     * Stored enrichment mode for this run. Passed through to markComplete so
+     * repo_sync_state.enrichment_mode records exactly which enrichment tier was
+     * active. Values are the narrow stored enum: 'llm' | 'tier1' | 'none'.
+     */
+    readonly enrichmentMode?: 'llm' | 'tier1' | 'none';
+    /**
+     * Model ID of the LLM enricher used in this run (e.g. 'anthropic.claude-haiku-…').
+     * Null when no LLM enricher was active. Persisted to
+     * repo_sync_state.enrichment_model for lineage and cost attribution.
+     */
+    readonly enrichmentModel?: string | null;
 }
 
 export class IngestionPipeline {
@@ -127,6 +139,8 @@ export class IngestionPipeline {
     private readonly retrievalProbe?: IRetrievalProbe;
     private readonly maxEnrichmentPerRun: number;
     private readonly deferEnrichment: boolean;
+    private readonly enrichmentMode?: 'llm' | 'tier1' | 'none';
+    private readonly enrichmentModel?: string | null;
 
     constructor(
         vectorStore: IVectorStore,
@@ -140,6 +154,8 @@ export class IngestionPipeline {
         this.enricher       = options.enricher;
         this.retrievalProbe = options.retrievalProbe;
         this.deferEnrichment = options.deferEnrichment ?? false;
+        this.enrichmentMode  = options.enrichmentMode;
+        this.enrichmentModel = options.enrichmentModel;
         this.maxEnrichmentPerRun =
             options.maxEnrichmentPerRun
             ?? parseEnrichmentCapFromEnv()
@@ -321,7 +337,14 @@ export class IngestionPipeline {
             // ── Quality + completion ─────────────────────────────────────────────
             const currentFilePaths = opts?.knownFilePaths
                 ?? [...new Set(rawChunks.map(c => c.filePath))];
-            const quality = computeKbQuality(rawChunks);
+            // Quality must reflect the repo's FULL persisted corpus, not this
+            // run's delta — same cumulative-vs-delta rule as totalChunkCount
+            // below. An incremental sync's rawChunks are only the changed-file
+            // slice (a 61-chunk activity delta once overwrote a 0.65 whole-repo
+            // score with 0.29: no README, no skills in the delta). Read lite
+            // rows from the store post upsert+prune; fail-open to the run's
+            // own chunks if the read fails.
+            const quality = computeKbQuality(await this.qualityInputsOrFallback(userId, repoFullName, rawChunks));
 
             let retrieval: RetrievalBreakdown | undefined;
             if (this.retrievalProbe) {
@@ -371,6 +394,8 @@ export class IngestionPipeline {
                 quality.breakdown as unknown as Record<string, unknown>,
                 persistRetrieval?.score,
                 persistRetrieval as unknown as Record<string, unknown> | undefined,
+                this.enrichmentMode ?? 'none',
+                this.enrichmentModel ?? null,
             );
 
             return {
@@ -398,6 +423,23 @@ export class IngestionPipeline {
     // =========================================================================
     // Context enrichment
     // =========================================================================
+
+    /**
+     * Full-corpus quality inputs from the store; fail-open to the run's own
+     * chunks so a store read failure can never break ingestion. Extracted from
+     * ingestChunks to keep its lint complexity at the pre-change baseline.
+     */
+    private async qualityInputsOrFallback(
+        userId: string,
+        repoFullName: string,
+        fallback: readonly RawChunk[],
+    ): Promise<readonly KbQualityInput[]> {
+        try {
+            return await this.vectorStore.loadQualityInputs(userId, repoFullName);
+        } catch {
+            return fallback;
+        }
+    }
 
     /**
      * Build the text that is actually sent to the embedding model.

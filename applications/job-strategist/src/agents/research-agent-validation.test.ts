@@ -58,6 +58,20 @@ describe('validateResearchResult', () => {
         expect(() => validateResearchResult(broken, INJECTED)).toThrow(/schema validation/i);
     });
 
+    it('passes quantifiedEvidence through verbatim', () => {
+        const withMetrics = {
+            ...VALID,
+            quantifiedEvidence: ['Cut p95 latency by 40% after the OpenSearch migration.'],
+        };
+        const r = validateResearchResult(withMetrics, INJECTED);
+        expect(r.quantifiedEvidence).toEqual(['Cut p95 latency by 40% after the OpenSearch migration.']);
+    });
+
+    it('defaults quantifiedEvidence to [] when the model omits it (older persona)', () => {
+        const r = validateResearchResult(VALID, INJECTED);
+        expect(r.quantifiedEvidence).toEqual([]);
+    });
+
     it('throws fast when the model injects an unknown field', () => {
         expect(() => validateResearchResult({ ...VALID, injected: 'nope' }, INJECTED))
             .toThrow(/schema validation/i);
@@ -217,6 +231,7 @@ describe('executeResearchAgent KB-matcher contract', () => {
             }));
             jest.mock('../prompts/research-persona.js', () => ({
                 RESEARCH_PERSONA_SYSTEM_PROMPT: 'stub-system-prompt',
+                RESEARCH_PERSONA_META: { id: 'research-persona', version: '1', cachePoint: 'default' },
             }));
             jest.mock('../prompts/resume-constraints.js', () => ({
                 RESUME_CONSTRAINTS: '',

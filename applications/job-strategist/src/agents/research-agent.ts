@@ -48,7 +48,7 @@ import type {
     StrategistPipelineContext,
 } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../services/resume-service.js';
-import { RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
+import { RESEARCH_PERSONA_META, RESEARCH_PERSONA_SYSTEM_PROMPT } from '../prompts/research-persona.js';
 import { RESUME_CONSTRAINTS } from '../prompts/resume-constraints.js';
 
 /** Delimiter used to join and later split deduplicated KB passages. */
@@ -601,6 +601,10 @@ const RESEARCH_TOOL = {
             },
             overallFitRating: { type: 'string', enum: ['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH'] },
             fitSummary:        { type: 'string' },
+            quantifiedEvidence: {
+                type: 'array', items: { type: 'string' },
+                description: 'Number-bearing sentences copied VERBATIM from KB passages cited in assessments (max 8). Never alter a value; never include a number not present in a passage.',
+            },
             pillarClassification: {
                 type: 'object',
                 properties: {
@@ -664,6 +668,7 @@ const ResearchModelSchema = z.object({
     }).strict()).default([]),
     overallFitRating: z.enum(['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH']),
     fitSummary: z.string(),
+    quantifiedEvidence: z.array(z.string()).default([]),
     pillarClassification: z.object({
         primaryPillar: z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering']),
         secondaryPillars: z.array(z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering'])),
@@ -701,6 +706,8 @@ export function validateResearchResult(
         /** Canonical JD skill list — the fixed universe the matcher assessed.
          *  Any skill the model failed to assess is filled as an honest gap. */
         jdSkills?: string[];
+        /** Verbatim KB retrieval queries this run issued (query inspection). */
+        retrievalQueries?: string[];
     },
 ): ResearchMatching {
     const validated = ResearchModelSchema.safeParse(raw);
@@ -722,6 +729,7 @@ export function validateResearchResult(
         kbContext: injected.kbContext,
         resumeConstraints: injected.resumeConstraints,
         kbRetrievalStats: computeKbStats(injected.kbContext, MIN_COSINE),
+        retrievalQueries: injected.retrievalQueries ?? [],
         // Default empty ledger — run-pipeline builds the real ledger deterministically
         // from the assembled JdSignal + this matching result and overwrites this field.
         skillEvidenceLedger: [],
@@ -740,6 +748,8 @@ const RESEARCH_CONFIG: AgentConfig = {
     maxTokens: RESEARCH_MAX_TOKENS,
     thinkingBudget: 0,
     systemPrompt: RESEARCH_PERSONA_SYSTEM_PROMPT,
+    promptId: RESEARCH_PERSONA_META.id,
+    promptVersion: RESEARCH_PERSONA_META.version,
     tool: RESEARCH_TOOL,
 };
 
@@ -825,15 +835,18 @@ export async function executeResearchAgent(
     // Bind the per-run retrieval pre-filter (filter-then-rank) into every KB query.
     const rds = (query: string, max: number = MAX_KB_PASSAGES): Promise<string[]> =>
         querySingleRds(query, userId, store, max, retrievalPrefilter);
+    // Named so the VERBATIM query texts persist to run metadata (query
+    // inspection is a first-class artifact: "was the query reasonable?"
+    // comes before "did retrieval fail?").
+    const skillQuery      = q ? q.skill : jd.substring(0, full);
+    const experienceQuery = q ? q.experience : `professional experience skills qualifications ${jd.substring(half)}`;
+    const projectQuery    = q ? q.project : `portfolio project implementation achievements ${jd.substring(0, half)}`;
+    const doraQuery       = 'DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance';
     const [factual1, factual2, factual3, factual4] = await Promise.all([
-        // Query 1 — skills/tech matches across the user's docs
-        rds(q ? q.skill : jd.substring(0, full)),
-        // Query 2 — experience / work-history signal
-        rds(q ? q.experience : `professional experience skills qualifications ${jd.substring(half)}`),
-        // Query 3 — JD-aware project/portfolio query
-        rds(q ? q.project : `portfolio project implementation achievements ${jd.substring(0, half)}`),
-        // Query 4 — DORA metrics and outcome measurements (static)
-        rds('DORA metrics lead time MTTR change failure rate deployment frequency outcome measurement pipeline performance'),
+        rds(skillQuery),        // Query 1 — skills/tech matches across the user's docs
+        rds(experienceQuery),   // Query 2 — experience / work-history signal
+        rds(projectQuery),      // Query 3 — JD-aware project/portfolio query
+        rds(doraQuery),         // Query 4 — DORA metrics and outcome measurements (static)
     ]);
 
     // Support-heavy roles (customerFacing + supportOps >= threshold) ground their
@@ -849,12 +862,14 @@ export async function executeResearchAgent(
     });
 
     let career: string[] = [];
+    const careerQuery = `work history roles responsibilities ${jd.substring(0, half)}`;
     try {
         const careerStore = RdsExperienceVectorStore.fromEnvironment();
-        career = await querySingleRds(`work history roles responsibilities ${jd.substring(0, half)}`, userId, careerStore, careerLimit);
+        career = await querySingleRds(careerQuery, userId, careerStore, careerLimit);
     } catch (e) {
         log('WARN', 'career vector query failed (non-fatal)', { error: (e as Error).message });
     }
+    const retrievalQueries = [skillQuery, experienceQuery, projectQuery, doraQuery, careerQuery];
     const allFactualPassages = [...factual1, ...factual2, ...factual3, ...factual4, ...career];
     const dedupedContext = deduplicatePassages(allFactualPassages);
 
@@ -939,7 +954,7 @@ export async function executeResearchAgent(
             // unwraps it; validateResearchResult fails fast on any schema
             // deviation instead of papering over it with defaults.
             const raw = parseJsonResponse<unknown>(text, 'strategist-research');
-            return validateResearchResult(raw, { resumeData, kbContext, resumeConstraints, jdSkills });
+            return validateResearchResult(raw, { resumeData, kbContext, resumeConstraints, jdSkills, retrievalQueries });
         },
         pipelineContext: {
             pipelineId: ctx.pipelineId,

@@ -22,7 +22,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { Pool } from 'pg';
-import { RdsVectorStore, TitanEmbeddingProvider } from '@bedrock/shared';
+import {
+    RdsVectorStore, TitanEmbeddingProvider,
+    SkillOntologyRepository, TechnologyOntologyRepository,
+    type RetrievalPrefilter,
+} from '@bedrock/shared';
+import { buildRetrievalPrefilter } from '../../ats/retrieval-prefilter.js';
 import {
     recallAtK, aggregate, meanRelevance, buildRelevanceJudgePrompt,
     RELEVANCE_JUDGE_TOOL, parseRelevanceScores, formatReport,
@@ -46,6 +51,19 @@ const PERSIST = process.env.RAG_EVAL_PERSIST === '1';
  *  (vector + BM25 RRF). Toggle to run a cosine-vs-hybrid A/B on the same golden
  *  set: run once with RAG_EVAL_HYBRID=0, once with =1, compare meanRecallAtK. */
 const HYBRID = process.env.RAG_EVAL_HYBRID !== '0';
+/** RAG_EVAL_PREFILTER=on → run each query through the filter-then-rank prefilter
+ *  lane (the RETRIEVAL_PREFILTER=on production path). Query-side terms are derived
+ *  DETERMINISTICALLY: the query text is matched against the skill- and
+ *  tech-ontology alias maps (no LLM, no embedding resolver), then transfer-group
+ *  expanded via buildRetrievalPrefilter — identical inputs across A/B legs.
+ *  Note: the prefilter routes through the vector path (no BM25), so compare
+ *  prefilter legs against each other, not against the hybrid baseline. */
+const PREFILTER = process.env.RAG_EVAL_PREFILTER === 'on';
+/** RAG_EVAL_SKILLS_LANE=0 → disable the LLM-enriched `d.skills &&` admitter inside
+ *  the prefilter (retrieval as if chunk enrichment were retired). The enrichment
+ *  A/B is: RAG_EVAL_PREFILTER=on RAG_EVAL_SKILLS_LANE=1 vs =0. */
+const SKILLS_LANE = process.env.RAG_EVAL_SKILLS_LANE !== '0';
+const MODE = PREFILTER ? (SKILLS_LANE ? 'prefilter+skills' : 'prefilter-noskills') : (HYBRID ? 'hybrid' : 'vector');
 
 interface ToolUseResponse { content?: Array<{ type: string; input?: unknown }> }
 
@@ -113,9 +131,8 @@ function loadGolden(): { version: number | null; queries: GoldenQuery[] } {
     return { version: parsed.version ?? null, queries: parsed.queries };
 }
 
-/** Persist the run + per-query rows to RDS for the Grafana eval panels. */
-async function persistEvalRun(report: RagEvalReport, datasetVersion: number | null): Promise<void> {
-    const pool = new Pool({
+function makePool(): Pool {
+    return new Pool({
         host:     process.env.RDS_HOST,
         port:     Number.parseInt(process.env.RDS_PORT ?? '5432', 10),
         database: process.env.RDS_DB_NAME,
@@ -124,6 +141,61 @@ async function persistEvalRun(report: RagEvalReport, datasetVersion: number | nu
         // Match RdsVectorStore: SSL over the SSM tunnel for the local eval (RDS_SSL=require).
         ssl:      process.env.RDS_SSL === 'require' ? { rejectUnauthorized: false } : false,
     });
+}
+
+interface OntologyMaps {
+    techGroups: string[][];
+    techAliasToCanonical: Map<string, string>;
+    skillAliasToCanonical: Map<string, string>;
+}
+
+/** Load the same ontology maps the production prefilter uses (fail-open to empty). */
+async function loadOntologyMaps(pool: Pool): Promise<OntologyMaps> {
+    const techRepo = new TechnologyOntologyRepository(pool);
+    const [transfer, category, techAlias, skillAlias] = await Promise.all([
+        techRepo.loadTransferGroups().catch(() => [] as string[][]),
+        techRepo.loadCategoryGroups().catch(() => [] as string[][]),
+        techRepo.loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
+        new SkillOntologyRepository(pool).loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
+    ]);
+    return {
+        techGroups: transfer.length > 0 ? transfer : category,
+        techAliasToCanonical: techAlias,
+        skillAliasToCanonical: skillAlias,
+    };
+}
+
+/** Word-boundary match of ontology aliases (and canonicals) inside the query text.
+ *  Underscore canonicals match their spaced/hyphenated surface forms. Deterministic
+ *  by construction so both A/B legs see byte-identical query terms. */
+function matchAliases(queryLower: string, aliasToCanonical: ReadonlyMap<string, string>): string[] {
+    const candidates = new Map(aliasToCanonical);
+    for (const canonical of aliasToCanonical.values()) candidates.set(canonical, canonical);
+    const hits = new Set<string>();
+    for (const [alias, canonical] of candidates) {
+        const a = alias.toLowerCase().trim();
+        if (a.length < 2) continue; // single-char aliases ("r", "c") are pure false-positive noise
+        const escaped = a.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('_', '[ _-]');
+        if (new RegExp(`\\b${escaped}\\b`).test(queryLower)) hits.add(canonical);
+    }
+    return [...hits].sort();
+}
+
+/** Per-query prefilter for the A/B legs; undefined when RAG_EVAL_PREFILTER is off
+ *  (or when the query surfaces no ontology terms — the widener is then a no-op
+ *  by its own cardinality guard, which the report flags per query). */
+function buildQueryPrefilter(query: string, maps: OntologyMaps): RetrievalPrefilter | undefined {
+    if (!PREFILTER) return undefined;
+    const q = query.toLowerCase();
+    const skills = matchAliases(q, maps.skillAliasToCanonical);
+    const tech = matchAliases(q, maps.techAliasToCanonical);
+    const base = buildRetrievalPrefilter(skills, tech, maps.techGroups, maps.techAliasToCanonical);
+    return { ...base, skillsLane: SKILLS_LANE };
+}
+
+/** Persist the run + per-query rows to RDS for the Grafana eval panels. */
+async function persistEvalRun(report: RagEvalReport, datasetVersion: number | null): Promise<void> {
+    const pool = makePool();
     try {
         const run = await pool.query<{ id: string }>(
             `INSERT INTO rag_eval_runs
@@ -134,7 +206,7 @@ async function persistEvalRun(report: RagEvalReport, datasetVersion: number | nu
             [datasetVersion, GENERATE, K, MIN_COSINE,
              report.queryCount, report.positiveCount, report.negativeCount,
              report.meanRecallAtK, report.meanRelevancePositive, report.meanRelevanceNegative, report.meanMaxCosine,
-             `retrieval_mode=${HYBRID ? 'hybrid' : 'vector'}`],
+             `retrieval_mode=${MODE}`],
         );
         const runId = run.rows[0]?.id;
         if (!runId) throw new Error('rag_eval_runs insert returned no id');
@@ -165,13 +237,29 @@ async function main(): Promise<void> {
     const bedrock  = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
     const { version: datasetVersion, queries: golden } = loadGolden();
-    console.log(`==> retrieval mode: ${HYBRID ? 'hybrid (vector + BM25 RRF)' : 'vector (cosine only)'} | k=${K}`);
+    console.log(`==> retrieval mode: ${MODE} | k=${K}`);
+
+    let maps: OntologyMaps | undefined;
+    if (PREFILTER) {
+        const pool = makePool();
+        try {
+            maps = await loadOntologyMaps(pool);
+        } finally {
+            await pool.end();
+        }
+        console.log(`==> ontology loaded: ${maps.techAliasToCanonical.size} tech aliases, ${maps.skillAliasToCanonical.size} skill aliases, ${maps.techGroups.length} transfer groups | skills lane: ${SKILLS_LANE ? 'ON' : 'OFF'}`);
+    }
+
     const results: QueryEvalResult[] = [];
     const jsonl: string[] = [];
 
     for (const g of golden) {
         const queryEmbedding = await embedder.embed(g.query);
-        const hits = await store.querySimilar({ userId, queryEmbedding, queryText: g.query, useHybrid: HYBRID, limit: K });
+        const prefilter = maps ? buildQueryPrefilter(g.query, maps) : undefined;
+        const hits = await store.querySimilar({
+            userId, queryEmbedding, queryText: g.query, useHybrid: HYBRID, limit: K,
+            ...(prefilter ? { prefilter } : {}),
+        });
         const contexts: RetrievedContext[] = hits
             .filter(h => h.cosine >= MIN_COSINE)
             .map(h => ({ source: `${h.repoFullName}/${h.filePath}`, cosine: h.cosine, snippet: h.content.slice(0, SNIPPET_CHARS) }));
@@ -187,8 +275,13 @@ async function main(): Promise<void> {
             retrievedCount: contexts.length,
             maxCosine,
         });
-        jsonl.push(JSON.stringify({ id: g.id, query: g.query, contexts, scores, ...(answer !== undefined ? { answer } : {}) }));
-        console.log(`  scored ${g.id} (${contexts.length} ctx, relevance ${meanRelevance(scores).toFixed(2)})`);
+        jsonl.push(JSON.stringify({
+            id: g.id, query: g.query, contexts, scores,
+            ...(prefilter ? { prefilterTerms: { skills: prefilter.skills, tech: prefilter.tech, skillsLane: SKILLS_LANE } } : {}),
+            ...(answer !== undefined ? { answer } : {}),
+        }));
+        const termNote = prefilter ? ` | terms s=${prefilter.skills.length} t=${prefilter.tech.length}` : '';
+        console.log(`  scored ${g.id} (${contexts.length} ctx, relevance ${meanRelevance(scores).toFixed(2)}${termNote})`);
     }
 
     const report = aggregate(results);

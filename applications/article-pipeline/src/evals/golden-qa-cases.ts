@@ -45,6 +45,7 @@ reconcile loop.
 export interface GoldenQaCase extends QaGoldenCase {
     readonly writer: WriterResult;
     readonly technicalFacts: string[];
+    readonly kbEvidence?: string[];
 }
 
 const FACTS = [

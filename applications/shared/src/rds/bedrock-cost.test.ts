@@ -1,4 +1,4 @@
-import { computeCostCents, recordInvocationToRds } from './bedrock-cost';
+import { computeCostCents, recordBedrockCost, recordInvocationToRds } from './bedrock-cost';
 import type { AgentInvocationLog } from '../types.js';
 
 describe('computeCostCents', () => {
@@ -80,6 +80,26 @@ describe('recordInvocationToRds', () => {
     expect(insert!.params[16]).toBe(50);                    // $17 output_tokens
   });
 
+  it('writes prompt_id and prompt_version from the invocation log (frontmatter identity)', async () => {
+    const { pool, queries } = fakePool();
+    await recordInvocationToRds(pool, 'job-strategist')({
+      ...baseLog, promptId: 'strategist-persona', promptVersion: '2',
+    });
+    const insert = queries.find((q) => /INSERT INTO prompt_invocations/.test(q.sql))!;
+    expect(insert.sql).toContain('github_repo_id, prompt_id, prompt_version');
+    // github_repo_id is $18 (params[17]); prompt_id/version shift to $19/$20.
+    expect(insert.params[18]).toBe('strategist-persona');   // $19 prompt_id
+    expect(insert.params[19]).toBe('2');                    // $20 prompt_version
+  });
+
+  it('prompt identity defaults to NULL when the log carries none', async () => {
+    const { pool, queries } = fakePool();
+    await recordInvocationToRds(pool, 'job-strategist')({ ...baseLog });
+    const insert = queries.find((q) => /INSERT INTO prompt_invocations/.test(q.sql))!;
+    expect(insert.params[17]).toBeNull();
+    expect(insert.params[18]).toBeNull();
+  });
+
   it('threads applicationId/projectId/syncKind from the context into the INSERT', async () => {
     const { pool, queries } = fakePool();
     await recordInvocationToRds(pool, 'job-strategist', {
@@ -121,4 +141,17 @@ describe('recordInvocationToRds', () => {
     await recordInvocationToRds(pool, 'job-strategist')({ ...baseLog, userId: undefined });
     expect(query).not.toHaveBeenCalled();
   });
+});
+
+test('recordBedrockCost writes github_repo_id when provided', async () => {
+    const calls: unknown[][] = [];
+    const pool = { query: async (sql: string, params: unknown[]) => { calls.push([sql, params]); return { rows: [] }; } };
+    await recordBedrockCost(pool as never, {
+        userId: '00000000-0000-0000-0000-000000000001',
+        modelId: 'm', pipeline: 'repo-sync', agent: 'chunk-enrich',
+        inputTokens: 1, outputTokens: 1, repoName: 'o/r', githubRepoId: 4242,
+    });
+    const [sql, params] = calls[0] as [string, unknown[]];
+    expect(sql).toContain('github_repo_id');
+    expect(params).toContain(4242);
 });

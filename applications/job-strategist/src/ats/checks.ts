@@ -20,9 +20,16 @@ export interface BuildAtsCheckArgs {
     readonly jdMustHaves?: string[];
     /** Used only when `coverage` is not provided (legacy / test path). */
     readonly groundedTerms?: Set<string>;
+    /** Rendered PDF page count (from parse-back); optional for the legacy/test path. */
+    readonly pages?: number;
+    /** JD required skills — weights the coverage score (0.7 required / 0.3 rest). */
+    readonly requiredSkills?: readonly string[];
 }
 
 type Coverage = AtsCheckResult['jdKeywordCoverage'];
+
+/** Rendered pages beyond this fail the check — industry-standard resume cap. */
+export const MAX_PDF_PAGES = 2;
 
 /** Human-readable ATS issues derived from the computed check facts. */
 function deriveIssues(facts: {
@@ -31,6 +38,7 @@ function deriveIssues(facts: {
     emailFound: boolean;
     coverage: Coverage;
     parseBreakers: string[];
+    pages?: number;
 }): string[] {
     const issues: string[] = [];
     const missing = REQUIRED_SECTIONS.filter(s => !facts.standardSectionsDetected.includes(s));
@@ -41,7 +49,44 @@ function deriveIssues(facts: {
         if (!k.present && k.grounded) issues.push(`Grounded JD must-have "${k.term}" missing from resume.`);
     }
     if (facts.parseBreakers.length) issues.push(`Parse-breaking elements detected: ${facts.parseBreakers.join(', ')}.`);
+    if (typeof facts.pages === 'number' && facts.pages > MAX_PDF_PAGES) {
+        issues.push(`Resume renders to ${facts.pages} pages — exceeds the ${MAX_PDF_PAGES}-page maximum.`);
+    }
     return issues;
+}
+
+
+/** Weighted JD-keyword coverage: required terms 0.7, the rest 0.3, weighting
+ *  only non-empty pools (evidence-fit convention). Undefined when there is no
+ *  coverage to grade. */
+function weightedCoverageScore(
+    coverage: Coverage | undefined,
+    requiredSkills: readonly string[] | undefined,
+): number | undefined {
+    if (!coverage || coverage.length === 0) return undefined;
+    const required = new Set((requiredSkills ?? []).map((s) => s.trim().toLowerCase()));
+    const pools = { req: { hit: 0, total: 0 }, rest: { hit: 0, total: 0 } };
+    for (const row of coverage) {
+        const pool = required.has(row.term.trim().toLowerCase()) ? pools.req : pools.rest;
+        pool.total++;
+        if (row.present) pool.hit++;
+    }
+    const wReq = pools.req.total > 0 ? 0.7 : 0;
+    const wRest = pools.rest.total > 0 ? 0.3 : 0;
+    const wSum = wReq + wRest;
+    if (wSum === 0) return undefined;
+    const frac = (p: { hit: number; total: number }): number => (p.total > 0 ? p.hit / p.total : 0);
+    return (wReq * frac(pools.req) + wRest * frac(pools.rest)) / wSum;
+}
+
+
+/** Spreadable score field — keeps buildAtsCheck's complexity flat. */
+function coverageScoreField(
+    coverage: Coverage | undefined,
+    requiredSkills: readonly string[] | undefined,
+): { coverageScore?: number } {
+    const score = weightedCoverageScore(coverage, requiredSkills);
+    return score === undefined ? {} : { coverageScore: score };
 }
 
 /** Pure ATS assertions over the parsed-back PDF + structured + JD data. */
@@ -72,7 +117,7 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
     // classic tab-delimited multi-column artifact as a regression guard.
     const parseBreakers = /\t.+\t/.test(a.text) ? ['multi-column-tabs'] : [];
 
-    const issues = deriveIssues({ standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage, parseBreakers });
+    const issues = deriveIssues({ standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage, parseBreakers, pages: a.pages });
     const passed = issues.length === 0;
     return {
         machineReadable: true,
@@ -83,5 +128,7 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
         status: passed ? 'passed' : 'issues',
         passed,
         issues,
+        ...(typeof a.pages === 'number' ? { pageCount: a.pages } : {}),
+        ...coverageScoreField(a.coverage, a.requiredSkills),
     };
 }

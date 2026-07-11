@@ -9,7 +9,7 @@
  * ```typescript
  * import { getBedrockAllocations } from '../../config/bedrock';
  * const allocs = getBedrockAllocations(Environment.PRODUCTION);
- * const model = allocs.foundationModel; // 'eu.anthropic.claude-sonnet-4-6'
+ * const model = allocs.apiLambda.chatbotModel;
  * ```
  */
 
@@ -21,17 +21,6 @@ import { MODELS } from '../shared/model-registry';
 // =============================================================================
 
 /**
- * Bedrock Agent allocation
- */
-export interface AgentAllocation {
-    /** Foundation model ID for the Bedrock Agent */
-    readonly foundationModel: string;
-    /** Agent idle session timeout in seconds */
-    readonly idleSessionTtlInSeconds: number;
-}
-
-
-/**
  * Lambda allocation for API invoke handler
  */
 export interface ApiLambdaAllocation {
@@ -41,18 +30,6 @@ export interface ApiLambdaAllocation {
     readonly timeoutSeconds: number;
     /** Bedrock model ID for RAG-based chatbot Lambdas (chatbot-public + chatbot-authenticated) */
     readonly chatbotModel: string;
-}
-
-/**
- * Knowledge Base allocation
- */
-export interface KnowledgeBaseAllocation {
-    /** Embedding model ID for vector generation */
-    readonly embeddingsModel: string;
-    /** Pinecone index connection string */
-    readonly pineconeConnectionString: string;
-    /** Pinecone namespace for data isolation */
-    readonly pineconeNamespace: string;
 }
 
 /**
@@ -69,8 +46,6 @@ export interface ApiGatewayAllocation {
  * Complete resource allocations for Bedrock project
  */
 export interface BedrockAllocations {
-    readonly agent: AgentAllocation;
-    readonly knowledgeBase: KnowledgeBaseAllocation;
     readonly apiLambda: ApiLambdaAllocation;
     readonly apiGateway: ApiGatewayAllocation;
 }
@@ -84,15 +59,6 @@ export interface BedrockAllocations {
  */
 export const BEDROCK_ALLOCATIONS: Record<DeployableEnvironment, BedrockAllocations> = {
     [Environment.DEVELOPMENT]: {
-        agent: {
-            foundationModel: MODELS.CHATBOT_AGENT,
-            idleSessionTtlInSeconds: 600, // 10 minutes
-        },
-        knowledgeBase: {
-            embeddingsModel: MODELS.KB_EMBEDDINGS,
-            pineconeConnectionString: 'https://portfolio-kb-79dyhsi.svc.aped-4627-b74a.pinecone.io',
-            pineconeNamespace: 'portfolio-dev',
-        },
         apiLambda: {
             memoryMb: 256,
             timeoutSeconds: 60,
@@ -105,15 +71,6 @@ export const BEDROCK_ALLOCATIONS: Record<DeployableEnvironment, BedrockAllocatio
     },
 
     [Environment.STAGING]: {
-        agent: {
-            foundationModel: MODELS.CHATBOT_AGENT,
-            idleSessionTtlInSeconds: 900, // 15 minutes
-        },
-        knowledgeBase: {
-            embeddingsModel: MODELS.KB_EMBEDDINGS,
-            pineconeConnectionString: 'https://portfolio-kb-79dyhsi.svc.aped-4627-b74a.pinecone.io',
-            pineconeNamespace: 'portfolio-stg',
-        },
         apiLambda: {
             memoryMb: 512,
             timeoutSeconds: 60,
@@ -126,15 +83,6 @@ export const BEDROCK_ALLOCATIONS: Record<DeployableEnvironment, BedrockAllocatio
     },
 
     [Environment.PRODUCTION]: {
-        agent: {
-            foundationModel: MODELS.CHATBOT_AGENT,
-            idleSessionTtlInSeconds: 1800, // 30 minutes
-        },
-        knowledgeBase: {
-            embeddingsModel: MODELS.KB_EMBEDDINGS,
-            pineconeConnectionString: 'https://portfolio-kb-79dyhsi.svc.aped-4627-b74a.pinecone.io',
-            pineconeNamespace: 'portfolio-prd',
-        },
         apiLambda: {
             memoryMb: 1024,
             timeoutSeconds: 120,

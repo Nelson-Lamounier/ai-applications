@@ -13,25 +13,32 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
-import type { JdSignal } from '@bedrock/shared';
+import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
-import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription } from './agents/research-agent.js';
+import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research-agent.js';
 import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
-import { loadProjectEvidenceBlock, loadProjectLaneIndex } from './agents/project-evidence-block.js';
+import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/project-evidence-block.js';
+import { relocateProjectExperience, restoreProjectHighlights } from './agents/relocate-project-experience.js';
 import { loadAchievementEvidence } from './agents/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
-import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts } from './agents/career-history.js';
+import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/career-history.js';
 import { extractJobDescription, extractJdSignal } from './agents/jd-extractor.js';
 import { buildYearsGap } from './agents/years-gap.js';
 import { guardCoverLetter } from './agents/cover-letter-guard.js';
-import { guardResume } from './agents/resume-guard.js';
+import type { CoverLetterNarrativeOpts } from './agents/cover-letter-guard.js';
+import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/resume-guard.js';
+import { annotateGapCauses } from './lib/gap-cause.js';
+import { createViolationLog } from './lib/violation-log.js';
+import { loadCandidateContactBlock } from './lib/candidate-contact.js';
+import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
+import { applyLengthBudget } from './ats/length-budget.js';
+import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
 import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -54,17 +61,62 @@ import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type R
 import { detectStaleMigrations, reframeStaleMigrations } from './ats/migration-reframe.js';
 import { buildRetrievalPrefilter } from './ats/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
-import { extractNumbers, stripUngroundedNumbers } from './ats/number-provenance.js';
+import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/number-provenance.js';
+import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
+import { reconcileExperienceRoster } from './lib/experience-roster.js';
+import { surfaceMetrics } from './agents/surface-metrics.js';
+import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from './prompts/strategist-persona.js';
 import { surfaceKeywords } from './agents/surface-keywords.js';
+import { stripDocumentSections } from './lib/strip-document-sections.js';
+import { dedupeSkillGaps } from './lib/dedupe-skill-gaps.js';
+import { ensureSummaryIntegrity } from './lib/summary-integrity.js';
+import { preserveResumeFields } from './lib/preserve-resume-fields.js';
+
+/**
+ * GROUNDED echoes the verifier's (document-stripped) answer back — keep the
+ * full original analysis; only a NOT_GROUNDED fallback substitution replaces
+ * it. Extracted from main() to keep its complexity at the baseline.
+ */
+/**
+ * Post-chain resume integrity: restore fields a lossy rewrite dropped
+ * (projects[].github, observed live) and pass the summary through the
+ * lint + bounded-repair gate. Fail-open; never throws; null-safe so the
+ * call sites add no branching to main().
+ */
+async function applyResumeIntegrity(
+    resume: StructuredResumeData,
+    writerOriginal: StructuredResumeData | null,
+    allowed: Set<number>,
+    onViolation: (code: string) => void,
+): Promise<StructuredResumeData> {
+    const restored = preserveResumeFields(writerOriginal, resume);
+    try {
+        const view = restored as unknown as { summary?: unknown };
+        if (typeof view.summary !== 'string' || view.summary.length === 0) return restored;
+        const originalSummary = (writerOriginal as unknown as { summary?: unknown } | null)?.summary;
+        const gate = await ensureSummaryIntegrity(view.summary, {
+            originalSummary: typeof originalSummary === 'string' ? originalSummary : null,
+            allowed,
+        });
+        for (const i of gate.issues) onViolation(i.code);
+        if (gate.action !== 'clean') onViolation(`summary_${gate.action}`);
+        return { ...restored, summary: gate.summary } as StructuredResumeData;
+    } catch {
+        return restored;
+    }
+}
+
+function resolveVerifiedAnalysis(original: string, g: { status: string; answer: string }): string {
+    return g.status === 'GROUNDED' ? original : g.answer;
+}
 import { formatTechTransferContext } from './ats/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
-import { attachSourceLanes } from './ats/evidence-lane.js';
+import { attachSourceLanes, mergeRepoLane } from './ats/evidence-lane.js';
 import { applyDegreeReconcile } from './ats/education-reconcile.js';
 import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
 import { runFreeTier }             from './free/run-free.js';
 import { gatherFreeEvidence }      from './free/gather-evidence.js';
 import { bedrockFreeResumeWriter } from './agents/free-resume-writer.js';
-import { querySingleRds }          from './agents/research-agent.js';
 
 // Default 'flag' — serve the real analysis and surface ungrounded claims via
 // telemetry, rather than 'block' replacing a cited analysis with a one-line stub.
@@ -123,6 +175,160 @@ async function buildQueryRetrievalPrefilter(
     );
 }
 
+/**
+ * Cover-letter narrative context: the JD's values rubric, the documented
+ * project pitches, and the resume's numbers (overlap = the letter restating
+ * the resume). Extracted from main() to keep its complexity bounded.
+ */
+type YearsGapLite = { framingLine: string; requiredYears: number | null } | null;
+
+/** True when the JD sets an explicit years-of-experience requirement. */
+function jdHasYearsBar(yearsGap: YearsGapLite): boolean {
+    return yearsGap?.requiredYears != null;
+}
+
+/** The tenure framing the LETTER may use — empty when the JD sets no years bar. */
+function tenureFramingFor(yearsGap: YearsGapLite): string {
+    if (!jdHasYearsBar(yearsGap) || !yearsGap) return '';
+    return yearsGap.framingLine;
+}
+
+/**
+ * Anchor the writer's experience roster to career-history truth (merge
+ * duplicated roles, restore company names). Null-safe; reports each fix.
+ * Extracted from main() to keep its complexity bounded.
+ */
+function reconcileRosterAgainstCareer(
+    resume: StructuredResumeData | null,
+    career: Parameters<typeof reconcileExperienceRoster>[1],
+    onViolation: (code: string) => void,
+): StructuredResumeData | null {
+    if (!resume) return null;
+    const { resume: fixed, violations } = reconcileExperienceRoster(resume, career);
+    for (const v of violations) onViolation(v);
+    return fixed;
+}
+
+/** The persona's full instruction text — the number DENY source for leak scrubbing. */
+function personaInstructionText(): string {
+    return STRATEGIST_PERSONA_SYSTEM_PROMPT
+        .map((b) => ('text' in b && typeof b.text === 'string' ? b.text : ''))
+        .join('\n');
+}
+
+/**
+ * Strip instruction-leaked metrics from the writer's raw output (numbers that
+ * appear in the persona but in none of the evidence handed to the writer).
+ * Null-safe; reports via callback only when something was actually stripped.
+ * Extracted from main() to keep its complexity bounded.
+ */
+function scrubInstructionLeaks(
+    resume: StructuredResumeData | null,
+    evidenceText: string,
+    onStripped: () => void,
+): StructuredResumeData | null {
+    if (!resume) return null;
+    const scrubbed = stripInstructionMetrics(resume, { instructionText: personaInstructionText(), evidenceText });
+    if (JSON.stringify(scrubbed) !== JSON.stringify(resume)) onStripped();
+    return scrubbed;
+}
+
+/**
+ * Grounded-metric weave: ONE bounded surface-metrics rewrite on EVERY resume
+ * when the ledger is non-empty (roster-preserving), then re-strip ungrounded
+ * numbers — ledger values are in `allowed`, so only drifted values are
+ * removed. Reports when the weave leaves the resume metric-free. Fail-open.
+ * Extracted from main() to keep its complexity bounded.
+ */
+async function weaveGroundedMetrics(
+    resume: StructuredResumeData,
+    groundedMetricsBlock: string,
+    groundingFacts: string,
+    allowed: Set<number>,
+    jdContext: string,
+    onEvent: (code: string) => void,
+): Promise<StructuredResumeData> {
+    if (!groundedMetricsBlock) return resume;
+    const surfaced = preserveExperienceRoster(resume, await surfaceMetrics(resume, groundedMetricsBlock, { groundingFacts, jdContext }).catch(() => resume));
+    const woven = stripUngroundedNumbers(surfaced, allowed);
+    if (!resumeHasMetric(woven)) onEvent('resume_missing_metrics_after_weave');
+    return woven;
+}
+
+function buildCoverLetterNarrative(
+    jdExtraction: JdSignal,
+    projectPitches: ReadonlyArray<{ name: string; pitch: string }>,
+    tailoredResumeData: unknown,
+    hasYearsBar: boolean,
+): CoverLetterNarrativeOpts {
+    const valuesSignals = [
+        ...(jdExtraction.implicitRequirements ?? []),
+        ...(jdExtraction.softRequirements ?? []).map((sr) => sr.skill),
+    ];
+    const resumeNumbers = new Set(
+        (JSON.stringify(tailoredResumeData ?? {}).match(/\d+(?:[.,]\d+)?\+?/g) ?? []).map((n) => n.replace(/[,+]/g, '')),
+    );
+    return { hasYearsBar, valuesSignals, projectPitches, companyProblem: jdExtraction.companyProblem, resumeNumbers };
+}
+
+/** Verified certification facts for the guard (name + date string). */
+/** Reconcile outcome label without a nested ternary. */
+function degreeOutcome(r: { verified?: unknown; partial?: unknown }): string {
+    if (r.verified) return 'verified';
+    if (r.partial) return 'partial';
+    return 'gap';
+}
+
+/** Career-history employers + their verified highlight facts — the guard's attribution boundary. */
+function toVerifiedEmployers(entries: ReadonlyArray<{ company: string; highlights?: readonly string[] }> | undefined): Array<{ name: string; facts: string }> {
+    return (entries ?? []).map((c) => ({ name: c.company, facts: (c.highlights ?? []).join(' ') }));
+}
+
+function toVerifiedCerts(entries: ReadonlyArray<{ name: string; date: string }> | undefined): Array<{ name: string; date: string }> {
+    return (entries ?? []).map((c) => ({ name: c.name, date: c.date }));
+}
+
+/**
+ * Corrective retrieval (CRAG-style, fail-open; CORRECTIVE_RETRIEVAL=off is the
+ * kill switch). Live measurement: 76% of classified gaps (100/131) were
+ * kb_present_not_retrieved — evidence exists in the KB but the JD-wide research
+ * queries missed it. Re-query per gap with a skill-focused query and let a
+ * strict Haiku adjudicator promote genuine evidence to a partialMatch (default
+ * verdict: stand — the tsv classifier overcounts lexical mentions). Runs AFTER
+ * the deterministic guards so demotions are respected, BEFORE the
+ * ledger/strategist consume gaps. Extracted from main() to keep its complexity
+ * bounded (same pattern as buildQueryRetrievalPrefilter).
+ */
+async function runCorrectiveRetrievalPass<T extends { gaps: SkillGap[]; partialMatches: PartialMatch[] }>(args: {
+    matching: T;
+    pool: Pool;
+    userId: string;
+    pipelineRunId: string;
+    pipelineContext: BasePipelineContext;
+    retrievalPrefilter: RetrievalPrefilter | undefined;
+}): Promise<{ matching: T; stats: CorrectiveStats | null }> {
+    if (process.env['CORRECTIVE_RETRIEVAL'] === 'off') return { matching: args.matching, stats: null };
+    try {
+        const correctiveStore = RdsVectorStore.fromEnvironment();
+        const corrective = await applyCorrectiveRetrieval(args.matching, {
+            pool: args.pool,
+            userId: args.userId,
+            retrieve: (q, k) => querySingleRds(q, args.userId, correctiveStore, k, args.retrievalPrefilter),
+            adjudicate: buildBedrockAdjudicator({ pipelineContext: args.pipelineContext, userId: args.userId }),
+        });
+        if (corrective.stats.promoted > 0) correctiveRetrievalMetric.inc({ outcome: 'promoted' }, corrective.stats.promoted);
+        const stood = corrective.stats.retrieved - corrective.stats.promoted;
+        if (stood > 0) correctiveRetrievalMetric.inc({ outcome: 'stood' }, stood);
+        if (corrective.stats.candidates > 0) {
+            log.info({ pipelineRunId: args.pipelineRunId, ...corrective.stats }, 'corrective_retrieval_pass');
+        }
+        return { matching: corrective.matching, stats: corrective.stats };
+    } catch (err) {
+        log.warn({ pipelineRunId: args.pipelineRunId, err: String(err) }, 'corrective_retrieval_failed_open');
+        return { matching: args.matching, stats: null };
+    }
+}
+
 /** S3 client for canonical resume PDF storage. */
 const s3 = new S3Client({});
 
@@ -175,6 +381,18 @@ const resumeViolationsMetric = new Counter({
 const atsFeedback = new Counter({
     name:       'job_strategist_ats_feedback_total',
     help:       'ATS feedback loop outcomes: fired (re-write ran), passed (no attainable missing), skipped (re-write not run).',
+    labelNames: ['outcome'] as const,
+    registers:  [obs.registry],
+});
+const gapCauseMetric = new Counter({
+    name:       'job_strategist_gap_cause_total',
+    help:       'Research gap causes: kb_present_not_retrieved (retrieval tuning lead) vs kb_no_evidence (document-or-build signal).',
+    labelNames: ['cause'] as const,
+    registers:  [obs.registry],
+});
+const correctiveRetrievalMetric = new Counter({
+    name:       'job_strategist_corrective_retrieval_total',
+    help:       'Corrective-retrieval verdicts on kb_present_not_retrieved gaps: promoted (evidence recovered) vs stood (lexical mention only).',
     labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
@@ -413,6 +631,14 @@ export async function main(): Promise<void> {
         userId:            env.userId,
         onInvocationComplete: recordInvocationToRds(pool, 'job-strategist', { applicationId: env.applicationId }),
     };
+    // Process-wide fallback: helper agents (guards, years-gap, surface-keywords,
+    // condense) and the matcher build their own contexts without the sink —
+    // register it once so EVERY Bedrock invocation in this Job records to
+    // prompt_invocations with user attribution.
+    setDefaultAgentInvocationSink(
+        recordInvocationToRds(pool, 'job-strategist', { applicationId: env.applicationId }),
+        env.userId,
+    );
 
     try {
         await updatePipelineRun(pool, env.pipelineRunId, 'researching');
@@ -494,8 +720,9 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock] = await Promise.all([
+        const [projectEvidenceBlock, projectResumeBullets, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContactBlock] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
+            loadProjectResumeBullets(pool, ctx.userId),
             loadProjectLaneIndex(pool, ctx.userId),
             loadProfileIntelligenceBlock(pool, ctx.userId),
             loadEducation(pool, ctx.userId).catch(() => []),
@@ -503,11 +730,21 @@ export async function main(): Promise<void> {
             loadCareerHistory(pool, ctx.userId).catch(() => []),
             extractJobDescription(ctx.jobDescription, ctx),
             loadAchievementEvidence(pool, ctx.userId),
+            loadGroundedMetricsLedger(pool, ctx.userId),
+            loadCandidateContactBlock(pool, ctx.userId),
         ]);
-        // Candidate grounding fed to research + strategist: documented project case
-        // studies PLUS the code-grounded Profile Intelligence (direction / undersold
-        // strengths / unsupported claims). Both fail-open to '' independently.
+        // Candidate grounding fed to RESEARCH (and the writer's evidence text):
+        // documented project case studies PLUS the code-grounded Profile
+        // Intelligence. Both fail-open to '' independently. The STRATEGIST now
+        // receives the two blocks SEPARATELY — concatenating them buried the
+        // profile block inside the case-studies wrapper (whose preamble scopes
+        // usage to bullet grounding), and the persona's S3 "drawn from the
+        // profile intelligence" instruction had no matching section to draw
+        // from (run 77e325ea: S3 slot filled with a second rigor close).
         const candidateGroundingBlock = [projectEvidenceBlock, profileIntelligenceBlock].filter(Boolean).join('\n\n');
+        // Writer prompt block for projects[].highlights selection; the structured
+        // form (projectResumeBullets) also anchors the post-writer relocation.
+        const projectResumeBulletsBlock = formatProjectResumeBulletsBlock(projectResumeBullets);
         const educationBlock      = formatEducation(educationEntries);
         const certificationsBlock = formatCertifications(certificationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
@@ -621,7 +858,7 @@ export async function main(): Promise<void> {
             log.info({
                 pipelineRunId: env.pipelineRunId,
                 requirement: degreeResult.requirementSkill,
-                outcome: degreeResult.verified ? 'verified' : degreeResult.partial ? 'partial' : 'gap',
+                outcome: degreeOutcome(degreeResult),
             }, 'education_degree_reconciled');
         }
 
@@ -639,7 +876,20 @@ export async function main(): Promise<void> {
                 cappedFitRating: yearsReconciled.overallFitRating,
             }, 'years_gap_enforced_disqualifying_experience_bar');
         }
-        const guardedResearch = { ...research, data: yearsReconciled };
+        const { matching: correctedMatching, stats: correctiveStats } = await runCorrectiveRetrievalPass({
+            matching: yearsReconciled, pool, userId: env.userId, pipelineRunId: env.pipelineRunId,
+            pipelineContext: ctx, retrievalPrefilter,
+        });
+        // One gap row per real-world skill: the matcher can emit the same
+        // requirement several ways (observed live: 'PHP/Hack' + 'PHP' + 'Hack').
+        const guardedResearch = {
+            ...research,
+            data: {
+                ...correctedMatching,
+                gaps: dedupeSkillGaps(correctedMatching.gaps, aliasToCanonical, (d) =>
+                    log.info({ pipelineRunId: env.pipelineRunId, ...d }, 'skill_gaps_deduped')),
+            },
+        };
 
         // Assemble StrategistResearchResult from jdExtraction (JdSignal) + guarded matching.
         // Build the Skill Evidence Ledger deterministically here — it's a pure function of the
@@ -656,17 +906,28 @@ export async function main(): Promise<void> {
         // soft skill (e.g. "complex technical communication") resolves to no code canonical
         // → keeps its honest career grounding. GAP entries untouched. Pure + deterministic
         // (no I/O), so it is called directly — it never reaches out and cannot block.
-        const ledgerWithCode = attachCodeEvidence(baseLedger, { canonicalToFiles: canonicalToCodeFiles, aliasToCanonical });
-
         // Tag each row's source lane(s) — repo (standalone code) / project (a
-        // documented project or its repos) / career (résumé). Deterministic +
-        // fail-open: an empty lane index simply yields no sourceLanes. Career
-        // terms are the exact company + job-title strings from the résumé.
+        // documented project or its repos) / career (résumé). Runs on the
+        // PRE-strip ledger so lanes classify the matcher's ORIGINAL citations:
+        // attachCodeEvidence strips display files from conceptual skills, and
+        // classifying afterwards left almost every entry lane-less (a live run
+        // tallied 3 repo / 0 project / 0 career over 34 entries). Deterministic
+        // + fail-open: an empty lane index simply yields no sourceLanes.
         const careerTerms = careerEntries.flatMap((e) => [e.company, e.title]).filter(Boolean);
-        const skillEvidenceLedger = attachSourceLanes(ledgerWithCode, {
+        const lanedBase = attachSourceLanes(baseLedger, {
             projectNames: projectLaneIndex.projectNames,
             careerTerms,
         });
+        const ledgerWithCode = attachCodeEvidence(lanedBase, { canonicalToFiles: canonicalToCodeFiles, aliasToCanonical });
+        // Entries that only GAINED files in the code pass earn the repo lane.
+        const lanedLedger = mergeRepoLane(ledgerWithCode);
+
+        // Join the run's own retrieved KB passages onto each entry — the
+        // "how was this verified" audit trail (source + cosine/rerank +
+        // snippet) the evidence panel renders. Deterministic; gap entries
+        // untouched; entries with no matching passage stay unannotated.
+        const kbPassages = parseKbPassages(guardedResearch.data.kbContext, KB_CONTEXT_SEPARATOR);
+        const skillEvidenceLedger = attachPassageProvenance(lanedLedger, kbPassages);
 
         const researchData: StrategistResearchResult = {
             ...jdExtraction,
@@ -683,7 +944,13 @@ export async function main(): Promise<void> {
 
         await updatePipelineRun(pool, env.pipelineRunId, 'analysing');
 
-        const analysis = await executeStrategistAgent(ctx, researchData, candidateGroundingBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock);
+        // GROUNDED METRICS block: deterministic case-study ledger + the matcher's
+        // verbatim KB pass-through. NEVER shown to the writer — feeding it there
+        // tripled extended thinking (13.9K -> 37-56K output tokens, 4 -> 12-17 min,
+        // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
+        // composition. It feeds the post-writer Haiku weave + allowed-number sets.
+        const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
+        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock, projectResumeBulletsBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -702,13 +969,17 @@ export async function main(): Promise<void> {
         let groundingStatus = 'GROUNDED';
         if (contextChunks.length > 0) {
             try {
+                // The resume JSON + cover letter have dedicated guards — strip
+                // them so the verifier judges only the analysis (smaller input,
+                // and resume phrasing can no longer trigger a false
+                // NOT_GROUNDED that block-replaces the whole analysis).
                 const g = await groundingVerifier.verify({
                     query: `${env.targetRole ?? ''} ${env.targetCompany ?? ''}`.trim(),
                     contextChunks,
-                    answer: analysis.data.analysisXml,
+                    answer: stripDocumentSections(analysis.data.analysisXml),
                 }, { pool, userId: env.userId });
                 groundingStatus = g.status;
-                finalAnalysis = g.answer;
+                finalAnalysis = resolveVerifiedAnalysis(analysis.data.analysisXml, g);
             } catch (e) {
                 log.warn({
                     pipelineRunId: env.pipelineRunId,
@@ -723,21 +994,55 @@ export async function main(): Promise<void> {
             strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_skipped_no_context' });
         }
 
-        // Raw tailored resume from the Strategist (guard reads this as input).
-        const tailoredResumeData = analysis.data.tailoredResumeData ?? null;
+        // Raw tailored resume from the Strategist (guard reads this as input) —
+        // scrubbed of instruction-leaked metrics FIRST: the 2026-07-08 run lifted
+        // "8 minutes to 30 seconds" from the persona's own impact-metric example,
+        // a class the provenance guard cannot catch (its allowed set is seeded
+        // with the writer's own output). Prompt numbers are never evidence.
+        const writerEvidenceText = [
+            experienceFactsBlock, candidateGroundingBlock, educationBlock, roleEvidenceBlock,
+            codeStackContext, achievementEvidenceBlock, groundedMetricsBlock, JSON.stringify(researchData),
+        ].join('\n');
+        // Guard-violation ledger: every (stage, code) pair fired below is
+        // collected for pipeline_runs.metadata.guard — Prometheus counters
+        // alone do not survive short-lived Job pods (run 77e325ea: three
+        // rewrites fired, zero increments visible after the pod exited).
+        const violationLog = createViolationLog((stage, code) =>
+            (stage === 'cover_letter' ? coverLetterViolations : resumeViolationsMetric).inc({ code }));
+        const tailoredResumeData = reconcileRosterAgainstCareer(
+            scrubInstructionLeaks(
+                analysis.data.tailoredResumeData ?? null,
+                writerEvidenceText,
+                () => {
+                    violationLog.record('instruction_scrub', 'instruction_metric_stripped');
+                    log.warn({ pipelineRunId: env.pipelineRunId }, 'instruction_metric_stripped_from_writer_output');
+                },
+            ),
+            careerEntries,
+            (code) => {
+                violationLog.record('roster_reconcile', code);
+                log.warn({ pipelineRunId: env.pipelineRunId, code }, 'experience_roster_reconciled');
+            },
+        );
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
         // ── Cover-letter guard (rule-based, fail-open, rewrite-on-violation) ──
         // Validates the AI-authored cover letter against code-enforced rules
         // (e.g. leadIdentity coherence, years-gap framing). Violations are
         // rewritten in-place and counted for observability — never throws.
+        // Tenure framing is CONDITIONAL: when the JD sets no years bar (the
+        // Accenture JD explicitly de-emphasised years yet the letter led with
+        // "five years"), the letter must not mention tenure at all.
+        const hasYearsBar = jdHasYearsBar(yearsGap);
+        const letterFraming = tenureFramingFor(yearsGap);
         const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
             analysis.data.coverLetter,
             researchData.targetRole,
             analysis.data.archetypeSelection?.leadIdentity ?? '',
-            yearsGap?.framingLine ?? '',
+            letterFraming,
+            buildCoverLetterNarrative(jdExtraction, projectLaneIndex.projectPitches, tailoredResumeData, hasYearsBar),
         );
-        for (const v of coverViolations) coverLetterViolations.inc({ code: v.code });
+        violationLog.recordAll('cover_letter', coverViolations);
 
         // ── Resume guard — F-pattern content checks (fail-open, rewrite-on-violation) ──
         // Validates the AI-authored resume against code-enforced rules (headline
@@ -745,17 +1050,54 @@ export async function main(): Promise<void> {
         // are rewritten in-place by Haiku and counted for observability — never throws.
         const archetypeId = analysis.data.archetypeSelection?.archetypeId ?? 0;
         const archetypeSkillLead = archetypeId === 7 ? 'Support & Troubleshooting' : '';
-        let finalResume = tailoredResumeData;
-        if (tailoredResumeData) {
-            const guarded = await guardResume(tailoredResumeData, {
-                targetRole:        researchData.targetRole,
-                leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
-                verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
-                archetypeSkillLead,
-            });
+        const resumeGuardCtx = {
+            targetRole:        researchData.targetRole,
+            leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
+            verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
+            archetypeSkillLead,
+            companyProblem:    jdExtraction.companyProblem,
+            targetCompany:     researchData.targetCompany,
+            projectPitches:    projectLaneIndex.projectPitches,
+            jdRequiredSkills:  jdExtraction.requiredSkills,
+            verifiedCertifications: toVerifiedCerts(certificationEntries),
+            verifiedEmployers: toVerifiedEmployers(careerEntries),
+        };
+        // Grounding for the expand direction + the allowed-number set that
+        // bounds ANY pass that can add content (expand, surface-keywords).
+        const budgetGroundingFacts = [
+            experienceFactsBlock,
+            projectEvidenceBlock,
+            groundedMetricsBlock,
+            // Server-computed years figure: without it the allowed-number set
+            // has no years value and the stripper deletes "N years" from the
+            // summary mid-sentence (observed live on run a428bdf4).
+            formatVerifiedYearsFact(careerEntries),
+            researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
+        ].filter(Boolean).join('\n\n');
+        // Keep Experience to verified employers: relocate any project the writer
+        // mis-filed as a "Solo <role> — <Project>" experience entry back into
+        // projects[].highlights (its github link + description live there). Runs
+        // BEFORE the guard so every downstream pass sees the corrected structure.
+        let finalResume = tailoredResumeData
+            ? relocateProjectExperience(tailoredResumeData, resumeGuardCtx.verifiedEmployers, projectResumeBullets)
+            : tailoredResumeData;
+        // Snapshot the relocated/filled projects[].highlights so the downstream
+        // Haiku re-emit passes (condense, metric-weave, keyword-surfacing) can't
+        // silently blank them — restored just before persist.
+        const projectHighlightsSnapshot = finalResume;
+        if (finalResume) {
+            const guarded = await guardResume(finalResume, resumeGuardCtx);
             finalResume = guarded.resume;
-            for (const v of guarded.violations) resumeViolationsMetric.inc({ code: v.code });
+            violationLog.recordAll('resume_guard', guarded.violations);
         }
+
+        // JD-priority context for length enforcement — required skills + the
+        // company problem decide what survives a condense (JD-relevant first).
+        const jdPriority = {
+            requiredSkills:   jdExtraction.requiredSkills,
+            companyProblem:   jdExtraction.companyProblem,
+            responsibilities: jdExtraction.responsibilities,
+        };
 
         // Career/bullet drift: reframe an experience bullet describing a tech the code
         // has since superseded (e.g. self-hosted kubeadm → managed EKS) into an honest
@@ -767,8 +1109,38 @@ export async function main(): Promise<void> {
                     pipelineRunId: env.pipelineRunId,
                     migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
                 }, 'migration_reframe_fired');
-                finalResume = await reframeStaleMigrations(finalResume, staleMigrations).catch(() => finalResume);
+                const preReframe = finalResume;
+                finalResume = preserveExperienceRoster(preReframe, await reframeStaleMigrations(preReframe, staleMigrations).catch(() => preReframe));
             }
+            // ── Length budget (measure → condense → hard trim; fail-open) ──
+            // The 2026-07-02 Google run shipped 1,723 words / 4 pages: the
+            // strategist emitted 1,045 and the guard + keyword rewrites added
+            // the rest. Enforce here (before persist/ATS) and again after the
+            // keyword-surfacing rewrite — the last stage that can grow it.
+            const preBudget = finalResume;
+            const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
+            const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
+            // Expansion may only add grounded numbers; strip anything else.
+            const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
+            // Metric weave (always-on when the ledger is non-empty): the writer
+            // never sees the ledger, so this Haiku pass is HOW grounded metrics
+            // enter the bullets. Values are protected by the allowed-number set;
+            // the number strip re-runs on its output.
+            const jdContextLine = `${researchData.targetRole}: ${jdExtraction.requiredSkills.join(', ')}`;
+            const numberSafe = await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
+                violationLog.record('metric_weave', code);
+                log.warn({ pipelineRunId: env.pipelineRunId, code }, 'grounded_metric_weave');
+            });
+            // FINAL content re-validation: reframe/condense/expand can
+            // reintroduce violations the early guard already repaired (the
+            // A/B run regained 5 bullet-shared project numbers and a flat
+            // "Terraform" claim). One bounded repair, then report residuals.
+            const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
+            violationLog.recordAll('revalidate', revalidated.violations);
+            finalResume = await applyResumeIntegrity(revalidated.resume, tailoredResumeData, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
+            // Restore any projects[].highlights the Haiku re-emit passes dropped
+            // (the emit_resume tool round-trip blanks the Projects bullets).
+            if (projectHighlightsSnapshot) finalResume = restoreProjectHighlights(projectHighlightsSnapshot, finalResume);
         }
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
@@ -830,9 +1202,23 @@ export async function main(): Promise<void> {
                 // Allowed numbers = original resume + grounding facts. Any number the
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
-                const refined = await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume);
-                const surfaced = refined !== baseResume ? stripUngroundedNumbers(refined, allowed) : baseResume;
+                const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
+                let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
                 if (surfaced !== baseResume) {
+                    // The keyword rewrite is the last stage that can GROW the
+                    // resume (it inflated the 2026-07-02 Google run by pulling
+                    // grounding-facts prose into projects) — re-enforce the
+                    // length budget, then FINAL-revalidate content (surface
+                    // rewrites were observed reintroducing inventory numbers
+                    // and unbridged claims) before persisting and re-checking.
+                    // No groundingFacts here: round 1 already expanded to fill;
+                    // this pass exists only to SHRINK keyword-rewrite overgrowth.
+                    // (Observed live: a second expand+revalidate round cost ~50s.)
+                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code)).catch(() => surfaced);
+                    surfaced = stripUngroundedNumbers(surfaced, allowed);
+                    const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
+                    violationLog.recordAll('revalidate_post_keywords', reval.violations);
+                    surfaced = await applyResumeIntegrity(reval.resume, tailoredResumeData, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
                         applicationId:  env.applicationId,
@@ -843,7 +1229,21 @@ export async function main(): Promise<void> {
                         tailoredResume: surfaced,
                     }).catch(() => null);
                     const reResumeId = rePersisted?.resumeId ?? persisted.resumeId;
-                    finalAts = await renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced }).catch(() => atsCheck);
+                    // Re-check the SURFACED resume. A silent fallback to the
+                    // pre-rewrite verdict shipped stale "missing keyword" issues
+                    // for a resume that had already fixed them — so retry once,
+                    // and if the re-check still fails, mark the verdict stale
+                    // instead of presenting it as current.
+                    finalAts = await renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced })
+                        .catch(async () => {
+                            log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed — retrying once');
+                            return renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced });
+                        })
+                        .catch(() => {
+                            log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed_twice — stamping stale verdict');
+                            strategistRuns.inc({ operation: 'analyse', outcome: 'ats_recheck_stale' });
+                            return { ...atsCheck, staleForFinalResume: true };
+                        });
                 }
             } else {
                 atsFeedback.inc({ outcome: 'skipped' });
@@ -874,6 +1274,15 @@ export async function main(): Promise<void> {
             pool, env.userId, finalAnalysis, env.pipelineRunId,
         );
 
+        // ── Gap-cause classification (advisory, fail-open) ────────────────
+        // Split every research gap into kb_present_not_retrieved (evidence
+        // exists, retrieval missed it → retrieval bug lead) vs kb_no_evidence
+        // (nothing in the KB → user-facing "document this" signal). Persisted
+        // on the gap entries; aggregated as a Prometheus counter for Grafana.
+        const gapsWithCauses = await annotateGapCauses(
+            pool, env.userId, researchData.gaps, (cause) => gapCauseMetric.inc({ cause }),
+        ).catch(() => researchData.gaps);
+
         // Stash both outputs on pipeline_runs.metadata so the admin-api detail
         // endpoint can serve research fields (fitSummary, matches, gaps, etc.)
         // and a downstream coach K8s Job can re-hydrate without re-running.
@@ -882,10 +1291,18 @@ export async function main(): Promise<void> {
         // atsCheck is stashed here as well as on resumes.ats_check_json so the
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
+        // metadata.guard answers "which violations fired, at which stage?" per
+        // run — the counters alone die with the Job pod. One structured log
+        // line makes the same answer greppable in Loki.
+        const guardMeta = violationLog.toMetadata();
+        if (guardMeta) {
+            log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
+        }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
             analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
-            research:     researchData,
+            research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
+            guard:   guardMeta,
             // LLM-agent cost (extraction + research + analysis + grounding); excludes embeddings/rerank.
             tokens:  ctx.cumulativeTokens,
             costUsd: ctx.cumulativeCostUsd,

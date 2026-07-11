@@ -19,10 +19,5 @@
   "include": [
     "src/**/*.ts"
   ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "src/migrate-dynamo.ts",
-    "src/**/*.test.ts"
-  ]
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }

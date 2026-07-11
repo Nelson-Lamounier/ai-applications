@@ -3,28 +3,20 @@ import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import {
-    BedrockAgentRuntimeClient,
-    InvokeAgentCommand,
-} from '@aws-sdk/client-bedrock-agent-runtime';
-import {
-    log, emitEmfMetric, withSpan, captureAwsClient,
+    log, emitEmfMetric, withSpan,
     InputSanitiser, OutputSanitiser,
     CHATBOT_SYSTEM_PROMPT, buildChatContext, recordZeroResultRetrieval,
     resolvePortfolioOwnerId,
+    hydrateRdsEnv,
 } from '@bedrock/shared';
 import { getEnv } from './env.js';
 import { multiQueryRetrieve } from './retrieval.js';
 import { invokeClaude } from './invoke-claude.js';
 import type { InvokeRequestBody, InvokeResponseBody, ErrorResponseBody, CallerRole } from './types.js';
 
-// ─── Feature flag ──────────────────────────────────────────────────────────────
-const CHATBOT_RETRIEVAL_SOURCE = (): string =>
-    process.env['CHATBOT_RETRIEVAL_SOURCE'] ?? 'bedrock-agent';
-
 // ─── Module-scoped singletons ─────────────────────────────────────────────────
 const inputSanitiser  = new InputSanitiser();
 const outputSanitiser = new OutputSanitiser();
-const agentClient     = captureAwsClient(new BedrockAgentRuntimeClient({}));
 
 let pool: Pool | undefined;
 export function resolvePostgresSsl(): PoolConfig['ssl'] {
@@ -108,6 +100,11 @@ export const handler = withSpan('chatbot-public.handler', async (
     const startTime = Date.now();
 
     try {
+        // Resolve RDS host (SSM) + password (Secrets Manager) before any DB use,
+        // so an endpoint rename or password rotation is picked up on cold start
+        // without a redeploy. No-op if RDS_SSM_PREFIX / RDS_SECRET_NAME are unset.
+        await hydrateRdsEnv();
+
         const env = getEnv();
 
         if (!event.body) {
@@ -143,41 +140,20 @@ export const handler = withSpan('chatbot-public.handler', async (
             ? parsed.callerRole as CallerRole
             : 'unknown';
 
-        let rawResponse: string;
-
-        if (CHATBOT_RETRIEVAL_SOURCE() === 'rds-pgvector') {
-            const ownerId      = await getOwnerId(env.portfolioOwnerUserId);
-            const passages     = await multiQueryRetrieve(ownerId, inputCheck.sanitised, getPool());
-            if (passages.length === 0) {
-                recordZeroResultRetrieval({
-                    namespace: EMF_NAMESPACE, appLabel: 'chatbot-public',
-                    sessionId, prompt: parsed.prompt,
-                });
-            }
-            const context      = buildChatContext(passages);
-            const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
-            rawResponse        = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised, {
-                pool:   getPool(),
-                userId: ownerId,
+        const ownerId      = await getOwnerId(env.portfolioOwnerUserId);
+        const passages     = await multiQueryRetrieve(ownerId, inputCheck.sanitised, getPool());
+        if (passages.length === 0) {
+            recordZeroResultRetrieval({
+                namespace: EMF_NAMESPACE, appLabel: 'chatbot-public',
+                sessionId, prompt: parsed.prompt,
             });
-        } else {
-            const agentCmd = new InvokeAgentCommand({
-                agentId:      env.agentId,
-                agentAliasId: env.agentAliasId,
-                sessionId,
-                inputText:    inputCheck.sanitised,
-                sessionState: { promptSessionAttributes: { callerRole } },
-            });
-            const agentResp = await agentClient.send(agentCmd);
-            if (!agentResp.completion) throw new Error('No completion stream from Bedrock Agent');
-            const chunks: string[] = [];
-            for await (const ev of agentResp.completion) {
-                if ('chunk' in ev && ev.chunk?.bytes) {
-                    chunks.push(new TextDecoder('utf-8').decode(ev.chunk.bytes));
-                }
-            }
-            rawResponse = chunks.join('');
         }
+        const context      = buildChatContext(passages);
+        const systemPrompt = CHATBOT_SYSTEM_PROMPT + CALLER_ROLE_SUFFIX[callerRole] + '\n\n' + context;
+        const rawResponse  = await invokeClaude(env.chatbotModel, systemPrompt, [], inputCheck.sanitised, {
+            pool:   getPool(),
+            userId: ownerId,
+        });
 
         const normalised = stripCodeFence(rawResponse);
         const { sanitised: sanitisedResponse, wasRedacted } = outputSanitiser.sanitiseWithReport(normalised);
@@ -187,7 +163,7 @@ export const handler = withSpan('chatbot-public.handler', async (
             sessionId,
             promptHash:      createHash('sha256').update(parsed.prompt).digest('hex').slice(0, 16),
             durationMs,
-            retrievalSource: CHATBOT_RETRIEVAL_SOURCE(),
+            retrievalSource: 'rds-pgvector',
             callerRole,
             outputRedacted:  wasRedacted,
         });

@@ -16,7 +16,7 @@ import type { AgentConfig, BasePipelineContext } from '@bedrock/shared';
 import type { JdSignal } from '@bedrock/shared';
 import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
 import type { StructuredResumeData, CoverLetter } from '@bedrock/shared';
-import { FREE_RESUME_SYSTEM_PROMPT } from '../prompts/free-resume-persona.js';
+import { FREE_RESUME_SYSTEM_PROMPT, FREE_RESUME_PERSONA_META } from '../prompts/free-resume-persona.js';
 import { capHighlights } from './experience-cap.js';
 import { jdAtsKeywords } from '../ats/jd-keywords-union.js';
 import { CoverLetterSchema } from './strategist-agent.js';
@@ -451,6 +451,8 @@ const FREE_RESUME_CONFIG: AgentConfig = {
     thinkingBudget: 0,
     systemPrompt:   [{ text: FREE_RESUME_SYSTEM_PROMPT }],
     pipeline:       'job-strategist',
+    promptId:       FREE_RESUME_PERSONA_META.id,
+    promptVersion:  FREE_RESUME_PERSONA_META.version,
     tool:           FREE_RESUME_TOOL,
 };
 

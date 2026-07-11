@@ -21,9 +21,10 @@
 import { createHash } from 'node:crypto';
 
 import type { BasePipelineContext } from '../base-agent.js';
+import type { ISemanticCache } from '../cache/cache-types.js';
 
 import type { CaseStudy } from './case-study-types.js';
-import type { SystemTour } from './system-tour-types.js';
+import { SystemTourSchema, type SystemTour } from './system-tour-types.js';
 import type { RdsSystemTourRepository } from './system-tour-persistence.js';
 
 /**
@@ -72,6 +73,47 @@ export interface RunSystemTourOutput {
  */
 export function computeCaseStudyHash(caseStudy: CaseStudy): string {
     return createHash('sha256').update(JSON.stringify(caseStudy)).digest('hex');
+}
+
+/** Mirrors the case-study orchestrator's 'casestudy' scope prefix. */
+const TOUR_CACHE_SCOPE_PREFIX = 'systemtour';
+
+/**
+ * Adapt an `ISemanticCache` (e.g. RedisExactCache) to the narrow
+ * `SystemTourCache` contract. Key shape mirrors the case-study cache —
+ * `systemtour:<userId>:<projectId>` + kbTag + the case-study hash as
+ * queryText — so an unchanged case study serves the tour from Redis
+ * instead of re-paying the Sonnet call. Hits are re-validated with
+ * `SystemTourSchema`; every failure path degrades to a miss (fail-open).
+ */
+export function semanticTourCache(
+    cache: ISemanticCache,
+    opts: { readonly userId: string; readonly projectId: string; readonly kbTag: string },
+): SystemTourCache {
+    const key = (hash: string) => ({
+        scope:     `${TOUR_CACHE_SCOPE_PREFIX}:${opts.userId}:${opts.projectId}`,
+        kbTag:     opts.kbTag,
+        queryText: hash,
+    });
+    return {
+        async get(hash: string): Promise<SystemTour | null> {
+            try {
+                const hit = await cache.get(key(hash));
+                if (!hit.hit || !hit.response) return null;
+                const parsed = SystemTourSchema.safeParse(hit.response);
+                return parsed.success ? parsed.data : null;
+            } catch {
+                return null; // cache failure is non-fatal — fall through to the agent
+            }
+        },
+        async set(hash: string, tour: SystemTour): Promise<void> {
+            try {
+                await cache.put({ ...key(hash), response: tour });
+            } catch {
+                // ignore — a failed store never fails the tour
+            }
+        },
+    };
 }
 
 export async function runSystemTour(

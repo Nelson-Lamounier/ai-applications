@@ -15,10 +15,15 @@
  */
 
 import { runAgent, log } from '@bedrock/shared';
+import { CLAIM_STRENGTH_RULE } from '../lib/claim-strength.js';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData, SkillEvidenceEntry } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.js';
+import { citableFiles } from '../ats/tool-evidence-retrieval.js';
 
 const MODEL_ID = process.env['SURFACE_KEYWORDS_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const SURFACE_KEYWORDS_PROMPT_META = { id: 'surface-keywords', version: '1' } as const;
 
 const ResumeSchema = ResumeRewriteSchema;
 
@@ -31,12 +36,18 @@ const CTX: BasePipelineContext = {
     cumulativeCostUsd: 0,
 };
 
-/** The honest evidence payload handed to the model — only real, provided fields. */
+/**
+ * The honest evidence payload handed to the model — only real, provided
+ * fields. Defence-in-depth on evidenceFiles: the ledger is sanitised at
+ * build time, but this prompt TRUSTS whatever reaches it, so non-citable
+ * paths (lockfiles, build output) are filtered again at the boundary and
+ * the list is capped — a wrong file here becomes fabricated grounding.
+ */
 function evidencePayload(missing: ReadonlyArray<SkillEvidenceEntry>) {
     return missing.map((e) => ({
         tool: e.tool,
         evidence: e.evidence,
-        evidenceFiles: e.evidenceFiles,
+        evidenceFiles: citableFiles(e.evidenceFiles).slice(0, 3),
         transferableBridge: e.transferableBridge,
     }));
 }
@@ -97,12 +108,23 @@ export async function surfaceKeywords(
         '   reframe with real evidence or simply omit the offending phrase.',
         '6. PRESERVE every company, title, and period exactly, and the profile identity. Leave education and',
         '   certifications unchanged. Only touch skills/projects when a keyword or red-flag fix requires it.',
+        '7. NEVER GROW THE RESUME — total length must be the SAME or FEWER words than the input. For every',
+        '   keyword you weave in, tighten or cut lower-value wording in the same section. IMPACT CLAUSES ARE',
+        '   PROTECTED: every bullet keeps its one impact clause (measured number or qualitative benefit,',
+        '   e.g. "(zero static credentials)"); cut scope enumerations and tool lists first, never the benefit.',
+        '   Hard caps: each',
+        '   bullet <= 32 words; a skill entry is a NAME (<= 6 words), never a sentence; a project description',
+        '   <= 80 words. Do NOT copy grounding-facts prose into the resume — grounding facts justify claims,',
+        '   they are not resume content.',
         '',
         'Output plain text only: no markdown, no em-dashes (the pipeline normalizes em-dashes anyway).',
+        CLAIM_STRENGTH_RULE,
     ].join('\n');
 
     const config: AgentConfig = {
         agentName: 'surface-keywords',
+        promptId: SURFACE_KEYWORDS_PROMPT_META.id,
+        promptVersion: SURFACE_KEYWORDS_PROMPT_META.version,
         modelId: MODEL_ID,
         maxTokens: 8000,
         thinkingBudget: 0,

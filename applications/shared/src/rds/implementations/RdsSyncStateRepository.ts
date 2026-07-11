@@ -145,8 +145,9 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 user_id, repo_full_name, sync_status,
                 last_synced_at, file_count, chunk_count, error_message,
                 kb_quality_score, kb_quality_breakdown,
-                retrieval_score, retrieval_breakdown, github_repo_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12)
+                retrieval_score, retrieval_breakdown, github_repo_id,
+                enrichment_mode, enrichment_model
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12, $13, $14)
             ON CONFLICT (user_id, repo_full_name)
             DO UPDATE SET
                 sync_status           = EXCLUDED.sync_status,
@@ -154,11 +155,13 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                 file_count            = EXCLUDED.file_count,
                 chunk_count           = EXCLUDED.chunk_count,
                 error_message         = EXCLUDED.error_message,
-                kb_quality_score      = EXCLUDED.kb_quality_score,
-                kb_quality_breakdown  = EXCLUDED.kb_quality_breakdown,
-                retrieval_score       = EXCLUDED.retrieval_score,
-                retrieval_breakdown   = EXCLUDED.retrieval_breakdown,
-                github_repo_id        = COALESCE(EXCLUDED.github_repo_id, repo_sync_state.github_repo_id)`,
+                kb_quality_score      = COALESCE(EXCLUDED.kb_quality_score, repo_sync_state.kb_quality_score),
+                kb_quality_breakdown  = COALESCE(EXCLUDED.kb_quality_breakdown, repo_sync_state.kb_quality_breakdown),
+                retrieval_score       = COALESCE(EXCLUDED.retrieval_score, repo_sync_state.retrieval_score),
+                retrieval_breakdown   = COALESCE(EXCLUDED.retrieval_breakdown, repo_sync_state.retrieval_breakdown),
+                github_repo_id        = COALESCE(EXCLUDED.github_repo_id, repo_sync_state.github_repo_id),
+                enrichment_mode       = COALESCE(EXCLUDED.enrichment_mode, repo_sync_state.enrichment_mode),
+                enrichment_model      = COALESCE(EXCLUDED.enrichment_model, repo_sync_state.enrichment_model)`,
             [
                 state.userId,
                 state.repoFullName,
@@ -176,6 +179,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
                     ? null
                     : JSON.stringify(state.retrievalBreakdown),
                 this.githubRepoId,
+                state.enrichmentMode ?? null,
+                state.enrichmentModel ?? null,
             ],
         );
     }
@@ -303,6 +308,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
         kbQualityBreakdown?: Record<string, unknown>,
         retrievalScore?: number,
         retrievalBreakdown?: Record<string, unknown>,
+        enrichmentMode?: string,
+        enrichmentModel?: string | null,
     ): Promise<void> {
         return this.upsert({
             userId,
@@ -315,6 +322,8 @@ export class RdsSyncStateRepository implements ISyncStateRepository {
             kbQualityBreakdown,
             retrievalScore,
             retrievalBreakdown,
+            enrichmentMode,
+            enrichmentModel,
         });
     }
 

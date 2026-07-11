@@ -17,3 +17,14 @@ export function pickStage(seniority: ReadonlyArray<{ area: string; level: string
     }
     return best;
 }
+
+/**
+ * The user's explicit stage override from `projects.user_overrides.stage`.
+ * Wins over the rollup-derived stage — the calibration level of a case study
+ * should be correctable by its owner when the Direction synthesizer
+ * under/over-levels an area. Null unless the value is a valid StageId.
+ */
+export function stickyStage(overrides: Record<string, unknown> | null | undefined): StageId | null {
+    const v = overrides?.['stage'];
+    return typeof v === 'string' && v in STAGE_RANK ? (v as StageId) : null;
+}

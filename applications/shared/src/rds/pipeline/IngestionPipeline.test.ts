@@ -12,6 +12,7 @@ import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnrich
 import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
 import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import type { KbQualityInput } from '../quality/computeKbQuality.js';
 import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
     ChunkIdentity,
@@ -49,6 +50,18 @@ class FakeVectorStore implements IVectorStore {
     async countChunks(_userId: string, _repoFullName: string): Promise<number> {
         if (this.storedChunkCount !== null) return this.storedChunkCount;
         return this.upserts.reduce((acc, batch) => acc + batch.length, 0);
+    }
+
+    /**
+     * Full-corpus rows for quality scoring. Defaults to everything upserted so
+     * far (full-run parity with the old rawChunks behaviour); a test can
+     * override it to simulate an incremental run over a large existing KB.
+     */
+    public qualityCorpus: KbQualityInput[] | null = null;
+
+    async loadQualityInputs(_userId: string, _repoFullName: string): Promise<KbQualityInput[]> {
+        if (this.qualityCorpus !== null) return this.qualityCorpus;
+        return this.upserts.flat();
     }
 
     async checkContentHashes(
@@ -333,6 +346,41 @@ describe('IngestionPipeline — chunk_count reflects the whole repo, not the run
 
         const callArgs = sync.markCompleteCalls[0];
         expect(callArgs[3]).toBe(4175); // chunk_count = cumulative, not the 2-chunk delta
+    });
+
+    // Regression: kb_quality had the same delta bug — computeKbQuality ran over
+    // this run's rawChunks, so a 61-chunk incremental activity delta (no README,
+    // no skills in the delta) overwrote a 0.65 whole-repo score with 0.29.
+    // Quality must be scored over the store's full persisted corpus.
+    it("scores kb_quality over the full stored corpus, not this run's delta", async () => {
+        store.qualityCorpus = [
+            { filePath: 'README.md', contentChars: 1200, tags: ['docs'], skills: ['kubernetes'] },
+            ...Array.from({ length: 99 }, (_, i) => ({
+                filePath: `src/f${i}.ts`, contentChars: 1000, tags: ['src'], skills: ['typescript'],
+            })),
+        ];
+        const pipeline = new IngestionPipeline(store, sync, embed);
+
+        // Incremental run: one changed file, no README among the delta.
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('src/changed.ts', 0)]);
+
+        const callArgs = sync.markCompleteCalls[0];
+        const breakdown = callArgs[5] as {
+            factors: { readme_present: { value: boolean }; chunk_count: { value: number } };
+        };
+        expect(breakdown.factors.readme_present.value).toBe(true); // README lives in the corpus, not the delta
+        expect(breakdown.factors.chunk_count.value).toBe(100);     // corpus size, not 1
+    });
+
+    it("falls back to this run's chunks when the corpus read fails (fail-open)", async () => {
+        store.loadQualityInputs = async () => { throw new Error('db down'); };
+        const pipeline = new IngestionPipeline(store, sync, embed);
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('README.md', 0)]);
+
+        const callArgs = sync.markCompleteCalls[0];
+        const breakdown = callArgs[5] as { factors: { readme_present: { value: boolean } } };
+        expect(breakdown.factors.readme_present.value).toBe(true); // scored from the run's own chunks
     });
 });
 
@@ -627,5 +675,18 @@ describe('IngestionPipeline — chunk-packing (feature 004)', () => {
 
         expect(packCalls.n).toBe(0);   // packing not invoked when off
         expect(store.upserts[0][0].skills).toEqual(['per-chunk']);
+    });
+});
+
+describe('IngestionPipeline — records enrichment mode', () => {
+    it('passes enrichmentMode + model to markComplete', async () => {
+        const store = new FakeVectorStore();
+        const sync = new FakeSyncState();
+        const embed = new FakeEmbedder();
+        const pipeline = new IngestionPipeline(store, sync, embed, { enrichmentMode: 'llm', enrichmentModel: 'anthropic.x' });
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)]);
+        const args = sync.markCompleteCalls[0];
+        expect(args[8]).toBe('llm');
+        expect(args[9]).toBe('anthropic.x');
     });
 });

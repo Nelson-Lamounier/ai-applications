@@ -1,0 +1,38 @@
+{
+    "constraints/achievements": {
+        "version": "1",
+        "sha256": "0543340c9a07ef60baa25b3dae0df9bf426808ba4d7ed9edabfdf0498398e751"
+    },
+    "constraints/agent-guide": {
+        "version": "1",
+        "sha256": "23d1ac44eb4d82fa2cc8d98b9b8d1919bf9411629c9dd1ba8b1372c16c7a157d"
+    },
+    "constraints/gap-awareness": {
+        "version": "1",
+        "sha256": "f2ec8863c0d655d8f824a951b30b31c73daabf5b5568fe5a3dbba65cd20e6917"
+    },
+    "constraints/role-archetypes": {
+        "version": "1",
+        "sha256": "01a1bb597fd0984c426304c97aa60d920c89ec02e742efae003d717ed66454b3"
+    },
+    "constraints/voice-library": {
+        "version": "1",
+        "sha256": "dc3ffc0bca7e2998d6abc6bc5a6cf7c5f1dcacc9f99f688c005591765fcbdeee"
+    },
+    "free-resume-persona": {
+        "version": "1",
+        "sha256": "e3d4576fd5566b5058bfeb9ede5be49b0b4ad63df4d086a0e4535e7c44ff1e94"
+    },
+    "jd-extractor-persona": {
+        "version": "1",
+        "sha256": "3afc3476d2a72e41fcdd517683d5fc5113462d7fe9ff497c1ce3c125c421dd29"
+    },
+    "research-persona": {
+        "version": "2",
+        "sha256": "ddddb047ba8662194566bd0d7b9a52b985b08d912c9ddb7b6e0c28e0ebd075fd"
+    },
+    "strategist-persona": {
+        "version": "15",
+        "sha256": "346f6738ab4c1b0ea7931bbf67805e2321c07fe3b38c1f2871ce9417f5b99886"
+    }
+}

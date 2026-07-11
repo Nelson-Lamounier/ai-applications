@@ -12,6 +12,7 @@
 import { NagSuppressions } from 'cdk-nag';
 
 import * as budgets from 'aws-cdk-lib/aws-budgets';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
@@ -38,6 +39,10 @@ export interface BedrockDataStackProps extends cdk.StackProps {
     readonly sonnetProfileSourceArn: string;
     /** Runtime environment name (for profile tags) */
     readonly environmentName: string;
+    /** IAM role NAME (not ARN) of admin-api's runtime role — granted put/delete on article assets. */
+    readonly articleAssetsAdminRoleName: string;
+    /** IAM role NAME of public-api's runtime role — granted read on images/articles/*. */
+    readonly articleAssetsReaderRoleName: string;
     /**
      * Email address to notify when the Bedrock monthly spend reaches budget thresholds.
      *
@@ -69,6 +74,9 @@ export class BedrockDataStack extends cdk.Stack {
 
     /** The S3 bucket for user-uploaded resume files (presigned PUT) */
     public readonly assetsBucket: s3.IBucket;
+
+    /** Public article media (images/videos) served via public-api. NO PII ever lands here. */
+    public readonly articleAssetsBucket: s3.Bucket;
 
     /** S3 bucket for server access logs */
     public readonly accessLogsBucket: s3.Bucket;
@@ -188,6 +196,66 @@ export class BedrockDataStack extends cdk.Stack {
         });
 
         // =================================================================
+        // Article assets bucket — public-content media only.
+        //
+        // Deliberately separate from AssetsBucket (resumes/, resume-imports/
+        // = user PII): public-api's internet-facing image endpoint reads
+        // from here, and bucket-level separation makes PII exposure
+        // structurally impossible rather than policy-guarded.
+        // =================================================================
+        this.articleAssetsBucket = new s3.Bucket(this, 'ArticleAssetsBucket', {
+            encryption: s3.BucketEncryption.S3_MANAGED,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            enforceSSL: true,
+            removalPolicy,
+            autoDeleteObjects: removalPolicy === cdk.RemovalPolicy.DESTROY,
+            serverAccessLogsBucket: this.accessLogsBucket,
+            serverAccessLogsPrefix: 'article-assets-bucket/',
+            cors: [
+                {
+                    allowedOrigins: [
+                        'http://localhost:5001',
+                        'https://tucaken.io',
+                        'https://www.tucaken.io',
+                        'https://tucaken.com',
+                        'https://www.tucaken.com',
+                    ],
+                    allowedMethods: [
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.GET,
+                        s3.HttpMethods.HEAD,
+                    ],
+                    allowedHeaders: ['*'],
+                    exposedHeaders: ['ETag'],
+                    maxAge: 3000,
+                },
+            ],
+        });
+
+        const articleAdminRole = iam.Role.fromRoleName(
+            this,
+            'ArticleAssetsAdminRole',
+            props.articleAssetsAdminRoleName,
+        );
+        const articleReaderRole = iam.Role.fromRoleName(
+            this,
+            'ArticleAssetsReaderRole',
+            props.articleAssetsReaderRoleName,
+        );
+
+        articleAdminRole.addToPrincipalPolicy(new iam.PolicyStatement({
+            actions: ['s3:PutObject', 's3:DeleteObject'],
+            resources: [
+                this.articleAssetsBucket.arnForObjects('images/articles/*'),
+                this.articleAssetsBucket.arnForObjects('videos/articles/*'),
+            ],
+        }));
+        articleReaderRole.addToPrincipalPolicy(new iam.PolicyStatement({
+            actions: ['s3:GetObject'],
+            resources: [this.articleAssetsBucket.arnForObjects('images/articles/*')],
+        }));
+
+        // =================================================================
         // Ingestion GitHub token — IaC ownership of the SM secret that the
         // ingestion-worker Jobs consume via ESO (kubernetes-bootstrap
         // charts/ingestion/external-secrets/ingestion-secrets.yaml maps it
@@ -292,6 +360,13 @@ export class BedrockDataStack extends cdk.Stack {
             parameterName: `/${namePrefix}/assets-bucket-name`,
             stringValue: this.assetsBucket.bucketName,
             description: `Resume upload assets bucket name for ${namePrefix}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        new ssm.StringParameter(this, 'ArticleAssetsBucketNameParam', {
+            parameterName: `/${namePrefix}/article-assets-bucket-name`,
+            stringValue: this.articleAssetsBucket.bucketName,
+            description: `Public article media bucket for ${namePrefix}`,
             tier: ssm.ParameterTier.STANDARD,
         });
 

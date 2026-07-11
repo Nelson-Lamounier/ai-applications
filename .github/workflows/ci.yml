@@ -69,6 +69,13 @@ jobs:
             apps:
               - 'applications/**/*.ts'
               - 'packages/**/*.ts'
+              # Prompt content is runtime data: personas/constraints live as
+              # src/**/*.md (loaded by prompt-loader) and prompt-manifest.json
+              # pins body-hash <-> version. A prompt-only PR must still run the
+              # persona pin tests, graders, and the content-integrity gate
+              # (CLAUDE.md rule 5: no prompt change ships without its eval).
+              - 'applications/*/src/**/*.md'
+              - 'applications/*/src/**/*.json'
             api:
               - 'api/**/*.ts'
             ci-config:
@@ -79,6 +86,8 @@ jobs:
             any-src:
               - 'infra/**/*.ts'
               - 'applications/**/*.ts'
+              - 'applications/*/src/**/*.md'
+              - 'applications/*/src/**/*.json'
               - 'api/**/*.ts'
               - 'packages/**/*.ts'
             any-tests:

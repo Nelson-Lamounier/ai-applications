@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
 import type { AtsCheckResult } from './ats-check.schema.js';
 import type { CoverageRow } from './checks.js';
 import { buildAtsCheck } from './checks.js';
-import { collectJdMustHaves, collectGroundedTerms } from './jd-keywords.js';
+import { collectJdMustHaves, buildGroundedChecker } from './jd-keywords.js';
 import { matchTerm, type Embedder } from './keyword-match.js';
 import { parsePdfBack } from './parse-back.js';
 import { storeAtsArtifacts } from './store-ats-artifacts.js';
@@ -60,17 +60,21 @@ const UNVERIFIED: AtsCheckResult = {
 export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsCheckResult> {
     try {
         const pdf = await renderResumePdf(a.resume);
-        const { text, sections } = await parsePdfBack(pdf);
+        const { text, sections, pages } = await parsePdfBack(pdf);
 
         // Must-haves = the single JD signal's technology inventory (atomic, the same list
         // the writer targets). a.research is the assembled brief carrying technologyInventory.
-        const mustHaves = collectJdMustHaves(a.research);
-        const groundedTerms = collectGroundedTerms(a.research);
+        const mustHaves = collectJdMustHaves(a.research, (dropped) =>
+            a.log.warn({ correlationId: a.correlationId, dropped }, 'ATS keyword cap truncated JD inventory'));
         const familyVocab = a.familyVocab ?? [];
         const embedder = a.embedder ?? null;
         const threshold = Number(process.env['ATS_KEYWORD_EMBED_THRESHOLD'] ?? '0.55');
         const techGroups = a.techGroups ?? [];
         const techAliasMap = a.techAliasMap;
+        // Transfer-aware grounding: Podman counts as grounded when Docker is
+        // evidenced (same transfer family) — direct verified/partial evidence
+        // as before, family co-membership as the new second route.
+        const isGrounded = buildGroundedChecker(a.research, techGroups, techAliasMap);
 
         // Embed the resume text once (fail-open: undefined on error).
         const resumeTextLower = text.toLowerCase();
@@ -86,15 +90,16 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
             coverage.push({
                 term,
                 present:  m.present,
-                grounded: groundedTerms.has(term.toLowerCase()),
+                grounded: isGrounded(term),
                 tier:     m.tier,
             });
         }
 
         const check = buildAtsCheck({
-            text, sections,
+            text, sections, pages,
             profile: { name: a.resume.profile.name, email: a.resume.profile.email },
             coverage,
+            requiredSkills: a.jdExtraction?.requiredSkills ?? [],
         });
         if (a.bucket) {
             await storeAtsArtifacts({

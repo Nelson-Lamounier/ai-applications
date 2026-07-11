@@ -157,6 +157,37 @@ const DepthMarkersSchema = z.object({
 }).strict();
 export type DepthMarkers = z.infer<typeof DepthMarkersSchema>;
 
+/** App-vs-infra share of a project's classified files; see deriveEvidenceMix. */
+export interface EvidenceMix {
+    readonly appPct:     number;
+    readonly infraPct:   number;
+    readonly appFiles:   number;
+    readonly infraFiles: number;
+}
+
+/** One fix-dense code area from the full commit history; counts are bucketed. */
+export interface DifficultyArea {
+    readonly area:         string;
+    readonly fixCommits:   number;
+    readonly totalCommits: number;
+    readonly firstMonth:   string;
+    readonly lastMonth:    string;
+}
+
+/**
+ * Measured "where the real battles were" map for challenge selection, derived
+ * from the WHOLE commit history (not the packed recency window); see
+ * deriveDifficultySignals. Counts bucketed to the nearest 5 and dates to
+ * months so the value — which feeds the prompt and the cache key — stays
+ * stable across small syncs.
+ */
+export interface DifficultySignals {
+    readonly firstCommitMonth: string;
+    readonly lastCommitMonth:  string;
+    readonly totalCommits:     number;
+    readonly areas:            readonly DifficultyArea[];
+}
+
 export const ArchitectureSchema = z.object({
     diagramFormat: z.enum(['mermaid', 'svg']),
     diagramSource: z.string().min(1),
@@ -174,13 +205,27 @@ export const ArchitectureSchema = z.object({
 export type Architecture = z.infer<typeof ArchitectureSchema>;
 
 export const CaseStudySchema = z.object({
+    // Recruiter-facing PRODUCT name — replaces repo-slug project names
+    // ("frontend-portfolio") on every surface. Optional so pre-rename cached
+    // artefacts keep validating; the tool schema requires it of the model.
+    displayName: z.string().min(1).max(80).optional(),
+    // README-derived 1-3 sentence product purpose. Persisted WRITE-ONCE into
+    // projects.product_description when that column is NULL — bootstraps the
+    // ground-truth block for users who never set it manually. Null when the
+    // supplied productContext states no purpose (the model must not invent).
+    productStatement: z.string().min(20).max(600).nullable().optional(),
     tagline: z.string().min(1).max(200),
     pitch:   z.string().min(1).max(4000),
     stack:        z.array(StackItemSchema).max(40),
     decisions:    z.array(DecisionSchema).max(5),
     highlights:   z.array(HighlightSchema).max(5),
     challenges:   z.array(ChallengeSchema).max(5),
-    depthMarkers: DepthMarkersSchema,
+    // Optional: the emit_case_study tool no longer asks the model for
+    // depthMarkers — the orchestrator overrides them with the deterministic,
+    // code-grounded values from the loader. Kept accepted for pre-trim
+    // cached artefacts. Likewise resumeBullets stays at 6 sets / 500-char
+    // bullets here while generation asks for at most 3 sets / 250 chars.
+    depthMarkers: DepthMarkersSchema.optional(),
     architecture: ArchitectureSchema,
     resumeBullets: z.array(ResumeBulletSetSchema)
         .min(1)
@@ -303,6 +348,16 @@ export interface CaseStudyContext {
     // OVERRIDES the model's depthMarkers with these so depth is measured, not
     // guessed. Absent → the model's own assessment stands.
     readonly depthMarkers?: DepthMarkers | null;
+    // Application-vs-infrastructure share of the project's classified files
+    // (source+test vs iac+ci fileClass lanes), percentages rounded to the
+    // nearest 5 so the value stays stable across small syncs. Drives the
+    // prompt's highlight-balance instruction AND is folded into the cache
+    // key. Null/absent when the evidence is single-lane — nothing to balance.
+    readonly evidenceMix?: EvidenceMix | null;
+    // Fix-density map over the FULL commit history — frees challenge selection
+    // from the packed window's recency bias. Null/absent when no fix-dense
+    // area exists.
+    readonly difficultySignals?: DifficultySignals | null;
     // The most-changed files across member repos (from repo_commit_files diffs)
     // — real file-level evidence the agent can cite in sourceSignals.files for
     // challenges / highlights / decisions. Capped + newest-churn first.

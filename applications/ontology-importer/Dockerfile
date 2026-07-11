@@ -18,7 +18,6 @@ COPY applications/ingestion/package.json      ./applications/ingestion/
 COPY api/public-api/package.json              ./api/public-api/
 COPY applications/article-pipeline/package.json  ./applications/article-pipeline/
 COPY applications/job-strategist/package.json    ./applications/job-strategist/
-COPY applications/chatbot/package.json           ./applications/chatbot/
 COPY applications/chatbot-public/package.json    ./applications/chatbot-public/
 COPY applications/chatbot-authenticated/package.json ./applications/chatbot-authenticated/
 COPY applications/self-healing/package.json           ./applications/self-healing/

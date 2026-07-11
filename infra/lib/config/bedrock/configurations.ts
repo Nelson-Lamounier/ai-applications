@@ -9,7 +9,7 @@
  * ```typescript
  * import { getBedrockConfigs } from '../../config/bedrock';
  * const configs = getBedrockConfigs(Environment.PRODUCTION);
- * const instruction = configs.agentInstruction;
+ * const origins = configs.api.allowedOrigins;
  * ```
  */
 
@@ -18,23 +18,11 @@ import * as cdk from 'aws-cdk-lib/core';
 
 import { type DeployableEnvironment, Environment } from '../environments';
 
-import { CHATBOT_AGENT_INSTRUCTION } from './chatbot-persona';
 
 // =============================================================================
 // TYPE DEFINITIONS
 // =============================================================================
 
-/**
- * Guardrail configuration
- */
-export interface GuardrailConfig {
-    /** Whether to enable content filtering */
-    readonly enableContentFilters: boolean;
-    /** Blocked input messaging */
-    readonly blockedInputMessaging: string;
-    /** Blocked output messaging */
-    readonly blockedOutputMessaging: string;
-}
 
 /**
  * Shared-VPC attributes for the RAG chatbot Lambdas. Resolved WITHOUT a
@@ -79,8 +67,6 @@ export interface ApiConfig {
     readonly rdsSsmPrefix: string;
     /** SecretsManager secret name containing RDS username/password */
     readonly rdsCredentialsSecretName: string;
-    /** Chatbot retrieval source feature flag ('bedrock-agent' | 'rds-pgvector') */
-    readonly chatbotRetrievalSource: string;
     /** SSM parameter holding the portfolio owner user ID for sessions + RLS */
     readonly portfolioOwnerUserIdParameterName: string;
     /** Shared VPC wiring for the RAG Lambdas (omit to skip VPC attachment). */
@@ -88,29 +74,23 @@ export interface ApiConfig {
 }
 
 /**
- * Knowledge Base configuration
+ * IAM role names (Pod Identity association roles, not ARNs) granted scoped
+ * access to the article-assets bucket. Discovered live via
+ * `aws eks list-pod-identity-associations` / `describe-pod-identity-association`
+ * against the tucaken-infra-managed EksPodIdentity-<env> stack — these roles
+ * are NOT created by this repo.
  */
-export interface KnowledgeBaseConfig {
-    /** Secrets Manager secret name for Pinecone API key */
-    readonly pineconeSecretName: string;
-    /** Knowledge Base description */
-    readonly description: string;
-    /** Knowledge Base instruction for agent interaction */
-    readonly instruction: string;
+export interface ArticleAssetsRolesConfig {
+    /** admin-api's runtime role — granted s3:PutObject/DeleteObject under images|videos/articles/*. */
+    readonly adminRoleName: string;
+    /** public-api's runtime role — granted s3:GetObject under images/articles/*. */
+    readonly readerRoleName: string;
 }
 
 /**
  * Complete resource configurations for Bedrock project
  */
 export interface BedrockConfigs {
-    /** Agent instruction prompt — defines agent behavior */
-    readonly agentInstruction: string;
-    /** Agent description */
-    readonly agentDescription: string;
-    /** Guardrail configuration */
-    readonly guardrail: GuardrailConfig;
-    /** Knowledge Base configuration */
-    readonly knowledgeBase: KnowledgeBaseConfig;
     /** API Gateway configuration */
     readonly api: ApiConfig;
     /** CloudWatch log retention */
@@ -121,6 +101,8 @@ export interface BedrockConfigs {
     readonly removalPolicy: cdk.RemovalPolicy;
     /** Whether to create customer-managed KMS keys */
     readonly createKmsKeys: boolean;
+    /** Runtime role names granted access to the article-assets bucket */
+    readonly articleAssets: ArticleAssetsRolesConfig;
 }
 
 // =============================================================================
@@ -129,37 +111,15 @@ export interface BedrockConfigs {
 
 /**
  * Bedrock resource configurations by environment.
- *
- * Agent instruction prompt is imported from the canonical source:
- * @see applications/chatbot/src/prompts/chatbot-persona.ts
  */
 
 export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
     [Environment.DEVELOPMENT]: {
-        agentInstruction: CHATBOT_AGENT_INSTRUCTION,
-        agentDescription: 'Portfolio AI assistant (development)',
-        guardrail: {
-            enableContentFilters: true,
-            blockedInputMessaging: 'Sorry, I cannot process that request.',
-            blockedOutputMessaging: 'Sorry, I cannot provide that response.',
-        },
-        knowledgeBase: {
-            pineconeSecretName: 'bedrock-dev/pinecone-api-key',
-            description: 'Portfolio repository documentation knowledge base (development)',
-            // Gap A7: Precise retrieval instruction — guides the agent to search across
-            // all portfolio topic areas listed in the agent instruction (KB TOPICS section).
-            instruction:
-                'Answers portfolio questions: AWS CDK, Kubernetes, AI/ML, CI/CD, Next.js, ' +
-                'observability, AWS certs. Always retrieve context before answering. No general knowledge.',
-        },
         api: {
             enableApiKey: true,
             allowedOrigins: ['http://localhost:3000', 'https://nelsonlamounier.com'],
             rdsSsmPrefix: '/k8s/development/platform-rds',
             rdsCredentialsSecretName: 'k8s-development/platform-rds/credentials',
-            // Pinecone-backed Bedrock Agent KB decommissioned — dev now reads the
-            // same RDS pgvector store as staging/production (returns chunk text, not refs).
-            chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserIdParameterName: '/bedrock-dev/portfolio-owner-user-id',
             // Shared VPC wiring read entirely from tucaken-infra's SSM exports
             // (/shared/vpc/development/*) at deploy time -- no hardcoded subnet
@@ -177,66 +137,59 @@ export const BEDROCK_CONFIGS: Record<DeployableEnvironment, BedrockConfigs> = {
         isProduction: false,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         createKmsKeys: false,
+        // Discovered 2026-07-06 via `aws eks list-pod-identity-associations` /
+        // `describe-pod-identity-association` against k8s-eks-development
+        // (associations a-4mizmqiy9p3ttok14 / a-6fabmnn98toakc4au). These
+        // roles are provisioned by tucaken-infra's EksPodIdentity-development
+        // stack, not by this repo.
+        articleAssets: {
+            adminRoleName: 'EksPodIdentity-development-Roleadminapi5EAE4B6E-gYZToUb4xsCc',
+            readerRoleName: 'EksPodIdentity-development-Rolepublicapi88CC20CC-xv2h0dN8FPQ8',
+        },
     },
 
     [Environment.STAGING]: {
-        agentInstruction: CHATBOT_AGENT_INSTRUCTION,
-        agentDescription: 'Portfolio AI assistant (staging)',
-        guardrail: {
-            enableContentFilters: true,
-            blockedInputMessaging: 'Sorry, I cannot process that request.',
-            blockedOutputMessaging: 'Sorry, I cannot provide that response.',
-        },
-        knowledgeBase: {
-            pineconeSecretName: 'bedrock-stg/pinecone-api-key',
-            description: 'Portfolio repository documentation knowledge base (staging)',
-            // Gap A7: Consistent with development — precise retrieval guidance.
-            instruction:
-                'Answers portfolio questions: AWS CDK, Kubernetes, AI/ML, CI/CD, Next.js, ' +
-                'observability, AWS certs. Always retrieve context before answering. No general knowledge.',
-        },
         api: {
             enableApiKey: true,
             allowedOrigins: ['https://staging.nelsonlamounier.com'],
             rdsSsmPrefix: '/k8s/staging/platform-rds',
             rdsCredentialsSecretName: 'k8s-staging/platform-rds/credentials',
-            chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserIdParameterName: '/bedrock-stg/portfolio-owner-user-id',
         },
         logRetention: logs.RetentionDays.ONE_MONTH,
         isProduction: false,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         createKmsKeys: false,
+        // TODO: no staging EKS cluster exists yet — placeholder role names.
+        // Replace with the real Pod Identity association role names (see the
+        // development entry above for the discovery commands) before this
+        // environment is ever deployed.
+        articleAssets: {
+            adminRoleName: 'EksPodIdentity-staging-admin-api-TBD',
+            readerRoleName: 'EksPodIdentity-staging-public-api-TBD',
+        },
     },
 
     [Environment.PRODUCTION]: {
-        agentInstruction: CHATBOT_AGENT_INSTRUCTION,
-        agentDescription: 'Portfolio AI assistant',
-        guardrail: {
-            enableContentFilters: true,
-            blockedInputMessaging: 'Sorry, I cannot process that request.',
-            blockedOutputMessaging: 'Sorry, I cannot provide that response.',
-        },
-        knowledgeBase: {
-            pineconeSecretName: 'bedrock-prd/pinecone-api-key',
-            description: 'Portfolio repository documentation knowledge base',
-            // Gap A7: Production instruction adds citation requirement for higher grounding precision.
-            instruction:
-                'Answers portfolio questions: AWS, K8s, AI/ML, CI/CD, Next.js, observability. ' +
-                'Retrieve context before answering and cite specific documents. No general knowledge.',
-        },
         api: {
             enableApiKey: true,
             allowedOrigins: ['https://nelsonlamounier.com'],
             rdsSsmPrefix: '/k8s/production/platform-rds',
             rdsCredentialsSecretName: 'k8s-production/platform-rds/credentials',
-            chatbotRetrievalSource: 'rds-pgvector',
             portfolioOwnerUserIdParameterName: '/bedrock-prd/portfolio-owner-user-id',
         },
         logRetention: logs.RetentionDays.THREE_MONTHS,
         isProduction: true,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
         createKmsKeys: true,
+        // TODO: no production EKS cluster exists yet — placeholder role names.
+        // Replace with the real Pod Identity association role names (see the
+        // development entry above for the discovery commands) before this
+        // environment is ever deployed.
+        articleAssets: {
+            adminRoleName: 'EksPodIdentity-production-admin-api-TBD',
+            readerRoleName: 'EksPodIdentity-production-public-api-TBD',
+        },
     },
 };
 

@@ -103,9 +103,10 @@ describe('persistCaseStudy — computed archetype/stage', () => {
         });
 
         const upd = findProjectsUpdate(calls);
-        // computed_archetype + computed_stage params resolve to null.
-        expect(upd.params[upd.params.length - 2]).toBeNull();
-        expect(upd.params[upd.params.length - 1]).toBeNull();
+        // computed_archetype ($9) + computed_stage ($10) params resolve to
+        // null. Indexed explicitly — displayName params follow them now.
+        expect(upd.params[8]).toBeNull();
+        expect(upd.params[9]).toBeNull();
     });
 });
 
@@ -245,5 +246,130 @@ describe('upsertArchitecture -- Mermaid normalisation', () => {
         const insert = calls.find((c) => /INSERT INTO project_architecture/i.test(c.sql))!;
         const sourceParam = insert.params[3] as string; // diagram_source is $4
         expect(sourceParam).toBe(svgSource); // untouched
+    });
+});
+
+describe('persistCaseStudy — optional depthMarkers', () => {
+    it('skips project_depth_markers when the case study carries none', async () => {
+        const { client, calls } = makeClient();
+        const { depthMarkers: _omitted, ...withoutDepth } = emptyCaseStudy;
+        const out = await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     withoutDepth as CaseStudy,
+        });
+        expect(out.depthMarkersUpserted).toBe(false);
+        expect(calls.some((c) => /project_depth_markers/.test(c.sql))).toBe(false);
+    });
+});
+
+describe('persistCaseStudy — order_index stability on reconcile', () => {
+    it('renumbers a surviving (already-present) row to its current payload position', async () => {
+        // makeClient returns rowCount 0 for the guarded INSERT — i.e. the row
+        // already exists from a prior run. The reconcile must then align its
+        // order_index with the current payload position, or kept rows collide
+        // with newly-inserted ones (observed live: two challenges at index 2).
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     {
+                ...emptyCaseStudy,
+                highlights: [{
+                    title:       'Launched the thing',
+                    description: 'Shipped it end to end.',
+                    sourceSignals: {
+                        commits: [], pulls: [], files: [],
+                        ungroundedClaims: [], grounding: 'NOT_VERIFIED',
+                    },
+                }],
+            },
+        });
+        const renumber = calls.find((c) =>
+            /UPDATE project_highlights\s+SET order_index/.test(c.sql));
+        expect(renumber).toBeDefined();
+        expect(renumber?.sql).toMatch(/order_index\s*<>\s*\$3/);
+    });
+});
+
+describe('persistCaseStudy — displayName renames the project', () => {
+    const base = {
+        projectId:     'proj-1',
+        userId:        'user-1',
+        pipelineRunId: 'run-1',
+        model:         'sonnet',
+        inputHash:     'hash-1',
+    };
+
+    it('writes displayName to projects.name when present and not sticky', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            ...base,
+            caseStudy: { ...emptyCaseStudy, displayName: 'Lami — AI-Assisted Portfolio' },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        expect(upd?.sql).toMatch(/name\s*=\s*CASE WHEN/);
+        expect(upd?.params).toContain('Lami — AI-Assisted Portfolio');
+        expect(upd?.params).toContain(true);
+    });
+
+    it('leaves the name untouched when the user made it sticky', async () => {
+        const calls: CapturedQuery[] = [];
+        const client = {
+            async query(sql: string, params?: readonly unknown[]) {
+                calls.push({ sql, params: params ?? [] });
+                if (/SELECT user_overrides/.test(sql)) return { rows: [{ user_overrides: { name: true } }] };
+                if (/DELETE FROM project_/.test(sql)) return { rows: [], rowCount: 2 };
+                return { rows: [], rowCount: 0 };
+            },
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await persistCaseStudy(client as any, {
+            ...base,
+            caseStudy: { ...emptyCaseStudy, displayName: 'Should not land' },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        // The flag parameter driving the name CASE WHEN must be false.
+        const nameFlagIdx = upd!.params.indexOf('Should not land') - 1;
+        expect(upd!.params[nameFlagIdx]).toBe(false);
+    });
+});
+
+describe('persistCaseStudy — productStatement bootstraps product_description', () => {
+    it('fills product_description ONLY when the column is NULL (write-once, never overwrites)', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     { ...emptyCaseStudy, productStatement: 'A platform that does X for Y.' },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        expect(upd?.sql).toMatch(/product_description\s*=\s*CASE WHEN \$\d+ AND product_description IS NULL/);
+        expect(upd?.params).toContain('A platform that does X for Y.');
+    });
+
+    it('passes a false flag when the model emitted null', async () => {
+        const { client, calls } = makeClient();
+        await persistCaseStudy(client, {
+            projectId:     'proj-1',
+            userId:        'user-1',
+            pipelineRunId: 'run-1',
+            model:         'sonnet',
+            inputHash:     'hash-1',
+            caseStudy:     { ...emptyCaseStudy, productStatement: null },
+        });
+        const upd = calls.find((c) => /UPDATE projects/.test(c.sql) && /case_study_status/.test(c.sql));
+        const stmtIdx = upd!.params.length - 1;
+        expect(upd!.params[stmtIdx]).toBeNull();
+        expect(upd!.params[stmtIdx - 1]).toBe(false);
     });
 });

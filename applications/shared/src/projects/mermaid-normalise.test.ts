@@ -37,3 +37,31 @@ describe('normaliseMermaidSource', () => {
     expect(normaliseMermaidSource(undefined as unknown as string)).toBe(undefined);
   });
 });
+
+describe('normaliseMermaidSource — nested quotes inside quoted labels', () => {
+    it('escapes inner double quotes that break the whole render (live corruption)', () => {
+        const src = [
+            'graph TD',
+            '  ALB["AWS ALB<br/>("shared, IP-target")"]',
+            '  Bedrock(["AWS Bedrock<br/>("Claude + Titan")"])',
+        ].join('\n');
+        const out = normaliseMermaidSource(src);
+        expect(out).toContain('ALB["AWS ALB<br/>(&quot;shared, IP-target&quot;)"]');
+        expect(out).toContain('Bedrock(["AWS Bedrock<br/>(&quot;Claude + Titan&quot;)"])');
+    });
+
+    it('leaves edge labels and multi-node lines untouched', () => {
+        const src = [
+            'graph LR',
+            '  NextPod -- "Kubernetes DNS" --> BFF',
+            '  A["x"] --> B["y"]',
+        ].join('\n');
+        expect(normaliseMermaidSource(src)).toBe(src);
+    });
+
+    it('is idempotent on repaired output', () => {
+        const src = '  ALB["AWS ALB<br/>("shared")"]';
+        const once = normaliseMermaidSource(src);
+        expect(normaliseMermaidSource(once)).toBe(once);
+    });
+});

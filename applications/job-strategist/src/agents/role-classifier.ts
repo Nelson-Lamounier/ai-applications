@@ -5,6 +5,9 @@ import type { AgentConfig, BasePipelineContext, CompanyType, NewFamily } from '@
 
 const MODEL_ID = process.env['ROLE_CLASSIFIER_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
+/** Ledger identity for the inline prompt below — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const ROLE_CLASSIFIER_PROMPT_META = { id: 'role-classifier', version: '1' } as const;
+
 export interface RoleClassification {
     familyKey: string;
     confidence: number;
@@ -83,6 +86,7 @@ export async function classifyRole(
     ].join('\n');
     const config: AgentConfig = {
         agentName: 'role-classifier', modelId: MODEL_ID, maxTokens: 512, thinkingBudget: 0,
+        promptId: ROLE_CLASSIFIER_PROMPT_META.id, promptVersion: ROLE_CLASSIFIER_PROMPT_META.version,
         systemPrompt: [{ text: system }], pipeline: 'job-strategist',
         tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema },
     };

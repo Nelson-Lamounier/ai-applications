@@ -116,7 +116,7 @@ export function seedZeroSeries(): void {
     }
     kbQualityScoreHist().observe(0);
     retrievalScoreHist().observe(0);
-    for (const stage of ['mirror', 'direction', 'reconciliation', 'diagnostic'] as const) {
+    for (const stage of ['mirror', 'direction', 'reconciliation', 'diagnostic', 'upsert'] as const) {
         for (const outcome of ['ok', 'skipped', 'failed'] as const) {
             synthesisOutcomeTotal().inc({ stage, outcome }, 0);
         }

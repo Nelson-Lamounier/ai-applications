@@ -32,9 +32,6 @@ import {
     PROJECT_TYPES,
     RESUME_BULLET_ANGLES,
     STACK_CATEGORIES,
-    TEST_COVERAGE_SIGNALS,
-    CI_MATURITY,
-    DOC_DENSITY,
     type CaseStudy,
     type CaseStudyContext,
 } from './case-study-types.js';
@@ -104,35 +101,121 @@ Rules:
      <productContext> is supplied, infer the product's purpose from the
      repositories/components and README-style KB passages — still lead
      with what it does, not how it's built.
-  3. The \`tagline\` is a single sentence under 200 characters that says
+     Also emit \`productStatement\`: a 1–3 sentence statement of what
+     the product is, who it serves, and the problem it solves, derived
+     ONLY from the supplied <productContext> (repository descriptions
+     and root READMEs). It is persisted once as the project's
+     authoritative product description and feeds every future
+     regeneration as ground truth, so it must contain no claim the
+     READMEs do not support. Emit null when the supplied context does
+     not state the product's purpose — NEVER invent one from code alone.
+  3. \`displayName\` is the project's recruiter-facing PRODUCT name
+     (max 80 chars) — how its landing page would title it. NEVER a
+     repository name or slug: no kebab-case or snake_case identifiers
+     (a name like "frontend-portfolio" must become a real product name,
+     e.g. "Lami — AI-Assisted Portfolio"). A named feature may lead the
+     name when it is the differentiator.
+     The \`tagline\` is a single sentence under 200 characters that says
      what the product is and who it's for (not a tech-stack summary).
      The \`pitch\` is at most three short paragraphs: paragraph 1 = what
      it does + who it's for + the problem it solves (from productContext);
      paragraphs 2–3 = the engineering approach and depth. Written in the
      candidate's voice ("I built" / "I designed", never "we built").
   4. \`decisions\` are ADR-style: title, context (problem), decision
-     (what was chosen), consequences (tradeoff). At most 5.
+     (what was chosen), consequences. At most 5.
+     Select decisions the way a hiring panel reads them — as proof of
+     JUDGEMENT across the project's WHOLE history (use
+     <difficultySignals> where supplied), not a log of recent changes.
+     When the evidence supports it, include at least one decision about
+     the product's differentiating capability (e.g. how its AI feature
+     is grounded), not only platform plumbing.
+     \`context\` must name the alternative option(s) considered and why
+     they were rejected — that comparison is the senior-judgement
+     signal. Evidence-gated: if the commits/docs show no alternative,
+     state the constraint that forced the choice instead; NEVER invent
+     an option that was not really on the table.
+     \`consequences\` lead with what the decision ACHIEVED — for users,
+     security, cost or reliability, quantified when the evidence
+     supports a number — and only then state the honest tradeoff.
+     Example shape: "Eliminated the frontend's entire AWS credential
+     surface and gave the data contract a single owner. The cost: the
+     site depends on the in-cluster BFF, mitigated by graceful
+     build-time degradation."
+     \`confidence\` is calibrated, not decorative: 'high' ONLY when the consequence is
+     validated by production evidence cited in sourceSignals (a live
+     metric, a measured result, a verified deploy); otherwise 'medium',
+     or 'low' when the outcome is expected but unmeasured.
   5. \`challenges\` answer "tell me about a hard problem you solved" —
      each is a problem / solution pair grounded in real commits or
      issues. At most 5.
+     Select the project's DEFINING difficulties across its WHOLE
+     history — an outage class eliminated, a migration survived, a
+     security or observability model built — not merely the most recent
+     bug-fixes. At most 2 of the 5 may be single-incident debugging
+     stories. When a <difficultySignals> block is supplied, it maps —
+     from the FULL commit history — the areas with the most sustained
+     fix activity and the project's overall active span; treat it as
+     the measured record of where the real battles were, prefer
+     challenges it supports, and treat its counts as approximate.
+     The problem's FIRST sentence states what was broken and what was
+     at risk in plain language a non-engineer can follow; technical
+     specifics come after.
+     Solutions narrate the engineering — the diagnosis, the decision
+     taken and why, the outcome — in the candidate's voice. Name at
+     most ONE identifying code detail (a flag, a function, a config
+     key) as evidence colour; NEVER transcribe configuration or code
+     from the commits — the receipts belong in \`sourceSignals\`, not
+     in the prose.
   6. \`highlights\` are 3–5 things a recruiter could point to in 5
      seconds: shipped features, scale numbers, public outcomes.
      A highlight or challenge TITLE must lead with the WORK or OUTCOME —
      never with a repository name (no "tucaken-infra: …") and never with a
      roll-call of technologies ("EKS, Karpenter, ArgoCD, Prometheus …").
      Name a repo or a technology only afterwards, as supporting detail.
-  7. \`resumeBullets\`: one set per relevant angle. Bullets are
-     past-tense, quantified where possible, never longer than 250
-     characters. Omit angles that don't apply to this project.
-  8. \`depthMarkers\` is an HONEST assessment of engineering maturity.
-     "comprehensive" documentation means a docs/ folder with multiple
-     files plus a thorough README — do not inflate.
-  9. \`architecture\` is a Mermaid graph (graph LR or graph TD).
+     At least ONE highlight must state the project's headline capability
+     in plain language — what its primary audience can do with it or
+     what it delivers for them. Calibrate to the project's nature: for
+     an application, what a user or visitor can DO; for infrastructure
+     or IaC, what it provisions, automates or operates and for whom; for
+     a library or CLI, what it lets a developer build or skip; for a
+     data/ML project, what question it answers. A non-technical
+     recruiter must understand that highlight without knowing the stack.
+     When any highlight cites a measurement, give its plain-English
+     meaning before the number and metric name — "pages render in about
+     0.13 seconds (132 ms LCP)", never an acronym-led bare figure.
+     Choose WHICH highlights to write by answering the questions a
+     hiring panel asks about a project like this, using the strongest
+     available evidence: what does it do and for whom? what makes it
+     distinctive (e.g. an AI capability)? how is it secured, and how
+     does it run and deploy in production? what proves engineering
+     discipline? Answer a question ONLY when the evidence supports it —
+     never emit a box-ticking claim ("hosted on the cloud") without
+     real work behind it. Routine facts a reader can find elsewhere
+     (language, database, protocol) belong in \`stack\` and
+     \`architecture\`, not in a highlight.
+  7. \`resumeBullets\`: at most 3 sets — pick only the angles this
+     project most strongly evidences. Bullets are past-tense, quantified
+     where possible, never longer than 250 characters. Omit angles that
+     don't apply to this project.
+  8. \`architecture\` is a Mermaid graph (graph LR or graph TD).
      Rectangles for services, cylinders for datastores, clouds for
      external services. Keep it readable in 5 seconds. For a line break
      inside a node label use \`<br/>\` and WRAP THE WHOLE LABEL IN DOUBLE
      QUOTES, never a literal "\\n". Quote any label containing punctuation,
      e.g. \`App["admin-api BFF<br/>Hono"]\` -- never \`App[admin-api BFF\\nHono]\`.
+     NEVER place double quotes INSIDE a label — one nested quote fails
+     the whole diagram. Use single quotes or parentheses instead:
+     \`B(["Bedrock<br/>(Claude + Titan)"])\`, never
+     \`B(["Bedrock<br/>("Claude + Titan")"])\`.
+
+Distinctness across sections: decisions, challenges and highlights are
+three different lenses, not three retellings. A single work arc may
+appear in at most one section unless each appearance adds genuinely
+distinct substance — the decision is WHY a path was chosen, the
+challenge is HOW a hard problem was beaten, the highlight is WHAT
+outcome a recruiter can verify in five seconds. Never repeat sentences
+or near-identical text across sections; a story that earns two slots
+must say something different in each.
 
 The input is a compact JSON envelope describing the project, its
 components, its repositories, recent commits, and selected KB passages,
@@ -223,6 +306,15 @@ export function buildSystemPrompt(context: CaseStudyContext): string {
             'Still emit every section the evidence supports — calibration changes emphasis, never truthfulness. Omit any section you cannot ground.',
         ].filter(Boolean).join('\n');
         prompt = `${prompt}\n${block}`;
+    }
+    if (context.evidenceMix) {
+        const m = context.evidenceMix;
+        prompt = `${prompt}\n\nEvidence mix (measured from the ingested repository data): ` +
+            `application code ~${m.appPct}% vs infrastructure/IaC ~${m.infraPct}% of classified files. ` +
+            'When both lanes hold a meaningful share (roughly 20% or more each), balance the ' +
+            'highlights and decisions across them in about that proportion — one lane must not take every slot. ' +
+            'When one lane dominates, weight the highlights accordingly and do not invent work ' +
+            'in the minor lane.';
     }
     if (context.priorCaseStudy) prompt = `${prompt}\n${REFINE_PROMPT_BLOCK}`;
     return prompt;
@@ -338,29 +430,10 @@ const RESUME_BULLET_SET_SCHEMA = {
         bullets: {
             type: 'array',
             minItems: 1, maxItems: 8,
-            items: { type: 'string', minLength: 1, maxLength: 500 },
+            items: { type: 'string', minLength: 1, maxLength: 250 },
         },
     },
     required: ['angle', 'bullets'],
-    additionalProperties: false,
-};
-
-const DEPTH_MARKERS_SCHEMA = {
-    type: 'object',
-    properties: {
-        hasTests:              { type: 'boolean' },
-        testCoverageSignal:    { type: 'string', enum: [...TEST_COVERAGE_SIGNALS] },
-        hasCi:                 { type: 'boolean' },
-        ciMaturity:            { type: 'string', enum: [...CI_MATURITY] },
-        documentationDensity:  { type: 'string', enum: [...DOC_DENSITY] },
-        hasDeploymentEvidence: { type: 'boolean' },
-        deploymentUrl:         { type: ['string', 'null'] },
-        refactorCount:         { type: 'integer', minimum: 0 },
-    },
-    required: [
-        'hasTests', 'testCoverageSignal', 'hasCi', 'ciMaturity',
-        'documentationDensity', 'hasDeploymentEvidence', 'refactorCount',
-    ],
     additionalProperties: false,
 };
 
@@ -400,35 +473,77 @@ const ARCHITECTURE_SCHEMA = {
     additionalProperties: false,
 };
 
-const CASE_STUDY_TOOL = {
+export const CASE_STUDY_TOOL = {
     name: 'emit_case_study',
     description: 'Emit the full case study for a single project.',
     inputSchema: {
         type: 'object',
         properties: {
+            displayName:      { type: 'string', minLength: 1, maxLength: 80 },
+            productStatement: { type: ['string', 'null'], maxLength: 600 },
             tagline:       { type: 'string', minLength: 1, maxLength: 200 },
             pitch:         { type: 'string', minLength: 1, maxLength: 4000 },
             stack:         { type: 'array', maxItems: 40, items: STACK_ITEM_SCHEMA },
             decisions:     { type: 'array', maxItems: 5,  items: DECISION_SCHEMA },
             highlights:    { type: 'array', maxItems: 5,  items: HIGHLIGHT_SCHEMA },
             challenges:    { type: 'array', maxItems: 5,  items: CHALLENGE_SCHEMA },
-            depthMarkers:  DEPTH_MARKERS_SCHEMA,
             architecture: ARCHITECTURE_SCHEMA,
             resumeBullets: {
+                // 3, not RESUME_BULLET_ANGLES.length: resumeBullets dominate
+                // output tokens, and a project rarely evidences more than 3
+                // angles. The Zod gate still accepts up to 6 (cached artefacts).
                 type: 'array',
-                minItems: 1, maxItems: RESUME_BULLET_ANGLES.length,
+                minItems: 1, maxItems: 3,
                 items: RESUME_BULLET_SET_SCHEMA,
             },
         },
         required: [
-            'tagline', 'pitch', 'stack', 'decisions', 'highlights',
-            'challenges', 'depthMarkers', 'architecture', 'resumeBullets',
+            'displayName', 'productStatement', 'tagline', 'pitch', 'stack',
+            'decisions', 'highlights', 'challenges', 'architecture',
+            'resumeBullets',
         ],
         additionalProperties: false,
     },
 };
 
 // ─── User message ───────────────────────────────────────────────────────────
+
+/**
+ * Append the optional code-grounded evidence blocks to the user message.
+ * Extracted from buildUserMessage to keep its complexity bounded as
+ * evidence lanes are added.
+ */
+function appendEvidenceBlocks(lines: string[], ctx: CaseStudyContext): void {
+    // Real file-level change evidence (from ingested commit diffs). The agent may
+    // cite these paths in sourceSignals.files to ground challenges/highlights in
+    // WHAT changed, not just commit messages.
+    if (ctx.fileChangeEvidence && ctx.fileChangeEvidence.length > 0) {
+        lines.push(
+            '<fileChanges>',
+            JSON.stringify(ctx.fileChangeEvidence),
+            '</fileChanges>',
+        );
+    }
+    // Real code dependencies (technology_evidence: Syft/treesitter/IaC/Docker),
+    // each with its actual version + canonical purl. The stack must reflect
+    // these; do not invent a dependency that is absent here and unevidenced.
+    if (ctx.verifiedStack && ctx.verifiedStack.length > 0) {
+        lines.push(
+            '<verifiedStack>',
+            JSON.stringify(ctx.verifiedStack),
+            '</verifiedStack>',
+        );
+    }
+    // Fix-density map over the FULL commit history (~200 tokens) — lets the
+    // challenges section see battles that predate the packed recency window.
+    if (ctx.difficultySignals) {
+        lines.push(
+            '<difficultySignals>',
+            JSON.stringify(ctx.difficultySignals),
+            '</difficultySignals>',
+        );
+    }
+}
 
 export function buildUserMessage(ctx: CaseStudyContext): string {
     // Trim to the project envelope the model needs. We deliberately do not
@@ -460,26 +575,7 @@ export function buildUserMessage(ctx: CaseStudyContext): string {
         JSON.stringify(ctx.kbChunks),
         '</kbChunks>',
     );
-    // Real file-level change evidence (from ingested commit diffs). The agent may
-    // cite these paths in sourceSignals.files to ground challenges/highlights in
-    // WHAT changed, not just commit messages.
-    if (ctx.fileChangeEvidence && ctx.fileChangeEvidence.length > 0) {
-        lines.push(
-            '<fileChanges>',
-            JSON.stringify(ctx.fileChangeEvidence),
-            '</fileChanges>',
-        );
-    }
-    // Real code dependencies (technology_evidence: Syft/treesitter/IaC/Docker),
-    // each with its actual version + canonical purl. The stack must reflect
-    // these; do not invent a dependency that is absent here and unevidenced.
-    if (ctx.verifiedStack && ctx.verifiedStack.length > 0) {
-        lines.push(
-            '<verifiedStack>',
-            JSON.stringify(ctx.verifiedStack),
-            '</verifiedStack>',
-        );
-    }
+    appendEvidenceBlocks(lines, ctx);
     if (ctx.priorCaseStudy) {
         lines.push(
             '<priorCaseStudy>',

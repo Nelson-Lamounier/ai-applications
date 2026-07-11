@@ -48,8 +48,9 @@ here:
 - **Env:** from secrets `platform-rds-credentials` + `platform-rds-config`
   (`PGHOST` → RDS endpoint directly, **not** PgBouncer; PgBouncer may not be up
   on first deploy).
-- **Image:** `771826808455.dkr.ecr.eu-west-1.amazonaws.com/platform-rds-bootstrap:<tag>`,
-  where `<tag>` is pinned in `values-<env>.yaml`.
+- **Image:** `771826808455.dkr.ecr.eu-west-1.amazonaws.com/platform-rds-bootstrap:<tag>`.
+  On **dev** the tag is auto-bumped by ArgoCD Image Updater (see below); on
+  **prod** it is pinned by hand in `values-production.yaml`.
 
 ## CI: image build
 
@@ -58,18 +59,30 @@ runs on every push to `develop` that touches `applications/platform-rds-bootstra
 builds the image, tags it `<git-sha>-r<run_attempt>`, pushes to ECR, and
 publishes the URI to SSM `/k8s/development/job-images/platform-rds-bootstrap`.
 
-## ⚠️ Deploying migrations — the gotcha
+## Deploying migrations — dev is automatic, prod is pinned
 
-Building the image does **not** run the migrations. The PostSync Job only ever
-runs the tag **pinned** in `kubernetes-bootstrap/.../values-<env>.yaml`. ArgoCD
-Image Updater is **not** wired to this chart yet, so the tag is bumped
-**manually**. If you merge a migration but never bump the tag, the new SQL sits
-in ECR while the cluster keeps re-running an old image — the DB silently lags.
+Building the image does **not** run the migrations; the PostSync Job runs
+whatever tag ArgoCD renders for the chart. There are two regimes:
 
-> This is exactly what happened with migrations 025–043: the dev tag was stuck
-> at the migration-024-era image (`c0e075f0…`).
+- **Dev — automatic.** ArgoCD Image Updater watches the
+  `platform-rds-bootstrap` ECR repo and bumps `bootstrap.image.tag` for you
+  (writing
+  `charts/platform-rds/chart/.argocd-source-platform-rds-eks-development.yaml`
+  on `main`). Merge a migration → CI builds the image → Image Updater bumps the
+  tag → ArgoCD syncs → the PostSync Job applies the new SQL. **No manual step.**
+  The annotations live on the `platform-rds-eks-development` Application; the
+  design + verification commands are in `kubernetes-bootstrap`
+  `docs/concepts/platform-rds-schema-management.md` and `argocd-image-updater.md`.
+- **Prod — pinned by hand.** `values-production.yaml` deliberately pins a
+  known-good tag ("do **not** auto-track dev's bleeding edge"); bump it manually
+  at cut-over so unreviewed schema never auto-applies to prod.
 
-### Permanent fix — bump the pinned tag (do this for every migration)
+> **Historical note.** Before Image Updater was wired (June 2026), the dev tag
+> was bumped manually and drifted: migrations 025–043 were stranded behind the
+> migration-024-era image (`c0e075f0…`) while the cluster re-ran the old image.
+> That class of bug is now closed **for dev**.
+
+### Manual tag bump — prod, or a dev fallback if Image Updater is down
 
 1. Merge the migration to `develop`; let CI build + push the image.
 2. Grab the freshly published image:
@@ -79,11 +92,11 @@ in ECR while the cluster keeps re-running an old image — the DB silently lags.
      --profile dev-account --query Parameter.Value --output text
    ```
 3. In **`kubernetes-bootstrap`**, set `bootstrap.image.tag` in
-   `charts/platform-rds/chart/values-development.yaml` to that tag, commit, push.
+   `charts/platform-rds/chart/values-<env>.yaml` to that tag, commit, push.
 4. ArgoCD auto-syncs → PostSync Job runs the new image → migrations apply.
 
-(A lasting automation would wire ArgoCD Image Updater to this chart so the tag
-bumps itself; until then, step 3 is manual and mandatory.)
+(On dev this is the break-glass path only — Image Updater normally does step 3
+for you. On prod it is the standard, mandatory procedure.)
 
 ### Break-glass — apply now without a GitOps round-trip
 
@@ -100,10 +113,12 @@ IMAGE=771826808455.dkr.ecr.eu-west-1.amazonaws.com/platform-rds-bootstrap:<tag> 
 
 The on-demand Job uses `generateName: platform-rds-bootstrap-ondemand-`, so it
 never collides with or looks like drift against the ArgoCD-managed
-`platform-rds-bootstrap` Job. It is **not** a substitute for the tag bump —
-always do the permanent fix too, or the next ArgoCD sync re-runs the stale tag
-(harmless, since migrations are idempotent, but it means the GitOps source of
-truth still lies about what's deployed).
+`platform-rds-bootstrap` Job. On **dev**, Image Updater reconciles the pinned
+tag on its own within a poll cycle, so the GitOps source of truth catches up
+automatically. On **prod** the on-demand Job is **not** a substitute for the
+manual tag bump — do the permanent fix too, or the next ArgoCD sync re-runs the
+stale pinned tag (harmless, since migrations are idempotent, but the GitOps
+source of truth still lies about what's deployed).
 
 ## Rollback / expand-contract
 

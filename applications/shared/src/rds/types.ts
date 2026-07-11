@@ -165,6 +165,14 @@ export interface RetrievalPrefilter {
     readonly tech: readonly string[];
     /** Minimum survivors before the soft tech/skill filter is topped-up from the hard-gated set. */
     readonly minResults?: number;
+    /**
+     * When false, the LLM-enriched `d.skills && query terms` admitter inside the
+     * soft widener is skipped, leaving only the deterministic lanes
+     * (file_tech_stack overlap, non-config-path fail-open). Default true.
+     * Exists for the enrichment-value A/B: retrieval as it would behave if
+     * chunk enrichment were retired.
+     */
+    readonly skillsLane?: boolean;
 }
 
 // =============================================================================
@@ -199,6 +207,14 @@ export interface RepoSyncState {
     readonly phaseDone?: number;
     /** Total items in the current phase (undefined when indeterminate). */
     readonly phaseTotal?: number;
+    /**
+     * Enrichment mode used for this sync run. Stored as a narrow enum:
+     * 'llm' = Bedrock LLM enrichment, 'tier1' = deterministic only,
+     * 'none' = enrichment disabled. Nullable for back-compat.
+     */
+    readonly enrichmentMode?: string;
+    /** Model ID of the LLM enricher used in this run (e.g. 'anthropic.claude-…'). Nullable. */
+    readonly enrichmentModel?: string | null;
 }
 
 /** Coarse pipeline phase surfaced to the onboarding UI for progress display. */

@@ -14,8 +14,17 @@
 
 import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, OutputSanitiser, log } from '@bedrock/shared';
+import {
+    ProfileBaseSchema,
+    ExperienceBaseSchema,
+    SkillCategoryBaseSchema,
+    EducationBaseSchema,
+    CertificationBaseSchema,
+    ProjectBaseSchema,
+    AchievementBaseSchema,
+} from '../schemas/resume-sections.js';
 import { formatResumeForPrompt } from '../services/resume-service.js';
-import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
+import { STRATEGIST_PERSONA_META, STRATEGIST_PERSONA_SYSTEM_PROMPT } from '../prompts/strategist-persona.js';
 import type { YearsGap } from './years-gap.js';
 import { capHighlights } from './experience-cap.js';
 
@@ -38,6 +47,7 @@ import type {
     StrategistPipelineContext,
     StrategistResearchResult,
     StrategistAnalysisResult,
+    GapMitigation,
     StructuredResumeData,
 } from '@bedrock/shared';
 
@@ -56,6 +66,8 @@ export interface StrategistAgentInput {
     readonly research: StrategistResearchResult;
     /** Formatted documented project case studies (citeable evidence). Optional. */
     readonly projectEvidence?: string;
+    /** Per-angle tailored project bullets to SELECT projects[].highlights from. Optional. */
+    readonly projectResumeBullets?: string;
     /** Verbatim education facts from user_career_history (degree + institution). Optional. */
     readonly educationFacts?: string;
     /** Verbatim experience facts (company + title + period). Optional. */
@@ -66,6 +78,10 @@ export interface StrategistAgentInput {
     readonly yearsGapFraming?: string;
     /** Authoritative current code stack per repo (doc-vs-code drift). Optional. */
     readonly codeStackContext?: string;
+    /** Code-grounded Profile Intelligence (direction/undersold) — the summary S3 source. Optional. */
+    readonly profileIntelligence?: string;
+    /** Per-user contact details (resume profile + cover-letter signoff source). Optional. */
+    readonly candidateContact?: string;
     /** Grounded achievement & impact evidence (challenges, decisions, highlights) for the cover letter. Optional. */
     readonly achievementEvidence?: string;
 }
@@ -108,6 +124,48 @@ const STRATEGIST_THINKING_BUDGET = Number(process.env.THINKING_BUDGET_TOKENS ?? 
 // =============================================================================
 
 /**
+ * Header for the Profile Intelligence section — the persona's summary S3
+ * instruction references this section BY NAME (a pin test holds the two in
+ * sync). Until 2026-07-09 the profile block was concatenated into the project
+ * case-studies section, whose preamble scopes usage to grounding bullets —
+ * run 77e325ea shipped a summary whose S3 slot was a second rigor close while
+ * the user's undersold differentiators sat unused inside the wrong wrapper.
+ */
+export const PROFILE_INTELLIGENCE_HEADER =
+    '### Profile Intelligence (code-grounded — the summary S3 distinctive-angle source)';
+
+/**
+ * Header for the per-user contact section — the persona's cover-letter signoff
+ * and resume profile placeholders reference this section BY NAME. The persona
+ * previously carried one user's literal contact details as the signoff
+ * example (a multi-tenant identity leak for every other user).
+ */
+export const CANDIDATE_CONTACT_HEADER =
+    '### Candidate Contact (VERBATIM source for the resume profile and cover-letter signoff)';
+
+/** Push the per-user contact section. Omitted entirely when no contact exists. */
+function pushCandidateContactSection(sections: string[], block?: string): void {
+    if (!block?.trim()) return;
+    sections.push('', CANDIDATE_CONTACT_HEADER, block.trim());
+}
+
+/** Push the Profile Intelligence section — positioning source, not bullet evidence. */
+function pushProfileIntelligenceSection(sections: string[], block?: string): void {
+    if (!block?.trim()) return;
+    sections.push(
+        '', PROFILE_INTELLIGENCE_HEADER,
+        'Code-grounded synthesis of the candidate\'s OWN GitHub: code-demonstrated direction and',
+        'seniority, UNDERSOLD strengths (what the code proves but the resume under-states), and',
+        'unsupported resume claims to avoid leaning on. This is the PRIMARY source for the',
+        'summary\'s S3 distinctive angle and for positioning choices. It is NOT project',
+        'case-study evidence: cite projects from the case-studies section, not from here.',
+        '--- BEGIN PROFILE INTELLIGENCE ---',
+        block.trim(),
+        '--- END PROFILE INTELLIGENCE ---',
+    );
+}
+
+/**
  * Build the user message for the Strategist Agent.
  *
  * Formats the research brief as structured context for the
@@ -127,6 +185,9 @@ export function buildStrategistMessage(
     yearsGapFraming = '',
     codeStackContext = '',
     achievementEvidence = '',
+    profileIntelligence?: string,
+    candidateContact?: string,
+    projectResumeBullets = '',
 ): string {
     const sections: string[] = [
         '## Research Agent Brief',
@@ -297,6 +358,29 @@ export function buildStrategistMessage(
         );
     }
 
+    // Tailored bullets — the AUTHORITATIVE source for projects[].highlights.
+    // The writer SELECTS JD-relevant bullets per project from here (quote or
+    // lightly trim; never invent). These belong in the PROJECTS section only —
+    // NEVER as Experience entries (see the Experience-purity rule in the persona).
+    if (projectResumeBullets.trim()) {
+        sections.push(
+            '', '### Project Resume Bullets (SELECT projects[].highlights FROM THESE — quote-only, never invent)',
+            'For EACH project you include in <tailored_resume_json> "projects", populate its',
+            '"highlights" array by selecting the 3-6 bullets below that best answer THIS JD\'s named',
+            'requirements. Copy them verbatim or trim for length — never add a fact not present here.',
+            'Prefer bullets that surface a JD must-have skill. Match each bullet to its project by the',
+            '"## <name>" heading. These bullets are PROJECT work: they go ONLY in "projects", NEVER as',
+            'an Experience entry — do NOT invent a job title (e.g. "Solo SRE Engineer") or a "Project"',
+            'period to host them. One "projects" entry per "## <name>" — never split one project in two.',
+            '--- BEGIN PROJECT RESUME BULLETS ---',
+            projectResumeBullets.trim(),
+            '--- END PROJECT RESUME BULLETS ---',
+        );
+    }
+
+    pushProfileIntelligenceSection(sections, profileIntelligence);
+    pushCandidateContactSection(sections, candidateContact);
+
     if (achievementEvidence) {
         sections.push(
             '',
@@ -304,6 +388,7 @@ export function buildStrategistMessage(
             achievementEvidence,
         );
     }
+
 
     if (roleEvidence) {
         sections.push('', roleEvidence);
@@ -392,6 +477,35 @@ export function extractCoverLetter(xml: string): CoverLetter | null {
  * @param xml - Raw XML analysis output
  * @returns Array of structured addition suggestions
  */
+/**
+ * Extract phase-3 gap mitigations into structured data. Field-by-field per
+ * <mitigation> block (CDATA-tolerant, optional fields default to '') — the
+ * defences were previously trapped in the raw XML while the UI rendered the
+ * gap list without them.
+ */
+export function extractGapMitigations(xml: string): GapMitigation[] {
+    const out: GapMitigation[] = [];
+    const tag = (block: string, name: string): string => {
+        const m = new RegExp(`<${name}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${name}>`).exec(block);
+        return m ? m[1].trim() : '';
+    };
+    const blockRe = /<mitigation>([\s\S]*?)<\/mitigation>/g;
+    let match: RegExpExecArray | null;
+    while ((match = blockRe.exec(xml)) !== null) {
+        const gap = tag(match[1], 'gap');
+        const honestFraming = tag(match[1], 'honest_framing');
+        if (!gap || !honestFraming) continue;
+        out.push({
+            gap,
+            honestFraming,
+            bridgeNarrative: tag(match[1], 'bridge_narrative'),
+            proactiveAction: tag(match[1], 'proactive_action'),
+            goNoGo: tag(match[1], 'go_no_go') || 'conditional',
+        });
+    }
+    return out;
+}
+
 function extractAdditions(xml: string): ResumeAdditionSuggestion[] {
     const additions: ResumeAdditionSuggestion[] = [];
     const regex = /<addition>\s*<section>(.*?)<\/section>\s*<suggested_bullet>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/suggested_bullet>\s*<source_citation>(.*?)<\/source_citation>\s*<\/addition>/gs;
@@ -567,45 +681,22 @@ export function extractArchetypeSelection(xml: string): RoleArchetypeSelection |
  * (with Job retries) re-spending it. Stripping keeps the run successful on additive
  * drift while still failing on missing/wrong-type required data.
  */
-const TailoredResumeSchema = z.object({
-    profile: z.object({
-        name:     z.string(),
-        title:    z.string(),
-        email:    z.string(),
-        location: z.string(),
-        linkedin: z.string().optional(),
-        github:   z.string().optional(),
-        website:  z.string().optional(),
-    }),
+// Section shapes derive from schemas/resume-sections.ts — the single source of
+// truth. Re-declaring them inline is how projects[].highlights drifted out of
+// the sibling schemas and got silently stripped downstream. Exported so the
+// schema drift test can pin every layer to the same shapes.
+export const TailoredResumeSchema = z.object({
+    profile: ProfileBaseSchema,
     summary: z.string(),
-    experience: z.array(z.object({
-        company:    z.string(),
-        title:      z.string(),
-        period:     z.string(),
-        highlights: z.array(z.string()),
-    })),
-    skills: z.array(z.object({
-        category: z.string(),
-        skills:   z.array(z.string()),
-    })),
-    education: z.array(z.object({
-        degree:      z.string(),
-        institution: z.string(),
-        period:      z.string(),
-    })),
-    certifications: z.array(z.object({
-        name:   z.string(),
-        year:   z.string(),
-        issuer: z.string(),
-    })),
-    projects: z.array(z.object({
-        name:        z.string(),
-        description: z.string(),
-        github:      z.string().optional(),
-    })),
-    keyAchievements: z.array(z.object({
-        achievement: z.string(),
-    })),
+    experience: z.array(ExperienceBaseSchema),
+    skills: z.array(SkillCategoryBaseSchema),
+    education: z.array(EducationBaseSchema),
+    certifications: z.array(CertificationBaseSchema),
+    // projects[].highlights: JD-aligned technical bullets selected from the
+    // PROJECT RESUME BULLETS block. Optional in the base (cached/legacy writer
+    // output still validates); the persona requires it going forward.
+    projects: z.array(ProjectBaseSchema),
+    keyAchievements: z.array(AchievementBaseSchema),
     // Section render order (archetype/restructure decision). Kept (not stripped)
     // because the UI consumes it; other unknown keys are dropped harmlessly.
     sectionOrder: z.array(z.string()).optional(),
@@ -657,6 +748,8 @@ const STRATEGIST_CONFIG: AgentConfig = {
     maxTokens: STRATEGIST_MAX_TOKENS,
     thinkingBudget: STRATEGIST_THINKING_BUDGET,
     systemPrompt: STRATEGIST_PERSONA_SYSTEM_PROMPT,
+    promptId: STRATEGIST_PERSONA_META.id,
+    promptVersion: STRATEGIST_PERSONA_META.version,
 };
 
 /**
@@ -698,7 +791,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence);
+        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence, input.candidateContact, input.projectResumeBullets);
     }
 
     /**
@@ -753,6 +846,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
         return {
             analysisXml: sanitisedXml,
             metadata,
+            gapMitigations: extractGapMitigations(sanitisedXml),
             coverLetter,
             archetypeSelection,
             tailoredResumeData,
@@ -813,6 +907,18 @@ export { strategistAgent, StrategistAgent };
  * @param research - Research Agent's structured output
  * @returns Full XML analysis with metadata extraction
  */
+/**
+ * Tenure framing is conditional: with no years bar in the JD the framing may
+ * shape the SUMMARY only — the cover letter must not mention tenure at all.
+ */
+function framingDirective(yearsGap: { framingLine: string; requiredYears: number | null } | null | undefined): string | undefined {
+    if (!yearsGap) return undefined;
+    if (yearsGap.requiredYears == null) {
+        return `${yearsGap.framingLine} [NO YEARS BAR IN THIS JD: summary only — the cover letter must NOT mention years or tenure]`;
+    }
+    return yearsGap.framingLine;
+}
+
 export async function executeStrategistAgent(
     ctx: StrategistPipelineContext,
     research: StrategistResearchResult,
@@ -823,6 +929,9 @@ export async function executeStrategistAgent(
     yearsGap: YearsGap | null = null,
     codeStackContext = '',
     achievementEvidence = '',
+    profileIntelligence?: string,
+    candidateContact?: string,
+    projectResumeBullets = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: yearsGap?.framingLine, codeStackContext, achievementEvidence }, ctx);
+    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence, candidateContact, projectResumeBullets }, ctx);
 }

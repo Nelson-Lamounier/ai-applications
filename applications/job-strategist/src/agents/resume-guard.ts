@@ -1,74 +1,88 @@
-/** @format */
-import { runAgent, log, normalizeProse } from '@bedrock/shared';
-import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
-import { ResumeRewriteSchema, buildEmitResumeTool } from './resume-tool-schema.js';
-
-export interface ResumeViolation { code: string; detail: string; }
-export interface ResumeGuardCtx {
-    targetRole: string;
-    leadIdentity: string;
-    verifiedEducation: string[];
-    archetypeSkillLead: string;
-}
-
-const GAP_RE = /falls?\s+short|\b\d{1,2}\s*years?\b[^.]{0,40}\b(?:short|threshold|bar|requirement|fall)|do(?:es)?\s*not\s+yet\s+have/i;
-
 /**
- * Generic stop-words that appear in many identities and are not differentiating
- * (e.g. "engineer", "builds", "years", "with", "who").
+ * @format
+ * Resume guard — facade + orchestrators.
+ *
+ * The rule families live in guards/ (one module per concern):
+ *   - guards/types.ts          shared interfaces (ResumeViolation, ResumeGuardCtx, …)
+ *   - guards/text.ts           tokenisers / name variants / sentence split
+ *   - guards/summary-rules.ts  summary inventory, echo, bridge, attribution
+ *   - guards/roster.ts         experience-roster invariant
+ *   - guards/claims-rules.ts   cert years, compliance, prohibited/scoped claims
+ *   - guards/fidelity-rules.ts experience/pitch/JD-echo grounding fidelity
+ *   - guards/rewrite.ts        the bounded Haiku repair pass
+ *
+ * This file keeps the three orchestrators (validateResume, guardResume,
+ * revalidateResumeContent) and re-exports every rule so existing consumers
+ * (run-pipeline, ats/length-budget, tests) keep importing from
+ * './resume-guard.js' unchanged. The monolith this replaces had grown past
+ * 1,100 lines and its rules repeatedly slipped during review.
  */
-const GENERIC_TOKENS = new Set(['engineer', 'builds', 'build', 'years', 'with', 'from', 'that', 'this', 'have', 'been', 'into', 'your', 'their', 'where', 'what', 'will', 'more', 'over', 'about', 'some', 'when', 'than', 'like']);
+import type { StructuredResumeData } from '@bedrock/shared';
+import type { ResumeViolation, ResumeGuardCtx } from './guards/types.js';
+import {
+    TITLE_NOUNS, namesGap, leadClusterTokens, findMisplacedSelectedWork,
+    checkSummaryInventory, checkProjectInventory, checkSummaryEcho,
+    checkProblemBridge, checkSummaryAttribution,
+    stripJobDescribingSentences, stripIdentityProblemClause,
+} from './guards/summary-rules.js';
+import {
+    enforceCertYears, enforceProhibitedClaims, enforceScopedClaims,
+    dropKeyAchievementsSection, stripEmDashes,
+    checkComplianceOverclaim, checkMetricStuffedBullets,
+} from './guards/claims-rules.js';
+import { preserveExperienceRoster } from './guards/roster.js';
+import {
+    checkProjectPitchAlignment, checkBulletJdEcho, checkExperienceFidelity,
+} from './guards/fidelity-rules.js';
+import { rewriteResume } from './guards/rewrite.js';
 
-/** Job-title nouns that must not appear in a positioning headline's lead segment. */
-const TITLE_NOUNS = new Set(['engineer', 'engineering', 'associate', 'analyst', 'manager', 'developer', 'specialist', 'lead', 'architect', 'consultant', 'administrator', 'coordinator', 'technician', 'officer', 'director', 'assistant', 'representative', 'agent', 'scientist']);
+// Re-export the full rule surface — consumers import from './resume-guard.js'.
+export type { ResumeViolation, VerifiedEmployer, ResumeGuardCtx } from './guards/types.js';
+export {
+    summarySharedNumbers, summaryEchoSentences, summaryConflationSentences,
+    identityProblemPhrases, jobDescribingSentences, targetCompanySentences,
+    stripJobDescribingSentences, stripIdentityProblemClause,
+} from './guards/summary-rules.js';
+export { preserveExperienceRoster } from './guards/roster.js';
+export {
+    enforceCertYears, enforceProhibitedClaims, enforceScopedClaims,
+    dropKeyAchievementsSection, stripEmDashes,
+    PROHIBITED_CLAIMS, SCOPED_CLAIMS,
+} from './guards/claims-rules.js';
+export type { ProhibitedClaim, ScopedClaim } from './guards/claims-rules.js';
+export {
+    checkProjectPitchAlignment, checkBulletJdEcho, checkExperienceFidelity,
+} from './guards/fidelity-rules.js';
+export { rewriteResume, RESUME_REWRITE_PROMPT_META } from './guards/rewrite.js';
 
-/** A "Selected work"/GitHub highlight must not sit under a support/customer/QA role. */
-const SUPPORT_ROLE_RE = /support|customer|service|associate|quality assurance|\bqa\b|help\s?desk|technician/i;
-const SELECTED_WORK_RE = /selected work|github\.com/i;
-
-/**
- * Returns the distinctive lead tokens from the identity string — words that
- * identify the archetype cluster (e.g. "support", "production") — by taking
- * the first token that is not in GENERIC_TOKENS.
- */
-function leadClusterTokens(leadIdentity: string): string[] {
-    const all = leadIdentity.toLowerCase().split(/[^a-z]+/).filter((t) => t.length > 3);
-    return all.filter((t) => !GENERIC_TOKENS.has(t));
-}
-
-/** Returns the support/customer role title whose highlights hold a Selected-work/GitHub line, else null. */
-function findMisplacedSelectedWork(resume: StructuredResumeData): string | null {
-    for (const e of resume.experience ?? []) {
-        if (SUPPORT_ROLE_RE.test(e.title) && (e.highlights ?? []).some((h) => SELECTED_WORK_RE.test(h))) {
-            return e.title;
-        }
-    }
-    return null;
-}
-
-export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
-    const out: ResumeViolation[] = [];
+/** profile.title must be a capability headline, never a job-title claim. */
+function checkHeadline(out: ResumeViolation[], resume: StructuredResumeData): void {
     const title = resume.profile.title.trim();
-
+    if (!title) return;
     const hasSeparator = /[·—|]/.test(title);
     const employmentTitles = new Set(resume.experience.map((e) => e.title.toLowerCase().trim()));
     const leadSeg = title.split(/[·—|]/)[0].trim().toLowerCase();
     const hasTitleNoun = leadSeg.split(/\s+/).some((w) => TITLE_NOUNS.has(w));
-    if (title && (!hasSeparator || employmentTitles.has(title.toLowerCase()) || hasTitleNoun)) {
+    if (!hasSeparator || employmentTitles.has(title.toLowerCase()) || hasTitleNoun) {
         out.push({ code: 'headline_is_title', detail: `profile.title "${title}" reads as a job-title claim — it must be a descriptive domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect…).` });
     }
+}
 
+/** Summary opener must lead the archetype cluster and never concede the gap. */
+function checkSummaryOpener(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
     const summary = resume.summary.trim();
     const firstSentence = summary.split(/(?<=[.!?])\s/)[0]?.toLowerCase() ?? '';
     const tokens = leadClusterTokens(ctx.leadIdentity);
     if (summary && tokens.length > 0 && !tokens.some((t) => firstSentence.includes(t))) {
         out.push({ code: 'summary_wrong_cluster', detail: 'Summary opener does not lead with the archetype lead-identity differentiator.' });
     }
-
-    if (GAP_RE.test(summary)) {
+    if (namesGap(summary)) {
         out.push({ code: 'summary_names_gap', detail: 'Summary names/concedes the experience gap.' });
     }
+}
 
+/** Every education degree must appear in the verified facts. */
+function checkEducation(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
     const verifiedLower = new Set(ctx.verifiedEducation.map((v) => v.toLowerCase()));
     for (const ed of resume.education) {
         const deg = ed.degree.toLowerCase();
@@ -77,13 +91,32 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
             break;
         }
     }
+}
 
-    if (ctx.archetypeSkillLead) {
-        const firstCat = (resume.skills[0]?.category ?? '').toLowerCase();
-        if (firstCat && firstCat !== ctx.archetypeSkillLead.toLowerCase()) {
-            out.push({ code: 'skills_lead_mismatch', detail: `First skill group "${resume.skills[0]?.category}" is not the archetype lead "${ctx.archetypeSkillLead}".` });
-        }
+/** The archetype's lead skill group must come first. */
+function checkSkillsLead(out: ResumeViolation[], resume: StructuredResumeData, ctx: ResumeGuardCtx): void {
+    if (!ctx.archetypeSkillLead) return;
+    const firstCat = (resume.skills[0]?.category ?? '').toLowerCase();
+    if (firstCat && firstCat !== ctx.archetypeSkillLead.toLowerCase()) {
+        out.push({ code: 'skills_lead_mismatch', detail: `First skill group "${resume.skills[0]?.category}" is not the archetype lead "${ctx.archetypeSkillLead}".` });
     }
+}
+
+export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
+    const out: ResumeViolation[] = [];
+
+    checkHeadline(out, resume);
+    checkSummaryOpener(out, resume, ctx);
+    checkEducation(out, resume, ctx);
+    checkSkillsLead(out, resume, ctx);
+
+    checkSummaryInventory(out, resume);
+    checkProjectInventory(out, resume);
+    checkSummaryEcho(out, resume);
+    checkProblemBridge(out, resume, ctx.companyProblem);
+    checkSummaryAttribution(out, resume, ctx);
+    checkComplianceOverclaim(out, resume);
+    checkMetricStuffedBullets(out, resume);
 
     const misplaced = findMisplacedSelectedWork(resume);
     if (misplaced) {
@@ -93,94 +126,83 @@ export function validateResume(resume: StructuredResumeData, ctx: ResumeGuardCtx
     return out;
 }
 
-/** Normalize em-dashes in all prose fields of a StructuredResumeData. Defensive +
- *  shape-preserving: only transforms fields that are actually present (the guard is
- *  fail-open infra — never throw on a resume missing an optional array). */
-export function stripEmDashes(resume: StructuredResumeData): StructuredResumeData {
-    return {
-        ...resume,
-        ...(typeof resume.summary === 'string' ? { summary: normalizeProse(resume.summary) } : {}),
-        ...(Array.isArray(resume.experience)
-            ? { experience: resume.experience.map((e) => ({ ...e, highlights: Array.isArray(e.highlights) ? e.highlights.map((h) => normalizeProse(h)) : e.highlights })) }
-            : {}),
-        ...(Array.isArray(resume.projects)
-            ? { projects: resume.projects.map((p) => ({ ...p, description: typeof p.description === 'string' ? normalizeProse(p.description) : p.description })) }
-            : {}),
-        ...(Array.isArray(resume.keyAchievements)
-            ? { keyAchievements: resume.keyAchievements.map((k) => ({ ...k, achievement: typeof k.achievement === 'string' ? normalizeProse(k.achievement) : k.achievement })) }
-            : {}),
-    } as StructuredResumeData;
+/** All deterministic content checks shared by revalidation's two sweeps. */
+function collectContentViolations(resume: StructuredResumeData, ctx: ResumeGuardCtx): ResumeViolation[] {
+    const out: ResumeViolation[] = [];
+    checkSummaryInventory(out, resume);
+    checkProjectInventory(out, resume);
+    checkSummaryEcho(out, resume);
+    checkProblemBridge(out, resume, ctx.companyProblem);
+    checkSummaryAttribution(out, resume, ctx);
+    checkComplianceOverclaim(out, resume);
+    checkMetricStuffedBullets(out, resume);
+    // Pitch alignment must hold through the WHOLE chain: run 9216cf25's first
+    // guard pass repaired both project pitches, then the condense pass cut
+    // them ("non-JD content is cut FIRST") and both revalidations were blind
+    // to the loss — stack-led descriptions shipped despite the repair.
+    out.push(...checkProjectPitchAlignment(resume, ctx.projectPitches));
+    return out;
 }
 
-// =============================================================================
-// HAIKU REWRITE + GUARD ORCHESTRATOR
-// =============================================================================
-
-const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
-
-const RewriteSchema = ResumeRewriteSchema;
-
-const TOOL = buildEmitResumeTool('Return the corrected resume as structured JSON (plain text strings, NO markdown).');
-
-const CTX: BasePipelineContext = {
-    pipelineId: 'resume-guard',
-    environment: process.env['DEPLOY_ENV'] ?? 'dev',
-    cumulativeTokens: { input: 0, output: 0, thinking: 0 },
-    cumulativeCostUsd: 0,
-};
-
-/** Haiku rewrite that fixes ONLY the flagged issues. FAIL-OPEN: returns the input on error. */
-export async function rewriteResume(
+/**
+ * FINAL content re-validation — runs after the LAST mutating pass (migration
+ * reframe, condense/expand, surface-keywords), because those passes were
+ * observed reintroducing violations the early guard had already repaired
+ * (the A/B run's project regained 5 bullet-shared numbers, and an unbridged
+ * "Terraform" appeared in the summary). Deterministic checks + ONE bounded
+ * repair; anything still violating after that is reported, never looped.
+ */
+export async function revalidateResumeContent(
     resume: StructuredResumeData,
-    violations: ResumeViolation[],
     ctx: ResumeGuardCtx,
-): Promise<StructuredResumeData> {
-    const system = [
-        'You repair a tailored resume, fixing ONLY the listed issues by REORDERING and REWORDING for prominence. Call emit_resume with the full resume JSON.',
-        `NEVER fabricate, NEVER change a number or date, NEVER rename a degree — the verified degree names are: ${ctx.verifiedEducation.join('; ')}.`,
-        `Make the summary's FIRST sentence lead with this identity differentiator: "${ctx.leadIdentity}" — never an infrastructure-first opener; never name or concede any experience gap.`,
-        'For headline_is_title: rewrite profile.title as a DESCRIPTIVE domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect, Consultant…) — e.g. "Cloud & AI Operations · Python Automation & Incident Response". Never claim a role the candidate does not hold.',
-        'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',
-        `Put the "${ctx.archetypeSkillLead}" skill group FIRST (if present); within each group, JD-matched terms first.`,
-        'Within each experience role, lead with the strongest number-led bullet.',
-        'Preserve every fact, all education names verbatim, and the profile identity. Output plain-text strings, no markdown.',
-    ].join('\n');
+): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
+    const prohibited = enforceProhibitedClaims(resume);
+    const certs = enforceCertYears(prohibited.resume, ctx.verifiedCertifications ?? []);
+    const scoped = enforceScopedClaims(certs.resume);
+    let out = scoped.resume;
+    const violations: ResumeViolation[] = [...prohibited.violations, ...certs.violations, ...scoped.violations];
 
-    const config: AgentConfig = {
-        agentName: 'resume-rewrite',
-        modelId: MODEL_ID,
-        maxTokens: 8000,
-        thinkingBudget: 0,
-        systemPrompt: [{ text: system }],
-        pipeline: 'job-strategist',
-        tool: { name: TOOL.name, description: TOOL.description, inputSchema: TOOL.input_schema as Record<string, unknown> },
-    };
-
-    const userMessage = `<issues>${violations.map((v) => v.code).join(', ')}</issues>\n<resume>${JSON.stringify(resume)}</resume>`;
-
-    try {
-        const result = await runAgent<StructuredResumeData>({
-            config, userMessage, pipelineContext: CTX,
-            parseResponse: (s) => {
-                const parsed = RewriteSchema.safeParse(JSON.parse(s));
-                if (!parsed.success) throw new Error(`resume-rewrite: ${parsed.error.message}`);
-                return parsed.data as unknown as StructuredResumeData;
-            },
-        });
-        return result.data;
-    } catch (e) {
-        log('WARN', 'resume rewrite failed — keeping original', { error: e instanceof Error ? e.message : String(e) });
-        return resume;
+    const inventory = collectContentViolations(out, ctx);
+    const needsRepair = [
+        ...inventory,
+        ...violations.filter((v) => v.code === 'unbridged_transferable_claim'),
+    ];
+    if (needsRepair.length > 0) {
+        violations.push(...inventory);
+        const beforeRepair = out;
+        out = await rewriteResume(out, needsRepair, ctx);
+        out = preserveExperienceRoster(beforeRepair, out, (v) => violations.push(v));
+        // Deterministic passes are idempotent — re-assert after the repair.
+        out = enforceProhibitedClaims(out).resume;
+        out = enforceCertYears(out, ctx.verifiedCertifications ?? []).resume;
+        out = enforceScopedClaims(out).resume;
+        const residual = collectContentViolations(out, ctx);
+        if (residual.length > 0) {
+            violations.push({ code: 'content_revalidation_residual', detail: `After one bounded repair, still violating: ${residual.map((r) => r.code).join(', ')}.` });
+        }
     }
+    // Deterministic backstops — a summary must never SHIP describing the job,
+    // naming the target company, or wearing the companyProblem's phrasing as
+    // identity. Prose-preserving repair got its one chance above.
+    out = stripJobDescribingSentences(out, ctx, (v) => violations.push(v));
+    out = stripIdentityProblemClause(out, ctx.companyProblem, (v) => violations.push(v));
+    return { resume: stripEmDashes(out), violations };
 }
 
-/** Validate → rewrite on violation → return. Never throws. */
+/** Validate → rewrite on violation → deterministic scoped-claim + section passes → return. Never throws. */
 export async function guardResume(
     resume: StructuredResumeData,
     ctx: ResumeGuardCtx,
 ): Promise<{ resume: StructuredResumeData; violations: ResumeViolation[] }> {
     const violations = validateResume(resume, ctx);
-    if (violations.length === 0) return { resume: stripEmDashes(resume), violations };
-    const fixed = await rewriteResume(resume, violations, ctx);
-    return { resume: stripEmDashes(fixed), violations };
+    violations.push(...checkExperienceFidelity(resume, ctx.verifiedEmployers));
+    violations.push(...checkProjectPitchAlignment(resume, ctx.projectPitches));
+    violations.push(...checkBulletJdEcho(resume, ctx.verifiedEmployers, `${ctx.targetRole ?? ''}: ${(ctx.jdRequiredSkills ?? []).join(', ')}`));
+    let rewritten = violations.length === 0 ? resume : await rewriteResume(resume, violations, ctx);
+    rewritten = preserveExperienceRoster(resume, rewritten, (v) => violations.push(v));
+    const scoped = enforceScopedClaims(rewritten);
+    violations.push(...scoped.violations);
+    const sectioned = dropKeyAchievementsSection(scoped.resume);
+    violations.push(...sectioned.violations);
+    return { resume: stripEmDashes(sectioned.resume), violations };
 }

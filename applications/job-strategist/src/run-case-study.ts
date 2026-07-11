@@ -32,6 +32,7 @@ import {
     recordInvocationToRds,
     runCaseStudyOrchestration,
     runSystemTour,
+    semanticTourCache,
     withWorkflowTrace,
     RdsSystemTourRepository,
     loadRepoRoleSignals,
@@ -69,6 +70,12 @@ const caseStudyDuration = new Histogram({
 // Cache effectiveness — unified counter shared with the read cache + other Jobs.
 // See docs/adr/0001-cache-observability-prometheus-over-emf.md.
 const CACHE_NAME = 'aigen:case_study';
+const TOUR_CACHE_NAME = 'aigen:system_tour';
+// The tour shares the RedisExactCache instance but reports under its own
+// cache name — its scope prefix ('systemtour:' vs 'casestudy:') tells the
+// two lookups apart so tour hits never inflate the case-study hit rate.
+const cacheLabel = (scope: string): string =>
+    scope.startsWith('systemtour') ? TOUR_CACHE_NAME : CACHE_NAME;
 const cacheRequests = new Counter({
     name:       'redis_cache_requests_total',
     help:       'Cache outcomes by cache name and result.',
@@ -81,7 +88,9 @@ const cacheEnabled = new Gauge({
     labelNames: ['cache'] as const,
     registers:  [obs.registry],
 });
-for (const result of ['hit', 'miss', 'error'] as const) cacheRequests.inc({ cache: CACHE_NAME, result }, 0);
+for (const cache of [CACHE_NAME, TOUR_CACHE_NAME]) {
+    for (const result of ['hit', 'miss', 'error'] as const) cacheRequests.inc({ cache, result }, 0);
+}
 
 /**
  * Refresh a confirmed project's components from current code-grounded signals,
@@ -188,9 +197,9 @@ async function main(): Promise<void> {
         // safe to deploy ahead of the cluster-side Redis wiring.
         const cache = RedisExactCache.fromEnvironment({
             metrics: {
-                onHit:   () => cacheRequests.inc({ cache: CACHE_NAME, result: 'hit' }),
-                onMiss:  () => cacheRequests.inc({ cache: CACHE_NAME, result: 'miss' }),
-                onError: () => cacheRequests.inc({ cache: CACHE_NAME, result: 'error' }),
+                onHit:   (scope) => cacheRequests.inc({ cache: cacheLabel(scope), result: 'hit' }),
+                onMiss:  (scope) => cacheRequests.inc({ cache: cacheLabel(scope), result: 'miss' }),
+                onError: (scope) => cacheRequests.inc({ cache: cacheLabel(scope), result: 'error' }),
             },
         });
         cacheEnabled.set({ cache: CACHE_NAME }, cache.enabled ? 1 : 0);
@@ -252,17 +261,28 @@ async function main(): Promise<void> {
 
             // S7b: generate the project's system-tour walkthrough from the fresh case study.
             // Fail-open — the case study is already persisted; a tour failure must not fail the job.
+            // The tour is keyed on hash(caseStudy), so an unchanged case study
+            // (including a case-study cache hit) serves the tour from Redis
+            // instead of re-paying the Sonnet call — and still self-heals a
+            // missing tour row by regenerating on a tour-cache miss.
             let systemTourGenerated = false;
+            let systemTourCacheHit = false;
             try {
                 await workflow.stage('project.case_study.system_tour', {}, async () => {
-                    await runSystemTour({
+                    const tourOut = await runSystemTour({
                         projectId: env.projectId,
                         userId:    env.userId,
                         caseStudy: out.caseStudy,
                         agent:     bedrockSystemTourAgent,
                         repo:      new RdsSystemTourRepository(pool),
+                        cache:     semanticTourCache(cache, {
+                            userId:    env.userId,
+                            projectId: env.projectId,
+                            kbTag,
+                        }),
                         ctx,
                     });
+                    systemTourCacheHit = tourOut.cacheHit;
                 });
                 systemTourGenerated = true;
             } catch (err) {
@@ -297,6 +317,7 @@ async function main(): Promise<void> {
                 depthMarkersUpserted:      out.persisted.depthMarkersUpserted,
                 skippedSections:           out.persisted.skippedSections,
                 systemTourGenerated,
+                systemTourCacheHit,
                 groundingChecked:          out.grounding.checked,
                 groundingGrounded:         out.grounding.grounded,
                 groundingFlagged:          out.grounding.flagged,
@@ -339,6 +360,7 @@ async function main(): Promise<void> {
                 tokens:               ctx.cumulativeTokens,
                 costUsd:              totalCostUsd,
                 systemTourGenerated,
+                systemTourCacheHit,
                 skippedSections:      out.persisted.skippedSections,
             }, 'project.case_study.complete');
         });
@@ -393,4 +415,14 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch(() => process.exit(1));
+// Exit EXPLICITLY on success too. main() awaits its work, closes the pg pool,
+// and shuts down observability — but module-scope handles (the Bedrock client's
+// keep-alive sockets, the Redis cache connection, the pushgateway HTTP agent)
+// keep the event loop alive, so the process would otherwise hang after logging
+// success — leaving the K8s Job Running 0/1 until activeDeadlineSeconds
+// force-kills it (~30min) and stamping a successful run as Failed.
+// process.exit(0) ends it cleanly. Mirrors run-pipeline.ts.
+main().then(
+    () => process.exit(0),
+    () => process.exit(1),
+);

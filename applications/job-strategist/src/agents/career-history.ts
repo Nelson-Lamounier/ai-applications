@@ -163,3 +163,43 @@ export function formatCertifications(entries: CertificationEntry[]): string {
     }
     return lines.join('\n');
 }
+
+/**
+ * Verified years of paid experience, computed from career-history period
+ * strings ("2019 - 2021", "2021 \u2013 Present"). Union of per-entry year
+ * intervals so overlapping roles never double-count. Null when nothing
+ * parses — callers omit the fact rather than guess.
+ */
+export function computeVerifiedYears(entries: readonly CareerEntry[]): number | null {
+    const now = new Date().getFullYear();
+    const intervals: Array<[number, number]> = [];
+    for (const e of entries) {
+        const years = (e.period.match(/\b(19|20)\d{2}\b/g) ?? []).map(Number);
+        if (years.length === 0) continue;
+        const start = Math.min(...years);
+        const end = /present|current|now/i.test(e.period) ? now : Math.max(...years);
+        if (end > start) intervals.push([start, end]);
+    }
+    if (intervals.length === 0) return null;
+    intervals.sort((a, b) => a[0] - b[0]);
+    let total = 0;
+    let [curStart, curEnd] = intervals[0];
+    for (const [s, e] of intervals.slice(1)) {
+        if (s <= curEnd) { curEnd = Math.max(curEnd, e); continue; }
+        total += curEnd - curStart;
+        [curStart, curEnd] = [s, e];
+    }
+    total += curEnd - curStart;
+    return total > 0 ? total : null;
+}
+
+/**
+ * Grounding-fact line for the verified-years figure, so the years number the
+ * writer states survives the allowed-number extraction instead of being
+ * token-stripped out of the summary (observed live: "approximately 5 years"
+ * was deleted mid-sentence). Empty string when unverifiable.
+ */
+export function formatVerifiedYearsFact(entries: readonly CareerEntry[]): string {
+    const years = computeVerifiedYears(entries);
+    return years == null ? '' : `Verified professional experience: ${years} years (computed from career-history employment periods).`;
+}
