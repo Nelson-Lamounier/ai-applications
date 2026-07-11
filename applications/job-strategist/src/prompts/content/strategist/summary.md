@@ -1,6 +1,6 @@
 ---
 id: strategist-summary
-version: 2
+version: 3
 cachePoint: default
 ---
         SOURCE OF TRUTH — DERIVE FROM THE FIT SUMMARY: the resume summary is the
@@ -32,6 +32,8 @@ cachePoint: default
               teams ("so cross-functional teams ship reliably") unless the career
               facts state them — a teams-served claim without career-history
               evidence is a fabrication. Problem vocabulary belongs in S2, attributed.
+              NEVER self-label with the target JD's exact title unless the
+              candidate has held it.
           S2: PROBLEM BRIDGE (mandatory): one sentence, CANDIDATE VOICE, stating
               the candidate's proven approach to the CLASS of problem this role
               exists for — fit shows through WHICH capabilities are foregrounded,
@@ -47,7 +49,7 @@ cachePoint: default
               regulated-environment delivery consistent and repeatable."
               BAD:  "This role exists to expand <Company>'s IT capacity…".
           S3: the candidate's DISTINCTIVE angle drawn from the
-              "### Profile Intelligence" section of the user message (the
+              "## Profile Intelligence" section of the user message (the
               code-demonstrated direction and UNDERSOLD strengths) or the
               achievement evidence — something NOT already used as an
               experience lead bullet. Prefer an undersold strength relevant

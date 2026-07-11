@@ -4,7 +4,7 @@
  *
  * The summary agent emits four beats (S1-S4) and needs only a narrow slice of
  * what the full Strategist writer sees: the Fit Summary as the source of
- * truth for positioning, the finished resume body (for altitude checks —
+ * truth for positioning, the finished resume body (for altitude checks -
  * never restate a number already in a bullet), the verified/partial/gap
  * verdicts (never claim a gap), the company problem (S2 bridge), profile
  * intelligence (S3 distinctive angle), years-gap framing (S1), and
@@ -15,18 +15,18 @@ import type { StrategistResearchResult, StructuredResumeData } from '@bedrock/sh
 /** Everything the summary-agent message builder may read. */
 export interface SummaryMessageInput {
     readonly research: StrategistResearchResult;
-    /** Finished resume body (summary field ignored — this agent produces it). */
+    /** Finished resume body (summary field ignored - this agent produces it). */
     readonly body: StructuredResumeData;
     readonly profileIntelligence: string;
     readonly yearsGapFraming: string;
     readonly achievementEvidence: string;
 }
 
-/** Focused user message for the summary agent — only what S1-S4 need. */
+/** Focused user message for the summary agent - only what S1-S4 need. */
 export function buildSummaryMessage(m: SummaryMessageInput): string {
     const { research, body } = m;
     const out: string[] = [
-        '## Fit Summary (SOURCE OF TRUTH — translate this into positive positioning)',
+        '## Fit Summary (SOURCE OF TRUTH - translate this into positive positioning)',
         research.fitSummary,
         `Overall fit rating: ${research.overallFitRating}`,
         '',
@@ -50,13 +50,13 @@ export function buildSummaryMessage(m: SummaryMessageInput): string {
     if (research.companyProblem?.trim()) {
         out.push(
             '',
-            '## The problem this role solves (S2 bridge — candidate voice, never name the company)',
+            '## The problem this role solves (S2 bridge - candidate voice, never name the company)',
             research.companyProblem.trim(),
         );
     }
 
     if (m.profileIntelligence.trim()) {
-        out.push('', '## Profile Intelligence (S3 distinctive angle — undersold, code-proven strengths)', m.profileIntelligence.trim());
+        out.push('', '## Profile Intelligence (S3 distinctive angle - undersold, code-proven strengths)', m.profileIntelligence.trim());
     }
 
     if (m.yearsGapFraming.trim()) {

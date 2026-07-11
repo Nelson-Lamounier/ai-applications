@@ -40,16 +40,12 @@ describe('strategist-summary-persona v12 — summary calibration (from the ResMe
 describe('strategist-summary-persona S3 <-> summary-message cross-reference', () => {
     // Post-split, S3 is composed by the dedicated summary agent from the
     // focused message buildSummaryMessage() produces (not the full body
-    // writer's message). The persona still names the section
-    // "### Profile Intelligence" (unchanged text — summary.md is not
-    // touched by the body/summary split), while buildSummaryMessage's own
-    // header is "## Profile Intelligence (...)" — a pre-existing heading
-    // level mismatch (## vs ###) between the two, out of scope to fix here.
-    // This test asserts what the code ACTUALLY emits: a "Profile
-    // Intelligence" section really is present in the summary agent's
-    // message, so the cross-reference is real, not a byte-exact stand-in.
-    it('S3 names a "Profile Intelligence" section, and buildSummaryMessage actually emits one carrying that name', () => {
-        expect(joined).toContain('"### Profile Intelligence" section');
+    // writer's message). Both sides must name the EXACT same heading
+    // ("## Profile Intelligence") so the model reliably finds the section
+    // (this is the class of bug that once shipped an empty S3 slot — run
+    // 77e325ea). This test pins an exact match, not a tolerant regex.
+    it('S3 names the literal "## Profile Intelligence" heading, and buildSummaryMessage emits that exact literal', () => {
+        expect(joined).toContain('## Profile Intelligence');
         expect(joined).toMatch(/UNDERSOLD strengths/);
 
         const research = {
@@ -72,7 +68,7 @@ describe('strategist-summary-persona S3 <-> summary-message cross-reference', ()
             achievementEvidence: '',
         });
 
-        expect(message).toMatch(/#{2,3}\s*Profile Intelligence/);
+        expect(message).toContain('## Profile Intelligence');
         expect(message).toContain('code-demonstrated direction: infra depth');
     });
 });
