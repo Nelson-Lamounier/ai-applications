@@ -21,6 +21,7 @@ export const SUMMARY_EMIT_INPUT_SCHEMA: Record<string, unknown> = {
         s4: { type: 'string', description: 'The close: rigor-as-shape (senior) or forward-fit (junior)' },
     },
     required: ['s1', 's2', 's3', 's4'],
+    additionalProperties: false,
 };
 
 /** Join the four beats into the summary string the resume persists. */

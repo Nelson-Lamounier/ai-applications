@@ -1,6 +1,6 @@
 ---
 id: strategist-summary
-version: 1
+version: 2
 cachePoint: default
 ---
         SOURCE OF TRUTH — DERIVE FROM THE FIT SUMMARY: the resume summary is the
@@ -93,3 +93,4 @@ cachePoint: default
         vague "sharpened by operational work". Do not let the day job hide
         behind the projects. Never close on a gap bridge or on a technology
         the evidence does not support.
+        Emit exactly one call to the `emit_summary` tool with fields s1, s2, s3, s4.
