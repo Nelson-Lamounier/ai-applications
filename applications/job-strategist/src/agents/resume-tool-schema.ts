@@ -103,7 +103,21 @@ export const RESUME_EMIT_INPUT_SCHEMA = {
             },
         },
         certifications: { type: 'array', items: { type: 'object' } },
-        projects: { type: 'array', items: { type: 'object' } },
+        // Shape projects so re-emit passes (surface-metrics/keywords, condense)
+        // PRESERVE the technical bullets. With an unshaped `{type:'object'}` the
+        // Haiku model dropped projects[].highlights on every re-emit, blanking
+        // the Projects section even after relocation/fill populated it.
+        projects: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string' }, description: { type: 'string' }, github: { type: 'string' },
+                    highlights: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['name', 'description'],
+            },
+        },
         keyAchievements: {
             type: 'array',
             items: {

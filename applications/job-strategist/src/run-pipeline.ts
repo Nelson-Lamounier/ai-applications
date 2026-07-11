@@ -24,7 +24,7 @@ import { executeStrategistAgent } from './agents/strategist-agent.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/role-evidence-block.js';
 import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/project-evidence-block.js';
-import { relocateProjectExperience } from './agents/relocate-project-experience.js';
+import { relocateProjectExperience, restoreProjectHighlights } from './agents/relocate-project-experience.js';
 import { loadAchievementEvidence } from './agents/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/profile-intelligence-block.js';
 import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/career-history.js';
@@ -1081,6 +1081,10 @@ export async function main(): Promise<void> {
         let finalResume = tailoredResumeData
             ? relocateProjectExperience(tailoredResumeData, resumeGuardCtx.verifiedEmployers, projectResumeBullets)
             : tailoredResumeData;
+        // Snapshot the relocated/filled projects[].highlights so the downstream
+        // Haiku re-emit passes (condense, metric-weave, keyword-surfacing) can't
+        // silently blank them — restored just before persist.
+        const projectHighlightsSnapshot = finalResume;
         if (finalResume) {
             const guarded = await guardResume(finalResume, resumeGuardCtx);
             finalResume = guarded.resume;
@@ -1134,6 +1138,9 @@ export async function main(): Promise<void> {
             const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
             violationLog.recordAll('revalidate', revalidated.violations);
             finalResume = await applyResumeIntegrity(revalidated.resume, tailoredResumeData, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
+            // Restore any projects[].highlights the Haiku re-emit passes dropped
+            // (the emit_resume tool round-trip blanks the Projects bullets).
+            if (projectHighlightsSnapshot) finalResume = restoreProjectHighlights(projectHighlightsSnapshot, finalResume);
         }
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.

@@ -127,6 +127,39 @@ function fillEmptyHighlights(
     }
 }
 
+/**
+ * Re-attach project highlights that a downstream Haiku re-emit pass
+ * (surface-metrics/keywords, condense) dropped. Those passes round-trip the
+ * whole resume through the `emit_resume` tool and have repeatedly blanked
+ * projects[].highlights, undoing relocation + fill. For each project in
+ * `after`, matched by name to `before`, restore `before`'s highlights when
+ * `after` lost them (or ended up with fewer). Never removes bullets a pass
+ * legitimately added. Match is exact-then-loose on the (possibly re-titled)
+ * project name.
+ */
+export function restoreProjectHighlights(before: Resume, after: Resume): Resume {
+    const priors = (before.projects ?? [])
+        .filter((p) => (p.highlights ?? []).length > 0)
+        .map((p) => ({ nameNorm: norm(p.name), tok: tokens(`${p.name} ${p.description ?? ''}`), highlights: p.highlights ?? [] }));
+    if (priors.length === 0) return after;
+
+    const projects = (after.projects ?? []).map((p) => {
+        // Exact name match first; else best token overlap (writer/Haiku renames).
+        let match = priors.find((pr) => pr.nameNorm === norm(p.name));
+        if (!match) {
+            const pTok = tokens(`${p.name} ${p.description ?? ''}`);
+            let bestScore = 0;
+            for (const pr of priors) {
+                const score = overlap(pTok, pr.tok);
+                if (score > bestScore) { bestScore = score; match = pr; }
+            }
+        }
+        if (match && (p.highlights ?? []).length < match.highlights.length) return { ...p, highlights: [...match.highlights] };
+        return p;
+    });
+    return { ...after, projects };
+}
+
 export function relocateProjectExperience(
     resume: Resume,
     verifiedEmployers: ReadonlyArray<{ name: string }>,
