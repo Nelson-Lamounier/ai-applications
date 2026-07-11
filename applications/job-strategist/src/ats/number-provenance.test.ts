@@ -1,5 +1,5 @@
 /** @format */
-import { extractNumbers, stripUngroundedNumbers } from './number-provenance.js';
+import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './number-provenance.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const resume = (over: Partial<StructuredResumeData> = {}): StructuredResumeData => ({
@@ -105,5 +105,94 @@ describe('stripUngroundedNumbers', () => {
         expect(h).not.toMatch(/\s{2,}/);
         expect(h).not.toMatch(/\s,/);
         expect(h).not.toMatch(/^by |^of |^to |^with /i);
+    });
+});
+
+describe('stripUngroundedNumbers — LLM shape drift (run 850b81d0 regression)', () => {
+    // The resume-expand tool schema leaves keyAchievements items unshaped and
+    // ResumeRewriteSchema passthroughs them, so the model can emit entries
+    // without an `achievement` string. The deterministic guard must be TOTAL:
+    // scrub what is a string, pass through what is not — never crash the run.
+    it('tolerates a keyAchievements entry without an achievement string', () => {
+        const r = resume({
+            keyAchievements: [
+                { title: 'Cost saver' } as unknown as StructuredResumeData['keyAchievements'][number],
+                { achievement: 'Cut spend 90% across 4 systems' },
+            ],
+        });
+        const out = stripUngroundedNumbers(r, new Set([4]));
+        expect(out.keyAchievements[0]).toEqual({ title: 'Cost saver' });
+        expect(out.keyAchievements[1].achievement).not.toContain('90');
+        expect(out.keyAchievements[1].achievement).toContain('4');
+    });
+
+    it('tolerates undefined summary and non-string highlight entries', () => {
+        const r = resume({
+            summary: undefined as unknown as string,
+            experience: [{
+                company: 'Acme', title: 'Engineer', period: '2020-2024',
+                highlights: ['Shipped 7 services', undefined] as unknown as string[],
+            }],
+        });
+        const out = stripUngroundedNumbers(r, new Set<number>());
+        expect(out.summary).toBeUndefined();
+        expect(out.experience[0].highlights[0]).not.toContain('7');
+        expect(out.experience[0].highlights[1]).toBeUndefined();
+    });
+});
+
+describe('stripInstructionMetrics', () => {
+    const persona = 'Impact metrics tell OUTCOMES (30-second deploys vs 8-minute manual cycles). experience: 370 words max.';
+
+    it('strips a unit metric whose value exists only in the instructions (the 2026-07-08 leak)', () => {
+        const r = resume({
+            experience: [{
+                company: 'A', title: 'B', period: '2021 - 2022',
+                highlights: ['Reduced IAM-only change deployment from 8 minutes to 30 seconds via OIDC handoff.'],
+            }],
+        });
+        const out = stripInstructionMetrics(r, { instructionText: persona, evidenceText: 'OIDC federation for CI.' });
+        const h = out.experience[0].highlights[0];
+        expect(h).not.toMatch(/8\s*minutes/);
+        expect(h).not.toMatch(/30\s*seconds/);
+        expect(h).toContain('OIDC handoff');
+    });
+
+    it('keeps the same metric when the evidence states those numbers', () => {
+        const r = resume({
+            experience: [{
+                company: 'A', title: 'B', period: 'p',
+                highlights: ['Reduced deployment from 8 minutes to 30 seconds.'],
+            }],
+        });
+        const out = stripInstructionMetrics(r, {
+            instructionText: persona,
+            evidenceText: 'Pipeline timing doc: full deploy fell from 8 minutes to 30 seconds after change detection.',
+        });
+        expect(out.experience[0].highlights[0]).toContain('8 minutes to 30 seconds');
+    });
+
+    it('never touches unit-free numbers like standard names or years', () => {
+        const r = resume({
+            summary: 'Engineer since 2021 applying CDK-Nag NIST 800-53 rule packs.',
+        });
+        const out = stripInstructionMetrics(r, {
+            instructionText: 'NIST 800-53 examples; 2021 word cap.',
+            evidenceText: '',
+        });
+        expect(out.summary).toBe('Engineer since 2021 applying CDK-Nag NIST 800-53 rule packs.');
+    });
+
+    it('strips an instruction-only percentage', () => {
+        const r = resume({ summary: 'Improved throughput by 370% on the ingest path.' });
+        const out = stripInstructionMetrics(r, { instructionText: persona, evidenceText: '' });
+        expect(out.summary).not.toContain('370');
+        expect(out.summary).toContain('ingest path');
+    });
+
+    it('leaves metrics alone when their values never appear in the instructions', () => {
+        const r = resume({ summary: 'Cut p95 latency by 42% in 6 weeks.' });
+        const out = stripInstructionMetrics(r, { instructionText: persona, evidenceText: '' });
+        expect(out.summary).toBe('Cut p95 latency by 42% in 6 weeks.');
     });
 });

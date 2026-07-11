@@ -128,15 +128,25 @@ async function upsertProjectTopFields(
     client: PoolClient,
     input: PersistCaseStudyInput,
     overrides: StickyOverrides,
-): Promise<{ taglineUpdated: boolean; pitchUpdated: boolean }> {
+): Promise<{ taglineUpdated: boolean; pitchUpdated: boolean; nameUpdated: boolean }> {
     const cs = input.caseStudy;
     const updateTagline = !isSticky(overrides, 'tagline');
     const updatePitch   = !isSticky(overrides, 'pitch');
+    // The model's product name replaces repo-slug project names. Sticky
+    // 'name' (user renamed it themselves) always wins; absent displayName
+    // (pre-rename cached artefact) leaves the name untouched.
+    const updateName    = !isSticky(overrides, 'name') && Boolean(cs.displayName?.trim());
+    // WRITE-ONCE bootstrap of the ground-truth product description from the
+    // model's README-derived statement: the SQL only fills a NULL column, so a
+    // manually-set or previously-bootstrapped value is never overwritten.
+    const updateStatement = !isSticky(overrides, 'productDescription') && Boolean(cs.productStatement?.trim());
 
     await client.query(
         `UPDATE projects
             SET tagline = CASE WHEN $2 THEN $3 ELSE tagline END,
                 pitch   = CASE WHEN $4 THEN $5 ELSE pitch   END,
+                name    = CASE WHEN $11 THEN $12 ELSE name END,
+                product_description = CASE WHEN $13 AND product_description IS NULL THEN $14 ELSE product_description END,
                 case_study_status            = 'complete',
                 case_study_generated_at      = NOW(),
                 case_study_pipeline_run_id   = $6,
@@ -156,9 +166,11 @@ async function upsertProjectTopFields(
             input.inputHash,
             input.computedArchetype ?? null,
             input.computedStage ?? null,
+            updateName, cs.displayName ?? null,
+            updateStatement, cs.productStatement ?? null,
         ],
     );
-    return { taglineUpdated: updateTagline, pitchUpdated: updatePitch };
+    return { taglineUpdated: updateTagline, pitchUpdated: updatePitch, nameUpdated: updateName };
 }
 
 /**
@@ -220,6 +232,18 @@ async function insertGenerated(
         `;
         const r = await client.query(insertSql, vals);
         inserted += r.rowCount ?? 0;
+        if ((r.rowCount ?? 0) === 0) {
+            // Row already exists from a prior run (unchanged content). Align
+            // its order_index with the current payload position — kept rows
+            // otherwise retain stale indices and collide with newly-inserted
+            // ones (observed live: two challenges sharing order_index 2).
+            await client.query(
+                `UPDATE ${table}
+                    SET order_index = $3
+                  WHERE project_id = $1 AND content_hash = $2 AND order_index <> $3`,
+                [input.projectId, hash, i],
+            );
+        }
     }
 
     // Prune superseded machine rows so the section reflects only the current run.
@@ -252,6 +276,10 @@ async function upsertDepthMarkers(
     input: PersistCaseStudyInput,
 ): Promise<boolean> {
     const d = input.caseStudy.depthMarkers;
+    // The model no longer emits depthMarkers; the orchestrator injects the
+    // deterministic values whenever the loader derived them. Absent → keep
+    // the last computed row rather than overwrite with nothing.
+    if (!d) return false;
     await client.query(
         `INSERT INTO project_depth_markers (
             user_id, project_id, has_tests, test_coverage_signal, has_ci,

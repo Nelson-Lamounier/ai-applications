@@ -1,5 +1,5 @@
 /** @format */
-import { classifyLanes, attachSourceLanes, repoOfFile, type LaneIndex } from './evidence-lane.js';
+import {classifyLanes, attachSourceLanes, repoOfFile, type LaneIndex, expandLaneNeedles, mergeRepoLane } from './evidence-lane.js';
 import type { SkillEvidenceEntry } from '@bedrock/shared';
 
 const entry = (over: Partial<SkillEvidenceEntry>): SkillEvidenceEntry => ({
@@ -86,5 +86,57 @@ describe('attachSourceLanes', () => {
         expect(out[0].sourceLanes).toEqual(['repo']);
         expect(out[1].sourceLanes).toBeUndefined();
         expect(ledger[0].sourceLanes).toBeUndefined(); // input untouched
+    });
+});
+
+describe('expandLaneNeedles + shortened-name matching', () => {
+    it('matches prose citing the short project name against the full catalogued name', () => {
+        const entry: SkillEvidenceEntry = {
+            tool: 'State management', status: 'verified', evidenceFiles: [],
+            evidence: 'AI Applications Platform: RdsSyncStateRepository tracks sync status per user/repo.',
+            transferableBridge: '',
+        } as SkillEvidenceEntry;
+        const lanes = classifyLanes(entry, {
+            projectNames: ['AI Applications Platform with Infrastructure-as-Code'],
+            careerTerms: [],
+        });
+        expect(lanes).toContain('project');
+    });
+
+    it('expands "Company (ABBR)" into base + long abbreviation, never short ones', () => {
+        const needles = expandLaneNeedles(['Amazon Web Services (AWS)', 'Meta via Accenture (ACNT)']);
+        expect(needles).toContain('Amazon Web Services');
+        expect(needles).not.toContain('AWS');       // 3 chars — would over-attribute
+        expect(needles).toContain('ACNT');
+    });
+
+    it('classifies resume-data citations as career content', () => {
+        const entry: SkillEvidenceEntry = {
+            tool: 'Customer relationship management', status: 'verified',
+            evidenceFiles: ['Nelson-Lamounier/frontend-portfolio/apps/site/src/lib/resumes/resume-data.ts'],
+            evidence: 'Career history shows direct customer escalation ownership.',
+            transferableBridge: '',
+        } as SkillEvidenceEntry;
+        const lanes = classifyLanes(entry, { projectNames: [], careerTerms: [] });
+        expect(lanes).toEqual(expect.arrayContaining(['repo', 'career']));
+    });
+});
+
+describe('mergeRepoLane', () => {
+    it('adds repo for entries that gained files after lane classification', () => {
+        const [out] = mergeRepoLane([{
+            tool: 'OpenAI API', status: 'transferable',
+            evidenceFiles: ['Nelson-Lamounier/ai-applications/src/bedrock/agent.ts'],
+            evidence: 'x', transferableBridge: 'interchangeable alternative (aws bedrock)',
+            sourceLanes: ['career'],
+        } as SkillEvidenceEntry]);
+        expect(out.sourceLanes).toEqual(['repo', 'career']);
+    });
+
+    it('never touches gap entries or removes lanes', () => {
+        const [gap] = mergeRepoLane([{
+            tool: 'GCP', status: 'gap', evidenceFiles: [], evidence: '', transferableBridge: '',
+        } as SkillEvidenceEntry]);
+        expect(gap.sourceLanes).toBeUndefined();
     });
 });

@@ -14,7 +14,9 @@
 import { Pool, type QueryResult } from 'pg';
 
 import { buildCroissant, type CroissantDataset } from '../../rag/croissant.js';
+import { COMMIT_HISTORY_PATH_PREFIX } from '../../ingestion/implementations/CommitChunker.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import type { KbQualityInput } from '../quality/computeKbQuality.js';
 import type {
     ChunkIdentity,
     DocumentChunk,
@@ -499,8 +501,7 @@ export class RdsVectorStore implements IVectorStore {
     /** One filtered vector pass. `applySoft` toggles the tech/skill widener; `excludeIds` skips already-returned chunks. */
     private async runFilteredVector(params: QueryParams, applySoft: boolean, excludeIds: string[]): Promise<SimilarityResult[]> {
         const { userId, repoFullName, queryEmbedding, limit = 10, efSearch = 40, prefilter } = params;
-        const skills = prefilter?.skills ?? [];
-        const tech = prefilter?.tech ?? [];
+        const { skills = [], tech = [], skillsLane = true } = prefilter ?? {};
         const result = await this.execute<SimilarityRow>(
             `WITH _ AS (SELECT set_config('hnsw.ef_search', $1, true))
              SELECT d.id, d.repo_full_name, d.file_path, d.heading, d.content, d.chunk_index, d.tags,
@@ -525,9 +526,10 @@ export class RdsVectorStore implements IVectorStore {
                 --   • CONFIG WITHOUT file evidence is excluded: it must not free-ride its
                 --     repo's stack (the old repo_tech_stack fallback admitted any YAML in a
                 --     repo that used a JD tech anywhere). Code/other without evidence passes
-                --     to cosine. Chunk skills[] overlap always admits.
+                --     to cosine. Chunk skills[] overlap admits when the skills lane is
+                --     enabled ($9, prefilter.skillsLane — off in the enrichment A/B leg).
                 AND ($6::bool = false OR cardinality($7::text[]) = 0
-                     OR d.skills && $7::text[]
+                     OR ($9::bool AND d.skills && $7::text[])
                      OR (d.metadata ? 'file_tech_stack' AND d.metadata->'file_tech_stack' ?| $7::text[])
                      OR (NOT (d.metadata ? 'file_tech_stack')
                          AND d.file_path !~* '\\.(ya?ml|json|toml|lock|cfg|ini|env|tf|tfvars)$'))
@@ -543,6 +545,7 @@ export class RdsVectorStore implements IVectorStore {
                 applySoft,
                 [...new Set([...skills, ...tech])],
                 excludeIds.length > 0 ? excludeIds : null,
+                skillsLane,
             ],
         );
         return result.rows.map((row) => this.mapSimilarityRow(row));
@@ -754,17 +757,26 @@ export class RdsVectorStore implements IVectorStore {
             return this.deleteChunksByRepo(userId, repoFullName);
         }
 
-        // Build $3, $4, ... placeholders for the IN list
+        // Build $4, $5, ... placeholders for the IN list ($3 = commit prefix)
         const placeholders = currentFilePaths
-            .map((_, i) => `$${3 + i}`)
+            .map((_, i) => `$${4 + i}`)
             .join(', ');
 
+        // Commit-history chunks live under synthetic `_commits/…` paths that
+        // are never in the repo file tree, so a tree-derived whitelist would
+        // delete every commit chunk in the same run that embedded it — and
+        // the next sync would re-embed them ("missing" per hash check), an
+        // embed-and-delete loop paid on every sync. The commit lane is
+        // append-only here; forceReindex still clears it via
+        // deleteChunksByRepo, and the empty-whitelist branch above still
+        // deletes it when the whole repo is gone.
         const result = await this.execute(
             `DELETE FROM document_embeddings
              WHERE user_id        = $1
                AND repo_full_name = $2
+               AND NOT starts_with(file_path, $3)
                AND file_path NOT IN (${placeholders})`,
-            [userId, repoFullName, ...currentFilePaths],
+            [userId, repoFullName, COMMIT_HISTORY_PATH_PREFIX, ...currentFilePaths],
         );
 
         return result.rowCount ?? 0;
@@ -783,6 +795,34 @@ export class RdsVectorStore implements IVectorStore {
         );
 
         return result.rows[0]?.n ?? 0;
+    }
+
+    // =========================================================================
+    // IVectorStore.loadQualityInputs
+    // =========================================================================
+
+    async loadQualityInputs(userId: string, repoFullName: string): Promise<KbQualityInput[]> {
+        const result = await this.execute<{
+            file_path: string;
+            content_chars: number;
+            tags: string[] | null;
+            file_type: string | null;
+            skills: string[] | null;
+        }>(
+            `SELECT file_path,
+                    char_length(content)::int AS content_chars,
+                    tags, file_type, skills
+               FROM document_embeddings
+              WHERE user_id = $1 AND repo_full_name = $2`,
+            [userId, repoFullName],
+        );
+        return result.rows.map((r) => ({
+            filePath:     r.file_path,
+            contentChars: r.content_chars,
+            tags:         r.tags ?? undefined,
+            fileType:     r.file_type ?? undefined,
+            skills:       r.skills ?? undefined,
+        }));
     }
 
     // =========================================================================

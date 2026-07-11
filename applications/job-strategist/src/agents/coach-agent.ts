@@ -633,9 +633,14 @@ export function coachToolForStage(stage: string): typeof COACH_TOOL {
     };
 }
 
+/** Ledger identity for the coach base + stage-delta prompt — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
+export const COACH_PROMPT_META = { id: 'strategist-coach', version: '1' } as const;
+
 /** Agent configuration for the Interview Coach Agent. */
 const COACH_CONFIG: Omit<AgentConfig, 'systemPrompt'> = {
     agentName: 'strategist-coach',
+    promptId: COACH_PROMPT_META.id,
+    promptVersion: COACH_PROMPT_META.version,
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: COACH_MAX_TOKENS,
     thinkingBudget: COACH_THINKING_BUDGET,

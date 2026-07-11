@@ -33,7 +33,7 @@ import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { assignSkillsToChunks } from '../enrichment/assignSkillsToChunks.js';
 import { groupChunksByFile } from '../enrichment/groupChunksByFile.js';
 import { packChunks } from '../enrichment/packChunks.js';
-import { computeKbQuality } from '../quality/computeKbQuality.js';
+import { computeKbQuality, type KbQualityInput } from '../quality/computeKbQuality.js';
 import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
     DocumentChunk,
@@ -337,7 +337,14 @@ export class IngestionPipeline {
             // ── Quality + completion ─────────────────────────────────────────────
             const currentFilePaths = opts?.knownFilePaths
                 ?? [...new Set(rawChunks.map(c => c.filePath))];
-            const quality = computeKbQuality(rawChunks);
+            // Quality must reflect the repo's FULL persisted corpus, not this
+            // run's delta — same cumulative-vs-delta rule as totalChunkCount
+            // below. An incremental sync's rawChunks are only the changed-file
+            // slice (a 61-chunk activity delta once overwrote a 0.65 whole-repo
+            // score with 0.29: no README, no skills in the delta). Read lite
+            // rows from the store post upsert+prune; fail-open to the run's
+            // own chunks if the read fails.
+            const quality = computeKbQuality(await this.qualityInputsOrFallback(userId, repoFullName, rawChunks));
 
             let retrieval: RetrievalBreakdown | undefined;
             if (this.retrievalProbe) {
@@ -416,6 +423,23 @@ export class IngestionPipeline {
     // =========================================================================
     // Context enrichment
     // =========================================================================
+
+    /**
+     * Full-corpus quality inputs from the store; fail-open to the run's own
+     * chunks so a store read failure can never break ingestion. Extracted from
+     * ingestChunks to keep its lint complexity at the pre-change baseline.
+     */
+    private async qualityInputsOrFallback(
+        userId: string,
+        repoFullName: string,
+        fallback: readonly RawChunk[],
+    ): Promise<readonly KbQualityInput[]> {
+        try {
+            return await this.vectorStore.loadQualityInputs(userId, repoFullName);
+        } catch {
+            return fallback;
+        }
+    }
 
     /**
      * Build the text that is actually sent to the embedding model.

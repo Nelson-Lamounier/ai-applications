@@ -14,8 +14,8 @@ const PRICING: Record<string, { inputCentsPerK: number; outputCentsPerK: number 
   // ENRICHMENT_MODEL_ID is unset. Same rates; without this it would fall back
   // to DEFAULT_PRICING (Sonnet) and over-bill Haiku ~3.75x.
   'anthropic.claude-haiku-4-5-20251001-v1:0': {
-    inputCentsPerK:  0.080,
-    outputCentsPerK: 0.400,
+    inputCentsPerK:  0.08,
+    outputCentsPerK: 0.4,
   },
   // Bare Sonnet id — the ModelId CloudWatch actually reports for Converse
   // calls (e.g. self-healing, chatbots, case-study, article-pipeline) is
@@ -63,6 +63,10 @@ export interface CostRecord {
   // spend can be attributed to a specific repo in the prompt_invocations table.
   // NULL for all other pipelines that have no repo in scope.
   githubRepoId?: number | null;
+  // Prompt-content identity (markdown frontmatter via the #402 loader) —
+  // answers "which prompt version produced this output" in the ledger.
+  promptId?:      string;
+  promptVersion?: string;
 }
 
 export function computeCostCents(
@@ -115,6 +119,10 @@ async function getOrCreateBudget(
   };
 }
 
+function orNull<T>(value: T | undefined): T | null {
+  return value ?? null;
+}
+
 export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise<void> {
   const { inputCostCents, outputCostCents, totalCostCents } = computeCostCents(
     record.modelId, record.inputTokens, record.outputTokens,
@@ -128,8 +136,8 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
        (pipeline, agent, model_id, system_prompt_hash, input_cost_cents, output_cost_cents,
        total_cost_cents, latency_ms, user_id, import_id, repo_name,
         application_id, project_id, sync_kind, trace_id,
-        system_prompt_tokens, user_message_tokens, output_tokens, github_repo_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, $15, 0, $16, $17, $18)`,
+        system_prompt_tokens, user_message_tokens, output_tokens, github_repo_id, prompt_id, prompt_version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11, $12::uuid, $13::uuid, $14, $15, 0, $16, $17, $18, $19, $20)`,
     [
       record.pipeline,                            // $1  pipeline
       record.agent ?? '__direct_invoke__',        // $2  agent
@@ -149,6 +157,8 @@ export async function recordBedrockCost(pool: Pool, record: CostRecord): Promise
       record.inputTokens,                         // $16 user_message_tokens
       record.outputTokens,                        // $17 output_tokens
       record.githubRepoId ?? null,                // $18 github_repo_id
+      orNull(record.promptId),                    // $19 prompt_id
+      orNull(record.promptVersion),               // $20 prompt_version
     ],
   );
 
@@ -205,6 +215,8 @@ export function recordInvocationToRds(
       agent:            log.agent,
       systemPromptHash: log.systemPromptHash,
       latencyMs:        log.latencyMs,
+      promptId:         log.promptId,
+      promptVersion:    log.promptVersion,
       applicationId:    context?.applicationId,
       projectId:        context?.projectId,
       syncKind:         context?.syncKind,

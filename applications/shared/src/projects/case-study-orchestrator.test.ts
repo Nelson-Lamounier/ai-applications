@@ -37,12 +37,30 @@ import type { CaseStudy, CaseStudyContext, SourceSignal } from './case-study-typ
 type Commit = CaseStudyContext['commits'][number];
 type Pull = CaseStudyContext['pulls'][number];
 
-function makeContext(overrides?: {
+function makeContext(overrides: {
     commits?: Commit[];
     pulls?: Pull[];
     archetype?: { id: string; name: string } | null;
     stage?: 'junior' | 'mid' | 'senior' | 'staff' | null;
-}): LoadCaseStudyContextResult {
+    evidenceMix?: { appPct: number; infraPct: number; appFiles: number; infraFiles: number } | null;
+    difficultySignals?: CaseStudyContext['difficultySignals'];
+} = {}): LoadCaseStudyContextResult {
+    // Destructuring defaults, not `??` chains — keeps the helper's cyclomatic
+    // complexity flat as override knobs are added.
+    const {
+        commits = [{
+            repoFullName: 'acme/api',
+            sha:          'abc1234',
+            authoredAt:   '2026-01-01T00:00:00.000Z',
+            authorName:   'Alice',
+            message:      'init',
+        }],
+        pulls = [],
+        archetype = null,
+        stage = null,
+        evidenceMix = null,
+        difficultySignals = null,
+    } = overrides;
     const context: CaseStudyContext = {
         projectId:     'proj-1',
         projectName:   'Example Project',
@@ -62,19 +80,13 @@ function makeContext(overrides?: {
                 defaultBranch:   'main',
             },
         ],
-        commits: overrides?.commits ?? [
-            {
-                repoFullName: 'acme/api',
-                sha:          'abc1234',
-                authoredAt:   '2026-01-01T00:00:00.000Z',
-                authorName:   'Alice',
-                message:      'init',
-            },
-        ],
-        pulls: overrides?.pulls ?? [],
+        commits,
+        pulls,
         kbChunks: [],
-        archetype: overrides?.archetype ?? null,
-        stage:     overrides?.stage ?? null,
+        archetype,
+        stage,
+        evidenceMix,
+        difficultySignals,
     };
     return { userId: 'user-1', context };
 }
@@ -407,5 +419,38 @@ describe('computeInputHash', () => {
         ]);
         expect(statuses).toEqual(['fetching_context', 'persisting']);
         expect(agent.invoke).not.toHaveBeenCalled();
+    });
+});
+
+describe('computeInputHash — evidence mix', () => {
+    it('changes when the app/infra evidence mix changes (it changes the prompt)', () => {
+        const balanced = computeInputHash(makeContext({
+            evidenceMix: { appPct: 70, infraPct: 30, appFiles: 700, infraFiles: 300 },
+        }));
+        const infraHeavy = computeInputHash(makeContext({
+            evidenceMix: { appPct: 10, infraPct: 90, appFiles: 30, infraFiles: 270 },
+        }));
+        const absent = computeInputHash(makeContext());
+        expect(balanced).not.toBe(infraHeavy);
+        expect(balanced).not.toBe(absent);
+    });
+});
+
+describe('computeInputHash — difficulty signals', () => {
+    it('changes when the difficulty signals change (they change the prompt)', () => {
+        const withSignals = computeInputHash(makeContext({
+            difficultySignals: {
+                firstCommitMonth: '2025-11', lastCommitMonth: '2026-07', totalCommits: 405,
+                areas: [{ area: 'src/auth', fixCommits: 15, totalCommits: 40, firstMonth: '2026-01', lastMonth: '2026-06' }],
+            },
+        }));
+        const shifted = computeInputHash(makeContext({
+            difficultySignals: {
+                firstCommitMonth: '2025-11', lastCommitMonth: '2026-07', totalCommits: 405,
+                areas: [{ area: 'src/auth', fixCommits: 25, totalCommits: 50, firstMonth: '2026-01', lastMonth: '2026-07' }],
+            },
+        }));
+        expect(withSignals).not.toBe(shifted);
+        expect(withSignals).not.toBe(computeInputHash(makeContext()));
     });
 });

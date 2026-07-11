@@ -16,6 +16,8 @@ jest.mock('@bedrock/shared', () => ({
     CHATBOT_SYSTEM_PROMPT: 'SYSTEM',
     buildChatContext:      jest.fn(() => '<retrieved_context/>'),
     recordZeroResultRetrieval: jest.fn(),
+    resolvePortfolioOwnerId: jest.fn(async (_pool: unknown, fallback: string) => fallback),
+    hydrateRdsEnv:         jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
 }));
 
 jest.mock('../retrieval.js', () => ({
@@ -86,11 +88,9 @@ describe('chatbot-authenticated handler', () => {
     });
 
     beforeEach(() => {
-        process.env['CHATBOT_RETRIEVAL_SOURCE'] = 'rds-pgvector';
     });
 
     afterEach(() => {
-        delete process.env['CHATBOT_RETRIEVAL_SOURCE'];
     });
 
     it('records a zero-result retrieval when retrieval returns no passages', async () => {

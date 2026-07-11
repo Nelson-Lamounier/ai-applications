@@ -10,9 +10,10 @@ import type { buildStrategistMessage as BuildStrategistMessageFn } from './strat
 import type { StrategistResearchResult, StrategistPipelineContext } from '@bedrock/shared';
 
 let buildStrategistMessage: typeof BuildStrategistMessageFn;
+let PROFILE_INTELLIGENCE_HEADER: string;
 
 beforeAll(async () => {
-    ({ buildStrategistMessage } = await import('./strategist-agent.js'));
+    ({ buildStrategistMessage, PROFILE_INTELLIGENCE_HEADER } = await import('./strategist-agent.js'));
 });
 
 /** Minimal valid StrategistResearchResult — only required fields populated. */
@@ -85,4 +86,75 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
         expect(msg).toContain('Achievement & Impact Evidence');
         expect(msg).toContain('Reduced latency by 40%');
     });
+
+    it('never carries a grounded-metrics section — feeding the ledger to the writer tripled its extended thinking (13.9K -> 37-56K output tokens, measured 2026-07-08); metrics enter via the post-writer Haiku weave', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        expect(msg).not.toContain('GROUNDED METRICS');
+    });
+});
+
+describe('buildStrategistMessage — profile intelligence section (the summary S3 source)', () => {
+    const PROFILE = 'CANDIDATE PROFILE INTELLIGENCE — derived from GitHub.\nCode-demonstrated direction:\n- Platform & Infrastructure: senior';
+
+    it('injects the profile block under its OWN labelled section, not the case-studies wrapper (run 77e325ea shipped a summary with no S3 angle because the block sat inside the case-studies delimiters)', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, 'project case study text', '', '', '', '', '', '', PROFILE);
+        expect(msg).toContain(PROFILE_INTELLIGENCE_HEADER);
+        expect(msg).toContain('--- BEGIN PROFILE INTELLIGENCE ---');
+        expect(msg).toContain('Platform & Infrastructure: senior');
+        // The profile block must NOT be inside the case-studies delimiters.
+        const caseStudies = msg.split('--- BEGIN PROJECT CASE STUDIES ---')[1]!.split('--- END PROJECT CASE STUDIES ---')[0]!;
+        expect(caseStudies).not.toContain('CANDIDATE PROFILE INTELLIGENCE');
+    });
+
+    it('omits the section entirely when no profile intelligence exists (fail-open users)', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        expect(msg).not.toContain('Profile Intelligence');
+    });
+});
+
+describe('buildStrategistMessage — candidate contact section (per-user identity, any tenant)', () => {
+    it('injects the contact block under its labelled section (the persona signoff placeholders reference it by name)', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '', undefined,
+            'name: Grace Hopper\nemail: grace@navy.example');
+        expect(msg).toContain('### Candidate Contact');
+        expect(msg).toContain('name: Grace Hopper');
+    });
+
+    it('omits the section when no contact exists — the persona instructs empty fields, never invention', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        expect(msg).not.toContain('Candidate Contact');
+    });
+});
+
+describe('extractGapMitigations — phase 3 defences become structured data', () => {
+	const XML = [
+		'<phase_3_strategy>',
+		'  <gap_mitigation>',
+		'    <mitigation><gap>Ansible</gap><honest_framing>No Ansible experience; config management achieved via AWS CDK TypeScript and SSM Automation documents</honest_framing><bridge_narrative>Declarative infrastructure automation daily, different tool</bridge_narrative><proactive_action>Work through an Ansible playbook conversion of one CDK stack</proactive_action><go_no_go>go</go_no_go></mitigation>',
+		'    <mitigation><gap>HPC / simulation</gap><honest_framing><![CDATA[No HPC scheduler experience; all compute is cloud-native]]></honest_framing><go_no_go>conditional</go_no_go></mitigation>',
+		'  </gap_mitigation>',
+		'</phase_3_strategy>',
+	].join('\n');
+
+	it('extracts every mitigation with its framing, bridge, action and verdict', async () => {
+		const { extractGapMitigations } = await import('./strategist-agent.js');
+		const out = extractGapMitigations(XML);
+		expect(out).toHaveLength(2);
+		expect(out[0]).toEqual({
+			gap: 'Ansible',
+			honestFraming: 'No Ansible experience; config management achieved via AWS CDK TypeScript and SSM Automation documents',
+			bridgeNarrative: 'Declarative infrastructure automation daily, different tool',
+			proactiveAction: 'Work through an Ansible playbook conversion of one CDK stack',
+			goNoGo: 'go',
+		});
+		// CDATA + missing optional fields tolerated.
+		expect(out[1].gap).toBe('HPC / simulation');
+		expect(out[1].honestFraming).toContain('cloud-native');
+		expect(out[1].goNoGo).toBe('conditional');
+	});
+
+	it('returns [] when the section is absent', async () => {
+		const { extractGapMitigations } = await import('./strategist-agent.js');
+		expect(extractGapMitigations('<phase_1_jd_analysis>x</phase_1_jd_analysis>')).toEqual([]);
+	});
 });

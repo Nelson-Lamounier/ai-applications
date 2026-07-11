@@ -38,6 +38,7 @@ import type { DocumentType as __DocumentType } from '@smithy/types';
 import { estimateInvocationCost } from './metrics.js';
 import type { TokenUsage } from './metrics.js';
 import { recordBedrockUsage } from './observability/bedrock.js';
+import { recordGenAiInvocationSpan } from './observability/genai.js';
 import { currentTraceContext } from './observability/workflow-trace.js';
 import type { AgentConfig, AgentResult, AgentInvocationLog } from './types.js';
 import type { BasePipelineContext } from './base-agent.js';
@@ -311,14 +312,55 @@ function emitAgentMetrics(
  * @returns Typed agent result with execution metadata
  * @throws AgentExecutionError wrapping the original error with agent context
  */
+// ---------------------------------------------------------------------------
+// Process-level default invocation sink.
+//
+// Helper agents (guards, years-gap, surface-keywords, condense — and the
+// strategist's own matcher) call runAgent with locally-built contexts that
+// never carried onInvocationComplete, so their Bedrock spend silently missed
+// prompt_invocations: a monitored run booked $0.38 while several agents went
+// unrecorded. A worker process registers its sink ONCE at startup and every
+// agent in the process records, present and future, without threading the
+// sink through each helper's signature. Per-call and per-context sinks still
+// win when provided.
+// ---------------------------------------------------------------------------
+let defaultInvocationSink: ((log: AgentInvocationLog) => Promise<void>) | undefined;
+let defaultInvocationUserId: string | undefined;
+
+/** Register the process-wide fallback sink (call once per worker startup). */
+export function setDefaultAgentInvocationSink(
+    sink: ((log: AgentInvocationLog) => Promise<void>) | undefined,
+    userId?: string,
+): void {
+    defaultInvocationSink = sink;
+    defaultInvocationUserId = userId;
+}
+
+function resolveInvocationSink(
+    perCall: RunAgentOptions<unknown>['onInvocationComplete'],
+    fromContext: ((log: AgentInvocationLog) => Promise<void>) | undefined,
+): ((log: AgentInvocationLog) => Promise<void>) | undefined {
+    return perCall ?? fromContext ?? defaultInvocationSink;
+}
+
+/** Config-level prompt version (markdown frontmatter) wins over the process-wide env var. */
+function resolvePromptVersion(config: AgentConfig): string | undefined {
+    return config.promptVersion ?? process.env['PROMPT_VERSION'];
+}
+
+function resolveInvocationUserId(perCall: string | undefined, fromContext: string | undefined): string | undefined {
+    return perCall ?? fromContext ?? defaultInvocationUserId;
+}
+
 export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentResult<T>> {
     const { config, userMessage, parseResponse, pipelineContext, resumeGenerationId } = options;
-    // Per-call options win, but fall back to the pipeline context so a pipeline
-    // can opt every agent into cost recording by setting these once at start
-    // (avoids threading them through every execute*Agent wrapper).
-    const invocationSink = options.onInvocationComplete ?? pipelineContext.onInvocationComplete;
-    const userId         = options.userId ?? pipelineContext.userId;
-    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, pipeline, promptId, tool } = config;
+    // Per-call options win, then the pipeline context, then the process-wide
+    // default registered at worker startup (setDefaultAgentInvocationSink).
+    const invocationSink = resolveInvocationSink(options.onInvocationComplete, pipelineContext.onInvocationComplete);
+    const pipelineName   = config.pipeline ?? pipelineContext.pipelineId;
+    const userId         = resolveInvocationUserId(options.userId, pipelineContext.userId);
+    const { agentName, modelId, maxTokens, thinkingBudget, systemPrompt, promptId, tool } = config;
+    const promptVersion = resolvePromptVersion(config);
 
     // Anthropic forbids forced tool_use with extended thinking. Catch the
     // misconfiguration here rather than as an opaque Bedrock 400.
@@ -467,6 +509,24 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             `cumulativeCost=$${pipelineContext.cumulativeCostUsd.toFixed(6)}`,
         );
 
+        // OTel GenAI semconv span (no-op tracer on Lambdas). Post-hoc with
+        // explicit timestamps so the runner's error handling stays the owner
+        // of the call lifecycle. Prompt hash answers "prompt or data drift?".
+        recordGenAiInvocationSpan({
+            agentName,
+            modelId,
+            pipeline:             pipelineName,
+            startTimeMs:          startTime,
+            endTimeMs:            startTime + durationMs,
+            inputTokens:          tokenUsage.inputTokens,
+            outputTokens:         tokenUsage.outputTokens,
+            cacheReadInputTokens: tokenUsage.cacheReadInputTokens,
+            costUsd,
+            stopReason:           response.stopReason,
+            systemPromptHash:     sha256(JSON.stringify(systemPrompt)),
+            promptVersion,
+        });
+
         // Build and dispatch the invocation log (non-blocking — errors are swallowed)
         if (invocationSink) {
             const systemPromptHash = sha256(JSON.stringify(systemPrompt));
@@ -479,10 +539,10 @@ export async function runAgent<T>(options: RunAgentOptions<T>): Promise<AgentRes
             const totalCostCents  = Math.round(costUsd * 100);
 
             const log: AgentInvocationLog = {
-                pipeline:           pipeline ?? pipelineContext.pipelineId,
+                pipeline:           pipelineName,
                 agent:              agentName,
                 modelId,
-                promptVersion:      process.env['PROMPT_VERSION'],
+                promptVersion,
                 promptId,
                 systemPromptHash,
                 outputHash,

@@ -43,6 +43,8 @@ function createDataStack(
             haikuProfileSourceArn: 'arn:aws:bedrock:eu-west-1::inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
             sonnetProfileSourceArn: 'arn:aws:bedrock:eu-west-1::inference-profile/eu.anthropic.claude-sonnet-4-6',
             environmentName: 'development',
+            articleAssetsAdminRoleName: 'test-admin-api-role',
+            articleAssetsReaderRoleName: 'test-public-api-role',
             env: TEST_ENV_EU,
             ...overrides,
         },

@@ -194,6 +194,113 @@ describe('reenrichSkippedChunks', () => {
     });
 });
 
+describe('reenrichSkippedChunks — canonical packing (deferred lane)', () => {
+    const vocab = ['kubernetes', 'argocd'];
+
+    it('resolves the whole residue with ONE pack call instead of per-chunk calls', async () => {
+        const { pool, updates } = makePool(rows);
+        const enrichTextCanonical = jest.fn(async () => ({ canonical: ['fallback'], newSkills: [] }));
+        const enrichPackCanonical = jest.fn(async (_v: readonly string[], items: ReadonlyArray<{ key: string }>) =>
+            new Map(items.map((it) => [it.key, { canonical: ['kubernetes'], newSkills: ['webassembly'] }])),
+        );
+        const enricher: IChunkEnricher = {
+            enrich: jest.fn(async () => ({ skills: [], technologies: [] })),
+            enrichTextCanonical,
+            enrichPackCanonical,
+        };
+
+        const result = await reenrichSkippedChunks(pool, enricher, {
+            concurrency: 1, canonicalVocab: vocab, packSize: 10,
+        });
+
+        expect(enrichPackCanonical).toHaveBeenCalledTimes(1);      // one call for both chunks
+        expect(enrichTextCanonical).not.toHaveBeenCalled();        // no per-chunk residue calls
+        expect(updates).toHaveLength(2);
+        expect(updates[0].skills).toEqual(['kubernetes']);
+        expect(result.enriched).toBe(2);
+        expect(result.newSkillsQueued).toBe(2);                    // 1 NEW: per chunk
+        expect(result.remaining).toBe(0);
+    });
+
+    it('falls a key the model skipped back to per-chunk canonical (fail-safe)', async () => {
+        const { pool, updates } = makePool(rows);
+        // Pack answers only chunk 'a'; chunk 'b' must be retried per-chunk.
+        const enrichPackCanonical = jest.fn(async () => new Map([['a', { canonical: ['kubernetes'], newSkills: [] }]]));
+        const enrichTextCanonical = jest.fn(async () => ({ canonical: ['argocd'], newSkills: [] }));
+        const enricher: IChunkEnricher = {
+            enrich: jest.fn(async () => ({ skills: [], technologies: [] })),
+            enrichTextCanonical,
+            enrichPackCanonical,
+        };
+
+        const result = await reenrichSkippedChunks(pool, enricher, {
+            concurrency: 1, canonicalVocab: vocab, packSize: 10,
+        });
+
+        expect(enrichTextCanonical).toHaveBeenCalledTimes(1);
+        expect(updates.find((u) => u.id === 'a')?.skills).toEqual(['kubernetes']);
+        expect(updates.find((u) => u.id === 'b')?.skills).toEqual(['argocd']);
+        expect(result.enriched).toBe(2);
+    });
+
+    it('falls the WHOLE pack back to per-chunk when the pack call throws', async () => {
+        const { pool, updates } = makePool(rows);
+        const enrichPackCanonical = jest.fn(async () => { throw new Error('transport'); });
+        const enrichTextCanonical = jest.fn(async () => ({ canonical: ['kubernetes'], newSkills: [] }));
+        const enricher: IChunkEnricher = {
+            enrich: jest.fn(async () => ({ skills: [], technologies: [] })),
+            enrichTextCanonical,
+            enrichPackCanonical,
+        };
+
+        const result = await reenrichSkippedChunks(pool, enricher, {
+            concurrency: 1, canonicalVocab: vocab, packSize: 10,
+        });
+
+        expect(enrichTextCanonical).toHaveBeenCalledTimes(2);      // every row retried per-chunk
+        expect(updates).toHaveLength(2);
+        expect(result.enriched).toBe(2);
+        expect(result.failed).toBe(0);
+    });
+
+    it('packSize absent keeps the per-chunk path exactly as before', async () => {
+        const { pool } = makePool(rows);
+        const enrichPackCanonical = jest.fn();
+        const enrichTextCanonical = jest.fn(async () => ({ canonical: ['kubernetes'], newSkills: [] }));
+        const enricher: IChunkEnricher = {
+            enrich: jest.fn(async () => ({ skills: [], technologies: [] })),
+            enrichTextCanonical,
+            enrichPackCanonical,
+        };
+
+        await reenrichSkippedChunks(pool, enricher, { concurrency: 1, canonicalVocab: vocab });
+
+        expect(enrichPackCanonical).not.toHaveBeenCalled();
+        expect(enrichTextCanonical).toHaveBeenCalledTimes(2);
+    });
+
+    it('a deadline hit before the pack phase leaves the residue pending (remaining > 0)', async () => {
+        const { pool, updates } = makePool(rows);
+        const enrichPackCanonical = jest.fn();
+        const enricher: IChunkEnricher = {
+            enrich: jest.fn(async () => ({ skills: [], technologies: [] })),
+            enrichTextCanonical: jest.fn(async () => ({ canonical: [], newSkills: [] })),
+            enrichPackCanonical,
+        };
+        // Row workers defer both rows to the pack phase; the pack phase's own
+        // deadline check then refuses to dispatch.
+        const result = await reenrichSkippedChunks(pool, enricher, {
+            concurrency: 1, canonicalVocab: vocab, packSize: 10,
+            deadlineMs: Date.now() - 1,
+        });
+
+        expect(enrichPackCanonical).not.toHaveBeenCalled();
+        expect(updates).toHaveLength(0);
+        expect(result.stoppedEarly).toBe(true);
+        expect(result.remaining).toBe(2);
+    });
+});
+
 describe('reenrichSkippedChunks — Tier-1-only (no enricher)', () => {
     it('applies deterministic Tier-1 skills and makes NO LLM call when enricher is absent', async () => {
         const captured = { updates: [] as unknown[] };

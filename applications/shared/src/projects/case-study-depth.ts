@@ -12,7 +12,7 @@
  * Pure — no I/O, no LLM.
  */
 
-import type { DepthMarkers } from './case-study-types.js';
+import type { DepthMarkers, DifficultySignals, EvidenceMix } from './case-study-types.js';
 
 export interface DepthSignals {
     /** Summed fileClass lane counts across the project's repos. */
@@ -87,5 +87,78 @@ export function deriveDepthMarkers(s: DepthSignals): DepthMarkers {
         hasDeploymentEvidence,
         deploymentUrl:         s.deploymentUrl ?? null,
         refactorCount:         Math.max(0, Math.trunc(s.refactorCount ?? 0)),
+    };
+}
+
+/**
+ * App-vs-infra evidence split from fileClass lane counts: application =
+ * source + test, infrastructure = iac + ci. Docs and config are excluded —
+ * docs is its own narrative lane and config is classification noise.
+ * Percentages are rounded to the nearest 5 so the value — which feeds the
+ * system prompt AND the case-study cache key — stays stable across small
+ * syncs. Returns null when either side is empty: a single-lane project
+ * (e.g. a pure Terraform repo, or an app with no IaC) has nothing to
+ * balance, and the prompt must not pressure the model to invent one.
+ */
+export function deriveEvidenceMix(laneCounts: DepthSignals['laneCounts']): EvidenceMix | null {
+    const app   = n(laneCounts.source) + n(laneCounts.test);
+    const infra = n(laneCounts.iac) + n(laneCounts.ci);
+    if (app === 0 || infra === 0) return null;
+    const appPct = Math.round((app / (app + infra)) * 20) * 5;
+    return { appPct, infraPct: 100 - appPct, appFiles: app, infraFiles: infra };
+}
+
+/** Raw per-area row from the full-history fix-density SQL. node-postgres
+ *  returns timestamptz columns as Date objects; counts arrive as text. */
+export interface DifficultyAreaRow {
+    readonly area:          string;
+    readonly fix_commits:   string | number;
+    readonly total_commits: string | number;
+    readonly first_at:      string | Date;
+    readonly last_at:       string | Date;
+}
+
+/** Raw whole-repo span row (min/max authored_at over ALL stored commits). */
+export interface CommitSpanRow {
+    readonly first_commit_at: string | Date;
+    readonly last_commit_at:  string | Date;
+    readonly total:           string | number;
+}
+
+/** Nearest-5 bucket with a floor of 1, so small-but-real counts stay visible. */
+function bucket5(v: number): number {
+    return Math.max(1, Math.round(v / 5) * 5);
+}
+
+/** Timestamp -> YYYY-MM. node-postgres hands timestamptz back as Date. */
+function month(v: string | Date): string {
+    return (v instanceof Date ? v.toISOString() : String(v)).slice(0, 7);
+}
+
+/**
+ * Shape the full-history fix-density rows into the <difficultySignals> block:
+ * where sustained fix activity happened, over what span, across the ENTIRE
+ * stored commit history — the measured "what was actually hard and for how
+ * long" that the recency-capped packing window cannot express. Counts bucket
+ * to the nearest 5 and dates to months so the value (prompt + cache key)
+ * stays stable across small syncs. Null when there is nothing fix-dense —
+ * the prompt then simply omits the block.
+ */
+export function deriveDifficultySignals(
+    areas: readonly DifficultyAreaRow[],
+    span: CommitSpanRow | null,
+): DifficultySignals | null {
+    if (areas.length === 0 || !span) return null;
+    return {
+        firstCommitMonth: month(span.first_commit_at),
+        lastCommitMonth:  month(span.last_commit_at),
+        totalCommits:     bucket5(Number(span.total)),
+        areas: areas.map((r) => ({
+            area:         r.area,
+            fixCommits:   bucket5(Number(r.fix_commits)),
+            totalCommits: bucket5(Number(r.total_commits)),
+            firstMonth:   month(r.first_at),
+            lastMonth:    month(r.last_at),
+        })),
     };
 }

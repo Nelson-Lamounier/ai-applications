@@ -134,3 +134,26 @@ describe('packContext', () => {
         expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     });
 });
+
+describe('packContext — evidence priority (P1 cost/sourcing fix)', () => {
+    it('keeps PRs and KB chunks before commits when the budget is tight', () => {
+        const bigCommits = Array.from({ length: 40 }, (_, i) => commit(i, 'c'.repeat(700)));
+        const ctx = baseContext({
+            commits: bigCommits,
+            pulls: [{ repoFullName: 'o/r', number: 7, title: 'Add BFF', body: 'p'.repeat(600), state: 'merged', authorLogin: 'n', mergedAt: '2026-01-01', htmlUrl: 'u' }],
+            kbChunks: [{ repoFullName: 'o/r', filePath: 'docs/a.md', chunkType: 'document', content: 'k'.repeat(1000) }],
+        });
+        // Budget only fits the skeleton + PR + chunk + a few commits.
+        const packed = packContext(ctx, { maxTokens: estimateTokens(JSON.stringify({ ...ctx, commits: [], pulls: [], kbChunks: [] })) + 1200 });
+        expect(packed.pulls).toHaveLength(1);       // strongest evidence survives
+        expect(packed.kbChunks).toHaveLength(1);    // narrative context survives
+        expect(packed.commits.length).toBeLessThan(bigCommits.length); // commits absorb the squeeze
+    });
+
+    it('pre-caps commits at maxCommits keeping the newest-first head', () => {
+        const ctx = baseContext({ commits: Array.from({ length: 300 }, (_, i) => commit(i, `m${i}`)) });
+        const packed = packContext(ctx, { maxTokens: 1_000_000, maxCommits: 150 });
+        expect(packed.commits).toHaveLength(150);
+        expect(packed.commits[0].message).toBe('m0'); // incoming (newest-first) order preserved
+    });
+});

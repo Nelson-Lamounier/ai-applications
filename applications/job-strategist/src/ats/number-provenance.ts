@@ -162,17 +162,92 @@ function matchPhraseCovering(region: string, targetRel: number): RegExpExecArray
  * GUARANTEE: no number outside `allowed` survives in any scrubbed field.
  * Pure + deterministic.
  */
+/**
+ * Runtime view of an LLM-rewritten resume. The declared StructuredResumeData
+ * type promises these fields are strings, but rewritten resumes arrive through
+ * tool schemas that under-specify item shapes, so at runtime any text field
+ * can be absent (run 850b81d0 crashed on a keyAchievements entry without an
+ * `achievement` string). The guard reads through this honest view.
+ */
+interface DriftedResumeView {
+    readonly summary?: unknown;
+    readonly experience?: ReadonlyArray<{ readonly highlights?: ReadonlyArray<unknown> }>;
+    readonly keyAchievements?: ReadonlyArray<{ readonly achievement?: unknown }>;
+}
+
 export function stripUngroundedNumbers(resume: StructuredResumeData, allowed: Set<number>): StructuredResumeData {
+    // TOTAL over LLM shape drift: scrub what is a string, pass through what
+    // is not — a guard must never fail the pipeline it protects.
+    const view = resume as unknown as DriftedResumeView;
+    const scrub = (v: unknown): unknown => (typeof v === 'string' ? scrubText(v, allowed) : v);
     return {
         ...resume,
-        summary: scrubText(resume.summary, allowed),
-        experience: resume.experience.map((exp) => ({
+        summary: scrub(view.summary) as string,
+        experience: (view.experience ?? []).map((exp) => ({
             ...exp,
-            highlights: exp.highlights.map((h) => scrubText(h, allowed)),
-        })),
-        keyAchievements: resume.keyAchievements.map((a) => ({
+            highlights: (exp.highlights ?? []).map(scrub),
+        })) as StructuredResumeData['experience'],
+        keyAchievements: (view.keyAchievements ?? []).map((a) => ({
             ...a,
-            achievement: scrubText(a.achievement, allowed),
-        })),
+            achievement: scrub(a.achievement),
+        })) as StructuredResumeData['keyAchievements'],
+    };
+}
+
+// =============================================================================
+// INSTRUCTION-NUMBER SCRUB — prompt text is never evidence
+// =============================================================================
+
+/** Unit vocabulary for an impact-metric span. Deliberately excludes bare
+ *  integers, years and standard names (NIST 800-53): only number+unit shapes
+ *  are instruction-leak candidates. */
+const METRIC_UNITS = '(?:%|x\\b|×|ms\\b|seconds?\\b|secs?\\b|minutes?\\b|mins?\\b|hours?\\b|hrs?\\b|days?\\b|weeks?\\b)';
+
+/** A metric span incl. an optional comparative pair ("from 8 minutes to 30
+ *  seconds") and an optional leading qualifier, removed as one unit so no
+ *  dangling "from … to" survives. */
+const METRIC_SPAN = new RegExp(
+    `(?:(?:from|by|to|in|under|within|at|of)\\s+)?(\\d+(?:\\.\\d+)?)[\\s-]*${METRIC_UNITS}` +
+    `(?:\\s+to\\s+(\\d+(?:\\.\\d+)?)[\\s-]*${METRIC_UNITS})?`,
+    'gi',
+);
+
+/** Remove every metric span whose numeric value(s) include a disallowed number. */
+function removeDisallowedSpans(text: string, disallowed: ReadonlySet<number>): string {
+    const out = text.replace(METRIC_SPAN, (span, a: string, b: string | undefined) => {
+        const values = [Number(a), ...(b === undefined ? [] : [Number(b)])];
+        return values.some((v) => disallowed.has(v)) ? ' ' : span;
+    });
+    return out === text ? text : tidy(out);
+}
+
+/**
+ * Strip unit-bearing metrics whose values appear in the INSTRUCTION text (the
+ * writer persona) but in none of the evidence text. The 2026-07-08 run lifted
+ * "8 minutes to 30 seconds" from the persona's own impact-metric example into
+ * a resume bullet — a class the original provenance guard structurally cannot
+ * catch, because its allowed set is seeded with the writer's own output.
+ * Pure + deterministic; unit-free numbers (years, NIST 800-53) are never touched.
+ */
+export function stripInstructionMetrics(
+    resume: StructuredResumeData,
+    opts: { readonly instructionText: string; readonly evidenceText: string },
+): StructuredResumeData {
+    const evidence = extractNumbers(opts.evidenceText);
+    const disallowed = new Set([...extractNumbers(opts.instructionText)].filter((n) => !evidence.has(n)));
+    if (disallowed.size === 0) return resume;
+    const view = resume as unknown as DriftedResumeView;
+    const scrub = (v: unknown): unknown => (typeof v === 'string' ? removeDisallowedSpans(v, disallowed) : v);
+    return {
+        ...resume,
+        summary: scrub(view.summary) as string,
+        experience: (view.experience ?? []).map((exp) => ({
+            ...exp,
+            highlights: (exp.highlights ?? []).map(scrub),
+        })) as StructuredResumeData['experience'],
+        keyAchievements: (view.keyAchievements ?? []).map((a) => ({
+            ...a,
+            achievement: scrub(a.achievement),
+        })) as StructuredResumeData['keyAchievements'],
     };
 }

@@ -38,12 +38,6 @@ export interface Config {
   /** Allowed CORS origins — comma-separated from ALLOWED_ORIGINS env var. */
   readonly allowedOrigins: string[];
   /**
-   * Bedrock chatbot API Gateway URL (e.g. https://id.execute-api.eu-west-1.amazonaws.com/v1/).
-   * Sourced from BEDROCK_API_URL (ConfigMap).
-   * Optional — if absent the /api/chatbot/invoke route returns 503.
-   */
-  readonly bedrockApiUrl: string | undefined;
-  /**
    * Secrets Manager ARN for the Bedrock chatbot API key.
    * Sourced from BEDROCK_API_KEY_SECRET_ARN (ConfigMap).
    * The value is fetched at runtime via the EC2 instance profile — never
@@ -71,6 +65,25 @@ export interface Config {
    * `GITHUB_APP_SECRET_ARN` env var (ConfigMap).
    */
   readonly githubAppSecretArn: string;
+  /**
+   * Internal user id of the portfolio owner. Sourced from
+   * PORTFOLIO_OWNER_USER_ID (ConfigMap) — the same owner-pinning concept
+   * the chatbot RAG lambdas use. The owner-scoped /api/projects routes
+   * filter on THIS id rather than a GitHub username, because
+   * oauth_connections.username is not unique (UNIQUE is on
+   * (user_id, provider)) and usernames can be renamed/reclaimed on
+   * GitHub — identity, not a display handle, is the isolation key.
+   * Optional — if absent the owner-scoped project routes fail closed
+   * (empty list / 404) rather than guessing an owner.
+   */
+  readonly portfolioOwnerUserId: string | undefined;
+  /**
+   * Name of the dedicated article-assets S3 bucket that serves published
+   * article media (no PII lives in that bucket). Sourced from
+   * ARTICLE_ASSETS_BUCKET_NAME (optional ESO secret).
+   * Optional — if absent GET /api/articles/images/:file returns 503.
+   */
+  readonly articleAssetsBucketName: string | undefined;
 }
 
 /**
@@ -111,10 +124,11 @@ export function loadConfig(): Config {
     pgPassword: process.env['PG_PASSWORD'] as string,
     port: parseInt(process.env['PORT'] ?? '3001', 10),
     allowedOrigins: (process.env['ALLOWED_ORIGINS'] ?? 'https://nelsonlamounier.com,http://localhost:3000').split(',').map(s => s.trim()),
-    bedrockApiUrl: process.env['BEDROCK_API_URL'] ?? undefined,
     bedrockApiKeySecretArn: process.env['BEDROCK_API_KEY_SECRET_ARN'] ?? undefined,
     bedrockPublicApiUrl: process.env['BEDROCK_PUBLIC_API_URL'] ?? undefined,
     bedrockAuthApiUrl: process.env['BEDROCK_AUTH_API_URL'] ?? undefined,
     githubAppSecretArn: process.env['GITHUB_APP_SECRET_ARN'] as string,
+    portfolioOwnerUserId: process.env['PORTFOLIO_OWNER_USER_ID'],
+    articleAssetsBucketName: process.env['ARTICLE_ASSETS_BUCKET_NAME'],
   });
 }

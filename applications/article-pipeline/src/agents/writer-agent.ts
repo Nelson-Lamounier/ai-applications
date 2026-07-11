@@ -13,8 +13,12 @@
  */
 
 import { z } from 'zod';
+import type { SystemContentBlock } from '@aws-sdk/client-bedrock-runtime';
 import { BaseAgent, parseJsonResponse, log } from '@bedrock/shared';
 import { BLOG_PERSONA_SYSTEM_PROMPT } from '../prompts/blog-persona.js';
+import { WRITER_CORE_BLOCKS } from '../prompts/writer-core-prompt.js';
+import { selectArchetype } from '../prompts/archetypes.js';
+import { assembleDynamicBlock, type ResearchBrief } from '../prompts/prompt-assembler.js';
 import type {
     AgentConfig,
     AgentResult,
@@ -39,6 +43,12 @@ import type {
 export interface WriterAgentInput {
     /** Research Agent's structured output */
     readonly research: ResearchResult;
+    /**
+     * QA feedback from a prior failed attempt, injected on retry so the Writer
+     * fixes the specific issues rather than regenerating blind. Empty on the
+     * first attempt.
+     */
+    readonly revisionNotes?: readonly string[];
 }
 
 // =============================================================================
@@ -64,6 +74,50 @@ const WRITER_MAX_TOKENS = Number.parseInt(process.env.MAX_TOKENS ?? '65536', 10)
 const DEFAULT_THINKING_BUDGET = Number.parseInt(process.env.THINKING_BUDGET_TOKENS ?? '16000', 10);
 
 // =============================================================================
+// SYSTEM PROMPT ASSEMBLY (evidence-driven archetype, flag-gated)
+// =============================================================================
+
+/** Dark-launch flag for evidence-driven archetype assembly. */
+function archetypeAssemblyEnabled(): boolean {
+    return process.env['ARTICLE_ARCHETYPE_ASSEMBLY'] === '1';
+}
+
+/** Map the research result's brief fields into the assembler's ResearchBrief. */
+function briefFromResearch(research: ResearchResult): ResearchBrief | null {
+    const inv = research.evidenceInventory;
+    if (!inv) return null;
+    return {
+        slug:               '',
+        topic:              research.suggestedTitle,
+        evidenceInventory:  inv,
+        citableLinks:       (research.citableLinks ?? []).map((l) => ({ url: l.url, supportsClaim: l.supportsClaim })),
+        publicRepos:        [...(research.publicRepos ?? [])],
+        publishIdentifiers: [...(research.publishIdentifiers ?? [])],
+        availableMetrics:   (research.availableMetrics ?? []).map((m) => ({ value: m.value, measures: m.measures })),
+    };
+}
+
+/**
+ * Choose the Writer system prompt. When the archetype flag is on and the
+ * research carries an evidence inventory, assemble the universal core (cached)
+ * + the selected archetype + brief (uncached). Falls back to the static blog
+ * persona when the flag is off, the inventory is absent, or — defensively —
+ * the evidence is ineligible (run-pipeline gates ineligibility before this).
+ */
+export function buildWriterSystemPrompt(research: ResearchResult): SystemContentBlock[] {
+    if (!archetypeAssemblyEnabled()) return BLOG_PERSONA_SYSTEM_PROMPT;
+    const brief = briefFromResearch(research);
+    if (!brief) return BLOG_PERSONA_SYSTEM_PROMPT;
+    const selection = selectArchetype(brief.evidenceInventory);
+    if (!selection.eligible) return BLOG_PERSONA_SYSTEM_PROMPT;
+    return [
+        ...WRITER_CORE_BLOCKS,
+        { cachePoint: { type: 'default' } } as SystemContentBlock,
+        { text: assembleDynamicBlock(selection, brief) },
+    ];
+}
+
+// =============================================================================
 // USER MESSAGE BUILDER
 // =============================================================================
 
@@ -77,15 +131,33 @@ const DEFAULT_THINKING_BUDGET = Number.parseInt(process.env.THINKING_BUDGET_TOKE
  * @param retryAttempt - Current retry attempt (0-based)
  * @returns Formatted user message
  */
-function buildContextSection(research: ResearchResult, retryAttempt: number, version: number): string[] {
+/** Retry banner + the concrete QA issues to fix, injected on a retry attempt. */
+function buildRetryNote(retryAttempt: number, revisionNotes: readonly string[]): string[] {
+    if (retryAttempt === 0) return [];
+    const feedback = revisionNotes.length > 0
+        ? [
+              `>`,
+              `> ## QA Feedback To Fix (from the previous attempt)`,
+              `> Resolve each of these specific issues. Do not reintroduce them.`,
+              ...revisionNotes.map((note) => `> - ${note}`),
+          ]
+        : [];
     return [
-        ...(retryAttempt > 0
-            ? [
-                  ``,
-                  `> ⚠️ This is retry attempt ${retryAttempt}. The previous version did not pass QA.`,
-                  `> Pay extra attention to technical accuracy and code correctness.`
-              ]
-            : []),
+        ``,
+        `> ⚠️ This is retry attempt ${retryAttempt}. The previous version did not pass QA.`,
+        `> Pay extra attention to technical accuracy and code correctness.`,
+        ...feedback,
+    ];
+}
+
+function buildContextSection(
+    research: ResearchResult,
+    retryAttempt: number,
+    version: number,
+    revisionNotes: readonly string[] = [],
+): string[] {
+    return [
+        ...buildRetryNote(retryAttempt, revisionNotes),
         ...(research.authorDirection
             ? [
                   ``,
@@ -203,6 +275,7 @@ function buildWriterMessage(
     research: ResearchResult,
     retryAttempt: number,
     version: number,
+    revisionNotes: readonly string[] = [],
 ): string {
     const parts: string[] = [
         `## Content Generation Request`,
@@ -210,7 +283,7 @@ function buildWriterMessage(
         `- Complexity: ${research.complexity.tier} — ${research.complexity.reason}`,
         `- Suggested Title: ${research.suggestedTitle}`,
         `- Suggested Tags: ${research.suggestedTags.join(', ')}`,
-        ...buildContextSection(research, retryAttempt, version),
+        ...buildContextSection(research, retryAttempt, version, revisionNotes),
         ...buildOutlineAndFactsSection(research),
         ...buildSeoSection(research),
         ``,
@@ -237,12 +310,19 @@ function buildWriterMessage(
  * @throws Error if required fields are missing
  */
 /**
- * Strict safety-net for the Writer's structured JSON. Writer keeps
- * extended thinking so forced tool_use is unavailable; this Zod schema
- * is the constrained-decoding substitute. `.strict()` rejects invented
- * fields; a failure throws rather than persisting placeholder defaults
- * to DynamoDB (structure-output-checklist §5/§7). `content` is prose and
- * stays a free-form string (only emptiness is rejected).
+ * Safety-net for the Writer's structured JSON. Writer keeps extended
+ * thinking so forced tool_use is unavailable; this Zod schema is the
+ * constrained-decoding substitute — it enforces every required field and
+ * its type, and `content` (prose) stays a free-form non-empty string.
+ *
+ * These objects STRIP unknown keys rather than `.strict()`-rejecting them.
+ * Rejecting was too brittle: the model, cued by the frontmatter example
+ * (`author: "Nelson Lamounier"`), intermittently echoes an extra `author`
+ * key into `metadata`, and `.strict()` then threw away the ENTIRE,
+ * already-paid-for generation (~$0.25 of Bedrock spend — research + writer,
+ * billed before this local check runs, with no retry). Stripping keeps the
+ * real fields and silently drops stray ones, so a harmless extra key never
+ * discards an expensive run. Required-field and type validation is unchanged.
  */
 const WriterMetadataSchema = z.object({
     title:               z.string().min(1),
@@ -258,7 +338,7 @@ const WriterMetadataSchema = z.object({
     processingNote:      z.string(),
     primaryKeyword:      z.string().optional(),
     secondaryKeywords:   z.array(z.string()).optional(),
-}).strict();
+});
 
 const ShotListItemSchema = z.object({
     id:          z.string(),
@@ -266,21 +346,21 @@ const ShotListItemSchema = z.object({
     instruction: z.string(),
     context:     z.string(),
     duration:    z.string().optional(),
-}).strict();
+});
 
 const SuggestedReferenceSchema = z.object({
     label:      z.string(),
     url:        z.string(),
     relevance:  z.string(),
     usedInline: z.boolean(),
-}).strict();
+});
 
 const WriterOutputSchema = z.object({
     content:             z.string().min(1, 'Writer Agent: missing or empty "content"'),
     metadata:            WriterMetadataSchema,
     shotList:            z.array(ShotListItemSchema).default([]),
     suggestedReferences: z.array(SuggestedReferenceSchema).optional(),
-}).strict();
+});
 
 /**
  * Parse and validate the Writer Agent's JSON response.
@@ -354,7 +434,7 @@ class WriterAgent extends BaseAgent<WriterAgentInput, WriterResult, PipelineCont
             modelId: EFFECTIVE_MODEL_ID,
             maxTokens: WRITER_MAX_TOKENS,
             thinkingBudget,
-            systemPrompt: BLOG_PERSONA_SYSTEM_PROMPT,
+            systemPrompt: buildWriterSystemPrompt(input.research),
         };
     }
 
@@ -366,7 +446,7 @@ class WriterAgent extends BaseAgent<WriterAgentInput, WriterResult, PipelineCont
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: WriterAgentInput, ctx: PipelineContext): string {
-        return buildWriterMessage(input.research, ctx.retryAttempt, ctx.version);
+        return buildWriterMessage(input.research, ctx.retryAttempt, ctx.version, input.revisionNotes);
     }
 
     /**
@@ -431,11 +511,13 @@ export { writerAgent, WriterAgent };
  *
  * @param ctx - Pipeline context
  * @param research - Research result from the first agent
+ * @param revisionNotes - QA feedback from a prior failed attempt (retry only)
  * @returns Writer result with MDX content, metadata, and shot list
  */
 export async function executeWriterAgent(
     ctx: PipelineContext,
     research: ResearchResult,
+    revisionNotes?: readonly string[],
 ): Promise<AgentResult<WriterResult>> {
-    return writerAgent.execute({ research }, ctx);
+    return writerAgent.execute({ research, revisionNotes }, ctx);
 }

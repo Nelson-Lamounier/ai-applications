@@ -6,8 +6,15 @@ sources:
   - infra/lib/stacks/bedrock/kb-stack.ts
   - infra/lib/stacks/bedrock/data-stack.ts
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-07-10
 ---
+
+> **RETIRED (2026-07-10).** The Bedrock Knowledge Base and the Pinecone index
+> this runbook re-ingests were decommissioned — see
+> [ADR 0011](../decisions/0011-retire-bedrock-agent-pinecone-kb.md).
+> Retrieval now reads the RDS pgvector store, which the ingestion pipeline
+> keeps current automatically; there is no manual reindex procedure to run.
+> Kept for historical reference only.
 
 ## When to run this
 

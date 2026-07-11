@@ -64,7 +64,21 @@ export function buildResumeElement(rp: ReactPdfPrimitives, data: StructuredResum
 
     if (data.projects.length) {
         children.push(sectionHeader('Projects'));
-        data.projects.forEach((pr, i) => children.push(text(s.bullet, `${pr.name}: ${pr.description}`, `pr-${i}`)));
+        data.projects.forEach((pr, i) => {
+            // Always structured: name header, github link, pitch, then any
+            // JD-aligned technical bullets (mirrors the Experience layout). The
+            // github link is part of the section's trust signal and must show
+            // even when a project carries no highlights.
+            const highlights = pr.highlights ?? [];
+            children.push(
+                h(View, { style: s.item, key: `pr-${i}` }, [
+                    h(Text, { style: s.itemHead, key: 'head' }, pr.name),
+                    ...(pr.github ? [h(Text, { style: s.contact, key: 'gh' }, pr.github)] : []),
+                    ...(pr.description ? [h(Text, { key: 'desc' }, pr.description)] : []),
+                    ...highlights.map((hl, j) => h(Text, { style: s.bullet, key: `pr-hl-${j}` }, `• ${hl}`)),
+                ]),
+            );
+        });
     }
 
     children.push(sectionHeader('Education'));

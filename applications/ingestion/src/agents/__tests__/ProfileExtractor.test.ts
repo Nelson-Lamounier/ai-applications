@@ -156,6 +156,49 @@ describe('ProfileExtractor', () => {
         expect(result.highlights).toHaveLength(5);
     });
 
+    it('coerces a stringified-JSON-array highlights into a string[] instead of failing (regression: Haiku sometimes returns highlights as a JSON string)', async () => {
+        mockBedrockResponse({
+            ...VALID_TOOL_INPUT,
+            highlights: '["Shipped feature A end to end.", "Cut latency by half."]',
+        });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.highlights).toEqual([
+            'Shipped feature A end to end.',
+            'Cut latency by half.',
+        ]);
+    });
+
+    it('coerces a newline/bullet-delimited highlights string into a string[] instead of failing', async () => {
+        mockBedrockResponse({
+            ...VALID_TOOL_INPUT,
+            highlights: '- Built the ingestion pipeline\n- Added retrieval probe\n* Wired cost tracking',
+        });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.highlights).toEqual([
+            'Built the ingestion pipeline',
+            'Added retrieval probe',
+            'Wired cost tracking',
+        ]);
+    });
+
+    it('wraps a single plain-string highlights value into a one-element array', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, highlights: 'A single ungrounded highlight sentence.' });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.highlights).toEqual(['A single ungrounded highlight sentence.']);
+    });
+
+    it('coerces an empty highlights string to an empty array', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, highlights: '' });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.highlights).toEqual([]);
+    });
+
+    it('coerces a stringified tech_stack into a string[] instead of failing', async () => {
+        mockBedrockResponse({ ...VALID_TOOL_INPUT, tech_stack: '["TypeScript", "React"]' });
+        const result = await extractor.extract('user-123', makeBundle());
+        expect(result.tech_stack).toEqual(['TypeScript', 'React']);
+    });
+
     it('still rejects a too-short one_liner (min quality floor preserved)', async () => {
         mockBedrockResponse({ ...VALID_TOOL_INPUT, one_liner: 'short' });
         await expect(extractor.extract('user-123', makeBundle()))

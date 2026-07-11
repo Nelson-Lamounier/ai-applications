@@ -35,7 +35,7 @@ import { canonicaliseSkills } from '../ontology/canonicaliseSkills.js';
 import { NullOntologyGapRecorder } from '../ontology/OntologyGapRecorder.js';
 import type { IOntologyGapRecorder } from '../ontology/OntologyGapRecorder.js';
 import { buildExtractionBody, buildPackExtractionBody, parsePackSkills, type PackBodyItem } from './extractionBody.js';
-import { buildCanonicalExtractionBody, parseCanonicalSkills, type CanonicalSplit } from './canonicalVocabExtraction.js';
+import { buildCanonicalExtractionBody, buildCanonicalPackExtractionBody, parseCanonicalSkills, parseCanonicalPackSkills, type CanonicalSplit } from './canonicalVocabExtraction.js';
 import { BedrockBatchEnrich, buildEnrichRecords, type BatchEnrichItem } from '../../bedrock/BedrockBatchEnrich.js';
 
 const DEFAULT_MODEL_ID = 'anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -256,6 +256,32 @@ export class BedrockChunkEnricher implements IChunkEnricher {
         // Pass the alias map so alias phrasings ("aws dynamodb") resolve to their
         // canonical ("dynamodb") instead of being mis-queued as NEW: gaps.
         return parseCanonicalSkills(toolUse.input.skills ?? [], new Set(vocabulary), this.aliasToCanonical);
+    }
+
+    /**
+     * Enrich a PACK of chunks in ONE model call under the controlled vocabulary
+     * — the canonical twin of {@link enrichPack}, for the deferred/canonical
+     * lane where production enrichment actually runs. The vocabulary + rules
+     * bill once per pack, not once per chunk. Returns key -> CanonicalSplit;
+     * keys absent from the response are omitted (the caller falls those chunks
+     * back to per-chunk enrichTextCanonical — fail-safe). Books ONE cost record.
+     * Throws only on transport error, so the caller can fall the whole pack back.
+     */
+    async enrichPackCanonical(vocabulary: readonly string[], items: readonly PackBodyItem[]): Promise<Map<string, CanonicalSplit>> {
+        const body = JSON.stringify(buildCanonicalPackExtractionBody(vocabulary, items));
+
+        const { body: responseBody } = await this.client.send(
+            new InvokeModelCommand({ modelId: this.modelId, contentType: 'application/json', accept: 'application/json', body: Buffer.from(body) }),
+        );
+        const parsed = JSON.parse(Buffer.from(responseBody).toString('utf-8')) as AnthropicResponse;
+
+        this.bookCost(parsed);
+
+        return parseCanonicalPackSkills(
+            parsed.content as unknown as ReadonlyArray<{ type: string; name?: string; input?: { extractions?: unknown } }>,
+            new Set(vocabulary),
+            this.aliasToCanonical,
+        );
     }
 
     /**

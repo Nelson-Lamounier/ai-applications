@@ -23,8 +23,9 @@ import type { CaseStudyContext } from './case-study-types.js';
 import { packContext } from './case-study-context-budget.js';
 import { RdsProjectOntologyRepository } from '../rds/implementations/RdsProjectOntologyRepository.js';
 import { classifyArchetype } from './archetype-classifier.js';
-import { pickStage } from './derive-stage.js';
-import { deriveDepthMarkers } from './case-study-depth.js';
+import { pickStage, stickyStage } from './derive-stage.js';
+import { deriveDepthMarkers, deriveDifficultySignals, deriveEvidenceMix } from './case-study-depth.js';
+import type { CommitSpanRow, DifficultyAreaRow } from './case-study-depth.js';
 import { buildVerifiedStackMap } from './case-study-verified-stack.js';
 
 /** Minimal commit shape — matches `RepoCommit` from the ingestion adapter. */
@@ -182,7 +183,7 @@ async function loadCodeGroundedEvidence(
     repoNames: string[],
     archetype: Record<string, boolean>,
     commits: ReadonlyArray<{ message: string }>,
-): Promise<Pick<CaseStudyContext, 'depthMarkers' | 'fileChangeEvidence'>> {
+): Promise<Pick<CaseStudyContext, 'depthMarkers' | 'fileChangeEvidence' | 'evidenceMix'>> {
     const laneRows = (await pool.query<{ fc: string; cnt: string }>(
         `SELECT de.metadata->>'fileClass' AS fc, count(*) AS cnt
            FROM document_embeddings de
@@ -197,6 +198,7 @@ async function loadCodeGroundedEvidence(
 
     const refactorCount = commits.filter((c) => /\brefactor/i.test(c.message)).length;
     const depthMarkers = deriveDepthMarkers({ laneCounts, archetype, refactorCount });
+    const evidenceMix = deriveEvidenceMix(laneCounts);
 
     const fileRows = (await pool.query<{ repo_full_name: string; file_path: string; additions: string; deletions: string; changes: string }>(
         `SELECT repo_full_name, file_path,
@@ -216,7 +218,73 @@ async function loadCodeGroundedEvidence(
         changes:      Number(r.changes),
     }));
 
-    return { depthMarkers, fileChangeEvidence };
+    return { depthMarkers, fileChangeEvidence, evidenceMix };
+}
+
+/** Areas with the most sustained fix activity, ranked by fix-commit count. */
+const DIFFICULTY_AREA_CAP = 8;
+
+/**
+ * Difficulty signals over the ENTIRE stored commit history — deliberately NOT
+ * limited to the packed recency window, so the challenges section can see
+ * battles from the project's early months. Two cheap aggregates (no LLM):
+ * per-area fix-commit density (area = first two path segments; lockfiles
+ * excluded) and the whole-repo commit span.
+ */
+async function loadDifficultySignals(
+    pool: Pool,
+    userId: string,
+    repoNames: string[],
+): Promise<Pick<CaseStudyContext, 'difficultySignals'>> {
+    // Areas are repo-scoped ('tucaken-app:src/features') so a path that exists
+    // in several member repos ('.github/workflows', 'docs') never merges into
+    // one fake battle, and each repo holds at most 3 of the capped slots so a
+    // fix-noisy repo cannot monopolise the map.
+    const areas = (await pool.query<DifficultyAreaRow>(
+        `SELECT area, fix_commits, total_commits, first_at, last_at
+           FROM (
+             SELECT split_part(repo, '/', 2) || ':' || area AS area,
+                    fix_commits, total_commits, first_at, last_at,
+                    ROW_NUMBER() OVER (PARTITION BY repo ORDER BY fix_commits DESC, total_commits DESC) AS rpr
+               FROM (
+                 SELECT repo, area,
+                        count(DISTINCT sha) FILTER (WHERE is_fix) AS fix_commits,
+                        count(DISTINCT sha)                        AS total_commits,
+                        min(authored_at)                           AS first_at,
+                        max(authored_at)                           AS last_at
+                   FROM (
+                     SELECT f.repo_full_name AS repo,
+                            array_to_string((string_to_array(f.file_path, '/'))[1:2], '/') AS area,
+                            c.sha, c.authored_at,
+                            c.message ~* '\\y(fix|bug|hotfix|revert)' AS is_fix
+                       FROM repo_commit_files f
+                       JOIN repo_commits c
+                         ON c.user_id = f.user_id
+                        AND c.repo_full_name = f.repo_full_name
+                        AND c.sha = f.commit_sha
+                      WHERE f.user_id = $1
+                        AND f.repo_full_name = ANY($2::text[])
+                        AND f.file_path NOT IN ('yarn.lock', 'package-lock.json', 'pnpm-lock.yaml')
+                   ) t
+                  GROUP BY repo, area
+                 HAVING count(DISTINCT sha) FILTER (WHERE is_fix) > 0
+               ) g
+           ) ranked
+          WHERE rpr <= 3
+          ORDER BY fix_commits DESC, total_commits DESC
+          LIMIT $3`,
+        [userId, repoNames, DIFFICULTY_AREA_CAP],
+    )).rows;
+    const spanRows = (await pool.query<CommitSpanRow>(
+        `SELECT min(authored_at) AS first_commit_at,
+                max(authored_at) AS last_commit_at,
+                count(*)         AS total
+           FROM repo_commits
+          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
+         HAVING count(*) > 0`,
+        [userId, repoNames],
+    )).rows;
+    return { difficultySignals: deriveDifficultySignals(areas, spanRows[0] ?? null) };
 }
 
 /**
@@ -287,6 +355,7 @@ async function computeCalibration(
     userId: string,
     projectType: string,
     mergedSignals: Record<string, boolean>,
+    userOverrides: Record<string, unknown> | null,
 ): Promise<Calibration> {
     const ontology   = new RdsProjectOntologyRepository(pool);
     const archetypes = await ontology.listArchetypes();
@@ -299,10 +368,80 @@ async function computeCalibration(
         [userId],
     );
     const seniority = seniorityRow.rows[0]?.direction?.seniority ?? [];
-    const stage = pickStage(seniority);
+    // The owner's explicit override (user_overrides.stage) wins over the
+    // rollup-derived level — the Direction synthesizer can under/over-level.
+    const stage = stickyStage(userOverrides) ?? pickStage(seniority);
     const overlay = stage ? await ontology.getStageOverlay(classified.archetypeId, stage) : null;
 
     return assembleCalibration(classified.archetypeId, def, stage, overlay);
+}
+
+/**
+ * Salient full-text terms for KB-chunk relevance ranking, from the project's
+ * name + tagline (short, high-signal — the pitch is too long to AND and too
+ * noisy to OR). Lowercased, alphanumeric-only, ≥4 chars, deduped, capped at
+ * 12, OR-joined for to_tsquery. Empty string ⇒ caller falls back to recency.
+ */
+export function kbRelevanceTerms(name: string, tagline: string | null): string {
+    const words = `${name} ${tagline ?? ''}`
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 4);
+    return [...new Set(words)].slice(0, 12).join(' | ');
+}
+
+/**
+ * Select the KB chunks fed to the case-study prompt. Previously this was
+ * `ORDER BY last_synced_at DESC LIMIT 24` — pure sync-timing luck, which let
+ * config chunks of whichever repo synced last fill the window and duplicate
+ * README content already carried by <productContext>. Selection is now:
+ *   1. full-text relevance to the project name/tagline (content_tsv, the
+ *      same generated column the strategist's hybrid retrieval uses),
+ *   2. docs/history lanes preferred over code/config (narrative evidence),
+ *   3. recency as the tie-break and the fill when few chunks match,
+ * with root-README rows excluded (they already feed <productContext>).
+ * Falls back to the docs-preferred recency ordering when no terms derive.
+ */
+async function selectKbChunks(
+    pool: Pool,
+    userId: string,
+    repoNames: string[],
+    terms: string,
+): Promise<KbRow[]> {
+    // Rank columns are computed once, reused for the per-repo window and the
+    // final order. rpr <= 12 stops one member repo's docs from taking every
+    // slot of a multi-repo project's 24-chunk budget.
+    const result = await pool.query<KbRow>(
+        `SELECT repo_full_name, file_path, chunk_type, content
+           FROM (
+             SELECT
+                de.repo_full_name AS repo_full_name,
+                de.file_path      AS file_path,
+                'document'        AS chunk_type,
+                de.content        AS content,
+                CASE WHEN $4 <> '' AND de.content_tsv @@ to_tsquery('english', $4) THEN 0 ELSE 1 END AS relevance_bucket,
+                CASE WHEN de.metadata->>'fileClass' IN ('docs', 'history') THEN 0 ELSE 1 END AS lane_bucket,
+                CASE WHEN $4 <> '' THEN ts_rank_cd(de.content_tsv, to_tsquery('english', $4)) ELSE 0 END AS rank_score,
+                de.last_synced_at AS last_synced_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY de.repo_full_name
+                    ORDER BY
+                        CASE WHEN $4 <> '' AND de.content_tsv @@ to_tsquery('english', $4) THEN 0 ELSE 1 END,
+                        CASE WHEN de.metadata->>'fileClass' IN ('docs', 'history') THEN 0 ELSE 1 END,
+                        CASE WHEN $4 <> '' THEN ts_rank_cd(de.content_tsv, to_tsquery('english', $4)) ELSE 0 END DESC,
+                        de.last_synced_at DESC
+                ) AS rpr
+             FROM document_embeddings de
+             WHERE de.user_id::text = $1::text
+               AND de.repo_full_name = ANY($2::text[])
+               AND lower(de.file_path) NOT IN ('readme.md', 'readme')
+           ) ranked
+          WHERE rpr <= 12
+          ORDER BY relevance_bucket, lane_bucket, rank_score DESC, last_synced_at DESC
+          LIMIT $3`,
+        [userId, repoNames, KB_CHUNK_CAP, terms],
+    );
+    return result.rows;
 }
 
 export async function loadCaseStudyContext(
@@ -367,19 +506,7 @@ export async function loadCaseStudyContext(
         }
     }
 
-    const kb = (await pool.query<KbRow>(
-        `SELECT
-            de.repo_full_name AS repo_full_name,
-            de.file_path      AS file_path,
-            'document'        AS chunk_type,
-            de.content        AS content
-         FROM document_embeddings de
-         WHERE de.user_id::text = $1::text
-           AND de.repo_full_name = ANY($2::text[])
-         ORDER BY de.last_synced_at DESC
-         LIMIT $3`,
-        [p.user_id, repoNames, KB_CHUNK_CAP],
-    )).rows;
+    const kb = await selectKbChunks(pool, p.user_id, repoNames, kbRelevanceTerms(p.name, p.tagline));
 
     // Root-README prose per repo — the human "what/why/who" the code evidence
     // can't carry. Ordered by chunk_index so the intro (chunk 0) leads; capped
@@ -401,12 +528,20 @@ export async function loadCaseStudyContext(
     );
 
     // Commit evidence now lives in RDS (`repo_commits`, populated by
-    // ingestion). Newest first across all member repos.
+    // ingestion). Fair-share interleave: newest-first WITHIN each repo,
+    // round-robin ACROSS repos — the packer keeps the first ~150, and a
+    // globally-newest-first order let one busy repo starve the other members
+    // of a multi-repo project of citable evidence. Single-repo projects get
+    // the identical newest-first order they always had.
     const commitRows = (await pool.query<{ repo_full_name: string; sha: string; author_name: string; author_login: string | null; authored_at: Date | string; message: string }>(
         `SELECT repo_full_name, sha, author_name, author_login, authored_at, message
-           FROM repo_commits
-          WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
-          ORDER BY authored_at DESC`,
+           FROM (
+             SELECT repo_full_name, sha, author_name, author_login, authored_at, message,
+                    ROW_NUMBER() OVER (PARTITION BY repo_full_name ORDER BY authored_at DESC) AS rn
+               FROM repo_commits
+              WHERE user_id = $1 AND repo_full_name = ANY($2::text[])
+           ) t
+          ORDER BY rn, authored_at DESC`,
         [p.user_id, repoNames],
     )).rows;
     const commits = commitRows.map((r) => ({
@@ -438,9 +573,10 @@ export async function loadCaseStudyContext(
         htmlUrl:      r.html_url,
     }));
 
-    const { depthMarkers, fileChangeEvidence } = await loadCodeGroundedEvidence(
+    const { depthMarkers, fileChangeEvidence, evidenceMix } = await loadCodeGroundedEvidence(
         pool, p.user_id, repoNames, mergedSignals, commits,
     );
+    const { difficultySignals } = await loadDifficultySignals(pool, p.user_id, repoNames);
 
     const verifiedStack = await loadVerifiedStack(pool, p.user_id, repoNames);
 
@@ -470,6 +606,8 @@ export async function loadCaseStudyContext(
         })),
         depthMarkers,
         fileChangeEvidence,
+        evidenceMix,
+        difficultySignals,
         verifiedStack,
     };
 
@@ -482,7 +620,7 @@ export async function loadCaseStudyContext(
     // agent) so the orchestrator's input-hash and the prompt see identical,
     // already-bounded content.
     // ── Archetype/stage calibration (additive; absent fields = no change) ──
-    const calibration = await computeCalibration(pool, p.user_id, p.type, mergedSignals);
+    const calibration = await computeCalibration(pool, p.user_id, p.type, mergedSignals, p.user_overrides);
 
     const context = packContext({ ...rawContext, ...calibration }, { maxTokens: CONTEXT_TOKEN_BUDGET });
 

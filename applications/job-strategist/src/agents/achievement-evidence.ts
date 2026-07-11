@@ -18,6 +18,7 @@ interface ChallengeRow {
 	solution: string;
 }
 interface DecisionRow {
+	title: string;
 	decision: string;
 	consequences: string;
 }
@@ -34,7 +35,7 @@ export async function loadAchievementEvidence(pool: Pool, userId: string): Promi
 				[userId, CHALLENGE_CAP],
 			),
 			pool.query<DecisionRow>(
-				`SELECT decision, consequences FROM project_decisions WHERE user_id = $1 ORDER BY order_index LIMIT $2`,
+				`SELECT title, decision, consequences FROM project_decisions WHERE user_id = $1 ORDER BY order_index LIMIT $2`,
 				[userId, DECISION_CAP],
 			),
 			pool.query<HighlightRow>(
@@ -53,7 +54,8 @@ export async function loadAchievementEvidence(pool: Pool, userId: string): Promi
 		if (decisions.rows.length > 0) {
 			groups.push(
 				'Decision impact (decision -> consequence; pick those relevant to the role):\n' +
-					decisions.rows.map((r) => `- ${r.decision} -> ${r.consequences}`).join('\n'),
+					// Title first — the writer gets the framing, not just mechanics.
+					decisions.rows.map((r) => `- ${r.title}: ${r.decision} -> ${r.consequences}`).join('\n'),
 			);
 		}
 		if (highlights.rows.length > 0) {

@@ -50,3 +50,11 @@ describe('dropInvalidProjects', () => {
         expect(dropInvalidProjects(notArray)).toEqual({ resume: notArray, droppedProjects: 0 });
     });
 });
+
+describe('StructuredResumeDataSchema — persist gate keeps projects[].highlights', () => {
+    it('does NOT strip highlights on parse (the final DB-write gate)', () => {
+        const raw = resumeWith([{ ...validProject, highlights: ['Provisioned EKS with Karpenter', 'Built React 19 SPA'] }]);
+        const parsed = StructuredResumeDataSchema.parse(raw);
+        expect(parsed.projects[0]).toHaveProperty('highlights', ['Provisioned EKS with Karpenter', 'Built React 19 SPA']);
+    });
+});

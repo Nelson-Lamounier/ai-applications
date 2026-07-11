@@ -119,4 +119,15 @@ describe('computeKbQuality', () => {
         ]);
         expect(Number(r.score.toFixed(2))).toBe(r.score);
     });
+
+    it('scores a contentChars lite row identically to its content-string twin', () => {
+        const asContent = computeKbQuality([
+            chunk({ filePath: 'README.md', content: 'X'.repeat(1200), tags: ['docs'], skills: ['k8s', 'cdk'] }),
+        ]);
+        const asChars = computeKbQuality([
+            { filePath: 'README.md', contentChars: 1200, tags: ['docs'], skills: ['k8s', 'cdk'] },
+        ]);
+        expect(asChars.score).toBe(asContent.score);
+        expect(asChars.breakdown.factors).toEqual(asContent.breakdown.factors);
+    });
 });

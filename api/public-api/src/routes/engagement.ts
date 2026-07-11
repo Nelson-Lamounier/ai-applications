@@ -20,6 +20,7 @@
 import { Hono } from 'hono';
 import { getPool } from '../lib/pg.js';
 import { loadConfig } from '../lib/config.js';
+import { clientIpFromRequest } from '../lib/client-ip.js';
 
 const engagement = new Hono();
 
@@ -186,10 +187,10 @@ engagement.post('/api/articles/:slug/comments', async (c) => {
     );
   }
 
-  const ipAddress =
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-    c.req.header('x-real-ip') ||
-    'unknown';
+  // Trust only the proxy-appended (rightmost) XFF entry — the leftmost value is
+  // caller-controlled and would let anyone spoof a fresh IP per request to
+  // defeat the per-IP limit below. See lib/client-ip.ts for the ALB semantics.
+  const ipAddress = clientIpFromRequest(c.req);
 
   // Rate limit: max RATE_LIMIT_MAX comments per IP in the last hour.
   const recent = await pool.query<{ n: string }>(

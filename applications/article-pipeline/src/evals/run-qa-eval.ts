@@ -43,7 +43,7 @@ function evalContext(id: string): PipelineContext {
 export async function runQaEval(dimThreshold = QA_DIM_THRESHOLD): Promise<QaEvalReport> {
     const results: QaCaseResult[] = [];
     for (const c of GOLDEN_QA_CASES) {
-        const qa = await executeQaAgent(evalContext(c.id), c.writer, c.technicalFacts, 'kb-augmented');
+        const qa = await executeQaAgent(evalContext(c.id), c.writer, c.technicalFacts, c.kbEvidence ?? [], 'kb-augmented');
         results.push(scoreQaCase(c, qa.data, dimThreshold));
     }
     return aggregate(results);

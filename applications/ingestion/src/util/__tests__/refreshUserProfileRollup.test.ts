@@ -249,3 +249,30 @@ describe('refreshUserProfileRollup', () => {
         expect(call[6]).toBeUndefined();
     });
 });
+
+describe('refreshUserProfileRollup upsert retry (loud persistence)', () => {
+    it('retries the upsert ONCE on a transient failure and persists on the second attempt', async () => {
+        const upsert = jest.fn(async () => {})
+            .mockImplementationOnce(async () => { throw new Error('transient pool error'); });
+        const repo = {
+            listProfilesForRollup: jest.fn(async () => rows as never),
+            upsert,
+            getRollup: jest.fn(),
+        } as never as IUserProfileRollupRepository;
+
+        await expect(refreshUserProfileRollup(repo, 'u1')).resolves.toBeUndefined();
+        expect(upsert).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up after the retry, never throws, and stops at two attempts', async () => {
+        const upsert = jest.fn(async () => { throw new Error('write failed'); });
+        const repo = {
+            listProfilesForRollup: jest.fn(async () => rows as never),
+            upsert,
+            getRollup: jest.fn(),
+        } as never as IUserProfileRollupRepository;
+
+        await expect(refreshUserProfileRollup(repo, 'u1')).resolves.toBeUndefined();
+        expect(upsert).toHaveBeenCalledTimes(2);
+    });
+});

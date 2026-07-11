@@ -62,12 +62,22 @@ export interface PersistArticleMetadata {
  * from the MDX frontmatter — without this, every generated article surfaced with
  * the raw placeholder slug as its title and no excerpt or tags.
  */
+/**
+ * Article lifecycle status the pipeline may set:
+ *   - 'review'  — passed the QA gate; admin-api owns the transition to 'published'.
+ *   - 'flagged' — failed the QA gate after all retries; needs human rework before
+ *                 it can be reviewed. Content is still persisted so the failure is
+ *                 inspectable in the admin UI.
+ */
+export type ArticleStatus = 'review' | 'flagged';
+
 export async function persistArticle(
     pool: Pool,
     slug: string,
     contentMd: string,
     aiModel: string,
     metadata: PersistArticleMetadata,
+    status: ArticleStatus = 'review',
 ): Promise<void> {
     const result = await pool.query(
         `UPDATE articles
@@ -76,10 +86,10 @@ export async function persistArticle(
                 title      = $4,
                 excerpt    = $5,
                 tags       = $6,
-                status     = 'review',
+                status     = $7,
                 updated_at = NOW()
           WHERE slug = $1`,
-        [slug, contentMd, aiModel, metadata.title, metadata.excerpt, [...metadata.tags]],
+        [slug, contentMd, aiModel, metadata.title, metadata.excerpt, [...metadata.tags], status],
     );
     if (result.rowCount === 0) {
         throw new Error(`persistArticle: no articles row found for slug '${slug}' — ensure article placeholder is created before dispatching the K8s Job`);

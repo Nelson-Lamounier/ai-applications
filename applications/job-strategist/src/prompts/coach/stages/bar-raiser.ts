@@ -14,7 +14,7 @@ export const BAR_RAISER_DELTA = [
     `evidence (ids + labels), story_shapes, and probing_patterns. This is the round where`,
     `over-claiming gets caught — your entire value is keeping the candidate HONEST and grounded.`,
     ``,
-    `Emit ONE barRaiserPrinciple card per principle in the block:`,
+    `Emit ONE barRaiserWalkthrough card per principle in the block:`,
     `• principleId / principleName / interpretation: copy verbatim from the block.`,
     `• coverage: "strong" if the principle has demonstrated evidence (component/decision),`,
     `  "partial" if only declared/claimed evidence (stack/tag/repo), "none" if no evidence.`,

@@ -18,6 +18,7 @@
 // ─── Agent Runner ────────────────────────────────────────────────────────────
 export {
     runAgent,
+    setDefaultAgentInvocationSink,
     parseJsonResponse,
     AgentExecutionError,
 } from './agent-runner.js';
@@ -89,6 +90,9 @@ export type {
     KbPassage,
     OutlineSection,
     ResearchResult,
+    EvidenceInventory,
+    CitableLink,
+    AvailableMetric,
 
     // SEO
     SuggestedReference,
@@ -171,6 +175,7 @@ export type {
     // Skill Evidence Ledger
     EvidenceStatus,
     SkillEvidenceEntry,
+    SkillEvidencePassage,
     SkillEvidenceLane,
 
     // Phase 0 Archetype Selection
@@ -187,6 +192,7 @@ export type {
     ResumeEslCorrection,
     ResumeSuggestions,
     StrategistAnalysisResult,
+    GapMitigation,
 
     // Interview Coach
     InterviewQuestion,
@@ -369,6 +375,9 @@ export { TechnologyCandidateRepository }    from './rds/index.js';
 export { TechnologyParityRunRepository }    from './rds/index.js';
 export { ArticleTopicCandidateRepository }  from './rds/index.js';
 export { CONFIDENCE_BY_LAYER }             from './rds/index.js';
+
+// Runtime RDS credential hydration (SSM host + Secrets Manager password)
+export { hydrateRdsEnv }                   from './rds/index.js';
 export type {
     SourceLayer, RawTechnologyEvidence, TechnologyEvidenceRow,
     OntologyRow, ParityRunRow, CandidateUpsertInput,
@@ -470,6 +479,7 @@ export {
     resolveRedisCacheConfig,
     createRedisCacheClient,
     projectCaseStudyKey,
+    projectOwnerPublicListKey,
 } from './cache/index.js';
 export type { RedisCacheConfig, RedisLike, CacheMetrics } from './cache/index.js';
 
@@ -529,6 +539,7 @@ export {
     RdsSystemTourRepository,
     runSystemTour,
     computeCaseStudyHash,
+    semanticTourCache,
 } from './projects/index.js';
 export type {
     ProjectComponentKind,
@@ -609,3 +620,4 @@ export { buildCycloneDxBom, technologyEvidenceToComponents, preferSpecificPurls 
 export type { SbomComponent, CycloneDxBom, BomMeta, EvidenceComponentInput } from './sbom/cyclonedx.js';
 export { buildCroissant } from './rag/croissant.js';
 export type { CroissantDataset, CroissantInput } from './rag/croissant.js';
+export { resolvePortfolioOwnerId } from './rds/index.js';

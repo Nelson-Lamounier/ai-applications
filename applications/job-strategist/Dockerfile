@@ -19,7 +19,6 @@ COPY applications/tech-extractor/package.json   ./applications/tech-extractor/
 COPY applications/synthetic-monitor/package.json ./applications/synthetic-monitor/
 COPY applications/article-pipeline/package.json ./applications/article-pipeline/
 COPY applications/ingestion/package.json        ./applications/ingestion/
-COPY applications/chatbot/package.json          ./applications/chatbot/
 COPY applications/chatbot-public/package.json   ./applications/chatbot-public/
 COPY applications/chatbot-authenticated/package.json ./applications/chatbot-authenticated/
 COPY applications/self-healing/package.json          ./applications/self-healing/
@@ -41,6 +40,13 @@ COPY applications/job-strategist/src           ./applications/job-strategist/src
 # mapping into shared/src are non-fatal for emit).
 RUN node_modules/.bin/tsc -b applications/shared applications/job-strategist --force \
  || ([ -f applications/job-strategist/dist/run-pipeline.js ] && [ -f applications/job-strategist/dist/run-coach.js ])
+
+# Prompt content is markdown DATA — tsc emits only compiled TS, so the loader's
+# content dir must be copied into dist explicitly (mirrors the package build
+# script). The existence gate fails the image build, not the Job at runtime.
+RUN cp -R applications/job-strategist/src/prompts/content applications/job-strategist/dist/prompts/ \
+ && [ -f applications/job-strategist/dist/prompts/content/strategist-persona.md ] \
+ && [ -f applications/job-strategist/dist/prompts/content/jd-extractor-persona.md ]
 
 RUN node -e "const f='applications/shared/package.json';const p=require('./'+f);p.main='dist/index.js';p.types='dist/index.d.ts';require('fs').writeFileSync(f,JSON.stringify(p,null,2));"
 

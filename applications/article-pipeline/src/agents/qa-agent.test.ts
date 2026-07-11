@@ -12,7 +12,7 @@ jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
     ConverseCommand: jest.fn((params: unknown) => ({ input: params })),
 }));
 
-import { qaAgent } from './qa-agent';
+import { qaAgent, parseQaResponse } from './qa-agent';
 import type { PipelineContext, WriterResult } from '@bedrock/shared';
 
 const DIM = { score: 90, issues: [] };
@@ -26,6 +26,10 @@ const VALID_QA = {
         metadataQuality: DIM,
         contentQuality: { score: 70, issues: [{ severity: 'warning', location: 'intro', description: 'thin', fix: 'expand' }] },
         specificityAndResult: DIM,
+        // Added alongside the securityDisclosure dimension (Task 6) — the
+        // Zod schema is `.strict()`, so every fixture must carry all 7
+        // dimensions or the mocked qaAgent.execute() calls below fail parse.
+        securityDisclosure: DIM,
     },
     summary: 'Solid article, minor intro tweak.',
     confidenceOverride: 85,
@@ -59,7 +63,7 @@ describe('QaAgent (forced tool_use)', () => {
 
     it('returns a validated QA result and clamps scores', async () => {
         mockSend.mockResolvedValueOnce(toolUseReply({ ...VALID_QA, overallScore: 130 }));
-        const result = await qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX);
+        const result = await qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX);
         expect(result.data.overallScore).toBe(100); // clamped
         expect(result.data.recommendation).toBe('publish');
         expect(result.data.dimensions.contentQuality.issues).toHaveLength(1);
@@ -69,7 +73,7 @@ describe('QaAgent (forced tool_use)', () => {
         const { ConverseCommand } = jest.requireMock('@aws-sdk/client-bedrock-runtime') as { ConverseCommand: jest.Mock };
         ConverseCommand.mockClear();
         mockSend.mockResolvedValueOnce(toolUseReply(VALID_QA));
-        await qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX);
+        await qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX);
         const sent = ConverseCommand.mock.calls.at(-1)?.[0] as any;
         expect(sent.toolConfig.toolChoice).toEqual({ tool: { name: 'emit_qa_result' } });
         expect(sent.toolConfig.tools[0].toolSpec.inputSchema.json.additionalProperties).toBe(false);
@@ -78,11 +82,32 @@ describe('QaAgent (forced tool_use)', () => {
 
     it('fails fast on an invalid recommendation enum', async () => {
         mockSend.mockResolvedValueOnce(toolUseReply({ ...VALID_QA, recommendation: 'maybe' }));
-        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX)).rejects.toThrow();
+        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX)).rejects.toThrow();
     });
 
     it('fails fast when the model injects an unknown field', async () => {
         mockSend.mockResolvedValueOnce(toolUseReply({ ...VALID_QA, injected: 'nope' }));
-        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], mode: 'kb' }, CTX)).rejects.toThrow();
+        await expect(qaAgent.execute({ writer: WRITER, technicalFacts: [], kbEvidence: [], mode: 'kb' }, CTX)).rejects.toThrow();
+    });
+
+    it('parses the securityDisclosure dimension', () => {
+        const payload = JSON.stringify({
+            overallScore: 90, recommendation: 'reject',
+            dimensions: {
+                technicalAccuracy: { score: 90, issues: [] },
+                seoCompliance: { score: 90, issues: [] },
+                mdxStructure: { score: 90, issues: [] },
+                metadataQuality: { score: 90, issues: [] },
+                contentQuality: { score: 90, issues: [] },
+                specificityAndResult: { score: 90, issues: [] },
+                securityDisclosure: { score: 10, issues: [
+                    { severity: 'error', location: 'Diagram', description: 'leaks api host', fix: 'generalise' },
+                ] },
+            },
+            summary: 's', confidenceOverride: 80,
+        });
+        const result = parseQaResponse(payload);
+        expect(result.dimensions.securityDisclosure.score).toBe(10);
+        expect(result.recommendation).toBe('reject');
     });
 });

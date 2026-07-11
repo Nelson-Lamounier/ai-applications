@@ -151,5 +151,24 @@ describe('engagement routes', () => {
       })
       expect(res.status).toBe(429)
     });
+
+    it('rate-limits on the proxy-appended IP, not a spoofed leftmost XFF', async () => {
+      // A caller pre-seeds "9.9.9.9"; the ALB appends the real peer "203.0.113.9".
+      // The per-IP count must key on the trusted (rightmost) value so an
+      // attacker cannot dodge the limit by rotating the leftmost entry.
+      mockedQuery
+        .mockResolvedValueOnce({ rows: [{ n: 0 }] }) // rate-limit count
+        .mockResolvedValueOnce({ rows: [{ id: 'x', created_at: new Date('2026-02-02T00:00:00Z') }] })
+      await engagement.request('/api/articles/my-post/comments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-forwarded-for': '9.9.9.9, 203.0.113.9',
+        },
+        body: JSON.stringify({ name: 'Ada', email: 'ada@example.com', body: 'Nice' }),
+      })
+      const rateLimitParams = mockedQuery.mock.calls[0]?.[1] as unknown[]
+      expect(rateLimitParams[0]).toBe('203.0.113.9')
+    });
   });
 });

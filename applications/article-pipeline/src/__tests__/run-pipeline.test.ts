@@ -16,7 +16,17 @@ const mockPersistArticle = jest.fn<() => Promise<void>>().mockImplementation((..
     return Promise.resolve();
 });
 const mockUpdatePipelineRun = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-const mockUpdatePipelineRunMetadata = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+// Latch on the metadata write — it fires a few awaits after persistArticle, so
+// capturing it off the persist latch races. Resolve when the payload lands.
+let resolveMetaLatch: (args: unknown[]) => void;
+const metaLatch = new Promise<unknown[]>((resolve) => {
+    resolveMetaLatch = resolve;
+});
+const mockUpdatePipelineRunMetadata = jest.fn<() => Promise<void>>().mockImplementation((...args) => {
+    resolveMetaLatch(args);
+    return Promise.resolve();
+});
 
 jest.mock('../lib/pipeline-runs.js', () => ({
     persistArticle:            mockPersistArticle,
@@ -71,11 +81,23 @@ const mockResearchData = {
     seoResearch:            undefined,
 };
 
+// Full QaValidationResult shape — buildRunMetadata iterates `dimensions`, so a
+// legacy `{ overallScore, issues }` mock throws and aborts main() before the
+// metadata write. Mirror the real per-dimension breakdown.
+const cleanDim = { score: 88, issues: [] };
 const mockQaData = {
     overallScore:   85,
-    recommendation: 'PASS',
-    issues:         [],
-    suggestions:    [],
+    recommendation: 'publish',
+    dimensions: {
+        technicalAccuracy:    cleanDim,
+        seoCompliance:        cleanDim,
+        mdxStructure:         cleanDim,
+        metadataQuality:      cleanDim,
+        contentQuality:       cleanDim,
+        specificityAndResult: cleanDim,
+    },
+    summary:            'Solid draft, ready for review.',
+    confidenceOverride: 88,
 };
 
 const fakeAgentResult = <T>(data: T) => ({
@@ -102,12 +124,32 @@ jest.mock('../agents/qa-agent.js', () => ({
         .mockResolvedValue(fakeAgentResult(mockQaData)),
 }));
 
+// The evidence adjudicator makes a Bedrock call for KB-dependent lint findings.
+// The mock article's title trips title-coverage, so stub it to return a defect
+// verdict (no network) — the run folds it into metadata.evidence.
+jest.mock('../agents/evidence-adjudicator.js', () => ({
+    EVIDENCE_TRIGGER_RULES: new Set(['enumerated-generalisation', 'dangling-reference', 'title-coverage']),
+    BedrockEvidenceAdjudicator: jest.fn().mockImplementation(() => ({
+        adjudicate: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            verdicts: [{ rule: 'title-coverage', finding: 'golden', decision: 'DEFECT', reason: 'absent from body' }],
+            defects: 1,
+        }),
+    })),
+}));
+
 // ─── Grounding mock handles ──────────────────────────────────────────────────
 // groundingVerifyMock is the spy injected as the `verify` method on every
 // BedrockGroundingVerifier instance created by the module under test.
 // emitEmfMetricMock lets tests assert what metrics were emitted.
 const groundingVerifyMock = jest.fn<() => Promise<unknown>>().mockResolvedValue({
     status: 'GROUNDED', reason: '', ungroundedClaims: [], answer: 'ok',
+});
+// stop-slop prose linter stub — keep the run hermetic (no Bedrock call).
+const proseLintMock = jest.fn<() => Promise<unknown>>().mockResolvedValue({
+    status: 'PASS',
+    score: { directness: 8, rhythm: 8, trust: 8, authenticity: 8, density: 8, total: 40 },
+    belowThreshold: false,
+    issues: [],
 });
 const emitEmfMetricMock = jest.fn<() => void>();
 
@@ -125,6 +167,9 @@ jest.mock('@bedrock/shared', () => {
         })),
         BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
             verify: groundingVerifyMock,
+        })),
+        BedrockProseLinter: jest.fn().mockImplementation(() => ({
+            lint: proseLintMock,
         })),
         emitEmfMetric: emitEmfMetricMock,
         bootstrapK8sObservability: jest.fn().mockReturnValue({
@@ -166,6 +211,7 @@ Object.assign(process.env, {
 
 let sharedPersistArgs: unknown[];
 let sharedEmittedMetrics: Array<{ name: string; value: number }> = [];
+let sharedMetadataArg: Record<string, unknown>;
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -183,6 +229,9 @@ describe('run-pipeline — MDX-persist PII scrub', () => {
         sharedEmittedMetrics = emitEmfMetricMock.mock.calls.flatMap(
             (call) => (call as unknown[])[2] as Array<{ name: string; value: number }>,
         );
+        // Await the metadata latch: the write lands a few awaits after persist.
+        const metaArgs = await metaLatch;
+        sharedMetadataArg = (metaArgs[2] ?? {}) as Record<string, unknown>;
     }, 10_000);
 
     it('calls persistArticle with redacted MDX — raw PII email is absent', () => {
@@ -235,6 +284,47 @@ describe('run-pipeline — grounding flag-mode post-QA (happy path, GROUNDED)', 
     });
 });
 
+// ─── Structural lint (deterministic, record-mode) tests ──────────────────────
+
+describe('run-pipeline — deterministic structural lint post-QA', () => {
+    // Re-uses the single module-level run. The linter is a real (unmocked) pure
+    // module, so it runs against the scrubbed mock article and its verdict is
+    // folded into pipeline_runs.metadata.lint.
+
+    it('emits a LintChecked metric (the stage ran)', async () => {
+        await metaLatch;
+        expect(sharedEmittedMetrics).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'LintChecked', value: 1 }),
+        ]));
+    });
+
+    it('folds the structural-lint verdict into pipeline_runs.metadata.lint', async () => {
+        await metaLatch;
+        expect(sharedMetadataArg).toHaveProperty('lint');
+        const lint = sharedMetadataArg['lint'] as {
+            errors: number;
+            warnings: number;
+            findings: unknown[];
+        };
+        expect(typeof lint.errors).toBe('number');
+        expect(typeof lint.warnings).toBe('number');
+        expect(Array.isArray(lint.findings)).toBe(true);
+    });
+
+    it('folds the evidence adjudication verdict into pipeline_runs.metadata.evidence', async () => {
+        await metaLatch;
+        expect(sharedMetadataArg).toHaveProperty('evidence');
+        const evidence = sharedMetadataArg['evidence'] as { defects: number; verdicts: unknown[] };
+        expect(evidence.defects).toBe(1);
+        expect(Array.isArray(evidence.verdicts)).toBe(true);
+    });
+
+    it('persists exactly the scrubbed content — lint never mutates the body', async () => {
+        await metaLatch;
+        expect(sharedPersistArgs[2]).toBe(EXPECTED_SCRUBBED_CONTENT);
+    });
+});
+
 /**
  * Drive a fresh pipeline run with custom @bedrock/shared and pipeline-runs mocks.
  *
@@ -282,6 +372,9 @@ async function runPipelineWithMocks(opts: {
             })),
             BedrockGroundingVerifier: jest.fn().mockImplementation(() => ({
                 verify: verifyFn,
+            })),
+            BedrockProseLinter: jest.fn().mockImplementation(() => ({
+                lint: proseLintMock,
             })),
             emitEmfMetric: localEmit,
             bootstrapK8sObservability: jest.fn().mockReturnValue({

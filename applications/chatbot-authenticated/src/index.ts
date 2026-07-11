@@ -6,6 +6,8 @@ import {
     log, emitEmfMetric, withSpan,
     InputSanitiser, OutputSanitiser,
     CHATBOT_SYSTEM_PROMPT, buildChatContext, recordZeroResultRetrieval,
+    resolvePortfolioOwnerId,
+    hydrateRdsEnv,
 } from '@bedrock/shared';
 import { getEnv } from './env.js';
 import { multiQueryRetrieve } from './retrieval.js';
@@ -35,6 +37,14 @@ function getPool(): Pool {
         max:      5,
     });
     return pool;
+}
+
+// Resolve the portfolio owner from the DB (portfolio_owner_id() fn, migration
+// 114) with the env as fail-safe fallback. Cached per warm container.
+let ownerIdPromise: Promise<string> | undefined;
+function getOwnerId(fallback: string): Promise<string> {
+    ownerIdPromise ??= resolvePortfolioOwnerId(getPool(), fallback);
+    return ownerIdPromise;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -115,8 +125,13 @@ export const handler = withSpan('chatbot-authenticated.handler', async (
     const startTime = Date.now();
 
     try {
+        // Resolve RDS host (SSM) + password (Secrets Manager) before any DB use,
+        // so an endpoint rename or password rotation is picked up on cold start
+        // without a redeploy. No-op if RDS_SSM_PREFIX / RDS_SECRET_NAME are unset.
+        await hydrateRdsEnv();
+
         const env    = getEnv();
-        const userId = env.portfolioOwnerUserId;
+        const userId = await getOwnerId(env.portfolioOwnerUserId);
 
         // ── 1. Parse + validate ────────────────────────────────────────────────
         if (!event.body) {

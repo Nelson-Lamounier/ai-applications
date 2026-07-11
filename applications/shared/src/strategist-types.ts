@@ -150,6 +150,13 @@ export interface ResumeCertification {
 export interface ResumeProject {
     readonly name: string;
     readonly description: string;
+    /**
+     * JD-aligned technical bullets, selected by the Strategist from the
+     * per-angle `project_resume_bullets` evidence. Optional for back-compat:
+     * cached resumes and the free-tier writer omit it, and the render falls
+     * back to `description` when absent.
+     */
+    readonly highlights?: readonly string[];
     readonly github?: string;
 }
 
@@ -330,6 +337,25 @@ export interface SkillEvidenceEntry {
      * produced before source-lane provenance shipped.
      */
     readonly sourceLanes?: SkillEvidenceLane[];
+    /**
+     * Retrieved KB passages that mention this skill — the "how was this
+     * verified" audit trail (source path + retrieval scores + a short
+     * snippet). Attached deterministically from the run's own KB context.
+     * Optional — absent on runs produced before passage provenance shipped.
+     */
+    readonly provenance?: SkillEvidencePassage[];
+}
+
+/** One retrieved KB passage backing a ledger entry. */
+export interface SkillEvidencePassage {
+    /** Passage source (repo-relative file path or document URI). */
+    readonly source: string;
+    /** Cosine similarity of the passage for the run's retrieval query. */
+    readonly cosine?: number;
+    /** Rerank score when reranking ran. */
+    readonly rerank?: number;
+    /** First ~200 chars of the passage — enough to see WHY it matched. */
+    readonly snippet: string;
 }
 
 /**
@@ -473,6 +499,10 @@ export interface ResearchMatching {
     readonly resumeData: StructuredResumeData | null;
     readonly kbContext: string;
     readonly kbRetrievalStats?: KbRetrievalStats;
+    /** Verbatim KB retrieval queries this run issued — first-class artifact:
+     *  "was the query reasonable?" must be answerable before "did retrieval
+     *  fail?". Optional — absent on runs before query persistence shipped. */
+    readonly retrievalQueries?: string[];
     readonly resumeConstraints: string;
     readonly dsaTopicCalibration?: {
         readonly likelyTopics: ReadonlyArray<{
@@ -486,6 +516,11 @@ export interface ResearchMatching {
     };
     /** Per-tool evidence ledger — built deterministically by run-pipeline; [] default from matcher. */
     readonly skillEvidenceLedger: SkillEvidenceEntry[];
+    /** Number-bearing sentences copied VERBATIM from cited KB passages — the
+     *  matcher's metric pass-through. One-line citations drop measured numbers,
+     *  so without this field the writer never sees the candidate's documented
+     *  metrics. [] on runs before the metric persona shipped. */
+    readonly quantifiedEvidence?: string[];
 }
 
 /** Assembled in run-pipeline as { ...JdSignal, ...ResearchMatching }. Members unchanged for back-compat. */
@@ -551,6 +586,10 @@ export interface StrategistResearchResult {
      * (not model-produced). Absent on legacy runs.
      */
     readonly kbRetrievalStats?: KbRetrievalStats;
+    /** Verbatim KB retrieval queries this run issued — first-class artifact:
+     *  "was the query reasonable?" must be answerable before "did retrieval
+     *  fail?". Optional — absent on runs before query persistence shipped. */
+    readonly retrievalQueries?: string[];
 
     /** Resume domain constraints — rules, gaps, and status thresholds (non-negotiable) */
     readonly resumeConstraints: string;
@@ -569,6 +608,10 @@ export interface StrategistResearchResult {
 
     /** Per-tool evidence ledger — built deterministically in run-pipeline; never model-produced. */
     readonly skillEvidenceLedger: SkillEvidenceEntry[];
+    /** Number-bearing sentences copied VERBATIM from cited KB passages — the
+     *  matcher's metric pass-through into the writer's GROUNDED METRICS block.
+     *  Absent on runs before the metric persona shipped. */
+    readonly quantifiedEvidence?: string[];
 }
 
 // =============================================================================
@@ -725,6 +768,20 @@ export interface CoverLetter {
  * This is the raw XML string; the handler parses specific sections
  * as needed. The full XML is persisted to DynamoDB for admin review.
  */
+/**
+ * One phase-3 gap defence: the honest framing, transfer bridge and prep
+ * action the strategist produced for a flagged skill gap. Extracted from the
+ * analysis XML so the UI can show the defence NEXT TO the gap instead of
+ * leaving it buried in the raw document.
+ */
+export interface GapMitigation {
+    readonly gap: string;
+    readonly honestFraming: string;
+    readonly bridgeNarrative: string;
+    readonly proactiveAction: string;
+    readonly goNoGo: string;
+}
+
 export interface StrategistAnalysisResult {
     /** The full XML analysis (raw string) */
     readonly analysisXml: string;
@@ -738,6 +795,9 @@ export interface StrategistAnalysisResult {
         readonly overallFitRating: FitRating;
         readonly applicationRecommendation: ApplicationRecommendation;
     };
+
+    /** Phase-3 gap defences, structured (empty for legacy runs). */
+    readonly gapMitigations: GapMitigation[];
 
     /** Generated cover letter (structured object, null when not requested) */
     readonly coverLetter: CoverLetter | null;

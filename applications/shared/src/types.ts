@@ -153,8 +153,12 @@ export type AgentName =
     | 'cover-letter-rewrite'
     // resume guard pipeline.
     | 'resume-rewrite'
+    | 'resume-condense'
+    | 'resume-expand'
     // ATS feedback loop — surface attainable-but-missing keywords.
     | 'surface-keywords'
+    // grounded-metrics loop — weave ledger metrics into a number-free resume.
+    | 'surface-metrics'
     // doc-vs-code drift — reframe a superseded-tech bullet as a migration narrative.
     | 'migration-reframe'
     // grounded change-impact narration over a commit's diff facts.
@@ -162,7 +166,10 @@ export type AgentName =
     // narrative eval: LLM judge for combined-overview quality.
     | 'case-study-overview-judge'
     // free-tier narrative resume + cover letter writer.
-    | 'free-resume-writer';
+    | 'free-resume-writer'
+    // CRAG-style re-retrieval adjudicator for kb_present_not_retrieved gaps.
+    | 'corrective-retrieval'
+    | 'summary-repair';
 
 /**
  * Model-agnostic configuration for a single agent.
@@ -199,6 +206,14 @@ export interface AgentConfig {
      * Written to prompt_invocations.prompt_id.
      */
     readonly promptId?: string;
+
+    /**
+     * Prompt content version — sourced from the prompt markdown frontmatter
+     * (`version:`) when the persona lives in prompts/content/*.md.
+     * Written to prompt_invocations.prompt_version; falls back to the
+     * process-wide PROMPT_VERSION env var when unset.
+     */
+    readonly promptVersion?: string;
 
     /**
      * Forced tool_use (constrained decoding). When set, runAgent sends a
@@ -343,6 +358,42 @@ export interface OutlineSection {
 }
 
 /**
+ * Counts of evidence units the KB retrieval actually returned for a topic.
+ * The Research agent emits this; it is the ONLY input to deterministic
+ * article-archetype selection (see article-pipeline/src/prompts/archetypes.ts).
+ * A unit is counted only when it is complete — e.g. a failure narrative needs
+ * symptom + diagnosis + fix all present, not a mention of something breaking.
+ */
+export interface EvidenceInventory {
+    /** Complete failure narratives: symptom + diagnosis + fix all present. */
+    readonly failureNarratives: number;
+    /** Measured quantities: durations, costs, sizes, rates with a source. */
+    readonly metrics: number;
+    /** Head-to-head evaluations of 2+ alternatives with criteria. */
+    readonly comparisons: number;
+    /** Ordered, reproducible step sequences (setup, migration, build). */
+    readonly stepSequences: number;
+    /** Decision records: context + options considered + choice + consequence. */
+    readonly decisionRecords: number;
+    /** Verified deep-links available for citation. */
+    readonly deepLinks: number;
+    /** Diagnostic artefacts: real error strings, log excerpts, command output. */
+    readonly diagnosticArtifacts: number;
+}
+
+/** A verified deep link plus the exact claim it supports. */
+export interface CitableLink {
+    readonly url: string;
+    readonly supportsClaim: string;
+}
+
+/** A concrete figure retrieved from the KB, with what it measures. */
+export interface AvailableMetric {
+    readonly value: string;
+    readonly measures: string;
+}
+
+/**
  * Complete output from the Research Agent.
  *
  * Provides the Writer Agent with structured context including
@@ -413,6 +464,26 @@ export interface ResearchResult {
      * for the Writer Agent to incorporate.
      */
     readonly seoResearch?: SeoResearch;
+
+    // ── Evidence-driven archetype selection (Phase 2) ────────────────────────
+    // All optional: absent on legacy runs, in which case the Writer falls back
+    // to the static blog persona. Populated when the Research agent runs the
+    // evidence-counting rubric.
+
+    /** Counts of evidence units retrieved — the sole input to archetype selection. */
+    readonly evidenceInventory?: EvidenceInventory;
+
+    /** Verified deep links: the ONLY external links the Writer may use. */
+    readonly citableLinks?: ReadonlyArray<CitableLink>;
+
+    /** Repositories marked PUBLIC that the Writer may link. */
+    readonly publicRepos?: ReadonlyArray<string>;
+
+    /** Operational identifiers explicitly cleared for publication. */
+    readonly publishIdentifiers?: ReadonlyArray<string>;
+
+    /** Concrete KB figures with what each measures — the Writer must use these. */
+    readonly availableMetrics?: ReadonlyArray<AvailableMetric>;
 }
 
 // =============================================================================
@@ -591,6 +662,8 @@ export interface QaValidationResult {
         readonly contentQuality: DimensionResult;
         /** Narrow problem focus + a concrete measured result (2026 portfolio thesis). */
         readonly specificityAndResult: DimensionResult;
+        /** Leaked identifiers, ungrounded/false security claims, or exploit how-to. */
+        readonly securityDisclosure: DimensionResult;
     };
     /** Human-readable review summary */
     readonly summary: string;

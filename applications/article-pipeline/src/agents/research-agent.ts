@@ -77,7 +77,9 @@ const KB_AUGMENTED_THRESHOLD = 500;
 /** Maximum KB passages to retrieve (Bedrock KB path — fixed depth). */
 const MAX_KB_PASSAGES = 10;
 
-const RESEARCH_RETRIEVAL_SOURCE = (): string => process.env['RESEARCH_RETRIEVAL_SOURCE'] ?? 'bedrock-kb';
+// Default pgvector: the Bedrock/Pinecone KB was decommissioned 2026-07, so a
+// missing env var must never select the deleted KB path.
+const RESEARCH_RETRIEVAL_SOURCE = (): string => process.env['RESEARCH_RETRIEVAL_SOURCE'] ?? 'pgvector';
 
 /** Maximum characters to include from previous version content */
 const PREVIOUS_VERSION_CONTENT_CAP = 3000;
@@ -500,11 +502,93 @@ const RESEARCH_TOOL = {
                 required: ['primaryKeyword', 'secondaryKeywords', 'suggestedReferences'],
                 additionalProperties: false,
             },
+            // ── Evidence-driven archetype selection (Phase 2) ──────────────
+            evidenceInventory: {
+                type: 'object',
+                properties: {
+                    failureNarratives:   { type: 'integer' },
+                    metrics:             { type: 'integer' },
+                    comparisons:         { type: 'integer' },
+                    stepSequences:       { type: 'integer' },
+                    decisionRecords:     { type: 'integer' },
+                    deepLinks:           { type: 'integer' },
+                    diagnosticArtifacts: { type: 'integer' },
+                },
+                required: [
+                    'failureNarratives', 'metrics', 'comparisons', 'stepSequences',
+                    'decisionRecords', 'deepLinks', 'diagnosticArtifacts',
+                ],
+                additionalProperties: false,
+            },
+            citableLinks: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        url:           { type: 'string' },
+                        supportsClaim: { type: 'string' },
+                    },
+                    required: ['url', 'supportsClaim'],
+                    additionalProperties: false,
+                },
+            },
+            publicRepos:        STR_ARRAY,
+            publishIdentifiers: STR_ARRAY,
+            availableMetrics: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        value:    { type: 'string' },
+                        measures: { type: 'string' },
+                    },
+                    required: ['value', 'measures'],
+                    additionalProperties: false,
+                },
+            },
         },
         required: ['outline', 'technicalFacts', 'suggestedTitle', 'suggestedTags'],
         additionalProperties: false,
     },
 };
+
+/**
+ * Coerce a model-emitted value into an array before the item schema validates.
+ *
+ * Research runs under forced tool_use, but Bedrock's constrained decoding does
+ * NOT reliably enforce nested `type: array` fields — the model occasionally
+ * emits a bare string (an empty "", "none"/"n/a", or a JSON-stringified array)
+ * where an array is required. A plain `z.array(...)` REJECTS that and the whole
+ * research brief fails schema validation, aborting the pipeline before the
+ * Writer runs (observed live: `citableLinks` returned as a string, run
+ * af9b983b). This preprocessor coerces those shapes to an array so a soft,
+ * optional field never hard-fails the run:
+ *   - already an array            → unchanged
+ *   - "" / "none" / "n/a" / null  → []  (no data, not an error)
+ *   - a JSON-stringified array    → the parsed array
+ *   - anything else               → passed through so the item schema still
+ *                                    rejects genuinely wrong shapes (number, object)
+ *
+ * Malformed string content is dropped to [] rather than wrapped, so a stray
+ * string can never be smuggled in as a fabricated link/metric object.
+ */
+function coerceJsonArray<T extends z.ZodTypeAny>(items: T) {
+    return z.preprocess((v): unknown => {
+        if (Array.isArray(v)) return v;
+        if (v === null || v === undefined) return [];
+        if (typeof v === 'string') {
+            const s = v.trim();
+            if (s === '' || s.toLowerCase() === 'none' || s.toLowerCase() === 'n/a') return [];
+            try {
+                const parsed: unknown = JSON.parse(s);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch {
+                return [];
+            }
+        }
+        return v;
+    }, z.array(items));
+}
 
 const ResearchModelSchema = z.object({
     outline: z.array(z.object({
@@ -519,12 +603,32 @@ const ResearchModelSchema = z.object({
     seoResearch: z.object({
         primaryKeyword:    z.string(),
         secondaryKeywords: z.array(z.string()),
-        suggestedReferences: z.array(z.object({
+        suggestedReferences: coerceJsonArray(z.object({
             label:     z.string(),
             url:       z.string(),
             relevance: z.string(),
         }).strict()),
     }).strict().optional(),
+    // ── Evidence-driven archetype selection (Phase 2), all optional ──────────
+    evidenceInventory: z.object({
+        failureNarratives:   z.number(),
+        metrics:             z.number(),
+        comparisons:         z.number(),
+        stepSequences:       z.number(),
+        decisionRecords:     z.number(),
+        deepLinks:           z.number(),
+        diagnosticArtifacts: z.number(),
+    }).strict().optional(),
+    citableLinks: coerceJsonArray(z.object({
+        url:           z.string(),
+        supportsClaim: z.string(),
+    }).strict()).optional(),
+    publicRepos:        z.array(z.string()).optional(),
+    publishIdentifiers: z.array(z.string()).optional(),
+    availableMetrics: coerceJsonArray(z.object({
+        value:    z.string(),
+        measures: z.string(),
+    }).strict()).optional(),
 }).strict();
 
 /** The subset of {@link ResearchResult} the model actually produces. */
@@ -534,6 +638,11 @@ export interface ResearchModelOutput {
     suggestedTitle: string;
     suggestedTags: string[];
     seoResearch?: SeoResearch;
+    evidenceInventory?: ResearchResult['evidenceInventory'];
+    citableLinks?: ResearchResult['citableLinks'];
+    publicRepos?: ResearchResult['publicRepos'];
+    publishIdentifiers?: ResearchResult['publishIdentifiers'];
+    availableMetrics?: ResearchResult['availableMetrics'];
 }
 
 /**
@@ -566,6 +675,11 @@ export function validateArticleResearch(raw: unknown): ResearchModelOutput {
         suggestedTitle: d.suggestedTitle,
         suggestedTags: d.suggestedTags,
         seoResearch,
+        evidenceInventory:  d.evidenceInventory,
+        citableLinks:       d.citableLinks,
+        publicRepos:        d.publicRepos,
+        publishIdentifiers: d.publishIdentifiers,
+        availableMetrics:   d.availableMetrics,
     };
 }
 
@@ -657,6 +771,11 @@ export async function executeResearchAgent(
                 authorDirection,
                 previousVersionContent,
                 seoResearch: model.seoResearch,
+                evidenceInventory:  model.evidenceInventory,
+                citableLinks:       model.citableLinks,
+                publicRepos:        model.publicRepos,
+                publishIdentifiers: model.publishIdentifiers,
+                availableMetrics:   model.availableMetrics,
             };
         },
         pipelineContext: ctx,
