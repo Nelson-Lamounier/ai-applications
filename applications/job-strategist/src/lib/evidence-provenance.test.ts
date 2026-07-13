@@ -1,5 +1,9 @@
 /** @format */
-import { buildProvenanceRows, buildRepoQualityRows } from './evidence-provenance.js';
+import type { Pool } from 'pg';
+
+import {
+    buildProvenanceRows, buildRepoQualityRows, persistEvidenceProvenance, persistRepoEvidenceQuality,
+} from './evidence-provenance.js';
 
 const KB = [
     '[Source: Nelson-Lamounier/cdk-monitoring/docs/k8s.md, Cosine: 0.390, Rerank: 0.810]',
@@ -91,5 +95,75 @@ describe('buildRepoQualityRows', () => {
 
     it('returns no rows for an empty trace', () => {
         expect(buildRepoQualityRows([], codeTech)).toHaveLength(0);
+    });
+});
+
+/** Mock pool whose connect() returns a client; every query resolves rowCount: 1. */
+function mockPool() {
+    const release = jest.fn();
+    const query = jest.fn().mockResolvedValue({ rowCount: 1 });
+    const connect = jest.fn().mockResolvedValue({ query, release });
+    return { pool: { connect } as unknown as Pool, connect, query, release };
+}
+
+describe('persistEvidenceProvenance (F12 — RLS-scoped write)', () => {
+    const meta = {
+        pipelineRunId: 'run-1', userId: 'u-1', targetRole: 'Engineer', targetCompany: 'Acme', agent: 'research' as const,
+    };
+    const row = buildProvenanceRows(inputs)[0];
+
+    it('runs the INSERT inside withUserRls: BEGIN, set_config(userId), INSERT, COMMIT', async () => {
+        const { pool, connect, query, release } = mockPool();
+
+        const count = await persistEvidenceProvenance(pool, meta, [row]);
+
+        expect(count).toBe(1);
+        expect(connect).toHaveBeenCalledTimes(1);
+        expect(query.mock.calls.map((c) => c[0])).toEqual([
+            'BEGIN',
+            expect.stringMatching(/set_config\('app\.current_user_id'/),
+            expect.stringMatching(/INSERT INTO evidence_provenance/i),
+            'COMMIT',
+        ]);
+        expect(query.mock.calls[1][1]).toEqual(['u-1']);
+        expect(query.mock.calls[2][1]?.[1]).toBe('u-1'); // user_id is the 2nd bound param
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 0 and never opens a connection for an empty rows list', async () => {
+        const { pool, connect } = mockPool();
+        const count = await persistEvidenceProvenance(pool, meta, []);
+        expect(count).toBe(0);
+        expect(connect).not.toHaveBeenCalled();
+    });
+});
+
+describe('persistRepoEvidenceQuality (F12 — RLS-scoped write)', () => {
+    const meta = { pipelineRunId: 'run-1', userId: 'u-1', targetRole: 'Engineer' };
+    const qualityRow = buildRepoQualityRows(buildProvenanceRows(inputs), new Map())[0];
+
+    it('runs the INSERT inside withUserRls: BEGIN, set_config(userId), INSERT, COMMIT', async () => {
+        const { pool, connect, query, release } = mockPool();
+
+        const count = await persistRepoEvidenceQuality(pool, meta, [qualityRow]);
+
+        expect(count).toBe(1);
+        expect(connect).toHaveBeenCalledTimes(1);
+        expect(query.mock.calls.map((c) => c[0])).toEqual([
+            'BEGIN',
+            expect.stringMatching(/set_config\('app\.current_user_id'/),
+            expect.stringMatching(/INSERT INTO repo_evidence_quality/i),
+            'COMMIT',
+        ]);
+        expect(query.mock.calls[1][1]).toEqual(['u-1']);
+        expect(query.mock.calls[2][1]?.[1]).toBe('u-1'); // user_id is the 2nd bound param
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 0 and never opens a connection for an empty rows list', async () => {
+        const { pool, connect } = mockPool();
+        const count = await persistRepoEvidenceQuality(pool, meta, []);
+        expect(count).toBe(0);
+        expect(connect).not.toHaveBeenCalled();
     });
 });

@@ -1,5 +1,7 @@
 /** @format */
-import { buildRepoProfiles, buildRepoProfileContext, deriveTopology } from './repo-profile.js';
+import type { Pool } from 'pg';
+
+import { buildRepoProfiles, buildRepoProfileContext, deriveTopology, persistRepoProfiles } from './repo-profile.js';
 import type { Signals } from './repo-profile.js';
 
 const tech = (...t: string[]) => new Set(t);
@@ -112,5 +114,46 @@ describe('buildRepoProfileContext', () => {
     });
     it('returns empty string for no profiles', () => {
         expect(buildRepoProfileContext([])).toBe('');
+    });
+});
+
+/** Mock pool whose connect() returns a client; the INSERT resolves rowCount. */
+function mockPool() {
+    const release = jest.fn();
+    const query = jest.fn().mockResolvedValue({ rowCount: 1 });
+    const connect = jest.fn().mockResolvedValue({ query, release });
+    return { pool: { connect } as unknown as Pool, connect, query, release };
+}
+
+describe('persistRepoProfiles (F12 — RLS-scoped write)', () => {
+    it('runs the INSERT inside withUserRls: BEGIN, set_config(userId), INSERT, COMMIT', async () => {
+        const { pool, connect, query, release } = mockPool();
+        const [profile] = buildRepoProfiles(
+            new Map([['o/r', new Set(['aws_cdk'])]]),
+            new Map([['o/r', { has_iac: true } as Signals]]),
+        );
+
+        const count = await persistRepoProfiles(pool, { pipelineRunId: 'run-1', userId: 'u-1' }, [profile]);
+
+        expect(count).toBe(1);
+        expect(connect).toHaveBeenCalledTimes(1);
+        expect(query.mock.calls.map((c) => c[0])).toEqual([
+            'BEGIN',
+            expect.stringMatching(/set_config\('app\.current_user_id'/),
+            expect.stringMatching(/INSERT INTO repo_profile/i),
+            'COMMIT',
+        ]);
+        const setConfigCall = query.mock.calls[1];
+        expect(setConfigCall[1]).toEqual(['u-1']);
+        const insertCall = query.mock.calls[2];
+        expect(insertCall[1]).toEqual(['run-1', 'u-1', 'o/r', profile.repoType, profile.frameworks, profile.services, profile.concepts]);
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 0 and never opens a connection for an empty profiles list', async () => {
+        const { pool, connect } = mockPool();
+        const count = await persistRepoProfiles(pool, { pipelineRunId: 'run-1', userId: 'u-1' }, []);
+        expect(count).toBe(0);
+        expect(connect).not.toHaveBeenCalled();
     });
 });
