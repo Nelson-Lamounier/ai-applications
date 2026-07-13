@@ -47,9 +47,13 @@ function matchSkillCategory(rawTermLower: string, paddedResume: string): boolean
 // F4: multi-word terms need PROXIMITY, not just co-presence — "project" and "management"
 // each appearing somewhere in the resume, in unrelated sentences, is not the same as the
 // resume demonstrating "project management". A sentence boundary (.!?;\n) is a hard cut;
-// within a sentence, tokens must additionally fall within PROXIMITY_WINDOW words of each
-// other so a long buzzword-list sentence doesn't bridge two unrelated mentions either.
-const PROXIMITY_WINDOW = 8;
+// within a sentence, ALL significant tokens must additionally fall within a single span
+// of PROXIMITY_WINDOW words of each other (a true span check, not anchored on any one
+// token) so a long buzzword-list sentence doesn't bridge two unrelated mentions either.
+// WINDOW=12 is wide enough for ordinary prose ("owned the project timeline, budget, and
+// risk register while reporting to senior management weekly" — 10 words apart) while
+// still requiring genuine co-occurrence in one sentence.
+const PROXIMITY_WINDOW = 12;
 
 function splitSentences(text: string): string[] {
     return text.split(/[.!?;\n]+/);
@@ -59,16 +63,44 @@ function sentenceWords(sentence: string): string[] {
     return sentence.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter((w) => w.length > 0);
 }
 
-/** True when every token has an occurrence within `windowSize` words of some occurrence of the first token. */
+/**
+ * True span check: every token in `tokens` must occur somewhere in `words`, and there
+ * must exist a choice of one occurrence per token (tokens may repeat) whose positions
+ * fit within a single window of `windowSize` words — i.e. (max position - min position)
+ * <= windowSize across the whole token span, not measured from any one "anchor" token.
+ *
+ * Implemented as the classic "smallest range covering at least one element from each of
+ * k lists" sweep: merge every (position, tokenIndex) pair, sort by position, then slide
+ * a window over the merged list tracking how many distinct tokens are currently covered.
+ */
 function withinWindow(words: string[], tokens: string[], windowSize: number): boolean {
-    const positions = tokens.map((tok) => {
-        const idxs: number[] = [];
-        words.forEach((w, i) => { if (w === tok) idxs.push(i); });
-        return idxs;
+    const merged: Array<{ pos: number; tokenIdx: number }> = [];
+    const tokenSeen = new Array(tokens.length).fill(false);
+    words.forEach((w, pos) => {
+        const tokenIdx = tokens.indexOf(w);
+        if (tokenIdx !== -1) {
+            merged.push({ pos, tokenIdx });
+            tokenSeen[tokenIdx] = true;
+        }
     });
-    if (positions.some((p) => p.length === 0)) return false; // a token is absent from this sentence
-    return positions[0].some((anchor) =>
-        positions.slice(1).every((idxs) => idxs.some((p) => Math.abs(p - anchor) <= windowSize)));
+    if (tokenSeen.some((seen) => !seen)) return false; // a token is absent from this sentence
+    merged.sort((a, b) => a.pos - b.pos);
+
+    const counts = new Array(tokens.length).fill(0);
+    let distinct = 0;
+    let left = 0;
+    let minSpan = Infinity;
+    for (let right = 0; right < merged.length; right++) {
+        if (counts[merged[right].tokenIdx] === 0) distinct++;
+        counts[merged[right].tokenIdx]++;
+        while (distinct === tokens.length) {
+            minSpan = Math.min(minSpan, merged[right].pos - merged[left].pos);
+            counts[merged[left].tokenIdx]--;
+            if (counts[merged[left].tokenIdx] === 0) distinct--;
+            left++;
+        }
+    }
+    return minSpan <= windowSize;
 }
 
 /** Co-occurrence check for multi-word terms: all tokens present in the SAME sentence, within a bounded window. */

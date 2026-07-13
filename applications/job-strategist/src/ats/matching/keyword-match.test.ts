@@ -72,6 +72,24 @@ describe('matchTier1 — proximity for multi-word terms (F4)', () => {
         expect(matchTier1('project management',
             'led the project through several phases of stakeholder management')).toBe(true);
     });
+
+    it('true span check: ordinary prose with tokens ~10 words apart in one sentence matches', () => {
+        expect(matchTier1('project management',
+            'owned the project timeline, budget, and risk register while reporting to senior management weekly',
+        )).toBe(true);
+    });
+
+    it('true span check: tokens scattered across one sentence (not anchored on the first token) still match', () => {
+        expect(matchTier1('root cause analysis',
+            'traced the root of the failure back to its underlying cause through detailed analysis',
+        )).toBe(true);
+    });
+
+    it('regression guard: cross-sentence tokens still never match (the F4 honesty fix holds)', () => {
+        expect(matchTier1('project management',
+            'Shipped a side project last year. Handled stakeholder time management separately.',
+        )).toBe(false);
+    });
 });
 
 describe('tokenOverlapMatch', () => {
