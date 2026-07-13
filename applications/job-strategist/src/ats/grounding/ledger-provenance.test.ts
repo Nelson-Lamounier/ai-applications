@@ -89,5 +89,37 @@ describe('attachPassageProvenance', () => {
             const [out] = attachPassageProvenance([entry('SQL')], parseKbPassages(sqlKb, SEP));
             expect(out.provenance?.[0].source).toContain('schema.sql');
         });
+
+        describe('word-boundary matching (2-char canonicals)', () => {
+            const ongoingKb = [
+                '[Source: Nelson-Lamounier/ai-applications/docs/decisions/0009-prose.md, Score: 0.6]\nThe team made ongoing decisions about efficient algorithms and shared learnings weekly.',
+            ].join(SEP);
+            const goKb = [
+                '[Source: Nelson-Lamounier/ai-applications/applications/shared/src/main.go, Score: 0.6]\nWe wrote the service in Go for its low-latency concurrency model.',
+            ].join(SEP);
+            const ciKb = [
+                '[Source: Nelson-Lamounier/kubernetes-bootstrap/.github/workflows/ci.yml, Score: 0.6]\nWe ran CI on every push to catch regressions before merge.',
+            ].join(SEP);
+
+            it('does NOT attach "ongoing"/"decisions"/"efficient" prose as support for skill "Go"', () => {
+                const [out] = attachPassageProvenance([entry('Go')], parseKbPassages(ongoingKb, SEP));
+                expect(out.provenance).toBeUndefined();
+            });
+
+            it('does NOT attach "ongoing"/"decisions"/"efficient" prose as support for skill "CI"', () => {
+                const [out] = attachPassageProvenance([entry('CI')], parseKbPassages(ongoingKb, SEP));
+                expect(out.provenance).toBeUndefined();
+            });
+
+            it('DOES attach a passage that genuinely mentions "Go" as a word', () => {
+                const [out] = attachPassageProvenance([entry('Go')], parseKbPassages(goKb, SEP));
+                expect(out.provenance?.[0].source).toContain('main.go');
+            });
+
+            it('DOES attach a passage that genuinely mentions "CI" as a word', () => {
+                const [out] = attachPassageProvenance([entry('CI')], parseKbPassages(ciKb, SEP));
+                expect(out.provenance?.[0].source).toContain('ci.yml');
+            });
+        });
     });
 });

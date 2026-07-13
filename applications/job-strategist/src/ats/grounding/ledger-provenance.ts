@@ -14,6 +14,7 @@
  * must match at least half its tokens. Pure — no I/O, no LLM.
  */
 import type { SkillEvidenceEntry, SkillEvidencePassage } from '@bedrock/shared';
+import { padded } from '../matching/keyword-match.js';
 
 export interface KbPassage {
     readonly source: string;
@@ -61,6 +62,20 @@ function toolTokens(tool: string): string[] {
         .filter((t) => (t.length >= 4 || SHORT_CANONICAL_ALLOWLIST.has(t)) && !STOPWORDS.has(t));
 }
 
+/**
+ * True when `token` is present in the passage. Allowlisted short canonicals
+ * (2-3 chars — "go", "ci", "cd", "sql", ...) require a WORD-BOUNDARY match
+ * (via the space-padded `paddedHay`) so "go" doesn't false-match "ongoing"
+ * and "ci"/"cd" don't false-match "decisions"/"efficient". Longer tokens keep
+ * the raw substring check against `hay` deliberately — that's what lets a
+ * token like "state" match inside a compound identifier such as
+ * "RdsSyncStateRepository" with no word boundary between the parts.
+ */
+function tokenMatches(hay: string, paddedHay: string, token: string): boolean {
+    if (SHORT_CANONICAL_ALLOWLIST.has(token)) return paddedHay.includes(` ${token} `);
+    return hay.includes(token);
+}
+
 const SNIPPET_CHARS = 200;
 
 /**
@@ -105,7 +120,7 @@ export function attachPassageProvenance(
     topN = 3,
 ): SkillEvidenceEntry[] {
     if (passages.length === 0) return ledger;
-    const lowered = passages.map((p) => ({ p, hay: p.text.toLowerCase() }));
+    const lowered = passages.map((p) => ({ p, hay: p.text.toLowerCase(), paddedHay: padded(p.text) }));
 
     return ledger.map((entry) => {
         if (entry.status === 'gap') return entry;
@@ -114,12 +129,12 @@ export function attachPassageProvenance(
         const needed = Math.max(1, Math.ceil(tokens.length / 2));
 
         const scored = lowered
-            .map(({ p, hay }) => ({ p, hay, hits: tokens.filter((t) => hay.includes(t)).length }))
+            .map(({ p, hay, paddedHay }) => ({ p, hay, paddedHay, hits: tokens.filter((t) => tokenMatches(hay, paddedHay, t)).length }))
             .filter((s) => s.hits >= needed)
             // Negation guard: a passage that mentions the tool only in a
             // negation/migration context (e.g. "migrated away from Kubernetes")
             // is not supporting evidence — drop it rather than misattribute it.
-            .filter((s) => !tokens.some((t) => s.hay.includes(t) && isNegatedMention(s.hay, t)))
+            .filter((s) => !tokens.some((t) => tokenMatches(s.hay, s.paddedHay, t) && isNegatedMention(s.hay, t)))
             .sort((a, b) => b.hits - a.hits || (b.p.cosine ?? 0) - (a.p.cosine ?? 0))
             .slice(0, topN);
         if (scored.length === 0) return entry;
