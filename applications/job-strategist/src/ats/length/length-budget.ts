@@ -7,7 +7,7 @@
  * skills 2.3x over, a 91-word bullet). Prompt rules are the first attempt;
  * this module is the enforcement layer:
  *
- *   measure → (over budget?) one bounded Haiku condense rewrite, JD-aware →
+ *   measure → (over budget?) one bounded LLM (Sonnet) condense rewrite, JD-aware →
  *   re-measure → deterministic hard trims as the backstop.
  *
  * Hard trims only ever drop WHOLE units (skill items, trailing project
