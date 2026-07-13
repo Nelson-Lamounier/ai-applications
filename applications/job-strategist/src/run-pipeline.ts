@@ -37,8 +37,8 @@ import { annotateGapCauses } from './lib/gap-cause.js';
 import { createViolationLog } from './lib/violation-log.js';
 import { loadCandidateContactBlock } from './lib/candidate-contact.js';
 import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
-import { applyLengthBudget } from './ats/length-budget.js';
-import { parseKbPassages, attachPassageProvenance } from './ats/ledger-provenance.js';
+import { applyLengthBudget } from './ats/length/length-budget.js';
+import { parseKbPassages, attachPassageProvenance } from './ats/grounding/ledger-provenance.js';
 import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
@@ -50,18 +50,18 @@ import {
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
 import { S3Client } from '@aws-sdk/client-s3';
-import { renderCheckAndStoreAts } from './ats/run-ats-check.js';
-import type { AtsCheckResult } from './ats/ats-check.schema.js';
-import { buildSkillEvidenceLedger } from './ats/skill-evidence-ledger.js';
-import { canonicalJdSkills } from './ats/canonical-jd-skills.js';
-import { splitAttainable } from './ats/attainable.js';
-import { demoteMisattributedVendors } from './ats/vendor-provenance.js';
-import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/code-truth.js';
-import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/repo-profile.js';
-import { detectStaleMigrations, reframeStaleMigrations } from './ats/migration-reframe.js';
-import { buildRetrievalPrefilter } from './ats/retrieval-prefilter.js';
+import { renderCheckAndStoreAts } from './ats/gate/run-ats-check.js';
+import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
+import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
+import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
+import { splitAttainable } from './ats/gate/attainable.js';
+import { demoteMisattributedVendors } from './ats/grounding/vendor-provenance.js';
+import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/grounding/code-truth.js';
+import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/context/repo-profile.js';
+import { detectStaleMigrations, reframeStaleMigrations } from './ats/reconcile/migration-reframe.js';
+import { buildRetrievalPrefilter } from './ats/context/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
-import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/number-provenance.js';
+import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/grounding/number-provenance.js';
 import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
 import { reconcileExperienceRoster } from './lib/experience-roster.js';
 import { surfaceMetrics } from './agents/quality/surface-metrics.js';
@@ -109,11 +109,11 @@ async function applyResumeIntegrity(
 function resolveVerifiedAnalysis(original: string, g: { status: string; answer: string }): string {
     return g.status === 'GROUNDED' ? original : g.answer;
 }
-import { formatTechTransferContext } from './ats/tech-transfer-context.js';
-import { attachCodeEvidence } from './ats/tool-evidence-retrieval.js';
-import { attachSourceLanes, mergeRepoLane } from './ats/evidence-lane.js';
-import { applyDegreeReconcile } from './ats/education-reconcile.js';
-import { applyYearsGapReconcile } from './ats/years-gap-reconcile.js';
+import { formatTechTransferContext } from './ats/context/tech-transfer-context.js';
+import { attachCodeEvidence } from './ats/grounding/tool-evidence-retrieval.js';
+import { attachSourceLanes, mergeRepoLane } from './ats/grounding/evidence-lane.js';
+import { applyDegreeReconcile } from './ats/reconcile/education-reconcile.js';
+import { applyYearsGapReconcile } from './ats/reconcile/years-gap-reconcile.js';
 import { runFreeTier }             from './free/run-free.js';
 import { gatherFreeEvidence }      from './free/gather-evidence.js';
 import { bedrockFreeResumeWriter } from './agents/writer/free-resume-writer.js';

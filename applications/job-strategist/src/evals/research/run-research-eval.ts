@@ -39,7 +39,7 @@ async function main(): Promise<void> {
     const [{ extractJdSignal }, { executeResearchAgent }, { canonicalJdSkills }] = await Promise.all([
         import('../../agents/jd/jd-extractor.js'),
         import('../../agents/research/research-agent.js'),
-        import('../../ats/canonical-jd-skills.js'),
+        import('../../ats/context/canonical-jd-skills.js'),
     ]);
 
     const jdSignal = await extractJdSignal(jdText);

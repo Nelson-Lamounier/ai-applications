@@ -17,7 +17,7 @@ import {
     loadEducation,
     formatEducation,
 } from '../agents/evidence/career-history.js';
-import { buildCodeStackContext } from '../ats/code-truth.js';
+import { buildCodeStackContext } from '../ats/grounding/code-truth.js';
 import { loadCommitPrEvidence } from './commit-pr-evidence.js';
 import { loadProfilePositioning } from './profile-intelligence.js';
 import { loadAchievementEvidence } from '../agents/evidence/achievement-evidence.js';

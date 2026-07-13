@@ -18,7 +18,7 @@ import { runAgent, log } from '@bedrock/shared';
 import { CLAIM_STRENGTH_RULE } from '../../lib/claim-strength.js';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData, SkillEvidenceEntry } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../writer/resume-tool-schema.js';
-import { citableFiles } from '../../ats/tool-evidence-retrieval.js';
+import { citableFiles } from '../../ats/grounding/tool-evidence-retrieval.js';
 
 const MODEL_ID = process.env['SURFACE_KEYWORDS_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 

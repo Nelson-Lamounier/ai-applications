@@ -7,12 +7,12 @@ import type { AtsCheckResult } from './ats-check.schema.js';
 import type { CoverageRow } from './checks.js';
 import { buildAtsCheck } from './checks.js';
 import { collectJdMustHaves, buildGroundedChecker } from './jd-keywords.js';
-import { matchTerm, type Embedder } from './keyword-match.js';
+import { matchTerm, type Embedder } from '../matching/keyword-match.js';
 import { parsePdfBack } from './parse-back.js';
 import { storeAtsArtifacts } from './store-ats-artifacts.js';
-import { withUserRls } from '../lib/rls.js';
-import { renderResumePdf } from '../render/render-resume-pdf.js';
-import type { JdExtraction } from '../agents/jd/jd-extractor.js';
+import { withUserRls } from '../../lib/rls.js';
+import { renderResumePdf } from '../../render/render-resume-pdf.js';
+import type { JdExtraction } from '../../agents/jd/jd-extractor.js';
 
 /** Minimal structured logger surface (pino-compatible). */
 export interface AtsLogger {

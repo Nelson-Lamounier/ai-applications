@@ -14,7 +14,7 @@
  */
 
 import type { VerifiedMatch, PartialMatch, SkillGap, JobRequirement } from '@bedrock/shared';
-import type { EducationEntry } from '../agents/evidence/career-history.js';
+import type { EducationEntry } from '../../agents/evidence/career-history.js';
 
 // A requirement that is actually about a degree/qualification (not e.g. "degree of automation").
 const DEGREE_REQ_RE = /\b(bachelor'?s?|master'?s?|degree|diploma|b\.?sc|b\.?eng|graduate|undergraduate|qualification in)\b/i;

@@ -9,7 +9,7 @@
  * Pure function — no I/O. Returns '' when no groups intersect.
  */
 
-import { normalizeTerm } from './keyword-match.js';
+import { normalizeTerm } from '../matching/keyword-match.js';
 
 /**
  * Resolve a raw term to its canonical form via alias map, then normalize.
