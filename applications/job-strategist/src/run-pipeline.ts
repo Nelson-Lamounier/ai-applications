@@ -62,6 +62,7 @@ import { detectStaleMigrations, reframeStaleMigrations } from './ats/reconcile/m
 import { buildRetrievalPrefilter } from './ats/context/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/grounding/number-provenance.js';
+import { buildGroundingFacts } from './ats/grounding/grounding-facts.js';
 import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
 import { reconcileExperienceRoster } from './lib/experience-roster.js';
 import { surfaceMetrics } from './agents/quality/surface-metrics.js';
@@ -1064,7 +1065,12 @@ export async function main(): Promise<void> {
         };
         // Grounding for the expand direction + the allowed-number set that
         // bounds ANY pass that can add content (expand, surface-keywords).
-        const budgetGroundingFacts = [
+        // VERBATIM sources only (F2) — researchData.verifiedMatches[].sourceCitation
+        // is the matcher's free-text PARAPHRASE of where a skill is demonstrated,
+        // not verbatim KB text; folding it in let a paraphrased number (e.g. "cut
+        // deploy time 40%") launder into the allowed set and surface in a bullet
+        // as if verified. See grounding-facts.ts and its F2 regression test.
+        const budgetGroundingFacts = buildGroundingFacts([
             experienceFactsBlock,
             projectEvidenceBlock,
             groundedMetricsBlock,
@@ -1072,8 +1078,7 @@ export async function main(): Promise<void> {
             // has no years value and the stripper deletes "N years" from the
             // summary mid-sentence (observed live on run a428bdf4).
             formatVerifiedYearsFact(careerEntries),
-            researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
-        ].filter(Boolean).join('\n\n');
+        ]);
         // Keep Experience to verified employers: relocate any project the writer
         // mis-filed as a "Solo <role> — <Project>" experience entry back into
         // projects[].highlights (its github link + description live there). Runs
@@ -1193,12 +1198,13 @@ export async function main(): Promise<void> {
                 // Red flags: no structured red-flag source exists in this scope today
                 // (StrategistResearchResult has no `redFlags`, no recruiter snapshot here) → [].
                 const redFlags: string[] = [];
-                // Grounding facts = verbatim career facts + project evidence + verified-match citations.
-                const groundingFacts = [
+                // Grounding facts = verbatim career facts + project evidence only (F2:
+                // verifiedMatches[].sourceCitation is a matcher paraphrase, not verbatim
+                // KB text, and must never seed the allowed-number set — see grounding-facts.ts).
+                const groundingFacts = buildGroundingFacts([
                     experienceFactsBlock,
                     projectEvidenceBlock,
-                    researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
-                ].filter(Boolean).join('\n\n');
+                ]);
                 // Allowed numbers = original resume + grounding facts. Any number the
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
