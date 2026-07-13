@@ -20,6 +20,7 @@
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { buildReverseAliasMap, mentionsCanonical } from '../matching/keyword-match.js';
+import { peerPredecessorStillCurrent } from '../grounding/succeeds-edges.js';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../../agents/writer/resume-tool-schema.js';
 
 // Sonnet, not Haiku: this is nuanced multi-section structured generation — rewrite ONLY
@@ -67,8 +68,9 @@ function allCodeTech(codeTechByRepo: MigrationDeps['codeTechByRepo']): Set<strin
  * Predecessors genuinely superseded by the code: a successor is in code, the
  * predecessor is not, and no PEER predecessor (one sharing a successor — e.g.
  * kubeadm vs self_hosted_kubernetes, both → aws_eks) is still in code. The peer
- * check avoids false-flagging a non-code-detectable bootstrap tool (kubeadm) when
- * the family's primary approach (self-hosted) is genuinely current.
+ * check (shared with code-truth.ts — see grounding/succeeds-edges.ts) avoids
+ * false-flagging a non-code-detectable bootstrap tool (kubeadm) when the
+ * family's primary approach (self-hosted) is genuinely current.
  */
 function supersededPredecessors(
     succeedsEdges: MigrationDeps['succeedsEdges'],
@@ -79,9 +81,7 @@ function supersededPredecessors(
         if (code.has(predecessor)) continue;
         const present = [...successors].filter((s) => code.has(s));
         if (present.length === 0) continue;
-        const peerCurrent = [...succeedsEdges].some(([peer, peerSucc]) =>
-            peer !== predecessor && code.has(peer) && [...peerSucc].some((s) => successors.has(s)));
-        if (!peerCurrent) out.set(predecessor, present);
+        if (!peerPredecessorStillCurrent(succeedsEdges, code, predecessor, successors)) out.set(predecessor, present);
     }
     return out;
 }
@@ -119,14 +119,19 @@ export function detectStaleMigrations(resume: StructuredResumeData, deps: Migrat
 
 /**
  * Every prose surface that can carry a stale tech claim — summary, experience
- * highlights, AND keyAchievements. A "self-hosted kubeadm" claim lands in all three
- * (observed in production); scanning only highlights left the summary/achievement
- * copies stale. reframeStaleMigrations rewrites the flagged text wherever it appears.
+ * highlights, keyAchievements, AND project highlights/description. A "self-hosted
+ * kubeadm" claim lands in all of these (observed in production), and the project
+ * surface is the one most tied to a specific repo — the exact prose a stale
+ * predecessor-tech claim would appear in. Scanning only experience highlights left
+ * the summary/achievement/project copies stale. reframeStaleMigrations rewrites the
+ * flagged text wherever it appears.
  */
 function proseSurfaces(resume: StructuredResumeData): string[] {
     const highlights = (resume.experience ?? []).flatMap((e) => e?.highlights ?? []);
     const achievements = (resume.keyAchievements ?? []).map((a) => a?.achievement);
-    return [resume.summary, ...highlights, ...achievements]
+    const projectHighlights = (resume.projects ?? []).flatMap((p) => p?.highlights ?? []);
+    const projectDescriptions = (resume.projects ?? []).map((p) => p?.description);
+    return [resume.summary, ...highlights, ...achievements, ...projectHighlights, ...projectDescriptions]
         .filter((t): t is string => typeof t === 'string' && t.length > 0);
 }
 

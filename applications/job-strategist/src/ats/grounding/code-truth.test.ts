@@ -74,10 +74,27 @@ describe('demoteCodeContradictedMatches', () => {
             { ...DEPS, codeTechByRepo: new Map([['Nelson-Lamounier/cdk-monitoring', new Set(['kubernetes', 'argocd'])]]) }],
         ['no evidence files (career evidence, not repo-scoped)', verified('Self-hosted Kubernetes', []), DEPS],
         ['repo with no code truth', verified('Self-hosted Kubernetes', ['Other/unknown-repo/docs/x.md']), DEPS],
+        // PEER-PREDECESSOR GUARD (F11): kubeadm and self_hosted_kubernetes are both
+        // predecessors of aws_eks. self_hosted_kubernetes (the peer) is still current
+        // in code, so the kubeadm claim must NOT be demoted — same guard migration-reframe
+        // already applies (grounding/succeeds-edges.ts), now shared with code-truth.
+        ['a PEER predecessor of the same successor is still current in code', verified('Migrated a kubeadm control plane to managed EKS', [CDK_DOC]),
+            { ...DEPS, codeTechByRepo: new Map([['Nelson-Lamounier/cdk-monitoring', new Set(['aws_eks', 'self_hosted_kubernetes', 'kubernetes'])]]) }],
     ])('KEEPS the claim: %s', (_label, match, deps) => {
         const r = demoteCodeContradictedMatches(matching([match]), deps);
         expect(r.matching.verifiedMatches).toHaveLength(1);
         expect(r.contradictions).toHaveLength(0);
+    });
+
+    it('DOES demote when no peer predecessor is current (the genuine stale case)', () => {
+        // Neither self_hosted_kubernetes nor kubeadm is present in code — no peer to protect it.
+        const r = demoteCodeContradictedMatches(
+            matching([verified('Migrated a kubeadm control plane to managed EKS', [CDK_DOC])]),
+            DEPS,
+        );
+        expect(r.matching.verifiedMatches).toHaveLength(0);
+        expect(r.contradictions).toHaveLength(1);
+        expect(r.contradictions[0]).toMatchObject({ docTech: 'kubeadm', codeSuccessors: ['aws_eks'] });
     });
 
     it('does NOT touch unrelated verified matches', () => {

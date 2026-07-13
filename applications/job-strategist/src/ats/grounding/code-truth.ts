@@ -21,13 +21,17 @@
  *
  * The guard only fires on entities with a curated `succeeds` edge (migration 075+)
  * — absence of a tech in code is NEVER treated as contradiction on its own (a tool
- * may simply be undetectable by SBOM/AST). FAIL-SAFE: no edges / no code evidence
+ * may simply be undetectable by SBOM/AST). It also applies the PEER-PREDECESSOR
+ * guard shared with migration-reframe.ts (grounding/succeeds-edges.ts): a
+ * predecessor is not demoted when a peer predecessor of the same successor is
+ * itself still current in the repo's code. FAIL-SAFE: no edges / no code evidence
  * → no change.
  */
 
 import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
 import { log } from '@bedrock/shared';
 import { buildReverseAliasMap, mentionsCanonical, padded } from '../matching/keyword-match.js';
+import { peerPredecessorStillCurrent } from './succeeds-edges.js';
 
 /** Extract the `owner/repo` prefix from a KB evidence path (first two segments). */
 export function repoOf(path: string): string | null {
@@ -101,6 +105,28 @@ function reposOf(evidenceFiles: ReadonlyArray<string>): string[] {
     return [...repos];
 }
 
+/**
+ * The successor(s) present in `repo`'s code that make `predecessor` superseded
+ * there, or null when the repo has no code truth, still uses the predecessor,
+ * has no successor present, or a PEER predecessor of the same successor is
+ * itself still current (shared guard with migration-reframe.ts — see
+ * grounding/succeeds-edges.ts — a peer being current means the family's
+ * approach is genuinely still in use).
+ */
+function successorsPresentInRepo(
+    repo: string,
+    predecessor: string,
+    successors: ReadonlySet<string>,
+    deps: CodeTruthDeps,
+): string[] | null {
+    const codeSet = deps.codeTechByRepo.get(repo);
+    if (codeSet === undefined || codeSet.has(predecessor)) return null; // no code truth, or P still used
+    const present = [...successors].filter((s) => codeSet.has(s));
+    if (present.length === 0) return null;
+    if (peerPredecessorStillCurrent(deps.succeedsEdges, codeSet, predecessor, successors)) return null;
+    return present;
+}
+
 /** Find a code contradiction for one match, or null. */
 function findContradiction(
     vm: VerifiedMatch,
@@ -116,10 +142,8 @@ function findContradiction(
         const successors = deps.succeedsEdges.get(predecessor);
         if (successors === undefined) continue;
         for (const repo of repos) {
-            const codeSet = deps.codeTechByRepo.get(repo);
-            if (codeSet === undefined || codeSet.has(predecessor)) continue; // no code truth, or P still used
-            const present = [...successors].filter((s) => codeSet.has(s));
-            if (present.length > 0) return { skill: vm.skill, repo, docTech: predecessor, codeSuccessors: present, evidenceFiles: vm.evidenceFiles ?? [] };
+            const present = successorsPresentInRepo(repo, predecessor, successors, deps);
+            if (present !== null) return { skill: vm.skill, repo, docTech: predecessor, codeSuccessors: present, evidenceFiles: vm.evidenceFiles ?? [] };
         }
     }
     return null;
