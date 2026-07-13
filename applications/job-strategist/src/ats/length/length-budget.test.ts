@@ -153,6 +153,43 @@ describe('applyLengthBudget — expand direction', () => {
     });
 });
 
+describe('applyLengthBudget — condense self-scrubs its own instruction leaks (F3)', () => {
+    beforeEach(() => { mockRun.mockReset(); });
+
+    it('strips a length-budget constant (32 = perBulletWords) leaked into a fabricated metric span, ungrounded', async () => {
+        const leaked = base({
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: ['Reduced onboarding time by 32% company-wide.'] }],
+        } as never);
+        mockRun.mockResolvedValue({ data: leaked });
+        const fat = base({ projects: [{ name: 'P', description: sentence(300), github: '' }] } as never);
+        const out = await applyLengthBudget(fat, jd, () => {});
+        expect(out.experience[0].highlights[0]).not.toMatch(/32/);
+        expect(out.experience[0].highlights[0]).toContain('company-wide');
+    });
+
+    it('keeps the same leaked-looking number when groundingFacts states it', async () => {
+        const grounded = base({
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: ['Reduced onboarding time by 32% company-wide.'] }],
+        } as never);
+        mockRun.mockResolvedValue({ data: grounded });
+        const fat = base({ projects: [{ name: 'P', description: sentence(300), github: '' }] } as never);
+        const out = await applyLengthBudget(fat, jd, () => {}, { groundingFacts: 'Verified: onboarding time cut 32% after workflow automation.' });
+        expect(out.experience[0].highlights[0]).toContain('32%');
+    });
+
+    it('scrubEvidenceText grounds the condense scrub WITHOUT authorizing expand', async () => {
+        const grounded = base({
+            experience: [{ company: 'F', title: 'Cloud & DevOps Engineer', period: '2022 - Present', highlights: ['Reduced onboarding time by 32% company-wide.'] }],
+        } as never);
+        mockRun.mockResolvedValue({ data: grounded });
+        const fat = base({ projects: [{ name: 'P', description: sentence(300), github: '' }] } as never);
+        const out = await applyLengthBudget(fat, jd, () => {}, { scrubEvidenceText: 'Verified: onboarding time cut 32% after workflow automation.' });
+        expect(out.experience[0].highlights[0]).toContain('32%');
+        // Only the mocked condense call fired — no separate expand call.
+        expect(mockRun).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('condense prompt — project pitch protection (run 9216cf25)', () => {
     beforeEach(() => { mockRun.mockReset(); });
 

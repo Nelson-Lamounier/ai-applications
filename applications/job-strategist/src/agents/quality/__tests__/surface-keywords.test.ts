@@ -80,4 +80,31 @@ describe('surfaceKeywords', () => {
         await surfaceKeywords(resume, [entry('Terraform')]);
         expect(mockRun).toHaveBeenCalledTimes(1);
     });
+
+    describe('instruction-leak self-scrub (F3)', () => {
+        it('strips a prompt constant (32 = the per-bullet word cap) leaked into a fabricated metric span, ungrounded', async () => {
+            const resume = baseResume();
+            const leaked: StructuredResumeData = {
+                ...resume,
+                experience: [{ company: 'Acme', title: 'Engineer', period: '2020-2024', highlights: ['Cut deploy failures by 32% via Terraform.'] }],
+            };
+            mockRun.mockResolvedValue({ data: leaked });
+            const out = await surfaceKeywords(resume, [entry('Terraform')]);
+            expect(out.experience[0].highlights[0]).not.toMatch(/32/);
+            expect(out.experience[0].highlights[0]).toContain('Terraform');
+        });
+
+        it('keeps the same-looking number when groundingFacts states it', async () => {
+            const resume = baseResume();
+            const grounded: StructuredResumeData = {
+                ...resume,
+                experience: [{ company: 'Acme', title: 'Engineer', period: '2020-2024', highlights: ['Cut deploy failures by 32% via Terraform.'] }],
+            };
+            mockRun.mockResolvedValue({ data: grounded });
+            const out = await surfaceKeywords(resume, [entry('Terraform')], {
+                groundingFacts: 'Verified: Terraform migration cut deploy failures by 32% on the Acme platform.',
+            });
+            expect(out.experience[0].highlights[0]).toContain('32%');
+        });
+    });
 });

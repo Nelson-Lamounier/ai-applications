@@ -1220,7 +1220,12 @@ export async function main(): Promise<void> {
                     // No groundingFacts here: round 1 already expanded to fill;
                     // this pass exists only to SHRINK keyword-rewrite overgrowth.
                     // (Observed live: a second expand+revalidate round cost ~50s.)
-                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code)).catch(() => surfaced);
+                    // scrubEvidenceText (F3): the condense rewrite this triggers
+                    // interpolates its own numeric budgets into the prompt next to
+                    // the resume text — feed it real evidence so a genuinely
+                    // grounded number survives the post-condense instruction-leak
+                    // scrub, without opting back into the expand direction.
+                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     violationLog.recordAll('revalidate_post_keywords', reval.violations);
