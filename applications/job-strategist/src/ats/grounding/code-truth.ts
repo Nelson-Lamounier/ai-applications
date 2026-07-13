@@ -26,18 +26,14 @@
  */
 
 import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
-import { buildReverseAliasMap, mentionsCanonical } from '../matching/keyword-match.js';
+import { log } from '@bedrock/shared';
+import { buildReverseAliasMap, mentionsCanonical, padded } from '../matching/keyword-match.js';
 
 /** Extract the `owner/repo` prefix from a KB evidence path (first two segments). */
 export function repoOf(path: string): string | null {
     const parts = path.split('/').filter((p) => p.length > 0);
     if (parts.length < 2) return null;
     return `${parts[0]}/${parts[1]}`;
-}
-
-/** Space-pad a free-text phrase to a lowercased alnum token stream for whole-word containment. */
-function padded(text: string): string {
-    return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
 }
 
 /** Max technologies listed per repo in the grounding block (keeps the prompt bounded). */
@@ -149,7 +145,16 @@ function toStalePartial(vm: VerifiedMatch, hit: CodeContradiction): PartialMatch
  * edges or no code evidence → input returned unchanged.
  */
 export function demoteCodeContradictedMatches(matching: ResearchMatching, deps: CodeTruthDeps): CodeTruthResult {
-    if (deps.succeedsEdges.size === 0 || deps.codeTechByRepo.size === 0) return { matching, contradictions: [] };
+    if (deps.succeedsEdges.size === 0 || deps.codeTechByRepo.size === 0) {
+        // Distinguish from "ran, 0 contradictions" below: empty succeeds edges or
+        // empty code tech here usually means the ontology/code-evidence tables
+        // failed to load, not that there is genuinely nothing to reconcile.
+        log('WARN', 'code-truth guard SKIPPED — succeedsEdges/codeTechByRepo empty (possible ontology load failure)', {
+            succeedsEdgeCount: deps.succeedsEdges.size,
+            codeTechRepoCount:  deps.codeTechByRepo.size,
+        });
+        return { matching, contradictions: [] };
+    }
 
     const reverse = buildReverseAliasMap(deps.aliasToCanonical);
     const predecessors = [...deps.succeedsEdges.keys()];

@@ -28,7 +28,8 @@
  */
 
 import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
-import { buildReverseAliasMap, mentionsCanonical } from '../matching/keyword-match.js';
+import { log } from '@bedrock/shared';
+import { buildReverseAliasMap, mentionsCanonical, padded } from '../matching/keyword-match.js';
 
 /** Directory names that mark a doc as ILLUSTRATIVE (a pattern reference), not authored evidence. */
 const REFERENCE_DIR_TOKENS = new Set([
@@ -47,11 +48,6 @@ export function isReferenceDoc(path: string): boolean {
     if (dirs.some((d) => REFERENCE_DIR_TOKENS.has(d))) return true;
     const file = segments.at(-1) ?? '';
     return REFERENCE_FILE_RE.test(file);
-}
-
-/** Normalise free text to a space-padded token stream for whole-token containment. */
-function padded(text: string): string {
-    return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
 }
 
 export interface VendorGroupHit {
@@ -165,7 +161,13 @@ export function demoteMisattributedVendors(
         codeTechByRepo?: ReadonlyMap<string, ReadonlySet<string>>;
     },
 ): DemoteResult {
-    if (deps.techGroups.length === 0) return { matching, demotions: [] };
+    if (deps.techGroups.length === 0) {
+        // Distinguish from "ran, 0 demotions" below: an empty techGroups list here
+        // usually means the tech-transfer ontology failed to load, not that there
+        // is genuinely nothing to demote — that failure must not be silent.
+        log('WARN', 'vendor-provenance guard SKIPPED — techGroups empty (possible ontology load failure)', { techGroupCount: 0 });
+        return { matching, demotions: [] };
+    }
     const code = allCodeTech(deps.codeTechByRepo);
 
     const keptVerified: VerifiedMatch[] = [];

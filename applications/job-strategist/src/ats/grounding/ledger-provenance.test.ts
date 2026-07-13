@@ -52,4 +52,42 @@ describe('attachPassageProvenance', () => {
         const [out] = attachPassageProvenance([entry('Salesforce Apex triggers')], passages);
         expect(out.provenance).toBeUndefined();
     });
+
+    describe('negation guard', () => {
+        const supportingKb = [
+            '[Source: Nelson-Lamounier/kubernetes-bootstrap/charts/api/values.yaml, Score: 0.55]\nKubernetes orchestrates the API deployment, with rolling updates and autoscaling configured across all pods.',
+        ].join(SEP);
+        const negatedKb = [
+            '[Source: Nelson-Lamounier/cdk-monitoring/docs/architecture/migration.md, Score: 0.55]\nThe platform migrated away from Kubernetes to a fully serverless Lambda architecture last quarter.',
+        ].join(SEP);
+        const noLongerKb = [
+            '[Source: Nelson-Lamounier/cdk-monitoring/docs/architecture/migration.md, Score: 0.55]\nThe team no longer uses Kubernetes for the ingestion pipeline; it now runs on managed Fargate tasks.',
+        ].join(SEP);
+
+        it('does NOT attach a passage saying "migrated away from Kubernetes" as support', () => {
+            const [out] = attachPassageProvenance([entry('Kubernetes')], parseKbPassages(negatedKb, SEP));
+            expect(out.provenance).toBeUndefined();
+        });
+
+        it('does NOT attach a passage saying "no longer use X" as support', () => {
+            const [out] = attachPassageProvenance([entry('Kubernetes')], parseKbPassages(noLongerKb, SEP));
+            expect(out.provenance).toBeUndefined();
+        });
+
+        it('DOES attach a genuinely-supporting passage for the same tool', () => {
+            const [out] = attachPassageProvenance([entry('Kubernetes')], parseKbPassages(supportingKb, SEP));
+            expect(out.provenance?.[0].source).toContain('kubernetes-bootstrap');
+        });
+    });
+
+    describe('short canonicals', () => {
+        const sqlKb = [
+            '[Source: Nelson-Lamounier/ai-applications/applications/shared/src/rds/schema.sql, Score: 0.6]\nSQL migrations define the RDS schema, including indexes and constraints for the ledger tables.',
+        ].join(SEP);
+
+        it('a short canonical (SQL) with a matching passage DOES get provenance attached', () => {
+            const [out] = attachPassageProvenance([entry('SQL')], parseKbPassages(sqlKb, SEP));
+            expect(out.provenance?.[0].source).toContain('schema.sql');
+        });
+    });
 });

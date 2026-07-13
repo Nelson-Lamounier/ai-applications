@@ -28,6 +28,15 @@ function normalizeResume(text: string): string {
     return ' ' + text.toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
 }
 
+/**
+ * Space-pad free text to a lowercased alnum token stream for whole-word
+ * containment checks (e.g. `mentionsCanonical`). Single source of truth —
+ * previously copy-pasted identically across several ats/grounding modules.
+ */
+export function padded(text: string): string {
+    return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
+}
+
 // Generic "scripting / programming / languages" JD terms don't appear verbatim in
 // resumes, which list concrete languages. Credit such a term when the resume
 // demonstrates a real language — honest (the candidate genuinely codes). Deliberately

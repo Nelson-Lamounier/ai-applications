@@ -1,5 +1,6 @@
 /** @format */
 import { isReferenceDoc, vendorGroupForSkill, demoteMisattributedVendors } from './vendor-provenance.js';
+import * as shared from '@bedrock/shared';
 import type { ResearchMatching, VerifiedMatch } from '@bedrock/shared';
 
 const CHECKLIST = 'Nelson-Lamounier/ai-applications/docs/checklists/structure-output-checklist.md';
@@ -101,6 +102,26 @@ describe('demoteMisattributedVendors', () => {
         const r = demoteMisattributedVendors(input, { techGroups: [], techAliasMap: ALIAS });
         expect(r.matching).toBe(input);
         expect(r.demotions).toHaveLength(0);
+    });
+
+    describe('fail-open telemetry', () => {
+        it('warns when SKIPPED because techGroups is empty (possible ontology load failure)', () => {
+            const warnSpy = jest.spyOn(shared, 'log').mockImplementation(() => undefined);
+            demoteMisattributedVendors(matching([verified('OpenAI API', [CHECKLIST])]), { techGroups: [], techAliasMap: ALIAS });
+            expect(warnSpy).toHaveBeenCalledWith('WARN', expect.stringMatching(/skipped/i), expect.any(Object));
+            warnSpy.mockRestore();
+        });
+
+        it('does NOT warn when the guard RAN and found 0 demotions', () => {
+            const warnSpy = jest.spyOn(shared, 'log').mockImplementation(() => undefined);
+            const r = demoteMisattributedVendors(
+                matching([verified('Python scripting and automation', [CHECKLIST])]),
+                { techGroups: GROUPS, techAliasMap: ALIAS },
+            );
+            expect(r.demotions).toHaveLength(0);
+            expect(warnSpy).not.toHaveBeenCalled();
+            warnSpy.mockRestore();
+        });
     });
 
     describe('absent-from-code cross-check (robust where the path heuristic misses)', () => {

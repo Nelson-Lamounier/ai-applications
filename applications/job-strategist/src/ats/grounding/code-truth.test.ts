@@ -1,5 +1,6 @@
 /** @format */
 import { repoOf, buildCodeStackContext, demoteCodeContradictedMatches } from './code-truth.js';
+import * as shared from '@bedrock/shared';
 import type { ResearchMatching, VerifiedMatch } from '@bedrock/shared';
 
 const CDK_DOC = 'Nelson-Lamounier/cdk-monitoring/docs/architecture/kubernetes.md';
@@ -96,5 +97,22 @@ describe('demoteCodeContradictedMatches', () => {
         const r = demoteCodeContradictedMatches(input, { ...DEPS, succeedsEdges: new Map() });
         expect(r.matching).toBe(input);
         expect(r.contradictions).toHaveLength(0);
+    });
+
+    describe('fail-open telemetry', () => {
+        it('warns when SKIPPED because succeedsEdges/codeTechByRepo is empty (possible ontology load failure)', () => {
+            const warnSpy = jest.spyOn(shared, 'log').mockImplementation(() => undefined);
+            demoteCodeContradictedMatches(matching([verified('Self-hosted Kubernetes', [CDK_DOC])]), { ...DEPS, succeedsEdges: new Map() });
+            expect(warnSpy).toHaveBeenCalledWith('WARN', expect.stringMatching(/skipped/i), expect.any(Object));
+            warnSpy.mockRestore();
+        });
+
+        it('does NOT warn when the guard RAN and found 0 contradictions', () => {
+            const warnSpy = jest.spyOn(shared, 'log').mockImplementation(() => undefined);
+            const r = demoteCodeContradictedMatches(matching([verified('Python automation', [CDK_DOC])]), DEPS);
+            expect(r.contradictions).toHaveLength(0);
+            expect(warnSpy).not.toHaveBeenCalled();
+            warnSpy.mockRestore();
+        });
     });
 });

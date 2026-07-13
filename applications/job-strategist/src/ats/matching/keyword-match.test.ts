@@ -1,5 +1,17 @@
 /** @format */
-import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer, tokenOverlapMatch } from './keyword-match.js';
+import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer, tokenOverlapMatch, padded, mentionsCanonical, buildReverseAliasMap } from './keyword-match.js';
+
+describe('padded', () => {
+    it('lowercases, collapses non-alnum runs to single spaces, and pads both ends', () => {
+        expect(padded('OpenAI API')).toBe(' openai api ');
+        expect(padded('  Amazon-Bedrock!!  ')).toBe(' amazon bedrock ');
+    });
+
+    it('produces whole-word-safe containment for mentionsCanonical (the single-source-of-truth pairing)', () => {
+        const reverse = buildReverseAliasMap(new Map([['amazon bedrock', 'bedrock']]));
+        expect(mentionsCanonical('bedrock', padded('We use Amazon Bedrock in production'), reverse)).toBe(true);
+    });
+});
 
 describe('normalizeTerm', () => {
     it('strips qualifiers + generic suffixes, collapses punctuation', () => {
