@@ -59,6 +59,37 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
     return matchSkillCategory(term.toLowerCase(), resume);
 }
 
+// Common domain words that a 2-word term (short acronym + noun, e.g. "AI Engineering",
+// "ML Ops", "UX Design") collapses to once the <3-char acronym is filtered out. A bare
+// single-token overlap on one of these is too weak to credit via the 60%-of-smaller-set
+// ratio — "engineering" alone matches almost any engineering-adjacent phrase, which flips
+// an unrelated skill to "verified". Guarded in the single-token branch below.
+const GENERIC_SINGLE_TOKENS = new Set([
+    'engineering', 'development', 'management', 'operations', 'ops', 'analysis',
+    'design', 'support', 'architecture', 'strategy', 'testing', 'security',
+]);
+
+/**
+ * Guard for the single-generic-token case: when the smaller significant-token set
+ * collapses to one GENERIC word (e.g. "AI Engineering" -> {engineering} once the
+ * <3-char "ai" is dropped), a bare ratio match would credit against ANY string
+ * containing that one word. Require the smaller side's FULL normalized phrase
+ * (including the short, filtered-out tokens) to appear in the other side's phrase.
+ * Returns `null` when the guard doesn't apply (caller falls back to the ratio rule).
+ */
+function genericSingleTokenGuard(
+    smaller: Set<string>,
+    smallerRaw: string,
+    otherRaw: string,
+): boolean | null {
+    if (smaller.size !== 1) return null;
+    const [onlyTok] = smaller;
+    if (!GENERIC_SINGLE_TOKENS.has(onlyTok)) return null;
+    const smallerFullPhrase = normalizeTerm(smallerRaw);
+    const otherFullPhrase = normalizeTerm(otherRaw);
+    return smallerFullPhrase.length > 0 && otherFullPhrase.includes(smallerFullPhrase);
+}
+
 /**
  * Significant-token overlap — bridges differently-phrased competencies.
  *
@@ -67,7 +98,8 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
  * compares the sets of significant (≥3-char) tokens.
  *
  * Matches when ≥ `minShared` tokens overlap OR ≥ 60% of the smaller token set overlaps
- * (so a short, fully-contained phrase like "alerting" vs "alerting dashboards" bridges).
+ * (so a short, fully-contained phrase like "alerting" vs "alerting dashboards" bridges),
+ * subject to the single-generic-token guard above.
  */
 export function tokenOverlapMatch(a: string, b: string, minShared = 2): boolean {
     const toks = (s: string) => new Set(normalizeTerm(s).split(' ').filter((t) => t.length >= 3));
@@ -75,8 +107,14 @@ export function tokenOverlapMatch(a: string, b: string, minShared = 2): boolean 
     if (A.size === 0 || B.size === 0) return false;
     let shared = 0;
     for (const t of A) if (B.has(t)) shared++;
-    // match if ≥ minShared shared tokens OR ≥ 60% of the smaller set overlaps
-    return shared >= minShared || shared / Math.min(A.size, B.size) >= 0.6;
+    if (shared >= minShared) return true;
+
+    const [smaller, smallerRaw, otherRaw] = A.size <= B.size ? [A, a, b] : [B, b, a];
+    const guarded = genericSingleTokenGuard(smaller, smallerRaw, otherRaw);
+    if (guarded !== null) return guarded;
+
+    // match if ≥ 60% of the smaller set overlaps
+    return shared / Math.min(A.size, B.size) >= 0.6;
 }
 
 export type MatchTier = 'literal' | 'normalized' | 'ontology' | 'tech-transfer' | 'embedding' | 'none';

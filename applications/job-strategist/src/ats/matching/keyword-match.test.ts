@@ -102,6 +102,18 @@ describe('tokenOverlapMatch', () => {
     });
 });
 
+describe('tokenOverlapMatch — generic-word reduction guard (F1)', () => {
+    it('does NOT match when a multi-word term collapses to a single generic token', () => {
+        // "AI Engineering" -> {engineering} after the <3-char "ai" is dropped;
+        // must NOT then match any string containing "engineering".
+        expect(tokenOverlapMatch('AI Engineering', 'Data Engineering Pipelines')).toBe(false);
+        expect(tokenOverlapMatch('ML Ops', 'Cloud Ops team')).toBe(false);
+    });
+    it('still matches a genuine multi-token overlap', () => {
+        expect(tokenOverlapMatch('root cause analysis', 'performed root-cause analysis on incidents')).toBe(true);
+    });
+});
+
 const r2 = 'support engineer; escalation management and sla ownership; python automation; aws iam';
 const familyVocab = [['escalation', 'sla', 'on-call', 'incident response', 'root cause analysis']];
 
