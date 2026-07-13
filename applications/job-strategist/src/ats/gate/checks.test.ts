@@ -116,6 +116,40 @@ describe('buildAtsCheck — weighted coverage score', () => {
 	});
 });
 
+describe('buildAtsCheck — name/email whitespace normalisation', () => {
+    it('finds the name when the extracted text has a collapsed double-space in the middle of it', () => {
+        const r = buildAtsCheck({
+            // Simulates a PDF text-extraction artifact: "Jane  Doe" (double space).
+            text: 'Jane  Doe\nPlatform Engineer\njane@example.com\nExperience\nSkills\nEducation',
+            sections: ['Experience', 'Skills', 'Education'],
+            profile: { name: 'Jane Doe', email: 'jane@example.com' },
+            coverage: [],
+        });
+        expect(r.issues).not.toContain('Candidate name not found in document body.');
+    });
+
+    it('finds the name when the extracted text line-wraps across the name', () => {
+        const r = buildAtsCheck({
+            // Simulates a rendered line-wrap: "Jane\nDoe" instead of "Jane Doe".
+            text: 'Jane\nDoe\nPlatform Engineer\njane@example.com\nExperience\nSkills\nEducation',
+            sections: ['Experience', 'Skills', 'Education'],
+            profile: { name: 'Jane Doe', email: 'jane@example.com' },
+            coverage: [],
+        });
+        expect(r.issues).not.toContain('Candidate name not found in document body.');
+    });
+
+    it('finds the email when the extracted text has collapsed whitespace around it', () => {
+        const r = buildAtsCheck({
+            text: 'Jane Doe\nPlatform Engineer\njane@example.com  \nExperience\nSkills\nEducation',
+            sections: ['Experience', 'Skills', 'Education'],
+            profile: { name: 'Jane Doe', email: 'jane@example.com' },
+            coverage: [],
+        });
+        expect(r.issues).not.toContain('Contact email not found in document body.');
+    });
+});
+
 describe('reconcileAtsPassed (F5 — single arbiter of the headline pass bit)', () => {
     it('fails when status has issues even though the attainable pass-mark is true', () => {
         expect(reconcileAtsPassed('issues', true)).toBe(false);

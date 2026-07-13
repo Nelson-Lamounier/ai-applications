@@ -4,6 +4,11 @@ import { STANDARD_SECTIONS } from './parse-back.js';
 
 const REQUIRED_SECTIONS = ['Experience', 'Skills', 'Education'] as const;
 
+/** Collapse runs of whitespace (spaces, tabs, line-wraps) to a single space and trim. */
+function normalizeWhitespace(s: string): string {
+    return s.replace(/\s+/g, ' ').trim();
+}
+
 export type CoverageRow = AtsCheckResult['jdKeywordCoverage'][number];
 
 export interface BuildAtsCheckArgs {
@@ -127,8 +132,15 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
 
     const lower = a.text.toLowerCase();
     const standardSectionsDetected = a.sections.filter(s => (STANDARD_SECTIONS as readonly string[]).includes(s));
-    const nameFound = a.profile.name.trim().length > 0 && lower.includes(a.profile.name.toLowerCase());
-    const emailFound = a.profile.email.trim().length > 0 && lower.includes(a.profile.email.toLowerCase());
+    // Whitespace-normalise both sides before the containment check: a rendered
+    // PDF can collapse a double-space or line-wrap the name/email across a page
+    // break, and a raw `includes` against the un-normalised text then reports a
+    // false "not found" even though the name/email genuinely appears.
+    const normalizedLower = normalizeWhitespace(lower);
+    const nameFound = a.profile.name.trim().length > 0
+        && normalizedLower.includes(normalizeWhitespace(a.profile.name.toLowerCase()));
+    const emailFound = a.profile.email.trim().length > 0
+        && normalizedLower.includes(normalizeWhitespace(a.profile.email.toLowerCase()));
     // Use pre-computed coverage (with tier) when available; fall back to the
     // synchronous literal match for the legacy / test path.
     const jdKeywordCoverage: Coverage = a.coverage ?? (a.jdMustHaves ?? []).map(term => ({
