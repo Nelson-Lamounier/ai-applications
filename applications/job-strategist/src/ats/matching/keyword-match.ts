@@ -59,33 +59,34 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
     return matchSkillCategory(term.toLowerCase(), resume);
 }
 
-// Common domain words that a 2-word term (short acronym + noun, e.g. "AI Engineering",
-// "ML Ops", "UX Design") collapses to once the <3-char acronym is filtered out. A bare
-// single-token overlap on one of these is too weak to credit via the 60%-of-smaller-set
-// ratio — "engineering" alone matches almost any engineering-adjacent phrase, which flips
-// an unrelated skill to "verified". Guarded in the single-token branch below.
-const GENERIC_SINGLE_TOKENS = new Set([
-    'engineering', 'development', 'management', 'operations', 'ops', 'analysis',
-    'design', 'support', 'architecture', 'strategy', 'testing', 'security',
-]);
-
 /**
- * Guard for the single-generic-token case: when the smaller significant-token set
- * collapses to one GENERIC word (e.g. "AI Engineering" -> {engineering} once the
- * <3-char "ai" is dropped), a bare ratio match would credit against ANY string
- * containing that one word. Require the smaller side's FULL normalized phrase
- * (including the short, filtered-out tokens) to appear in the other side's phrase.
- * Returns `null` when the guard doesn't apply (caller falls back to the ratio rule).
+ * Guard for the dropped-short-token case: when a multi-word term has a short
+ * (<3-char) token filtered out by the significant-token cut — e.g. "AI Automation"
+ * -> {automation} once "ai" is dropped, "UX Reporting" -> {reporting} once "ux" is
+ * dropped — the surviving single token is NOT a discriminating match on its own: it's
+ * whatever generic noun happened to be left after the acronym vanished. A bare ratio
+ * match on that one word would credit against ANY string containing it (e.g. "Data
+ * Automation Pipelines"), regardless of which noun it is — no fixed word list can
+ * enumerate every generic noun, so this generalises instead of allowlisting them.
+ *
+ * Triggers whenever the smaller side's SIGNIFICANT-token set collapses to exactly one
+ * token AND the term originally had >= 2 tokens after qualifier stripping (i.e. a
+ * token was lost specifically to the <3-char cut, not because the term was always a
+ * single word — a genuinely single-word term like "alerting" must still bridge via the
+ * ratio rule below). When it triggers, require the smaller side's FULL normalized
+ * phrase (including the short, filtered-out token) to appear as a substring in the
+ * other side's phrase. Returns `null` when the guard doesn't apply (caller falls back
+ * to the ratio rule).
  */
-function genericSingleTokenGuard(
+function droppedShortTokenGuard(
     smaller: Set<string>,
     smallerRaw: string,
     otherRaw: string,
 ): boolean | null {
     if (smaller.size !== 1) return null;
-    const [onlyTok] = smaller;
-    if (!GENERIC_SINGLE_TOKENS.has(onlyTok)) return null;
     const smallerFullPhrase = normalizeTerm(smallerRaw);
+    const rawTokenCount = smallerFullPhrase.length > 0 ? smallerFullPhrase.split(' ').length : 0;
+    if (rawTokenCount < 2) return null; // term was always a single word — no token was dropped
     const otherFullPhrase = normalizeTerm(otherRaw);
     return smallerFullPhrase.length > 0 && otherFullPhrase.includes(smallerFullPhrase);
 }
@@ -99,7 +100,7 @@ function genericSingleTokenGuard(
  *
  * Matches when ≥ `minShared` tokens overlap OR ≥ 60% of the smaller token set overlaps
  * (so a short, fully-contained phrase like "alerting" vs "alerting dashboards" bridges),
- * subject to the single-generic-token guard above.
+ * subject to the dropped-short-token guard above.
  */
 export function tokenOverlapMatch(a: string, b: string, minShared = 2): boolean {
     const toks = (s: string) => new Set(normalizeTerm(s).split(' ').filter((t) => t.length >= 3));
@@ -110,7 +111,7 @@ export function tokenOverlapMatch(a: string, b: string, minShared = 2): boolean 
     if (shared >= minShared) return true;
 
     const [smaller, smallerRaw, otherRaw] = A.size <= B.size ? [A, a, b] : [B, b, a];
-    const guarded = genericSingleTokenGuard(smaller, smallerRaw, otherRaw);
+    const guarded = droppedShortTokenGuard(smaller, smallerRaw, otherRaw);
     if (guarded !== null) return guarded;
 
     // match if ≥ 60% of the smaller set overlaps

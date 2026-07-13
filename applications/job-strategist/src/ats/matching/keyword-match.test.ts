@@ -102,15 +102,32 @@ describe('tokenOverlapMatch', () => {
     });
 });
 
-describe('tokenOverlapMatch — generic-word reduction guard (F1)', () => {
-    it('does NOT match when a multi-word term collapses to a single generic token', () => {
+describe('tokenOverlapMatch — dropped-short-token guard (F1)', () => {
+    it('does NOT match when a multi-word term collapses to a single token via the <3-char cut', () => {
         // "AI Engineering" -> {engineering} after the <3-char "ai" is dropped;
         // must NOT then match any string containing "engineering".
         expect(tokenOverlapMatch('AI Engineering', 'Data Engineering Pipelines')).toBe(false);
         expect(tokenOverlapMatch('ML Ops', 'Cloud Ops team')).toBe(false);
     });
-    it('still matches a genuine multi-token overlap', () => {
+
+    it('generalises beyond any fixed word list — ANY generic noun left after the short token drops', () => {
+        // These generic nouns (automation, reporting, governance) were never on the old
+        // hardcoded allowlist — the guard must still close the hole for them, since no
+        // fixed list can enumerate every generic noun a short acronym might leave behind.
+        expect(tokenOverlapMatch('AI Automation', 'Data Automation Pipelines')).toBe(false);
+        expect(tokenOverlapMatch('UX Reporting', 'Data Reporting Dashboard')).toBe(false);
+        expect(tokenOverlapMatch('ML Governance', 'Cloud Governance Team')).toBe(false);
+    });
+
+    it('still matches a genuine multi-token overlap (no short token was dropped)', () => {
         expect(tokenOverlapMatch('root cause analysis', 'performed root-cause analysis on incidents')).toBe(true);
+        expect(tokenOverlapMatch('incident response', 'handled incident response on-call')).toBe(true);
+        expect(tokenOverlapMatch('data engineering', 'built data engineering pipelines')).toBe(true);
+        expect(tokenOverlapMatch('customer support', 'provided customer support')).toBe(true);
+    });
+
+    it('a genuinely single-word term still bridges via the ratio rule (no token was ever dropped)', () => {
+        expect(tokenOverlapMatch('alerting', 'alerting dashboards')).toBe(true);
     });
 });
 
