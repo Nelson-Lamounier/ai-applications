@@ -6,11 +6,12 @@ jest.mock('@bedrock/shared', () => ({
 }));
 import { runAgent } from '@bedrock/shared';
 import type { StructuredResumeData } from '@bedrock/shared';
-import { LENGTH_BUDGET, measureResume, hardTrim, applyLengthBudget } from './length-budget.js';
+import { LENGTH_BUDGET, measureResume, hardTrim, applyLengthBudget, resolveModelId } from './length-budget.js';
 
 const mockRun = runAgent as jest.Mock;
 
 const sentence = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ') + '.';
+const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
 const base = (over: Partial<StructuredResumeData> = {}): StructuredResumeData => ({
     profile: { name: 'Nelson', title: 'Production AI Systems · LLM Evaluation', email: 'e', location: 'Dublin' },
@@ -68,7 +69,30 @@ describe('hardTrim', () => {
         const highlights = Array.from({ length: 8 }, () => sentence(60));
         const r = base({ experience: [{ company: 'F', title: 'E', period: 'p', highlights }] } as never);
         const out = hardTrim(r);
-        expect(out.experience[0].highlights.length).toBe(LENGTH_BUDGET.maxBulletsPerRole);
+        expect(out.experience[0].highlights).toHaveLength(LENGTH_BUDGET.maxBulletsPerRole);
+    });
+
+    it('trims a single over-long bullet to the per-bullet word cap even when the role has <= 5 bullets (F7)', () => {
+        // The count cap alone is a no-op here (2 bullets, well under maxBulletsPerRole)
+        // but the second bullet is the module's own 91-word motivating incident.
+        // The over-budget trigger is 'total' (via bloated projects), mirroring the
+        // real run this module's docstring cites: projects blown out AND a
+        // 91-word bullet surviving because the count cap alone is a no-op.
+        const shortBullet = 'Cut enrichment cost to near-zero via dedup caching.';
+        const longBullet = sentence(91);
+        const r = base({
+            experience: [{ company: 'F', title: 'E', period: 'p', highlights: [shortBullet, longBullet] }],
+            projects: [{ name: 'P', description: sentence(900), github: '' }],
+        } as never);
+        expect(measureResume(r).overBudget).toContain('total');
+
+        const out = hardTrim(r);
+
+        expect(out.experience[0].highlights).toHaveLength(2);
+        expect(wordCount(out.experience[0].highlights[1])).toBeLessThanOrEqual(LENGTH_BUDGET.perBulletWords);
+        // Short bullet is untouched — no needless truncation.
+        expect(out.experience[0].highlights[0]).toBe(shortBullet);
+        expect(measureResume(out).experience).toBeLessThanOrEqual(LENGTH_BUDGET.experienceWords);
     });
 
     it('trims middle summary sentences, keeping the first and the closing metric', () => {
@@ -202,5 +226,25 @@ describe('condense prompt — project pitch protection (run 9216cf25)', () => {
         const system = config.systemPrompt.map((b: { text?: string }) => b.text ?? '').join('\n');
         expect(system).toContain('PITCH OPENINGS ARE PROTECTED');
         expect(system).toMatch(/opening sentence/i);
+    });
+});
+
+describe('resolveModelId (F7, CLAUDE.md §4: Sonnet for nuanced structured generation)', () => {
+    it('resolves to the Sonnet id when RESUME_REWRITE_MODEL is unset', () => {
+        expect(resolveModelId(undefined)).toBe('eu.anthropic.claude-sonnet-4-6');
+    });
+
+    it('resolves to the override id when RESUME_REWRITE_MODEL is set', () => {
+        expect(resolveModelId('custom.override.model-id')).toBe('custom.override.model-id');
+    });
+
+    it('the condense/expand agent config actually uses the resolved (Sonnet) model id', async () => {
+        mockRun.mockReset();
+        const fixed = base();
+        mockRun.mockResolvedValue({ data: fixed });
+        const fat = base({ projects: [{ name: 'P', description: sentence(300), github: '' }] } as never);
+        await applyLengthBudget(fat, jd, () => {});
+        const config = mockRun.mock.calls[0]![0].config;
+        expect(config.modelId).toBe(resolveModelId(undefined));
     });
 });

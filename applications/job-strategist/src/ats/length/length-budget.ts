@@ -145,7 +145,12 @@ function hardTrimProjects(resume: StructuredResumeData): StructuredResumeData {
 function hardTrimExperience(resume: StructuredResumeData): StructuredResumeData {
     const experience = (resume.experience ?? []).map((e) => ({
         ...e,
-        highlights: (e.highlights ?? []).slice(0, LENGTH_BUDGET.maxBulletsPerRole),
+        highlights: (e.highlights ?? [])
+            .slice(0, LENGTH_BUDGET.maxBulletsPerRole)
+            // Count cap alone is a no-op when a single surviving bullet is the
+            // over-budget one (e.g. the module's own 91-word motivating
+            // incident) — trim every bullet to the per-bullet word cap too.
+            .map((h) => (words(h) > LENGTH_BUDGET.perBulletWords ? trimSentences(h, LENGTH_BUDGET.perBulletWords) : h)),
     }));
     return { ...resume, experience };
 }
@@ -175,10 +180,19 @@ export function hardTrim(resume: StructuredResumeData): StructuredResumeData {
 }
 
 // =============================================================================
-// HAIKU CONDENSE (one bounded, JD-aware rewrite)
+// CONDENSE / EXPAND REWRITE (one bounded, JD-aware LLM call per direction)
 // =============================================================================
 
-const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+/** Default model id for the condense/expand rewrite — Sonnet per CLAUDE.md
+ *  Section 4 (nuanced multi-section structured generation defaults to
+ *  Sonnet; Haiku flakiness on this class of task is a real signal). Exposed
+ *  as a pure resolver (rather than only a module-level const) so the default
+ *  vs. env-override behaviour is directly testable without a module reload. */
+export function resolveModelId(envOverride: string | undefined): string {
+    return envOverride ?? 'eu.anthropic.claude-sonnet-4-6';
+}
+
+const MODEL_ID = resolveModelId(process.env['RESUME_REWRITE_MODEL']);
 
 /** Ledger identities for the two inline prompts below (condense + expand) — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
 export const RESUME_CONDENSE_PROMPT_META = { id: 'resume-condense', version: '2' } as const;
