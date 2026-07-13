@@ -59,7 +59,7 @@ ats/
               the tier ladder. The ONE place fuzzy matching lives.
               (extracted from keyword-match.ts + the duplicated padded()/canon copies
                in vendor-provenance, code-truth, tool-evidence-retrieval, evidence-lane)
-  coverage/   The ATS-check GATE: render -> parse-back -> score JD coverage -> store.
+  gate/      The ATS-check GATE: render -> parse-back -> score JD coverage -> store.
               run-ats-check, checks, parse-back, store-ats-artifacts, ats-check.schema,
               jd-keywords, grounded-coverage (free), attainable, evidence-fit (free)
   grounding/  Anti-fabrication: skill-evidence ledger + provenance + demotions.

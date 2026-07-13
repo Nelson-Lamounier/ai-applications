@@ -20,7 +20,7 @@
 
 ```
 ats/matching/    keyword-match.ts
-ats/coverage/    run-ats-check.ts, checks.ts, parse-back.ts, store-ats-artifacts.ts,
+ats/gate/    run-ats-check.ts, checks.ts, parse-back.ts, store-ats-artifacts.ts,
                  ats-check.schema.ts, jd-keywords.ts, grounded-coverage.ts,
                  attainable.ts, evidence-fit.ts
 ats/grounding/   skill-evidence-ledger.ts, ledger-provenance.ts, number-provenance.ts,
@@ -37,7 +37,7 @@ ats/length/      length-budget.ts
 ### Task 1: Create the six folders + READMEs
 
 **Files:**
-- Create: `ats/matching/README.md`, `ats/coverage/README.md`, `ats/grounding/README.md`, `ats/reconcile/README.md`, `ats/context/README.md`, `ats/length/README.md`
+- Create: `ats/matching/README.md`, `ats/gate/README.md`, `ats/grounding/README.md`, `ats/reconcile/README.md`, `ats/context/README.md`, `ats/length/README.md`
 
 **Interfaces:** none (docs only).
 
@@ -48,12 +48,12 @@ ats/length/      length-budget.ts
 # matching/
 
 Shared matching primitives — the ONE place fuzzy matching lives. Normalise/canon,
-token match, alias maps, and the tier ladder (`matchTerm`). Consumed by `coverage/`
+token match, alias maps, and the tier ladder (`matchTerm`). Consumed by `gate/`
 (the ATS gate), `grounding/` (ledger + demotions), `reconcile/`, and `context/`.
 Pure functions; no I/O.
 ```
 
-`ats/coverage/README.md`:
+`ats/gate/README.md`:
 ```markdown
 # coverage/
 
@@ -163,16 +163,16 @@ grep -rn "from '.*ats/[a-z-]*\.js'" . --include='*.ts' | grep -v node_modules
 ```
 - [ ] **Step 2: Rewrite intra-ats imports.** Inside `ats/<folder>/<file>.ts`, an import of another ats module now needs the sibling-or-cousin path. The only intra-ats imports (from the graph) are to `keyword-match`, `parse-back`, `checks`, `jd-keywords`, `store-ats-artifacts`:
   - `matching/keyword-match.js` is imported by `coverage/attainable.ts`, `coverage/run-ats-check.ts`, `grounding/{skill-evidence-ledger,vendor-provenance,code-truth,tool-evidence-retrieval}.ts`, `reconcile/migration-reframe.ts`, `context/tech-transfer-context.ts` → rewrite `from './keyword-match.js'` to `from '../matching/keyword-match.js'`.
-  - Within `coverage/`: `run-ats-check.ts` imports `./checks.js`, `./jd-keywords.js`, `./parse-back.js`, `./store-ats-artifacts.js` (all now siblings in `coverage/`) → these stay `./…`. `checks.ts` imports `./parse-back.js` → stays `./…`.
+  - Within `gate/`: `run-ats-check.ts` imports `./checks.js`, `./jd-keywords.js`, `./parse-back.js`, `./store-ats-artifacts.js` (all now siblings in `gate/`) → these stay `./…`. `checks.ts` imports `./parse-back.js` → stays `./…`.
 - [ ] **Step 3: Rewrite external consumer imports.** For each hit from Step 1 outside `ats/`, change `./ats/<file>.js` → `./ats/<folder>/<file>.js` using the mapping table. Example in `run-pipeline.ts`:
 ```
 ./ats/length-budget.js            -> ./ats/length/length-budget.js
 ./ats/ledger-provenance.js        -> ./ats/grounding/ledger-provenance.js
-./ats/run-ats-check.js            -> ./ats/coverage/run-ats-check.js
-./ats/ats-check.schema.js         -> ./ats/coverage/ats-check.schema.js
+./ats/run-ats-check.js            -> ./ats/gate/run-ats-check.js
+./ats/ats-check.schema.js         -> ./ats/gate/ats-check.schema.js
 ./ats/skill-evidence-ledger.js    -> ./ats/grounding/skill-evidence-ledger.js
 ./ats/canonical-jd-skills.js      -> ./ats/context/canonical-jd-skills.js
-./ats/attainable.js               -> ./ats/coverage/attainable.js
+./ats/attainable.js               -> ./ats/gate/attainable.js
 ./ats/vendor-provenance.js        -> ./ats/grounding/vendor-provenance.js
 ./ats/code-truth.js               -> ./ats/grounding/code-truth.js
 ./ats/repo-profile.js             -> ./ats/context/repo-profile.js
@@ -185,7 +185,7 @@ grep -rn "from '.*ats/[a-z-]*\.js'" . --include='*.ts' | grep -v node_modules
 ./ats/education-reconcile.js      -> ./ats/reconcile/education-reconcile.js
 ./ats/years-gap-reconcile.js      -> ./ats/reconcile/years-gap-reconcile.js
 ```
-Apply the SAME mapping to `run-free.ts`, `research-agent.ts`, `free-resume-writer.ts`, and any other file the Step-1 grep surfaced (e.g. `jd-keywords-union.js` → `context/`, `grounded-coverage.js` → `coverage/`, `evidence-fit.js` → `coverage/`).
+Apply the SAME mapping to `run-free.ts`, `research-agent.ts`, `free-resume-writer.ts`, and any other file the Step-1 grep surfaced (e.g. `jd-keywords-union.js` → `context/`, `grounded-coverage.js` → `gate/`, `evidence-fit.js` → `gate/`).
 - [ ] **Step 4: Typecheck — this is the completeness check for the rewrite:**
 ```bash
 yarn workspace @bedrock/job-strategist exec tsc --noEmit

@@ -4,7 +4,7 @@
 
 **Goal:** Fix every finding from the ATS review, in the Phase-1 subsystem structure, each with a TDD test.
 
-**Architecture:** Deterministic-logic fixes — no persona/prompt changes, so unit tests suffice (no live A/B). Paths are the POST-Phase-1 layout (`ats/matching/`, `ats/coverage/`, `ats/grounding/`, `ats/reconcile/`, `ats/context/`, `ats/length/`). One cross-repo change: a numbered RLS migration in `platform-rds-bootstrap`.
+**Architecture:** Deterministic-logic fixes — no persona/prompt changes, so unit tests suffice (no live A/B). Paths are the POST-Phase-1 layout (`ats/matching/`, `ats/gate/`, `ats/grounding/`, `ats/reconcile/`, `ats/context/`, `ats/length/`). One cross-repo change: a numbered RLS migration in `platform-rds-bootstrap`.
 
 **Tech Stack:** TypeScript (ESM, `.js` specifiers), ts-jest, Zod, Postgres (numbered SQL migrations with a checksum ledger).
 
@@ -133,13 +133,13 @@ it('does not admit a number that appears only in free-text sourceCitation (F2)',
 
 ---
 
-## Group 3 — coverage/ pass-signal, persistence, gate hygiene
+## Group 3 — gate/ pass-signal, persistence, gate hygiene
 
 ### Task 6: F5 + F6 [Important] — reconcile the pass signals + persist attainable fields to ats_check_json
 
 **Files:**
-- Modify: `ats/coverage/checks.ts` (headline `passed`), `ats/coverage/ats-check.schema.ts` (add attainable fields), `ats/coverage/run-ats-check.ts` + `run-pipeline.ts` (persist the merged object to `ats_check_json`, not only metadata)
-- Test: `ats/coverage/checks.test.ts`, `ats/coverage/run-ats-check.test.ts`
+- Modify: `ats/gate/checks.ts` (headline `passed`), `ats/gate/ats-check.schema.ts` (add attainable fields), `ats/gate/run-ats-check.ts` + `run-pipeline.ts` (persist the merged object to `ats_check_json`, not only metadata)
+- Test: `ats/gate/checks.test.ts`, `ats/gate/run-ats-check.test.ts`
 
 **Interfaces:** `AtsCheckResult` gains optional `attainableTotal/attainableCovered/attainablePassed/surfacedKeywords`; headline `passed = (status === 'passed') && (attainablePassed !== false)`.
 
@@ -152,8 +152,8 @@ it('does not admit a number that appears only in free-text sourceCitation (F2)',
 ### Task 7: F8 + coverage minors — recovery UPDATE row-count, schema safeParse, name/email whitespace, parallel embeddings
 
 **Files:**
-- Modify: `ats/coverage/run-ats-check.ts` (recovery UPDATE row-count + log; parallelise the per-term embedding tier; `safeParse` at the store boundary), `ats/coverage/checks.ts` (whitespace-normalise name/email presence)
-- Test: `ats/coverage/run-ats-check.test.ts`, `ats/coverage/checks.test.ts`
+- Modify: `ats/gate/run-ats-check.ts` (recovery UPDATE row-count + log; parallelise the per-term embedding tier; `safeParse` at the store boundary), `ats/gate/checks.ts` (whitespace-normalise name/email presence)
+- Test: `ats/gate/run-ats-check.test.ts`, `ats/gate/checks.test.ts`
 
 - [ ] **Step 1: Failing tests** — (a) the catch-path recovery UPDATE, when it matches 0 rows, logs a warning (spy) rather than silently swallowing; (b) `buildAtsCheck` reports name found when the extracted text has a collapsed double-space / line-wrap in the name; (c) an invalid `AtsCheckResult` shape is caught by `safeParse` at store and logged.
 - [ ] **Step 2: Run — fail.**
@@ -251,8 +251,8 @@ Match the exact policy shape used by the ~23 other RLS tables in the migration s
 
 ### Task 13: grounded-coverage tabs→spaces + AtsCheckResultSchema already made live in Task 6
 
-**Files:** Modify `ats/coverage/grounded-coverage.ts` (reindent tabs→spaces to match the codebase).
-- [ ] **Step 1:** Reindent; run `npx eslint ats/coverage/grounded-coverage.ts` — clean.
+**Files:** Modify `ats/gate/grounded-coverage.ts` (reindent tabs→spaces to match the codebase).
+- [ ] **Step 1:** Reindent; run `npx eslint ats/gate/grounded-coverage.ts` — clean.
 - [ ] **Step 2: Full suite green;** commit `style(ats): grounded-coverage tabs to spaces`.
 
 ---

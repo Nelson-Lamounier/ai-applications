@@ -1,4 +1,4 @@
-# coverage/
+# gate/
 
 The ATS-check GATE. Renders the finished resume to PDF, parses it back, scores JD
 keyword coverage against the parsed text, and stores the result. In: `finalResume`

@@ -50,11 +50,11 @@ import {
     persistTailoredResume,
 } from './lib/pipeline-runs.js';
 import { S3Client } from '@aws-sdk/client-s3';
-import { renderCheckAndStoreAts } from './ats/coverage/run-ats-check.js';
-import type { AtsCheckResult } from './ats/coverage/ats-check.schema.js';
+import { renderCheckAndStoreAts } from './ats/gate/run-ats-check.js';
+import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
-import { splitAttainable } from './ats/coverage/attainable.js';
+import { splitAttainable } from './ats/gate/attainable.js';
 import { demoteMisattributedVendors } from './ats/grounding/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/grounding/code-truth.js';
 import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/context/repo-profile.js';

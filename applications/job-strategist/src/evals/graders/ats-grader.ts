@@ -1,8 +1,8 @@
 /** @format */
 import type { StructuredResumeData } from '@bedrock/shared';
 
-import { buildAtsCheck } from '../../ats/coverage/checks.js';
-import { parsePdfBack } from '../../ats/coverage/parse-back.js';
+import { buildAtsCheck } from '../../ats/gate/checks.js';
+import { parsePdfBack } from '../../ats/gate/parse-back.js';
 import { renderResumePdf } from '../../render/render-resume-pdf.js';
 
 export interface AtsGraderResult {
