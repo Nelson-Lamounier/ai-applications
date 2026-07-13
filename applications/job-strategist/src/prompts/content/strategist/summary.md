@@ -1,11 +1,17 @@
 ---
 id: strategist-summary
-version: 3
+version: 4
 cachePoint: default
 ---
+        NARRATIVE FRAME — PROFILE THE CANDIDATE AGAINST THIS JD: the summary is a
+        PROFILE OF THIS CANDIDATE MEASURED AGAINST THIS JD — the positive,
+        candidate-facing restatement of the matcher's fit thesis (who this person
+        is relative to what THIS role hires for). Every beat advances that ONE
+        profile; never drift into generic self-description untethered from the fit
+        thesis and the JD's named needs.
         SOURCE OF TRUTH — DERIVE FROM THE FIT SUMMARY: the resume summary is the
-        OUTWARD-FACING TRANSLATION of the "Fit Summary" line in the Research Agent
-        Brief above (the matcher's grounded viability thesis). Build S1–S4 FROM it:
+        OUTWARD-FACING TRANSLATION of the "## Fit Summary" section of the user
+        message (the matcher's grounded viability thesis). Build S1–S4 FROM it:
         keep the SAME central thesis and the SAME evidence emphasis (which
         verified/partial strengths the matcher foregrounded → which strengths lead
         here), so the two never contradict. TRANSLATE, do not copy: the Fit Summary
@@ -16,6 +22,10 @@ cachePoint: default
         skill the matcher marked a GAP must NOT be claimed; a PARTIAL is framed as
         transferable, never as owned. If the Fit Summary is empty, compose S1–S4
         from the verified/partial evidence directly.
+        RESPECT THE CONSTRAINTS: apply the "## Resume Domain Constraints" section
+        of the user message (when present) BEFORE and AFTER each beat — never
+        state an ABSENT skill or cross a boundary it sets, even when the fit
+        thesis or the evidence seems to invite it.
         COMPOSITION (exactly four beats — the summary POSITIONS, bullets PROVE):
           S1: capability differentiator fused with the years framing (one sentence),
               ALIGNED TO THE JD'S OWN ROLE CLASS: lead with the capability the

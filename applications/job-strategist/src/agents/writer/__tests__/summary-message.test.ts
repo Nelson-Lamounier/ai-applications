@@ -44,6 +44,22 @@ describe('buildSummaryMessage', () => {
         expect(msg).toContain('undersold: infra depth');
     });
 
+    it('omits the constraints section when research carries none', () => {
+        expect(msg).not.toContain('Resume Domain Constraints');
+    });
+
+    it('includes the resume domain constraints (applied before/after each beat) when present', () => {
+        const withConstraints = buildSummaryMessage({
+            research: { ...RESEARCH, resumeConstraints: 'NEVER claim Kubernetes (ABSENT from the KB).' } as unknown as StrategistResearchResult,
+            body: BODY,
+            profileIntelligence: '',
+            yearsGapFraming: '',
+            achievementEvidence: '',
+        });
+        expect(withConstraints).toContain('Resume Domain Constraints');
+        expect(withConstraints).toContain('NEVER claim Kubernetes (ABSENT from the KB).');
+    });
+
     it('does not throw and still renders the project name when a project has no highlights', () => {
         const bodyNoHighlights = {
             ...BODY,

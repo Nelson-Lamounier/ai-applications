@@ -6,9 +6,10 @@
  * what the full Strategist writer sees: the Fit Summary as the source of
  * truth for positioning, the finished resume body (for altitude checks -
  * never restate a number already in a bullet), the verified/partial/gap
- * verdicts (never claim a gap), the company problem (S2 bridge), profile
- * intelligence (S3 distinctive angle), years-gap framing (S1), and
- * achievement evidence (S3/S4 alternative material).
+ * verdicts (never claim a gap), the resume-domain constraints (mandatory
+ * rules and gap boundaries the summary must respect), the company problem
+ * (S2 bridge), profile intelligence (S3 distinctive angle), years-gap
+ * framing (S1), and achievement evidence (S3/S4 alternative material).
  */
 import type { StrategistResearchResult, StructuredResumeData } from '@bedrock/shared';
 
@@ -46,6 +47,15 @@ export function buildSummaryMessage(m: SummaryMessageInput): string {
         '## Gaps (NEVER claim these)',
         ...research.gaps.map((g) => `- ${g.skill}`),
     ];
+
+    if (research.resumeConstraints?.trim()) {
+        out.push(
+            '',
+            '## Resume Domain Constraints (MANDATORY - apply BEFORE and AFTER composing each beat)',
+            'Non-negotiable rules and gap boundaries from the resume domain KB. Never state an ABSENT skill, never cross a boundary these set, even if the fit thesis or evidence seems to invite it.',
+            research.resumeConstraints.trim(),
+        );
+    }
 
     if (research.companyProblem?.trim()) {
         out.push(

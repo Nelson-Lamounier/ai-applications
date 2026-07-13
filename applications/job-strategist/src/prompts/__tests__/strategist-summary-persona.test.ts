@@ -72,3 +72,38 @@ describe('strategist-summary-persona S3 <-> summary-message cross-reference', ()
         expect(message).toContain('code-demonstrated direction: infra depth');
     });
 });
+
+describe('strategist-summary-persona v4 — profile-against-JD narrative + constraints', () => {
+    it('frames the whole summary as a candidate profile measured against the JD (fit-thesis mirror)', () => {
+        expect(joined).toContain('PROFILE THE CANDIDATE AGAINST THIS JD');
+        expect(joined).toContain('restatement of the matcher');
+    });
+
+    it('instructs the summary to apply the Resume Domain Constraints and never claim an ABSENT skill', () => {
+        expect(joined).toContain('RESPECT THE CONSTRAINTS');
+        expect(joined).toContain('## Resume Domain Constraints');
+    });
+
+    // S1's fit-thesis source reference must name the EXACT heading buildSummaryMessage
+    // emits ("## Fit Summary") — same exact-cross-ref discipline as the S3/Profile
+    // Intelligence pin (a stale "Research Agent Brief above" pointed the model at a
+    // section its focused message never carries).
+    it('S1 references the literal "## Fit Summary" section, and buildSummaryMessage emits that exact heading', () => {
+        expect(joined).toContain('"## Fit Summary"');
+
+        const research = {
+            targetRole: 'Backend Engineer', targetCompany: 'Acme', seniority: 'mid', domain: 'saas',
+            overallFitRating: 'REASONABLE FIT', fitSummary: 'Strong backend match.',
+            verifiedMatches: [], partialMatches: [], gaps: [],
+            companyProblem: '', dimensionMix: null,
+        } as unknown as StrategistResearchResult;
+
+        const body = {
+            summary: '', profile: {}, skills: [], education: [], certifications: [], keyAchievements: [], sectionOrder: [],
+            experience: [], projects: [],
+        } as unknown as StructuredResumeData;
+
+        const message = buildSummaryMessage({ research, body, profileIntelligence: '', yearsGapFraming: '', achievementEvidence: '' });
+        expect(message).toContain('## Fit Summary');
+    });
+});
