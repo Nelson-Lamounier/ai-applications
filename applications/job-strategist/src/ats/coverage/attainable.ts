@@ -27,7 +27,7 @@
  */
 
 import type { SkillEvidenceEntry } from '@bedrock/shared';
-import { matchTier1 } from './keyword-match.js';
+import { matchTier1 } from '../matching/keyword-match.js';
 
 export interface AttainableSplit {
     /** Verified + transferable entries whose coverage row is present===false — the honest re-write input. */

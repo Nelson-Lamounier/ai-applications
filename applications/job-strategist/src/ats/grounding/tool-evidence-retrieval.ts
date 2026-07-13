@@ -18,7 +18,7 @@
  */
 
 import type { SkillEvidenceEntry } from '@bedrock/shared';
-import { buildReverseAliasMap, mentionsCanonical } from './keyword-match.js';
+import { buildReverseAliasMap, mentionsCanonical } from '../matching/keyword-match.js';
 
 // ---------------------------------------------------------------------------
 // Public types

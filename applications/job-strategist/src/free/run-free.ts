@@ -21,12 +21,12 @@ import type { BasePipelineContext, JdSignal, CoverLetter } from '@bedrock/shared
 import type { StrategistEnv } from '../env.js';
 import type { FreeEvidence } from './gather-evidence.js';
 import type { FreeWriter, FreeResumeOutput } from '../agents/writer/free-resume-writer.js';
-import type { AtsCoverage } from '../ats/grounded-coverage.js';
-import type { AtsCheckResult } from '../ats/ats-check.schema.js';
-import type { EvidenceFit } from '../ats/evidence-fit.js';
-import { groundedAtsCoverage } from '../ats/grounded-coverage.js';
-import { evidenceFitScore } from '../ats/evidence-fit.js';
-import { jdAtsKeywords } from '../ats/jd-keywords-union.js';
+import type { AtsCoverage } from '../ats/coverage/grounded-coverage.js';
+import type { AtsCheckResult } from '../ats/coverage/ats-check.schema.js';
+import type { EvidenceFit } from '../ats/coverage/evidence-fit.js';
+import { groundedAtsCoverage } from '../ats/coverage/grounded-coverage.js';
+import { evidenceFitScore } from '../ats/coverage/evidence-fit.js';
+import { jdAtsKeywords } from '../ats/context/jd-keywords-union.js';
 import { guardCoverLetter } from '../agents/quality/cover-letter-guard.js';
 
 // =============================================================================

@@ -1,7 +1,7 @@
 /** @format */
 import type { StructuredResumeData } from '@bedrock/shared';
 
-import { renderResumePdf } from '../render/render-resume-pdf.js';
+import { renderResumePdf } from '../../render/render-resume-pdf.js';
 import { parsePdfBack } from './parse-back.js';
 
 const SAMPLE: StructuredResumeData = {

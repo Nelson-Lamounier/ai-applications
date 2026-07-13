@@ -26,7 +26,7 @@
  */
 
 import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
-import { buildReverseAliasMap, mentionsCanonical } from './keyword-match.js';
+import { buildReverseAliasMap, mentionsCanonical } from '../matching/keyword-match.js';
 
 /** Extract the `owner/repo` prefix from a KB evidence path (first two segments). */
 export function repoOf(path: string): string | null {

@@ -19,7 +19,7 @@
  */
 
 import type { SkillEvidenceEntry, VerifiedMatch, PartialMatch, SkillGap } from '@bedrock/shared';
-import { matchTier1, matchTechTransfer, tokenOverlapMatch } from './keyword-match.js';
+import { matchTier1, matchTechTransfer, tokenOverlapMatch } from '../matching/keyword-match.js';
 
 /**
  * Combined "semantic-ish" match: literal (bidirectional matchTier1) OR significant

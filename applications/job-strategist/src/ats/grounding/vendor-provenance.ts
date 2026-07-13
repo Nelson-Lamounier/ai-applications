@@ -28,7 +28,7 @@
  */
 
 import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
-import { buildReverseAliasMap, mentionsCanonical } from './keyword-match.js';
+import { buildReverseAliasMap, mentionsCanonical } from '../matching/keyword-match.js';
 
 /** Directory names that mark a doc as ILLUSTRATIVE (a pattern reference), not authored evidence. */
 const REFERENCE_DIR_TOKENS = new Set([

@@ -27,7 +27,7 @@ import {
     SkillOntologyRepository, TechnologyOntologyRepository,
     type RetrievalPrefilter,
 } from '@bedrock/shared';
-import { buildRetrievalPrefilter } from '../../ats/retrieval-prefilter.js';
+import { buildRetrievalPrefilter } from '../../ats/context/retrieval-prefilter.js';
 import {
     recallAtK, aggregate, meanRelevance, buildRelevanceJudgePrompt,
     RELEVANCE_JUDGE_TOOL, parseRelevanceScores, formatReport,

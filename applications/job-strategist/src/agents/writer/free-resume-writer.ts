@@ -18,7 +18,7 @@ import { StructuredResumeDataSchema } from '../../schemas/resume-data.schema.js'
 import type { StructuredResumeData, CoverLetter } from '@bedrock/shared';
 import { FREE_RESUME_SYSTEM_PROMPT, FREE_RESUME_PERSONA_META } from '../../prompts/free-resume-persona.js';
 import { capHighlights } from '../quality/experience-cap.js';
-import { jdAtsKeywords } from '../../ats/jd-keywords-union.js';
+import { jdAtsKeywords } from '../../ats/context/jd-keywords-union.js';
 import { CoverLetterSchema } from './strategist-agent.js';
 import type { FreeEvidence } from '../../free/gather-evidence.js';
 

@@ -20,8 +20,8 @@ import { YEARS_RELEVANCE_PROMPT_META } from '../writer/years-gap.js';
 import { COVER_LETTER_REWRITE_PROMPT_META } from '../quality/cover-letter-guard.js';
 import { RESUME_REWRITE_PROMPT_META } from '../quality/resume-guard.js';
 import { COACH_PROMPT_META } from '../coach/coach-agent.js';
-import { RESUME_CONDENSE_PROMPT_META, RESUME_EXPAND_PROMPT_META } from '../../ats/length-budget.js';
-import { MIGRATION_REFRAME_PROMPT_META } from '../../ats/migration-reframe.js';
+import { RESUME_CONDENSE_PROMPT_META, RESUME_EXPAND_PROMPT_META } from '../../ats/length/length-budget.js';
+import { MIGRATION_REFRAME_PROMPT_META } from '../../ats/reconcile/migration-reframe.js';
 import { CORRECTIVE_RETRIEVAL_PROMPT_META } from '../../lib/corrective-retrieval.js';
 import { SUMMARY_REPAIR_PROMPT_META } from '../../lib/summary-integrity.js';
 

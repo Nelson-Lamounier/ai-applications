@@ -15,12 +15,12 @@
  * never mid-sentence chops. Bullets are ordered by JD relevance upstream, so
  * dropping from the end removes the least relevant content first.
  */
-import { CLAIM_STRENGTH_RULE } from '../lib/claim-strength.js';
+import { CLAIM_STRENGTH_RULE } from '../../lib/claim-strength.js';
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
-import { ResumeRewriteSchema, buildEmitResumeTool } from '../agents/writer/resume-tool-schema.js';
-import type { ResumeViolation } from '../agents/quality/resume-guard.js';
-import { preserveExperienceRoster } from '../agents/quality/resume-guard.js';
+import { ResumeRewriteSchema, buildEmitResumeTool } from '../../agents/writer/resume-tool-schema.js';
+import type { ResumeViolation } from '../../agents/quality/resume-guard.js';
+import { preserveExperienceRoster } from '../../agents/quality/resume-guard.js';
 
 export const LENGTH_BUDGET = {
     /** ~2 rendered A4 pages at the ATS template's density. */
