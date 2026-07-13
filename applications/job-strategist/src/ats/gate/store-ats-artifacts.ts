@@ -43,3 +43,37 @@ export async function storeAtsArtifacts(a: StoreAtsArtifactsArgs): Promise<strin
     });
     return key;
 }
+
+export interface StoreAtsCheckJsonArgs {
+    readonly pool:     Pool;
+    readonly resumeId: string;
+    readonly userId:   string;
+    readonly check:    AtsCheckResult;
+}
+
+/**
+ * Re-store just the ATS check JSON — no PDF re-upload, no `pdf_s3_key`
+ * change. Used by run-pipeline.ts (F6) after the attainable fields
+ * (`attainableTotal`/`attainableCovered`/`attainablePassed`/`surfacedKeywords`)
+ * and the reconciled `passed` bit are merged onto the check, which happens
+ * AFTER `storeAtsArtifacts` already persisted the PRE-attainable value
+ * alongside the PDF. Without this second write, `resumes.ats_check_json`
+ * (the primary read path) never carries `attainablePassed` — only
+ * `pipeline_runs.metadata.analysis.atsCheck` does.
+ *
+ * RLS-scoped + row-count-checked, mirroring {@link storeAtsArtifacts}.
+ */
+export async function storeAtsCheckJson(a: StoreAtsCheckJsonArgs): Promise<void> {
+    await withUserRls(a.pool, a.userId, async (client) => {
+        const res = await client.query(
+            `UPDATE resumes SET ats_check_json = $1 WHERE id = $2`,
+            [JSON.stringify(a.check), a.resumeId],
+        );
+        if (res.rowCount === 0) {
+            throw new Error(
+                `storeAtsCheckJson: UPDATE matched 0 rows for resume ${a.resumeId} ` +
+                `(not visible under RLS, or id mismatch)`,
+            );
+        }
+    });
+}

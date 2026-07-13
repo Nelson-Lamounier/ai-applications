@@ -1,5 +1,5 @@
 /** @format */
-import { buildAtsCheck } from './checks.js';
+import { buildAtsCheck, reconcileAtsPassed } from './checks.js';
 
 const TEXT = [
     'Jane Doe', 'Platform Engineer', 'jane@example.com',
@@ -114,4 +114,26 @@ describe('buildAtsCheck — weighted coverage score', () => {
 		const check = buildAtsCheck({ ...base, coverage: [], requiredSkills: [] });
 		expect(check.coverageScore).toBeUndefined();
 	});
+});
+
+describe('reconcileAtsPassed (F5 — single arbiter of the headline pass bit)', () => {
+    it('fails when status has issues even though the attainable pass-mark is true', () => {
+        expect(reconcileAtsPassed('issues', true)).toBe(false);
+    });
+
+    it('fails when the attainable pass-mark is explicitly false even though status is passed', () => {
+        expect(reconcileAtsPassed('passed', false)).toBe(false);
+    });
+
+    it('passes when status is passed and the attainable pass-mark is true', () => {
+        expect(reconcileAtsPassed('passed', true)).toBe(true);
+    });
+
+    it('passes when status is passed and the attainable pass-mark is not yet known (undefined)', () => {
+        expect(reconcileAtsPassed('passed', undefined)).toBe(true);
+    });
+
+    it('fails when status is unverified regardless of the attainable pass-mark', () => {
+        expect(reconcileAtsPassed('unverified', true)).toBe(false);
+    });
 });

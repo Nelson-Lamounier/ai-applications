@@ -52,9 +52,11 @@ import {
 import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/gate/run-ats-check.js';
 import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
+import { reconcileAtsPassed } from './ats/gate/checks.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
 import { splitAttainable } from './ats/gate/attainable.js';
+import { storeAtsCheckJson } from './ats/gate/store-ats-artifacts.js';
 import { demoteMisattributedVendors } from './ats/grounding/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/grounding/code-truth.js';
 import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/context/repo-profile.js';
@@ -381,7 +383,12 @@ const resumeViolationsMetric = new Counter({
 });
 const atsFeedback = new Counter({
     name:       'job_strategist_ats_feedback_total',
-    help:       'ATS feedback loop outcomes: fired (re-write ran), passed (no attainable missing), skipped (re-write not run).',
+    // 'passed' is the RECONCILED headline outcome (reconcileAtsPassed: status
+    // === 'passed' AND attainablePassed !== false) — the single truth a
+    // downstream consumer should read instead of comparing this against the
+    // per-render `ats_${status}` outcome on job_strategist_runs_total, which
+    // can legitimately disagree with the attainable-only signal (F5).
+    help:       'ATS feedback loop outcomes: fired (re-write ran), passed (reconciled headline pass-mark), skipped (re-write not run).',
     labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
@@ -1185,6 +1192,11 @@ export async function main(): Promise<void> {
             };
             const atsCheck = await renderCheckAndStoreAts({ ...atsArgs, resume: finalResume });
             finalAts = atsCheck;
+            // Tracks whichever resumes row holds the FINAL ATS check (the
+            // keyword-surfacing re-write below may persist a different
+            // resumeId) — F6 re-stores the attainable-enriched object onto
+            // this row after the merge below.
+            let atsResumeId = persisted.resumeId;
 
             // ── ATS feedback loop (pass-by-generation, ONE bounded honest re-write) ──
             // Surface attainable-but-missing keywords (verified/transferable the
@@ -1240,6 +1252,7 @@ export async function main(): Promise<void> {
                         tailoredResume: surfaced,
                     }).catch(() => null);
                     const reResumeId = rePersisted?.resumeId ?? persisted.resumeId;
+                    atsResumeId = reResumeId;
                     // Re-check the SURFACED resume. A silent fallback to the
                     // pre-rewrite verdict shipped stale "missing keyword" issues
                     // for a resume that had already fixed them — so retry once,
@@ -1260,16 +1273,39 @@ export async function main(): Promise<void> {
                 atsFeedback.inc({ outcome: 'skipped' });
             }
 
-            // Stamp the pass-mark from the FINAL coverage.
+            // Stamp the pass-mark from the FINAL coverage, then reconcile the
+            // headline `passed` bit (F5). `status` (buildAtsCheck, GROUNDED
+            // keywords) and `attainablePassed` (splitAttainable, VERIFIED-only)
+            // measure different things and can legitimately disagree —
+            // reconcileAtsPassed is the single arbiter; emit ONE reconciled
+            // outcome from it rather than reading `finalSplit.attainablePassed`
+            // and the per-render `ats_${status}` outcome as two independent
+            // (and possibly conflicting) truths.
             const finalSplit = splitAttainable(finalAts.jdKeywordCoverage, skillEvidenceLedger);
-            if (finalSplit.attainablePassed) atsFeedback.inc({ outcome: 'passed' });
+            const reconciledPassed = reconcileAtsPassed(finalAts.status, finalSplit.attainablePassed);
+            if (reconciledPassed) atsFeedback.inc({ outcome: 'passed' });
             finalAts = {
                 ...finalAts,
+                passed:            reconciledPassed,
                 attainableTotal:   finalSplit.attainableTotal,
                 attainableCovered: finalSplit.attainableCovered,
                 attainablePassed:  finalSplit.attainablePassed,
                 surfacedKeywords:  split.attainableMissing.map((e) => e.tool),
             };
+
+            // F6: renderCheckAndStoreAts already persisted the PRE-attainable
+            // check to resumes.ats_check_json via storeAtsArtifacts. The
+            // attainable fields + reconciled `passed` only become known here,
+            // after the Skill Evidence Ledger split — re-store the enriched
+            // object so the primary read path (resumes.ats_check_json) carries
+            // the same truth as pipeline_runs.metadata.analysis.atsCheck
+            // instead of only the latter.
+            await storeAtsCheckJson({ pool, userId: env.userId, resumeId: atsResumeId, check: finalAts }).catch((e) => {
+                log.warn(
+                    { pipelineRunId: env.pipelineRunId, resumeId: atsResumeId, error: (e as Error).message },
+                    'ats_check_json_attainable_restore_failed — resumes.ats_check_json lacks attainable fields; pipeline_runs.metadata still has them',
+                );
+            });
         }
 
         // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────
