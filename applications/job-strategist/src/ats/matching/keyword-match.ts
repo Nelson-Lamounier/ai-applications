@@ -14,6 +14,21 @@ const QUALIFIERS = new Set([
     'scripting', 'systems', 'system', 'tools', 'tooling',
 ]);
 
+/**
+ * Resolve a raw JD term to its canonical form: alias-map hit (looked up by the
+ * lowercased, trimmed term) wins; otherwise fall back to `normalizeTerm`, joining
+ * its tokens with underscores. Single source of truth for canonicalisation —
+ * every call site that needs "the" canonical for a raw term (retrieval-prefilter,
+ * tech-transfer-context, the tech-transfer match tier below) must resolve through
+ * this function so the same term never canonicalises differently in different
+ * places (a prior divergence: one site canonicalised "Node.js" -> "node.js" via a
+ * raw lowercase, another -> "node_js" via this normalized fallback).
+ */
+export function resolveCanonical(term: string, aliasMap: ReadonlyMap<string, string>): string {
+    const termLower = term.toLowerCase().trim();
+    return aliasMap.get(termLower) ?? normalizeTerm(term).replaceAll(' ', '_');
+}
+
 export function normalizeTerm(t: string): string {
     return t
         .toLowerCase()
@@ -278,9 +293,7 @@ export function matchTechTransfer(
     techGroups: string[][],
     aliasMap: Map<string, string>,
 ): boolean {
-    const termLower = term.toLowerCase().trim();
-    // Resolve term → canonical: check aliasMap first, then normalized form
-    const jdCanonical = aliasMap.get(termLower) ?? normalizeTerm(term).replaceAll(' ', '_');
+    const jdCanonical = resolveCanonical(term, aliasMap);
 
     const reverseMap = buildReverseAliasMap(aliasMap);
     const resume = normalizeResume(resumeLowerText);

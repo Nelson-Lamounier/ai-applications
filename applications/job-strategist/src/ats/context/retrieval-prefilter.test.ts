@@ -34,4 +34,9 @@ describe('buildRetrievalPrefilter', () => {
         const p = buildRetrievalPrefilter([], [], GROUPS, ALIAS);
         expect(p).toEqual({ skills: [], tech: [] });
     });
+
+    it('canonicalisation divergence fix: a punctuation-bearing term with no alias hit resolves via the shared normalizeTerm-based fallback (Node.js -> node_js, not "node.js")', () => {
+        const p = buildRetrievalPrefilter([], ['Node.js'], [], new Map());
+        expect(p.tech).toEqual(['node_js']);
+    });
 });

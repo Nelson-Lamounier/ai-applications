@@ -1,5 +1,5 @@
 /** @format */
-import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer, tokenOverlapMatch, padded, mentionsCanonical, buildReverseAliasMap } from './keyword-match.js';
+import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer, tokenOverlapMatch, padded, mentionsCanonical, buildReverseAliasMap, resolveCanonical } from './keyword-match.js';
 
 describe('padded', () => {
     it('lowercases, collapses non-alnum runs to single spaces, and pads both ends', () => {
@@ -10,6 +10,27 @@ describe('padded', () => {
     it('produces whole-word-safe containment for mentionsCanonical (the single-source-of-truth pairing)', () => {
         const reverse = buildReverseAliasMap(new Map([['amazon bedrock', 'bedrock']]));
         expect(mentionsCanonical('bedrock', padded('We use Amazon Bedrock in production'), reverse)).toBe(true);
+    });
+});
+
+describe('resolveCanonical', () => {
+    it('alias-map hit (lowercased lookup) returns the mapped canonical', () => {
+        const aliasMap = new Map([['reactjs', 'react']]);
+        expect(resolveCanonical('ReactJS', aliasMap)).toBe('react');
+    });
+
+    it('no alias hit falls back to normalizeTerm, punctuation normalized to a token boundary (Node.js -> node_js)', () => {
+        expect(resolveCanonical('Node.js', new Map())).toBe('node_js');
+    });
+
+    it('no alias hit: multi-word fallback joins tokens with underscores', () => {
+        expect(resolveCanonical('Some New Tool', new Map())).toBe('some_new_tool');
+    });
+
+    it('is the single source of truth both call sites converge on for the same punctuation-bearing term', () => {
+        const emptyAliasMap = new Map<string, string>();
+        expect(resolveCanonical('Node.js', emptyAliasMap)).toBe(resolveCanonical('Node.js', emptyAliasMap));
+        expect(resolveCanonical('Node.js', emptyAliasMap)).toBe('node_js');
     });
 });
 

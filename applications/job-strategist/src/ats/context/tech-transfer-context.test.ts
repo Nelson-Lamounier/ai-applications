@@ -68,4 +68,12 @@ describe('formatTechTransferContext', () => {
         const bulletLines = result.split('\n').filter((l) => l.startsWith('- '));
         expect(bulletLines).toHaveLength(2);
     });
+
+    it('canonicalisation divergence fix: a punctuation-bearing JD term with no alias hit resolves via the shared normalizeTerm-based fallback (Node.js -> node_js), matching a group containing that canonical', () => {
+        const runtimeGroup = ['node_js', 'deno', 'bun'];
+        const result = formatTechTransferContext(['Node.js'], [runtimeGroup], new Map());
+        expect(result).toContain('## Technology Transferability');
+        expect(result).toContain('deno');
+        expect(result).toContain('bun');
+    });
 });

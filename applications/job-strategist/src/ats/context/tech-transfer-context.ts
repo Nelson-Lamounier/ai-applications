@@ -9,16 +9,7 @@
  * Pure function — no I/O. Returns '' when no groups intersect.
  */
 
-import { normalizeTerm } from '../matching/keyword-match.js';
-
-/**
- * Resolve a raw term to its canonical form via alias map, then normalize.
- * Alias map keys are lowercased.
- */
-function resolveCanonical(term: string, aliasMap: Map<string, string>): string {
-    const termLower = term.toLowerCase().trim();
-    return aliasMap.get(termLower) ?? normalizeTerm(term).replace(/ /g, '_');
-}
+import { resolveCanonical } from '../matching/keyword-match.js';
 
 /**
  * Format a single tech group as a readable "interchangeable" line.

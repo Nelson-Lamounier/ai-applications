@@ -10,6 +10,7 @@
  */
 
 import type { RetrievalPrefilter } from '@bedrock/shared';
+import { resolveCanonical } from '../matching/keyword-match.js';
 
 function norm(s: string): string {
     return s.toLowerCase().trim();
@@ -29,12 +30,13 @@ export function buildRetrievalPrefilter(
 ): RetrievalPrefilter {
     const skills = [...new Set(jdSkills.map(norm).filter((s) => s.length > 0))];
 
-    // Resolve each JD tech term to a canonical.
+    // Resolve each JD tech term to a canonical (shared resolver — keeps this in
+    // lockstep with tech-transfer-context and the tech-transfer match tier so the
+    // same JD term never canonicalises differently across the codebase).
     const canon = new Set<string>();
     for (const t of jdTech) {
-        const lower = norm(t);
-        if (lower.length === 0) continue;
-        canon.add(aliasMap.get(lower) ?? lower.replaceAll(/\s+/g, '_'));
+        if (norm(t).length === 0) continue;
+        canon.add(resolveCanonical(t, aliasMap));
     }
     // Expand with transfer-group siblings (interchangeable techs).
     const tech = new Set(canon);
