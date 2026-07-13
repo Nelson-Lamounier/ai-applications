@@ -59,6 +59,21 @@ describe('matchTier1', () => {
     });
 });
 
+describe('matchTier1 — proximity for multi-word terms (F4)', () => {
+    it('does NOT match when tokens appear in unrelated sentences', () => {
+        expect(matchTier1('project management',
+            'Shipped a side project last year. Handled stakeholder time management separately.')).toBe(false);
+    });
+    it('DOES match when the tokens co-occur as the actual phrase/skill', () => {
+        expect(matchTier1('project management', 'led project management for a 6-person team')).toBe(true);
+        expect(matchTier1('aws', 'deployed on aws')).toBe(true); // single-token unaffected
+    });
+    it('matches when tokens co-occur in the same sentence but are not adjacent (within window)', () => {
+        expect(matchTier1('project management',
+            'led the project through several phases of stakeholder management')).toBe(true);
+    });
+});
+
 describe('tokenOverlapMatch', () => {
     it('≥2 shared significant tokens → true (bridges competency phrasing)', () => {
         // shares {root, cause, analysis}

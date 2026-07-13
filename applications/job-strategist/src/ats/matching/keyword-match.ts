@@ -44,6 +44,38 @@ function matchSkillCategory(rawTermLower: string, paddedResume: string): boolean
     return LANGUAGE_EXEMPLARS.some((ex) => paddedResume.includes(ex));
 }
 
+// F4: multi-word terms need PROXIMITY, not just co-presence — "project" and "management"
+// each appearing somewhere in the resume, in unrelated sentences, is not the same as the
+// resume demonstrating "project management". A sentence boundary (.!?;\n) is a hard cut;
+// within a sentence, tokens must additionally fall within PROXIMITY_WINDOW words of each
+// other so a long buzzword-list sentence doesn't bridge two unrelated mentions either.
+const PROXIMITY_WINDOW = 8;
+
+function splitSentences(text: string): string[] {
+    return text.split(/[.!?;\n]+/);
+}
+
+function sentenceWords(sentence: string): string[] {
+    return sentence.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter((w) => w.length > 0);
+}
+
+/** True when every token has an occurrence within `windowSize` words of some occurrence of the first token. */
+function withinWindow(words: string[], tokens: string[], windowSize: number): boolean {
+    const positions = tokens.map((tok) => {
+        const idxs: number[] = [];
+        words.forEach((w, i) => { if (w === tok) idxs.push(i); });
+        return idxs;
+    });
+    if (positions.some((p) => p.length === 0)) return false; // a token is absent from this sentence
+    return positions[0].some((anchor) =>
+        positions.slice(1).every((idxs) => idxs.some((p) => Math.abs(p - anchor) <= windowSize)));
+}
+
+/** Co-occurrence check for multi-word terms: all tokens present in the SAME sentence, within a bounded window. */
+function tokensCoOccur(tokens: string[], resumeLowerText: string, windowSize = PROXIMITY_WINDOW): boolean {
+    return splitSentences(resumeLowerText).some((sentence) => withinWindow(sentenceWords(sentence), tokens, windowSize));
+}
+
 export function matchTier1(term: string, resumeLowerText: string): boolean {
     const resume = normalizeResume(resumeLowerText);
     const normTerm = normalizeTerm(term);
@@ -52,7 +84,11 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
         // 2-char atomic skill ("ML", "QA") matches its own word, not a substring of another.
         if (resume.includes(` ${normTerm} `)) return true;
         const tokens = normTerm.split(' ').filter((t) => t.length >= 3);
-        if (tokens.length > 0 && tokens.every((tok) => resume.includes(` ${tok} `))) return true;
+        if (tokens.length === 1) {
+            if (resume.includes(` ${tokens[0]} `)) return true;
+        } else if (tokens.length >= 2 && tokensCoOccur(tokens, resumeLowerText)) {
+            return true;
+        }
     }
     // Skill-category credit — e.g. "scripting languages" reduces to "languages" and won't
     // match literally, but the resume lists Python/Bash → the language skill IS present.
