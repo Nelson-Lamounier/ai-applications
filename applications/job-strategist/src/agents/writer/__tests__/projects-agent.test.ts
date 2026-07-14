@@ -5,7 +5,6 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import type { AgentName } from '@bedrock/shared';
 import { executeProjectsAgent } from '../projects-agent.js';
 import type { ProjectsMessageInput } from '../projects-message.js';
 
@@ -70,7 +69,7 @@ describe('projects agent', () => {
             data: opts.parseResponse(JSON.stringify(validOutput())),
         }));
 
-        await executeProjectsAgent(baseCtx, baseInput(), { agentName: 'strategist-projects-rewrite' as AgentName /* Task 6 adds these to the union */ });
+        await executeProjectsAgent(baseCtx, baseInput(), { agentName: 'strategist-projects-rewrite' });
 
         const call = mockRun.mock.calls[0]![0] as { config: { agentName: string } };
         expect(call.config.agentName).toBe('strategist-projects-rewrite');

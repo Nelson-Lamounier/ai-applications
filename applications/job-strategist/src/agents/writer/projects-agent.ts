@@ -32,7 +32,7 @@ const EFFECTIVE_MODEL_ID = process.env['INFERENCE_PROFILE_ARN'] ?? PROJECTS_MODE
  * the extended-thinking writer, not forced-tool calls).
  */
 const PROJECTS_CONFIG: AgentConfig = {
-    agentName: 'strategist-projects' as AgentName, // Task 6 adds these to the union
+    agentName: 'strategist-projects',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: 3000,
     thinkingBudget: 0,
