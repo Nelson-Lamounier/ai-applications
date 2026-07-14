@@ -1622,6 +1622,8 @@ export async function main(): Promise<void> {
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     violationLog.recordAll('revalidate_post_keywords', reval.violations);
                     surfaced = await applyResumeIntegrity(reval.resume, tailoredResumeData, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
+                    // close the silent-blanking path: the keyword-loop re-emit can drop projects[].highlights
+                    if (projectHighlightsSnapshot) surfaced = restoreProjectHighlights(projectHighlightsSnapshot, surfaced);
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
                         applicationId:  env.applicationId,
