@@ -107,3 +107,10 @@ describe('strategist-summary-persona v4 — profile-against-JD narrative + const
         expect(message).toContain('## Fit Summary');
     });
 });
+
+describe('strategist-summary-persona v5 -- ATS targets directive', () => {
+    it('carries the ATS-TARGETS directive, subordinate to the fit thesis', () => {
+        expect(joined).toContain('ATS Targets');
+        expect(joined.toLowerCase()).toContain('subordinate to the fit thesis');
+    });
+});

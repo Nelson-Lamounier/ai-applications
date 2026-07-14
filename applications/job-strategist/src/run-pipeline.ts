@@ -55,6 +55,10 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/gate/run-ats-check.js';
 import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
 import { reconcileAtsPassed } from './ats/gate/checks.js';
+import { selectSummaryAtsTargets, type SummaryAtsTarget } from './ats/gate/summary-ats-targets.js';
+import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/summary-ats-flow.js';
+import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-ats-diagnostics.js';
+import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
 import { splitAttainable } from './ats/gate/attainable.js';
@@ -132,25 +136,48 @@ async function fillResumeSummary(
     profileIntelligence: string,
     yearsGap: YearsGapLite,
     achievementEvidence: string,
+    atsTargets: readonly SummaryAtsTarget[],
     metric: Counter<'outcome'>,
     onFallback: (err: unknown) => void,
-): Promise<void> {
-    if (!tailoredResumeData) return;
+): Promise<SummaryAtsDiagnostics | null> {
+    if (!tailoredResumeData) return null;
+    const baseInput = {
+        research: researchData,
+        body: tailoredResumeData,
+        profileIntelligence,
+        yearsGapFraming: framingDirective(yearsGap) ?? '',
+        achievementEvidence,
+    };
     try {
-        const summaryRes = await executeSummaryAgent(ctx, {
-            research: researchData,
-            body: tailoredResumeData,
-            profileIntelligence,
-            yearsGapFraming: framingDirective(yearsGap) ?? '',
-            achievementEvidence,
+        const first = await executeSummaryAgent(ctx, { ...baseInput, atsTargets: atsTargets.map((t) => t.skill) });
+        const { summary, diag } = await resolveSummaryAts({
+            firstSummary: first.data.summary,
+            targets: atsTargets,
+            guard: (s) => (namesGap(s) ? 'namesGap' : null),
+            rewrite: async (draft, missing) => {
+                const rw = await executeSummaryAgent(
+                    ctx,
+                    { ...baseInput, atsTargets: missing, rewriteDraft: draft, rewriteMissing: missing },
+                    { agentName: 'strategist-summary-rewrite' },
+                );
+                return rw.data.summary;
+            },
         });
-        (tailoredResumeData as { summary: string }).summary = summaryRes.data.summary;
+        (tailoredResumeData as { summary: string }).summary = summary;
         metric.inc({ outcome: 'agent' });
+        return diag;
     } catch (err) {
         (tailoredResumeData as { summary: string }).summary =
             deterministicSummary(researchData.fitSummary, researchData.targetRole);
         metric.inc({ outcome: 'fallback' });
         onFallback(err);
+        return {
+            targets: [...atsTargets],
+            coverageBefore: { targets: atsTargets.length, covered: 0, missing: atsTargets.map((t) => t.skill) },
+            rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
+            fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
+            guardRejections: [],
+        };
     }
 }
 import { formatTechTransferContext } from './ats/context/tech-transfer-context.js';
@@ -449,6 +476,18 @@ const correctiveRetrievalMetric = new Counter({
     name:       'job_strategist_corrective_retrieval_total',
     help:       'Corrective-retrieval verdicts on kb_present_not_retrieved gaps: promoted (evidence recovered) vs stood (lexical mention only).',
     labelNames: ['outcome'] as const,
+    registers:  [obs.registry],
+});
+const summaryAtsOutcomeMetric = new Counter({
+    name:       'job_strategist_summary_ats_outcome_total',
+    help:       'Summary-ATS lane outcome by result and reason.',
+    labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
+const summaryAtsCoverageMetric = new Histogram({
+    name:       'job_strategist_summary_ats_coverage',
+    help:       'Covered ATS targets in the summary (0..N).',
+    buckets:    [0, 1, 2, 3],
     registers:  [obs.registry],
 });
 // Prose linting runs in 'flag' mode only — telemetry on AI-tell language in the
@@ -1081,9 +1120,10 @@ export async function main(): Promise<void> {
         );
 
         // ── Summary agent — fills the body's empty summary field ──
-        await fillResumeSummary(
+        const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
+        const summaryAtsDiag = await fillResumeSummary(
             ctx, tailoredResumeData, researchData, profileIntelligenceBlock,
-            yearsGap, achievementEvidenceBlock,
+            yearsGap, achievementEvidenceBlock, summaryAtsTargets,
             summaryOutcomeMetric,
             (err) => log.warn({
                 pipelineRunId: env.pipelineRunId,
@@ -1091,6 +1131,25 @@ export async function main(): Promise<void> {
                 error: err instanceof Error ? err.message : String(err),
             }, 'summary_agent_failed_deterministic_fallback_used'),
         );
+        // Summary-ATS observability: Loki event stream + bounded Prometheus outcome/coverage
+        // metrics. summaryAtsDiag itself is folded into the metadata.analysis write below
+        // (pipeline_runs.metadata.analysis.summaryAts) rather than a second
+        // updatePipelineRunMetadata call -- that call's top-level `analysis` key is a
+        // shallow-merge (jsonb `||`) and a second call would clobber the analysis object
+        // written later in this run. No traceId is in scope in this pipeline (only
+        // run-clustering.ts / run-case-study.ts thread one through) -- null here is correct,
+        // not a placeholder.
+        if (summaryAtsDiag) {
+            logSummaryAtsEvents(log, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId, traceId: null }, summaryAtsDiag);
+            const { outcome, reason } = summaryAtsOutcome(summaryAtsDiag);
+            summaryAtsOutcomeMetric.inc({ outcome, reason });
+            // Only a run that actually scored real targets contributes a coverage
+            // sample -- no-target runs and fallback runs (both report covered 0
+            // without a genuine measurement) would otherwise dilute the histogram.
+            if (summaryAtsDiag.coverageBefore.targets > 0 && !summaryAtsDiag.fallback.fired) {
+                summaryAtsCoverageMetric.observe(summaryAtsDiag.coverageBefore.covered);
+            }
+        }
 
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
@@ -1406,7 +1465,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,

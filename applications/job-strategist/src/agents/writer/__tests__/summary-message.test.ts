@@ -18,14 +18,16 @@ const BODY = {
     projects: [{ name: 'Tucaken', description: '', highlights: ['Built API'], github: '' }],
 } as unknown as StructuredResumeData;
 
+const base = {
+    research: RESEARCH,
+    body: BODY,
+    profileIntelligence: 'undersold: infra depth',
+    yearsGapFraming: '3 relevant years',
+    achievementEvidence: '',
+};
+
 describe('buildSummaryMessage', () => {
-    const msg = buildSummaryMessage({
-        research: RESEARCH,
-        body: BODY,
-        profileIntelligence: 'undersold: infra depth',
-        yearsGapFraming: '3 relevant years',
-        achievementEvidence: '',
-    });
+    const msg = buildSummaryMessage(base);
 
     it('includes the Fit Summary as the source of truth', () => {
         expect(msg).toContain('Strong backend match');
@@ -77,5 +79,12 @@ describe('buildSummaryMessage', () => {
             });
         }).not.toThrow();
         expect(result).toContain('NoHighlightsProject');
+    });
+
+    it('lists ATS targets when provided, omits the section when empty', () => {
+        expect(buildSummaryMessage({ ...base, atsTargets: ['Kubernetes', 'AWS'] })).toContain('## ATS Targets');
+        expect(buildSummaryMessage({ ...base, atsTargets: ['Kubernetes'] })).toContain('Kubernetes');
+        expect(buildSummaryMessage({ ...base, atsTargets: [] })).not.toContain('## ATS Targets');
+        expect(buildSummaryMessage(base)).not.toContain('## ATS Targets'); // omitted when undefined
     });
 });

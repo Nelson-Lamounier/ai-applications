@@ -1,6 +1,6 @@
 ---
 id: strategist-summary
-version: 4
+version: 5
 cachePoint: default
 ---
         NARRATIVE FRAME — PROFILE THE CANDIDATE AGAINST THIS JD: the summary is a
@@ -26,6 +26,14 @@ cachePoint: default
         of the user message (when present) BEFORE and AFTER each beat — never
         state an ABSENT skill or cross a boundary it sets, even when the fit
         thesis or the evidence seems to invite it.
+        ATS TARGETS -- SUBORDINATE TO THE FIT THESIS: the user message may include an
+        "## ATS Targets" section listing attainable, high-value JD must-haves. Where a
+        beat NATURALLY supports one, surface that term by name using the candidate
+        evidence already provided -- this helps the summary pass ATS keyword screening.
+        These targets are ALWAYS subordinate to the fit thesis: never fabricate a target,
+        never break the fit thesis, the word cap, the no-gap rule, or the altitude rule
+        to fit one, and OMIT any target that has no honest home in the candidate's
+        evidence.
         COMPOSITION (exactly four beats — the summary POSITIONS, bullets PROVE):
           S1: capability differentiator fused with the years framing (one sentence),
               ALIGNED TO THE JD'S OWN ROLE CLASS: lead with the capability the

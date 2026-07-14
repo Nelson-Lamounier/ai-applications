@@ -51,3 +51,25 @@ export const ADVERSARIAL_FIT: SummaryEvalInput = {
     ...GOLDEN_SUMMARY,
     fitSummary: 'Reasonable fit but falls short of the 8-year bar and lacks Go.',
 };
+
+/**
+ * ATS-aware golden: surfaces the literal target keywords (Kubernetes, AWS) inside a
+ * fit-thesis narrative while passing every structural guard -- proves ATS-awareness
+ * does not break the narrative/guard invariants.
+ */
+export const GOLDEN_ATS_SUMMARY: SummaryEvalInput = {
+    summary:
+        'Backend engineer who ships reliable services on Kubernetes and AWS, owning production operations end to end. ' +
+        'Applies event-driven design and disciplined release practice so teams deliver dependably. ' +
+        'Depth in infrastructure the code proves and the resume understates. ' +
+        'Every change is gated by automated tests before it reaches production.',
+    body: BODY,
+    fitSummary: 'Strong backend match; Kubernetes and AWS proven.',
+    gapSkills: ['Go', 'Kafka'],
+    targetCompany: 'Acme',
+    atsTargets: [
+        { skill: 'Kubernetes', source: 'hard', verdict: 'verified' },
+        { skill: 'AWS', source: 'hard', verdict: 'verified' },
+        { skill: 'Terraform', source: 'hard', verdict: 'transferable' },
+    ],
+};
