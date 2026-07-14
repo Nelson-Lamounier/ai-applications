@@ -29,7 +29,7 @@ import {
 import { loadCareerHistory, formatCareerHistory, type CareerEntry } from '../evidence/career-history.js';
 import { jdRetrievalQueries, formatJdExtraction } from '../jd/jd-extractor.js';
 import { assessmentsToMatching } from './research-assessment.js';
-import { canonicalJdSkills } from '../../ats/canonical-jd-skills.js';
+import { canonicalJdSkills } from '../../ats/context/canonical-jd-skills.js';
 import { computeKbStats } from '../../lib/kb-stats.js';
 import type { Pool } from 'pg';
 import type {

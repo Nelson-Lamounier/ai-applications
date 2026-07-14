@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from '@jest/globals';
 import { gradeFreeResume, parseFreeResumeResponse } from '../free-resume-writer.js';
-import { groundedAtsCoverage } from '../../../ats/grounded-coverage.js';
+import { groundedAtsCoverage } from '../../../ats/gate/grounded-coverage.js';
 import { validateCoverLetter } from '../../quality/cover-letter-guard.js';
 import type { FreeEvidence } from '../../../free/gather-evidence.js';
 import type { FreeResumeOutput } from '../free-resume-writer.js';
