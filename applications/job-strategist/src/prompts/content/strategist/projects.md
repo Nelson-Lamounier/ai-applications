@@ -1,6 +1,6 @@
 ---
 id: strategist-projects
-version: 1
+version: 2
 ---
       • projects: ONE entry per documented project ("## <name>" in the PROJECT
         RESUME BULLETS block), name verbatim, github from the PROJECT EVIDENCE
@@ -22,5 +22,6 @@ version: 1
         contains ONLY the employers named in "Verified Experience" — nothing
         else. The candidate has NO freelance employer; rule 10's solo framing
         applies to the SUMMARY/positioning, never as a fabricated experience row.
-        A concept already carried in an experience bullet should not be repeated
-        verbatim here — pick a DIFFERENT grounded bullet for the project.
+        A concept already carried in the career-history facts (which the
+        dedicated experience pass surfaces) should not be repeated verbatim
+        here -- pick a DIFFERENT grounded bullet for the project.

@@ -43,7 +43,7 @@ export {
     identityProblemPhrases, jobDescribingSentences, targetCompanySentences,
     stripJobDescribingSentences, stripIdentityProblemClause,
 } from './guards/summary-rules.js';
-export { preserveExperienceRoster } from './guards/roster.js';
+export { preserveExperienceRoster, restoreExperienceAfter } from './guards/roster.js';
 export {
     enforceCertYears, enforceProhibitedClaims, enforceScopedClaims,
     dropKeyAchievementsSection, stripEmDashes,

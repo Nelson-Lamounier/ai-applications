@@ -44,3 +44,22 @@ export function preserveExperienceRoster(
     });
     return changed ? { ...after, experience: merged } : after;
 }
+
+/**
+ * Restore a pre-weave experience snapshot onto a resume some later pass may
+ * have rewritten. The metric weave (surfaceMetrics, run-pipeline.ts) rewrites
+ * bullets across the WHOLE resume -- including experience, which it may
+ * legitimately touch for a plain writer-authored resume. But once a
+ * dedicated experience agent has authored the section, experience is
+ * agent-owned: its bullets are provenance-guarded (every one traces to a
+ * real career-history line) and the weave has no such guard. Scope the
+ * weave's write surface to everything EXCEPT experience by snapshotting it
+ * before the weave call and restoring it after -- the weave itself is not
+ * retired, it still legitimately rewrites project descriptions. Pure.
+ */
+export function restoreExperienceAfter(
+    resume: StructuredResumeData,
+    before: StructuredResumeData['experience'],
+): StructuredResumeData {
+    return { ...resume, experience: before };
+}

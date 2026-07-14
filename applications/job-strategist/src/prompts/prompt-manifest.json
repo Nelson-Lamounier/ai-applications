@@ -32,24 +32,24 @@
         "sha256": "3ac4c92db2186686c741721e992bc0f94ce3ae1b8c513007a959a90cf773d5f8"
     },
     "strategist/_base_1": {
-        "version": "2",
-        "sha256": "ba2abdd7a0b050c37d797aeebaf039c4e5758f8e3e49b9d9b42a39fd28dff39a"
+        "version": "6",
+        "sha256": "c8965e06aa0e912df4450ff1a539babcc099bc2a78cd445d8e502027fd6de466"
     },
     "strategist/_base_2": {
         "version": "1",
         "sha256": "7d3ce23ea95bd76e81cbfba151d82105808430b40b258711592d63b5bb4d5ab5"
     },
     "strategist/_base_3": {
-        "version": "2",
-        "sha256": "908e565254581c75300ac979c44e4a9f57e145acfb05dea3cc87ad6b8c346909"
+        "version": "4",
+        "sha256": "8f665ab3c9f471eb3bcbfbd6fab4a60330ef1a3952436b0f0c088341f5ebe518"
     },
     "strategist/_base_4": {
-        "version": "1",
-        "sha256": "5dc1da7aab6ce7c89cc1d7cb9832244ffcd73f192e82a4ad64b223506341735f"
+        "version": "3",
+        "sha256": "31effbbe408d5fc84a29d1310e7fbe425cfc4d3132e6b84ef698cc1d03c5a0e0"
     },
     "strategist/_base_5": {
-        "version": "1",
-        "sha256": "df31b055d7951fd7f0701e51fb858f2d6496d2872031262660d3d347c750f1e7"
+        "version": "3",
+        "sha256": "58d33213e52f3e6536c9d91f615078991eb3ebb44a29ebb67fdb21238b61d15d"
     },
     "strategist/archetype": {
         "version": "1",
@@ -60,16 +60,20 @@
         "sha256": "50b3136f1b6cb2bf3d0a0c383f550d25887d413dc314a2883d19b9adc22b8625"
     },
     "strategist/experience": {
+        "version": "3",
+        "sha256": "e54b143c9f4339dd09fc5518d45771f455c422387f53b5c2dd28ad22fb1810a2"
+    },
+    "strategist/experience-agent": {
         "version": "1",
-        "sha256": "83d33777ac7199db74988a6cff0337fe458e9e4125a37ad61e912f601694e122"
+        "sha256": "483f0a2f00d7af7791ff3422d9cefdcce07d3f269a8dac2d7f26481c359deaf9"
     },
     "strategist/gaps": {
         "version": "1",
         "sha256": "f11bd5d060f54a85fda6411b64b034be2ef5044c0a4ca34d7daac11747b5ed9a"
     },
     "strategist/projects": {
-        "version": "1",
-        "sha256": "3fb885ae93806426117a558f16fd4bf3098ad65e4f58b3b0c92ac43a5b92d964"
+        "version": "2",
+        "sha256": "c598372f78b1349b90eb66c7777c611fc973312b6e3e4e15ce82c6a9dc252f60"
     },
     "strategist/skills-education": {
         "version": "1",

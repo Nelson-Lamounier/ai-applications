@@ -1,23 +1,22 @@
 ---
 id: strategist-base-4
-version: 1
+version: 3
 ---
       • keyAchievements: DO NOT EMIT (always an empty array) — achievement
-        material integrates into experience lead bullets and the summary metric
+        material is integrated into experience lead bullets by the dedicated
+        experience pass and into the summary metric by the summary pass; do
+        not emit keyAchievements yourself
       • Grand total across all sections: 950 words max
       SELECTION RULE (before trimming): every piece of content must answer a
       JD required skill, a responsibility, or the company problem. One strong
       proof per requirement beats three restatements — never saturate.
       TRIM ORDER when over budget (apply in sequence until under limit):
-        1. Cut least JD-relevant bullet from the oldest experience role
-        2. Remove any skill not in the JD's top 5 requirements
-        3. Drop the least JD-relevant project highlight (never below 2 per project)
+        1. Remove any skill not in the JD's top 5 requirements
+        2. Drop the least JD-relevant project highlight (never below 2 per project)
         Do NOT return a resume that exceeds 950 words total.
       (Note: mirrored from agent-guide.md §Resume Word Count Budget.)
 
    d. SCOPE QUALIFIER RULE:
-      • REQUIRED in experience.highlights: add "solo-operated" or "self-managed"
-        to any bullet that could imply enterprise scale without qualification.
       • BANNED in summary, skills, projects: never write "portfolio-scale",
         "portfolio scale", "solo-operated", or "self-managed" in those sections.
         Technical specifics (EKS + Karpenter, Calico CNI, 265+ assertions) carry
@@ -35,8 +34,9 @@ version: 1
       Every subsequent mention must add new signal (deeper detail, different context,
       specific outcome) or be removed entirely.
       • projects → experience references it briefly or omits it
-      • summary → experience and projects do not restate the same framing
-      • skills → experience bullets do not list the same tools again
+      - summary/skills -> the dedicated experience pass avoids restating
+        summary framing and relisting skills tools; keep skills and projects
+        free of duplication with each other
       Common duplications to catch:
         ArgoCD in both K8s and CI/CD subsections → keep in the most JD-relevant
         Prometheus in both Observability and K8s → keep in Observability
