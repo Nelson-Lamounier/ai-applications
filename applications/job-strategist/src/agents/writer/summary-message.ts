@@ -21,6 +21,8 @@ export interface SummaryMessageInput {
     readonly profileIntelligence: string;
     readonly yearsGapFraming: string;
     readonly achievementEvidence: string;
+    /** Optional JD must-haves the summary should try to surface naturally (subordinate to the fit thesis). */
+    readonly atsTargets?: readonly string[];
 }
 
 /** Focused user message for the summary agent - only what S1-S4 need. */
@@ -75,6 +77,16 @@ export function buildSummaryMessage(m: SummaryMessageInput): string {
 
     if (m.achievementEvidence.trim()) {
         out.push('', '## Achievement evidence (S3/S4 alternative)', m.achievementEvidence.trim());
+    }
+
+    const atsTargets = m.atsTargets ?? [];
+    if (atsTargets.length > 0) {
+        out.push(
+            '',
+            '## ATS Targets (subordinate to the fit thesis - surface naturally, never fabricate)',
+            'These JD must-haves are attainable and high-value. Surface them by name where a beat NATURALLY supports it, using the candidate evidence above. If a target has no honest home, OMIT it - never break the fit thesis, the word cap, the no-gap rule, or the altitude rule to fit one.',
+            ...atsTargets.map((t) => `- ${t}`),
+        );
     }
 
     out.push('', 'Emit the four beats via the tool. 100 words total across s1-s4.');
