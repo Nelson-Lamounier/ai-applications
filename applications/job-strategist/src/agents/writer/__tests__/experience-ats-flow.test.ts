@@ -137,4 +137,33 @@ describe('resolveExperienceAts', () => {
     expect(r.diag.provenance.rewriteViolations).toContain('cross_role_citation:Acme:c0.h0');
     expect(r.diag.provenance.rewriteViolations).toContain('unaccounted_line:c1.h0');
   });
+
+  it('keeps first when the re-write is provenance-valid and covers more but trips namesGap', async () => {
+    const rewriteGapped: ExperienceAgentOutput = {
+      roles: [
+        { company: 'AWS', title: 'Support Engineer', period: '2023-2025',
+          highlights: [
+            {
+              text: 'Applied DNS and TCP/IP protocols, though this role falls short of the 8-year bar hardening VPC networking',
+              sources: ['c0.h0'], atsTargets: ['DNS', 'TCP/IP'],
+            },
+            { text: 'Resolved Sev-2 escalations enforcing SSL/TLS security with customer teams', sources: ['c0.h1'], atsTargets: ['SSL/TLS'] },
+          ] },
+        { company: 'Acme', title: 'QA Analyst', period: '2021-2023',
+          highlights: [{ text: 'Automated regression suites gating releases', sources: ['c1.h0'], atsTargets: [] }] },
+      ],
+      accounting: { dropped: [] },
+    };
+    const r = await resolveExperienceAts({
+      first, roster, careerLines: lines, targets,
+      rewrite: async () => rewriteGapped,
+    });
+    expect(r.diag.rewrite.fired).toBe(true);
+    // coverage would be full (3/3) and provenance-valid -- proves namesGap, not coverage or provenance, decided this
+    expect(r.diag.rewrite.coverageAfter?.covered).toBe(3);
+    expect(r.diag.provenance.rewriteViolations).toEqual([]);
+    expect(r.diag.rewrite.kept).toBe('first');
+    expect(r.diag.rewrite.keptReason).toBe('rewrite-names-gap');
+    expect(r.output).toBe(first);
+  });
 });

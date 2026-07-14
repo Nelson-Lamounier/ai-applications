@@ -68,6 +68,13 @@ describe('experience provenance', () => {
       ],
     });
   });
+  it('a cross-role-cited line counts as accounted -- cross_role_citation still rejects it', () => {
+    const bad = structuredClone(good);
+    bad.roles[1]!.highlights[0]!.sources = ['c0.h1']; // Acme bullet cites AWS's line instead of its own
+    const violations = validateExperienceProvenance(bad, roster, lines);
+    expect(violations).toContain('cross_role_citation:Acme:c0.h1');
+    expect(violations).not.toContain('unaccounted_line:c0.h1');
+  });
   it('ExperienceProvenanceError carries its violations array', () => {
     expect(new ExperienceProvenanceError(['uncited_bullet:AWS:0']).violations).toEqual(['uncited_bullet:AWS:0']);
   });

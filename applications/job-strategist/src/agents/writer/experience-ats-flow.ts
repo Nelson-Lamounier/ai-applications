@@ -25,7 +25,7 @@ export interface ExperienceAgentDiagnostics {
 }
 
 /** Flattened score text for an experience output: every role's bullets, in order. */
-function joinExperienceText(out: ExperienceAgentOutput): string {
+export function joinExperienceText(out: ExperienceAgentOutput): string {
   return assembleExperience(out).flatMap((r) => r.highlights).join('. ');
 }
 

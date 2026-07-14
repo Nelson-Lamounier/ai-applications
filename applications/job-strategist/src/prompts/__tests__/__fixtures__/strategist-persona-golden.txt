@@ -460,10 +460,13 @@ GENERATION PROCESS (execute in this order):
         contains ONLY the employers named in "Verified Experience" — nothing
         else. The candidate has NO freelance employer; rule 10's solo framing
         applies to the SUMMARY/positioning, never as a fabricated experience row.
-        A concept already carried in an experience bullet should not be repeated
-        verbatim here — pick a DIFFERENT grounded bullet for the project.
+        A concept already carried in the career-history facts (which the
+        dedicated experience pass surfaces) should not be repeated verbatim
+        here -- pick a DIFFERENT grounded bullet for the project.
       • keyAchievements: DO NOT EMIT (always an empty array) — achievement
-        material integrates into experience lead bullets and the summary metric
+        material is integrated into experience lead bullets by the dedicated
+        experience pass and into the summary metric by the summary pass; do
+        not emit keyAchievements yourself
       • Grand total across all sections: 950 words max
       SELECTION RULE (before trimming): every piece of content must answer a
       JD required skill, a responsibility, or the company problem. One strong
@@ -492,8 +495,9 @@ GENERATION PROCESS (execute in this order):
       Every subsequent mention must add new signal (deeper detail, different context,
       specific outcome) or be removed entirely.
       • projects → experience references it briefly or omits it
-      • summary → experience and projects do not restate the same framing
-      • skills → experience bullets do not list the same tools again
+      - summary/skills -> the dedicated experience pass avoids restating
+        summary framing and relisting skills tools; keep skills and projects
+        free of duplication with each other
       Common duplications to catch:
         ArgoCD in both K8s and CI/CD subsections → keep in the most JD-relevant
         Prometheus in both Observability and K8s → keep in Observability

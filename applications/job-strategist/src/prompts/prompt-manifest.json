@@ -44,8 +44,8 @@
         "sha256": "8f665ab3c9f471eb3bcbfbd6fab4a60330ef1a3952436b0f0c088341f5ebe518"
     },
     "strategist/_base_4": {
-        "version": "2",
-        "sha256": "b3f376aa89a8b8ecccee25b7227df178df5e40832512919a6f51e68b5675d108"
+        "version": "3",
+        "sha256": "31effbbe408d5fc84a29d1310e7fbe425cfc4d3132e6b84ef698cc1d03c5a0e0"
     },
     "strategist/_base_5": {
         "version": "3",
@@ -60,7 +60,7 @@
         "sha256": "50b3136f1b6cb2bf3d0a0c383f550d25887d413dc314a2883d19b9adc22b8625"
     },
     "strategist/experience": {
-        "version": "2",
+        "version": "3",
         "sha256": "e54b143c9f4339dd09fc5518d45771f455c422387f53b5c2dd28ad22fb1810a2"
     },
     "strategist/experience-agent": {
@@ -72,8 +72,8 @@
         "sha256": "f11bd5d060f54a85fda6411b64b034be2ef5044c0a4ca34d7daac11747b5ed9a"
     },
     "strategist/projects": {
-        "version": "1",
-        "sha256": "3fb885ae93806426117a558f16fd4bf3098ad65e4f58b3b0c92ac43a5b92d964"
+        "version": "2",
+        "sha256": "c598372f78b1349b90eb66c7777c611fc973312b6e3e4e15ce82c6a9dc252f60"
     },
     "strategist/skills-education": {
         "version": "1",

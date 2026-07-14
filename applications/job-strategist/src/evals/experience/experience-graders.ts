@@ -8,8 +8,8 @@
  * deterministic checks against a fixed ExperienceEvalInput.
  */
 import { numbersIn } from '../../agents/quality/guards/text.js';
+import { joinExperienceText } from '../../agents/writer/experience-ats-flow.js';
 import {
-    assembleExperience,
     validateExperienceProvenance,
     type IndexedCareerLine,
     type RosterEntry,
@@ -26,13 +26,6 @@ export interface ExperienceEvalInput {
     readonly careerLines: readonly IndexedCareerLine[];
     readonly atsTargets: readonly ExperienceAtsTarget[];
     readonly allowedNumbers: readonly string[]; // ledger + source-line numbers
-}
-
-/** Flattened bullet text for a graded output: every role's bullets, in order. */
-function joinBullets(output: ExperienceAgentOutput): string {
-    return assembleExperience(output)
-        .flatMap((r) => r.highlights)
-        .join('. ');
 }
 
 /** Deterministic provenance rules - reuses the runtime validator, does not re-check rules. */
@@ -74,7 +67,7 @@ export function noFabricationGrader(i: ExperienceEvalInput): GraderResult {
 export function atsCoverageGrader(i: ExperienceEvalInput): GraderResult {
     const targets = i.atsTargets;
     if (targets.length === 0) return mkResult('atsCoverage', []);
-    const { covered } = scoreSummaryCoverage(joinBullets(i.output), targets);
+    const { covered } = scoreSummaryCoverage(joinExperienceText(i.output), targets);
     const need = Math.min(2, targets.length);
     return mkResult(
         'atsCoverage',

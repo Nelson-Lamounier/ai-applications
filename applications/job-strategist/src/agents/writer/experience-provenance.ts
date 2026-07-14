@@ -54,6 +54,10 @@ export function validateExperienceProvenance(
       const careerSources = b.sources.filter((s) => lineById.has(s));
       if (careerSources.length === 0) violations.push(`uncited_bullet:${role.company}:${bi}`);
       for (const s of careerSources) {
+        // A cross-role-cited line still counts as accounted here (added before the
+        // cross-role check below): the cross_role_citation violation already rejects
+        // the candidate, so unaccounted_line will never fire for it too -- do not
+        // build a token-targeted repair on unaccounted_line alone.
         cited.add(s);
         if (lineById.get(s)!.roleIndex !== i) violations.push(`cross_role_citation:${role.company}:${s}`);
       }

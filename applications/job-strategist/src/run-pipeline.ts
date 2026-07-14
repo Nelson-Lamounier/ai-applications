@@ -211,7 +211,13 @@ async function fillResumeExperience(
     codeStack: string,
     onFallback: (err: unknown) => void,
 ): Promise<ExperienceAgentDiagnostics | null> {
-    if (!tailoredResumeData || careerEntries.length === 0) return null;
+    if (!tailoredResumeData) return null;
+    if (careerEntries.length === 0) {
+        // no career facts: an experience entry without bullets can only be a fabricated roster row -- drop it
+        (tailoredResumeData as { experience: unknown }).experience =
+            tailoredResumeData.experience.filter((e) => e.highlights.length > 0);
+        return null;
+    }
     const roster = rosterFromCareer(careerEntries);
     const careerLines = indexCareerLines(careerEntries);
     const baseInput = { research: researchData, roster, careerLines, atsTargets, groundedMetrics, codeStack };
@@ -360,6 +366,15 @@ function reconcileRosterAgainstCareer(
  */
 function expSnapshot(resume: StructuredResumeData | null): string {
     return JSON.stringify(resume?.experience ?? null);
+}
+
+/**
+ * Record a net-fired instrumentation hit when a downstream pass changed the
+ * agent-owned Experience snapshot. Shared by the 4 call sites (guard, length
+ * x2, surface_keywords) so main() doesn't repeat the inline `if` branch.
+ */
+function trackNetFired(pass: 'guard' | 'length' | 'surface_keywords', before: string, after: string): void {
+    if (before !== after) experienceNetFiredMetric.inc({ pass });
 }
 
 /** The persona's full instruction text — the number DENY source for leak scrubbing. */
@@ -1356,7 +1371,7 @@ export async function main(): Promise<void> {
             const guarded = await guardResume(finalResume, resumeGuardCtx);
             finalResume = guarded.resume;
             violationLog.recordAll('resume_guard', guarded.violations);
-            if (expSnapshot(finalResume) !== beforeGuard) experienceNetFiredMetric.inc({ pass: 'guard' });
+            trackNetFired('guard', beforeGuard, expSnapshot(finalResume));
         }
 
         // JD-priority context for length enforcement — required skills + the
@@ -1389,7 +1404,7 @@ export async function main(): Promise<void> {
             const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
             const beforeLength = expSnapshot(preBudget);
             const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
-            if (expSnapshot(budgeted) !== beforeLength) experienceNetFiredMetric.inc({ pass: 'length' });
+            trackNetFired('length', beforeLength, expSnapshot(budgeted));
             // Expansion may only add grounded numbers; strip anything else.
             const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
             // Metric weave (always-on when the ledger is non-empty): the writer
@@ -1489,7 +1504,7 @@ export async function main(): Promise<void> {
                 const beforeSurface = expSnapshot(baseResume);
                 const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
                 let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
-                if (expSnapshot(surfaced) !== beforeSurface) experienceNetFiredMetric.inc({ pass: 'surface_keywords' });
+                trackNetFired('surface_keywords', beforeSurface, expSnapshot(surfaced));
                 if (surfaced !== baseResume) {
                     // The keyword rewrite is the last stage that can GROW the
                     // resume (it inflated the 2026-07-02 Google run by pulling
@@ -1507,7 +1522,7 @@ export async function main(): Promise<void> {
                     // scrub, without opting back into the expand direction.
                     const beforePostKeywordsLength = expSnapshot(surfaced);
                     surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
-                    if (expSnapshot(surfaced) !== beforePostKeywordsLength) experienceNetFiredMetric.inc({ pass: 'length' });
+                    trackNetFired('length', beforePostKeywordsLength, expSnapshot(surfaced));
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     violationLog.recordAll('revalidate_post_keywords', reval.violations);

@@ -1,6 +1,6 @@
 ---
-id: strategist-experience
-version: 2
+id: strategist-experience-skeleton
+version: 3
 ---
       - EXPERIENCE -- ROSTER SKELETON ONLY: emit each entry from "Verified
         Experience" with its exact company, title, and period and highlights: []
