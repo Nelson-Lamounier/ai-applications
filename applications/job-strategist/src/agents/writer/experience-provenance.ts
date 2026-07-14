@@ -67,6 +67,18 @@ export function validateExperienceProvenance(
   return violations;
 }
 
+/** Thrown by the run-pipeline splice when the first experience-agent draft
+ *  fails deterministic provenance validation -- triggers the verbatim-career
+ *  fallback (see run-pipeline.ts fillResumeExperience). */
+export class ExperienceProvenanceError extends Error {
+  readonly violations: string[];
+  constructor(violations: string[]) {
+    super(`experience provenance violated: ${violations.join(', ')}`);
+    this.name = 'ExperienceProvenanceError';
+    this.violations = violations;
+  }
+}
+
 /** The SYSTEM assembles the final section -- the model never emits final strings unchecked. */
 export function assembleExperience(
   out: ExperienceAgentOutput,

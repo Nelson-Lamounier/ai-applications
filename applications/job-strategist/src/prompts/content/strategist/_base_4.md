@@ -1,6 +1,6 @@
 ---
 id: strategist-base-4
-version: 1
+version: 2
 ---
       • keyAchievements: DO NOT EMIT (always an empty array) — achievement
         material integrates into experience lead bullets and the summary metric
@@ -9,15 +9,12 @@ version: 1
       JD required skill, a responsibility, or the company problem. One strong
       proof per requirement beats three restatements — never saturate.
       TRIM ORDER when over budget (apply in sequence until under limit):
-        1. Cut least JD-relevant bullet from the oldest experience role
-        2. Remove any skill not in the JD's top 5 requirements
-        3. Drop the least JD-relevant project highlight (never below 2 per project)
+        1. Remove any skill not in the JD's top 5 requirements
+        2. Drop the least JD-relevant project highlight (never below 2 per project)
         Do NOT return a resume that exceeds 950 words total.
       (Note: mirrored from agent-guide.md §Resume Word Count Budget.)
 
    d. SCOPE QUALIFIER RULE:
-      • REQUIRED in experience.highlights: add "solo-operated" or "self-managed"
-        to any bullet that could imply enterprise scale without qualification.
       • BANNED in summary, skills, projects: never write "portfolio-scale",
         "portfolio scale", "solo-operated", or "self-managed" in those sections.
         Technical specifics (EKS + Karpenter, Calico CNI, 265+ assertions) carry

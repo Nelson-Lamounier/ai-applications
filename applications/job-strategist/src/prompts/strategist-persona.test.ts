@@ -72,9 +72,24 @@ describe('strategist-persona v11 — v6-restored body (writer-duration bisect cl
 		expect(joined).not.toMatch(/OUTPUT BUDGET/);
 	});
 
-	it('keeps the v6 numeric examples; persona-example number leakage is handled deterministically by stripInstructionMetrics, not by prompt wording', () => {
-		expect(joined).toMatch(/30-second deploys vs 8-minute manual/);
+	it('persona-example number leakage is handled deterministically by stripInstructionMetrics, not by prompt wording', () => {
 		expect(joined).not.toMatch(/numbers?\s+in\s+these\s+instructions\s+are\s+not\s+evidence/i);
+	});
+});
+
+// Task 7 (experience agent): the writer body's "30-second deploys vs
+// 8-minute manual cycles" SCOPE vs IMPACT example lived in
+// content/strategist/experience.md, which composed experience bullets
+// directly. That composition -- and its worked example -- moved to the
+// dedicated strategist-experience agent persona (see
+// content/strategist/experience-agent.md); the writer body now emits a
+// roster skeleton only, so asserting the old example here would pin text
+// this prompt no longer (and should no longer) carry.
+describe('strategist-persona experience roster skeleton (Task 7)', () => {
+	it('the writer body no longer composes experience bullets -- it emits a roster skeleton for a dedicated experience pass', () => {
+		expect(joined).toMatch(/ROSTER SKELETON ONLY/);
+		expect(joined).toMatch(/highlights: \[\]/);
+		expect(joined).not.toMatch(/30-second deploys vs 8-minute manual/);
 	});
 });
 

@@ -1,6 +1,6 @@
 ---
 id: strategist-base-3
-version: 2
+version: 3
 ---
 
 ════════════════════════════════════════════════════════════════════
@@ -88,3 +88,4 @@ GENERATION PROCESS (execute in this order):
       output and trims anything over budget. Hard maximums:
       • summary: leave as "" here — a dedicated summary pass composes it
         (see the summary directive in the output contract above).
+      - experience: roster skeleton only -- word budget enforced by the experience pass

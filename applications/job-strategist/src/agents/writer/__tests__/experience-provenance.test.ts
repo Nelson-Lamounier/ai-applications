@@ -2,6 +2,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   indexCareerLines, rosterFromCareer, validateExperienceProvenance, assembleExperience,
+  ExperienceProvenanceError,
 } from '../experience-provenance.js';
 import type { ExperienceAgentOutput } from '../experience-schema.js';
 
@@ -66,5 +67,8 @@ describe('experience provenance', () => {
         'Resolved Sev-2 escalations with customer security teams',
       ],
     });
+  });
+  it('ExperienceProvenanceError carries its violations array', () => {
+    expect(new ExperienceProvenanceError(['uncited_bullet:AWS:0']).violations).toEqual(['uncited_bullet:AWS:0']);
   });
 });

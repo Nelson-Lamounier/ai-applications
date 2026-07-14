@@ -29,12 +29,12 @@ import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullet
 import { relocateProjectExperience, restoreProjectHighlights } from './agents/quality/relocate-project-experience.js';
 import { loadAchievementEvidence } from './agents/evidence/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/evidence/profile-intelligence-block.js';
-import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact } from './agents/evidence/career-history.js';
+import { loadEducation, formatEducation, loadCertifications, formatCertifications, loadCareerHistory, formatExperienceFacts, formatVerifiedYearsFact, type CareerEntry } from './agents/evidence/career-history.js';
 import { extractJobDescription, extractJdSignal } from './agents/jd/jd-extractor.js';
 import { buildYearsGap } from './agents/writer/years-gap.js';
 import { guardCoverLetter } from './agents/quality/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/quality/cover-letter-guard.js';
-import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/quality/resume-guard.js';
+import { guardResume, revalidateResumeContent, preserveExperienceRoster, restoreExperienceAfter } from './agents/quality/resume-guard.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { createViolationLog } from './lib/violation-log.js';
 import { loadCandidateContactBlock } from './lib/candidate-contact.js';
@@ -58,6 +58,12 @@ import { reconcileAtsPassed } from './ats/gate/checks.js';
 import { selectSummaryAtsTargets, type SummaryAtsTarget } from './ats/gate/summary-ats-targets.js';
 import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/summary-ats-flow.js';
 import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-ats-diagnostics.js';
+import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate/experience-ats-targets.js';
+import { resolveExperienceAts, type ExperienceAgentDiagnostics } from './agents/writer/experience-ats-flow.js';
+import { executeExperienceAgent } from './agents/writer/experience-agent.js';
+import {
+    rosterFromCareer, indexCareerLines, assembleExperience, validateExperienceProvenance, ExperienceProvenanceError,
+} from './agents/writer/experience-provenance.js';
 import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
@@ -177,6 +183,73 @@ async function fillResumeSummary(
             rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
             fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
             guardRejections: [],
+        };
+    }
+}
+
+/**
+ * Experience agent -- rewrites the user's indexed career lines into a
+ * JD-tailored Experience section. The writer body now emits a roster
+ * skeleton only (company/title/period, highlights: []); this dedicated
+ * Sonnet call authors the bullets, provenance-guarded against the real
+ * career-history lines (see experience-provenance.ts -- every bullet cites
+ * its own role's line ids; every line is cited or dropped with a reason).
+ * On failure (schema/network/provenance) fall back to the verbatim
+ * career-history bullets (first 5 per role) so the pipeline never persists
+ * an empty experience section. Fail-open by design -- never throws into the
+ * pipeline. Extracted from main() to keep its complexity at the baseline,
+ * same shape as fillResumeSummary.
+ */
+async function fillResumeExperience(
+    ctx: StrategistPipelineContext,
+    tailoredResumeData: StructuredResumeData | null,
+    researchData: StrategistResearchResult,
+    careerEntries: readonly CareerEntry[],
+    atsTargets: readonly ExperienceAtsTarget[],
+    groundedMetrics: string,
+    codeStack: string,
+    metric: Counter<'outcome'>,
+    onFallback: (err: unknown) => void,
+): Promise<ExperienceAgentDiagnostics | null> {
+    if (!tailoredResumeData || careerEntries.length === 0) return null;
+    const roster = rosterFromCareer(careerEntries);
+    const careerLines = indexCareerLines(careerEntries);
+    const baseInput = { research: researchData, roster, careerLines, atsTargets, groundedMetrics, codeStack };
+    const verbatim = () => careerEntries.map((e) => ({
+        company: e.company, title: e.title, period: e.period, highlights: e.highlights.slice(0, 5),
+    }));
+    try {
+        const first = await executeExperienceAgent(ctx, baseInput);
+        const firstViolations = validateExperienceProvenance(first.data, roster, careerLines);
+        if (firstViolations.length > 0) throw new ExperienceProvenanceError(firstViolations);
+        const { output, diag } = await resolveExperienceAts({
+            first: first.data, roster, careerLines, targets: atsTargets,
+            rewrite: async (draftText, missing) => {
+                const rw = await executeExperienceAgent(
+                    ctx,
+                    { ...baseInput, rewriteDraft: draftText, rewriteMissing: missing },
+                    { agentName: 'strategist-experience-rewrite' },
+                );
+                return rw.data;
+            },
+        });
+        (tailoredResumeData as { experience: unknown }).experience = assembleExperience(output);
+        metric.inc({ outcome: 'agent' });
+        return diag;
+    } catch (err) {
+        (tailoredResumeData as { experience: unknown }).experience = verbatim();
+        metric.inc({ outcome: 'fallback' });
+        onFallback(err);
+        return {
+            targets: [...atsTargets],
+            coverageBefore: { targets: atsTargets.length, covered: 0, missing: atsTargets.map((t) => t.skill) },
+            rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
+            fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
+            provenance: {
+                firstViolations: err instanceof ExperienceProvenanceError ? err.violations : [],
+                rewriteViolations: [],
+                droppedLines: 0,
+            },
         };
     }
 }
@@ -469,6 +542,12 @@ const gapCauseMetric = new Counter({
 const summaryOutcomeMetric = new Counter({
     name:       'job_strategist_summary_agent_outcome_total',
     help:       'Summary agent outcomes: agent (dedicated summary agent filled the resume summary) vs fallback (agent call failed, deterministic summary used).',
+    labelNames: ['outcome'] as const,
+    registers:  [obs.registry],
+});
+const experienceOutcomeMetric = new Counter({
+    name:       'job_strategist_experience_agent_outcome_total',
+    help:       'Experience agent outcomes: agent vs fallback.',
     labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
@@ -1119,6 +1198,28 @@ export async function main(): Promise<void> {
             },
         );
 
+        // -- Experience agent -- rewrites the writer's roster skeleton into a
+        // JD-tailored, provenance-guarded Experience section. Runs BEFORE the
+        // summary splice so the summary agent sees the real experience body,
+        // not the empty-highlights skeleton the writer emitted. --
+        const experienceAtsTargets = selectExperienceAtsTargets(skillEvidenceLedger, jdExtraction, 6);
+        const experienceAgentDiag = await fillResumeExperience(
+            ctx, tailoredResumeData, researchData, careerEntries, experienceAtsTargets,
+            groundedMetricsBlock, codeStackContext, experienceOutcomeMetric,
+            (err) => log.warn({
+                pipelineRunId: env.pipelineRunId,
+                agent: 'strategist-experience',
+                err: err instanceof Error ? err.message : String(err),
+            }, 'experience_agent_failed_verbatim_fallback_used'),
+        );
+        if (experienceAgentDiag) {
+            log.info({
+                pipelineRunId: env.pipelineRunId,
+                applicationId: env.applicationId,
+                experienceAts: experienceAgentDiag,
+            }, 'experience_ats_diagnostics');
+        }
+
         // ── Summary agent — fills the body's empty summary field ──
         const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
         const summaryAtsDiag = await fillResumeSummary(
@@ -1258,10 +1359,18 @@ export async function main(): Promise<void> {
             // enter the bullets. Values are protected by the allowed-number set;
             // the number strip re-runs on its output.
             const jdContextLine = `${researchData.targetRole}: ${jdExtraction.requiredSkills.join(', ')}`;
-            const numberSafe = await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
-                violationLog.record('metric_weave', code);
-                log.warn({ pipelineRunId: env.pipelineRunId, code }, 'grounded_metric_weave');
-            });
+            // Experience is agent-owned (fillResumeExperience above already produced
+            // a provenance-guarded final section) -- the weave may still legitimately
+            // rewrite project descriptions, so scope it OUT of experience by
+            // snapshot-restore rather than retiring it. See restoreExperienceAfter.
+            const expBeforeWeave = structuredClone(preMetrics.experience);
+            const numberSafe = restoreExperienceAfter(
+                await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
+                    violationLog.record('metric_weave', code);
+                    log.warn({ pipelineRunId: env.pipelineRunId, code }, 'grounded_metric_weave');
+                }),
+                expBeforeWeave,
+            );
             // FINAL content re-validation: reframe/condense/expand can
             // reintroduce violations the early guard already repaired (the
             // A/B run regained 5 bullet-shared project numbers and a flat
