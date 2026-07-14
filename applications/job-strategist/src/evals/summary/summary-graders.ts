@@ -12,6 +12,8 @@ import type { StructuredResumeData } from '@bedrock/shared';
 import { namesGap } from '../../agents/quality/guards/summary-rules.js';
 import { numbersIn } from '../../agents/quality/guards/text.js';
 import { mkResult, type GraderResult } from '../graders.js';
+import { scoreSummaryCoverage } from '../../ats/gate/summary-coverage.js';
+import type { SummaryAtsTarget } from '../../ats/gate/summary-ats-targets.js';
 
 /** The exact input the summary phase produces + the context it was graded against. */
 export interface SummaryEvalInput {
@@ -20,6 +22,7 @@ export interface SummaryEvalInput {
     readonly fitSummary: string;
     readonly gapSkills: string[];
     readonly targetCompany: string;
+    readonly atsTargets?: readonly SummaryAtsTarget[];
 }
 
 /** No gap/shortfall language - reuses the runtime guard's own predicate. */
@@ -67,8 +70,32 @@ export function gapClaimGrader(i: SummaryEvalInput): GraderResult {
     return mkResult('gapClaim', failures);
 }
 
+/**
+ * ATS coverage: an ATS-aware summary should surface at least min(2, N) of its
+ * attainable targets (strict adjacent-phrase, same predicate the runtime lane
+ * uses). Vacuously passes when a fixture set no targets, so it composes with the
+ * existing structural graders without forcing every fixture to carry targets.
+ */
+export function atsCoverageGrader(i: SummaryEvalInput): GraderResult {
+    const targets = i.atsTargets ?? [];
+    if (targets.length === 0) return mkResult('atsCoverage', []);
+    const { covered } = scoreSummaryCoverage(i.summary, targets);
+    const need = Math.min(2, targets.length);
+    return mkResult(
+        'atsCoverage',
+        covered >= need ? [] : [`summary covers only ${covered}/${targets.length} ATS targets (need >=${need})`],
+    );
+}
+
 /** All structural graders, in display order. */
-export const SUMMARY_GRADERS = [noGapGrader, altitudeGrader, wordCountGrader, bansGrader, gapClaimGrader] as const;
+export const SUMMARY_GRADERS = [
+    noGapGrader,
+    altitudeGrader,
+    wordCountGrader,
+    bansGrader,
+    gapClaimGrader,
+    atsCoverageGrader,
+] as const;
 
 /** Run every grader; overall pass = all pass. */
 export function runSummaryGraders(i: SummaryEvalInput): { pass: boolean; results: GraderResult[] } {
