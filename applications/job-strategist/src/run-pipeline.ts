@@ -60,6 +60,7 @@ import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/s
 import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-ats-diagnostics.js';
 import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate/experience-ats-targets.js';
 import { resolveExperienceAts, type ExperienceAgentDiagnostics } from './agents/writer/experience-ats-flow.js';
+import { logExperienceAgentEvents, experienceAgentOutcome } from './agents/writer/experience-agent-diagnostics.js';
 import { executeExperienceAgent } from './agents/writer/experience-agent.js';
 import {
     rosterFromCareer, indexCareerLines, assembleExperience, validateExperienceProvenance, ExperienceProvenanceError,
@@ -208,7 +209,6 @@ async function fillResumeExperience(
     atsTargets: readonly ExperienceAtsTarget[],
     groundedMetrics: string,
     codeStack: string,
-    metric: Counter<'outcome'>,
     onFallback: (err: unknown) => void,
 ): Promise<ExperienceAgentDiagnostics | null> {
     if (!tailoredResumeData || careerEntries.length === 0) return null;
@@ -234,11 +234,9 @@ async function fillResumeExperience(
             },
         });
         (tailoredResumeData as { experience: unknown }).experience = assembleExperience(output);
-        metric.inc({ outcome: 'agent' });
         return diag;
     } catch (err) {
         (tailoredResumeData as { experience: unknown }).experience = verbatim();
-        metric.inc({ outcome: 'fallback' });
         onFallback(err);
         return {
             targets: [...atsTargets],
@@ -351,6 +349,17 @@ function reconcileRosterAgainstCareer(
     const { resume: fixed, violations } = reconcileExperienceRoster(resume, career);
     for (const v of violations) onViolation(v);
     return fixed;
+}
+
+/**
+ * Snapshot a resume's Experience section for the net-fired safety-net
+ * counter -- a downstream pass (guard/length/surface-keywords) that changes
+ * this snapshot touched the agent-owned, provenance-guarded Experience
+ * section it should be leaving alone. Null-safe (both a null resume and a
+ * resume with no experience snapshot to the same stable string).
+ */
+function expSnapshot(resume: StructuredResumeData | null): string {
+    return JSON.stringify(resume?.experience ?? null);
 }
 
 /** The persona's full instruction text — the number DENY source for leak scrubbing. */
@@ -547,8 +556,27 @@ const summaryOutcomeMetric = new Counter({
 });
 const experienceOutcomeMetric = new Counter({
     name:       'job_strategist_experience_agent_outcome_total',
-    help:       'Experience agent outcomes: agent vs fallback.',
-    labelNames: ['outcome'] as const,
+    help:       'Experience-agent lane outcome by result and reason.',
+    labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
+const experienceAgentCoverageMetric = new Histogram({
+    name:       'job_strategist_experience_agent_coverage',
+    help:       'Covered ATS targets in the experience section (0..N).',
+    buckets:    [0, 1, 2, 3, 4, 5, 6],
+    registers:  [obs.registry],
+});
+// Safety-net signal: experience is agent-owned once fillResumeExperience has
+// run (provenance-guarded bullets), so a downstream guard/length/keyword-
+// surface pass changing it is unexpected. preserveExperienceRoster only
+// guarantees no ROLE is dropped -- it does not stop a pass rewriting a
+// bullet within a role that survives -- so this counter is the only signal
+// for that narrower drift. Ideally always zero; a nonzero rate over time is
+// the lead to investigate.
+const experienceNetFiredMetric = new Counter({
+    name:       'job_strategist_experience_net_fired_total',
+    help:       'Downstream passes (guard/length/surface_keywords) that changed the agent-owned Experience section after fillResumeExperience ran.',
+    labelNames: ['pass'] as const,
     registers:  [obs.registry],
 });
 const correctiveRetrievalMetric = new Counter({
@@ -1205,19 +1233,25 @@ export async function main(): Promise<void> {
         const experienceAtsTargets = selectExperienceAtsTargets(skillEvidenceLedger, jdExtraction, 6);
         const experienceAgentDiag = await fillResumeExperience(
             ctx, tailoredResumeData, researchData, careerEntries, experienceAtsTargets,
-            groundedMetricsBlock, codeStackContext, experienceOutcomeMetric,
+            groundedMetricsBlock, codeStackContext,
             (err) => log.warn({
                 pipelineRunId: env.pipelineRunId,
                 agent: 'strategist-experience',
                 err: err instanceof Error ? err.message : String(err),
             }, 'experience_agent_failed_verbatim_fallback_used'),
         );
+        // Experience-agent observability: Loki event stream + bounded Prometheus
+        // outcome/coverage metrics -- same pattern as the summary-ATS block below.
+        // experienceAgentDiag itself is folded into the metadata.analysis write
+        // further down (pipeline_runs.metadata.analysis.experienceAgent) rather
+        // than a second updatePipelineRunMetadata call (shallow-merge constraint).
         if (experienceAgentDiag) {
-            log.info({
-                pipelineRunId: env.pipelineRunId,
-                applicationId: env.applicationId,
-                experienceAts: experienceAgentDiag,
-            }, 'experience_ats_diagnostics');
+            logExperienceAgentEvents(log, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId, traceId: null }, experienceAgentDiag);
+            const { outcome, reason } = experienceAgentOutcome(experienceAgentDiag);
+            experienceOutcomeMetric.inc({ outcome, reason });
+            if (experienceAgentDiag.targets.length > 0 && !experienceAgentDiag.fallback.fired) {
+                experienceAgentCoverageMetric.observe(experienceAgentDiag.coverageBefore.covered);
+            }
         }
 
         // ── Summary agent — fills the body's empty summary field ──
@@ -1318,9 +1352,11 @@ export async function main(): Promise<void> {
         // silently blank them — restored just before persist.
         const projectHighlightsSnapshot = finalResume;
         if (finalResume) {
+            const beforeGuard = expSnapshot(finalResume);
             const guarded = await guardResume(finalResume, resumeGuardCtx);
             finalResume = guarded.resume;
             violationLog.recordAll('resume_guard', guarded.violations);
+            if (expSnapshot(finalResume) !== beforeGuard) experienceNetFiredMetric.inc({ pass: 'guard' });
         }
 
         // JD-priority context for length enforcement — required skills + the
@@ -1351,7 +1387,9 @@ export async function main(): Promise<void> {
             // keyword-surfacing rewrite — the last stage that can grow it.
             const preBudget = finalResume;
             const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
+            const beforeLength = expSnapshot(preBudget);
             const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
+            if (expSnapshot(budgeted) !== beforeLength) experienceNetFiredMetric.inc({ pass: 'length' });
             // Expansion may only add grounded numbers; strip anything else.
             const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
             // Metric weave (always-on when the ledger is non-empty): the writer
@@ -1448,8 +1486,10 @@ export async function main(): Promise<void> {
                 // Allowed numbers = original resume + grounding facts. Any number the
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
+                const beforeSurface = expSnapshot(baseResume);
                 const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
                 let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
+                if (expSnapshot(surfaced) !== beforeSurface) experienceNetFiredMetric.inc({ pass: 'surface_keywords' });
                 if (surfaced !== baseResume) {
                     // The keyword rewrite is the last stage that can GROW the
                     // resume (it inflated the 2026-07-02 Google run by pulling
@@ -1465,7 +1505,9 @@ export async function main(): Promise<void> {
                     // the resume text — feed it real evidence so a genuinely
                     // grounded number survives the post-condense instruction-leak
                     // scrub, without opting back into the expand direction.
+                    const beforePostKeywordsLength = expSnapshot(surfaced);
                     surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
+                    if (expSnapshot(surfaced) !== beforePostKeywordsLength) experienceNetFiredMetric.inc({ pass: 'length' });
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     violationLog.recordAll('revalidate_post_keywords', reval.violations);
@@ -1574,7 +1616,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,
