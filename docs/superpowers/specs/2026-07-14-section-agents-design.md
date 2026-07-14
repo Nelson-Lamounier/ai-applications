@@ -36,8 +36,11 @@ Pipeline wiring issues found by the Phase 5 trace:
 
 ## Goals
 
-1. Dedicated Projects agent (full Phase-4 mirror: provenance + ATS lane), with
-   quote-only enforced BY SCHEMA (bullet ids, never bullet text).
+1. Dedicated Projects agent (full Phase-4 mirror: provenance + ATS lane) over a
+   TWO-LANE pool: curated case-study quotes enforced BY SCHEMA (bullet ids,
+   never bullet text) + repo-current research evidence strictly attributed per
+   project, from which at most 2 grounded bullets may be composed for JD targets
+   the curated pool cannot answer (resolves case-study staleness vs repo sync).
 2. Remove the strategist-writer LLM entirely: three dedicated agents (analysis,
    cover-letter, skills) + a deterministic reconciler that assembles the resume.
 3. Rewire run-pipeline: section agents run in PARALLEL after research; documented
@@ -103,27 +106,49 @@ wall-clock drops from ~8 min toward ~3 min; Sonnet spend roughly halves.
 
 #### projects-agent (`agents/writer/projects-agent.ts` + `projects-message.ts` + `projects-schema.ts` + `projects-provenance.ts` + `projects-ats-flow.ts`)
 
-- **Payload** (`projects-message.ts`): per-project INDEXED bullet pool
-  (`[p{i}.b{j}] <verbatim bullet>`) from `loadProjectResumeBullets` (withUserRls
-  preserved); documented pitch/stack/decisions/repo URLs from
-  `loadProjectEvidenceBlock`; JD requirements + top-6 attainable targets (REUSE
-  `selectExperienceAtsTargets`); re-write fields (draft + missing targets).
+- **TWO-LANE bullet pool per project** (user decision -- resolves case-study
+  staleness: `project_resume_bullets` is written by the user-triggered
+  case-study pipeline and LAGS the repo sync, while the research agent's
+  verified matches are grounded in the synced KB fresh on every run):
+  - **Curated lane** `[p{i}.b{j}]`: verbatim quotes from `loadProjectResumeBullets`
+    (withUserRls preserved). The narrative backbone -- quote-only, preferred.
+  - **Repo-current lane** `[p{i}.r{k}]`: research `verifiedMatches` mapped to
+    THIS project STRICTLY by repo ownership -- a match is attributed to a
+    project ONLY when its evidence repo (`sourceCitation`/`evidenceFiles` repo,
+    per the match's repo-lane provenance) is byte-exactly in that project's
+    `project_repositories -> repositories.full_name` set (the same `array_agg`
+    the evidence loader already builds). Matches with no repo provenance, or
+    whose repo is owned by no project, appear in NO project's lane. A repo
+    owned by multiple projects contributes its matches to each owner.
+- **Payload** (`projects-message.ts`): the two-lane pool; documented
+  pitch/stack/decisions/repo URLs from `loadProjectEvidenceBlock`; JD
+  requirements + top-6 attainable targets (REUSE `selectExperienceAtsTargets`);
+  re-write fields (draft + missing targets). Composition rule in the message:
+  curated bullets first; a composed bullet is allowed ONLY for a JD target the
+  curated pool does not answer, max 2 composed per project.
 - **Tool schema** (`emit_projects`, forced, thinkingBudget 0): per project
-  `{name, github, description, highlights: [{bulletId: string}]}` -- the agent
-  emits bullet IDS only. The SYSTEM assembles bullet text from the DB pool:
-  quote-only by construction, invention structurally impossible.
-- **Provenance validator** (pure): every bulletId exists in THAT project's pool;
-  no duplicate ids; ONE entry per documented project, name verbatim; github from
-  the project's repo-URL set; 3-6 bullets when the pool has >=3 (min = pool size
-  when smaller); description <=40 words AND >=30% token overlap with the
-  documented pitch (pre-checks the existing `checkProjectPitchAlignment` bar).
+  `{name, github, description, highlights: [{bulletId} | {text, sources: [matchId]}]}`
+  -- curated bullets by ID only (system assembles text from the DB: quote-only
+  by construction); composed bullets carry text + the repo-current match id(s)
+  they are grounded in.
+- **Provenance validator** (pure): every bulletId exists in THAT project's
+  curated pool, no duplicates; every composed bullet cites >=1 match id from
+  THAT project's repo-current lane (cross-project citation = violation, the
+  strict-attribution guarantee); <=2 composed bullets per project; ONE entry per
+  documented project, name verbatim; github from the project's repo-URL set;
+  3-6 bullets when the pool has >=3 (min = pool size when smaller); description
+  <=40 words AND >=30% token overlap with the documented pitch (pre-checks the
+  existing `checkProjectPitchAlignment` bar).
 - **ATS lane** (Phase-4 mirror): strict `scoreSummaryCoverage` over the assembled
   projects text; fire ONE re-write when any target missing, agent name
-  `strategist-projects-rewrite`; keep rule = provenance-valid + higher coverage,
-  ties/invalid/throw -> first. **Fallback** (agent error or invalid first pass):
-  deterministic assembly -- bullets ranked by strict-coverage score against the
-  canonical JD skills, description = documented pitch trimmed to 40 words,
-  github/name verbatim. Never empty when the DB has bullets.
+  `strategist-projects-rewrite`; the re-write's levers are re-SELECTION of
+  curated quotes, grounded COMPOSITION from the repo-current lane (within the
+  <=2 cap), and the description prose; keep rule = provenance-valid + higher
+  coverage, ties/invalid/throw -> first. **Fallback** (agent error or invalid
+  first pass): deterministic assembly -- CURATED bullets only, ranked by
+  strict-coverage score against the canonical JD skills, description =
+  documented pitch trimmed to 40 words, github/name verbatim. Never empty when
+  the DB has bullets.
 - Writer migration: `projects.md` persona rewritten to skeleton rule (emit
   `projects: []`; the dedicated pass authors entries), version bump + manifest;
   message-builder project sections move to the agent payload.
