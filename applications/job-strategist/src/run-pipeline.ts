@@ -20,7 +20,8 @@ import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research/research-agent.js';
-import { executeStrategistAgent, framingDirective } from './agents/writer/strategist-agent.js';
+import { executeStrategistAgent } from './agents/writer/strategist-agent.js';
+import { framingDirective } from './agents/writer/framing.js';
 import { executeSummaryAgent } from './agents/writer/summary-agent.js';
 import { deterministicSummary } from './agents/writer/summary-fallback.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/jd/resolve-role-families.js';
