@@ -9,7 +9,7 @@ import {
 import type { ExperienceAgentOutput } from './experience-schema.js';
 
 /** Per-run experience-ATS diagnostics. Logged (Loki) and persisted alongside the
- *  summary-ATS diagnostics (pipeline_runs.metadata.analysis.experienceAts). */
+ *  summary-ATS diagnostics (pipeline_runs.metadata.analysis.experienceAgent). */
 export interface ExperienceAgentDiagnostics {
   readonly targets: ExperienceAtsTarget[];
   readonly coverageBefore: SummaryCoverage;

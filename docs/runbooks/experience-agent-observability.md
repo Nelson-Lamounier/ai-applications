@@ -33,9 +33,11 @@ Every Loki event carries `pipeline_run_id`, `application_id`, and `trace_id`
 - `job_strategist_experience_net_fired_total{pass}` (Counter,
   `pass = guard | length | surface_keywords`) -- increments when a downstream
   safety-net pass CHANGED the experience section after the agent. This is the
-  retirement evidence: passes trending to zero firings are candidates for
-  removal; a pass that keeps firing means the agent under-delivers on that
-  dimension (read its Loki events to see what changed).
+  retirement evidence for `guard` and `surface_keywords`: those trending to zero
+  means the agent delivers fidelity/keywords by construction, and sustained
+  firings mean it under-delivers (read the Loki events to see what changed).
+  `pass=length` is NOT a retirement signal -- it legitimately fires whenever the
+  combined resume exceeds the page budget and trimming touches experience.
 
 Panels (datasource UID `prometheus`):
 
