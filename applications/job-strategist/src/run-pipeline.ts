@@ -57,6 +57,7 @@ import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
 import { reconcileAtsPassed } from './ats/gate/checks.js';
 import { selectSummaryAtsTargets, type SummaryAtsTarget } from './ats/gate/summary-ats-targets.js';
 import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/summary-ats-flow.js';
+import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-ats-diagnostics.js';
 import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
@@ -475,6 +476,18 @@ const correctiveRetrievalMetric = new Counter({
     name:       'job_strategist_corrective_retrieval_total',
     help:       'Corrective-retrieval verdicts on kb_present_not_retrieved gaps: promoted (evidence recovered) vs stood (lexical mention only).',
     labelNames: ['outcome'] as const,
+    registers:  [obs.registry],
+});
+const summaryAtsOutcomeMetric = new Counter({
+    name:       'job_strategist_summary_ats_outcome_total',
+    help:       'Summary-ATS lane outcome by result and reason.',
+    labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
+const summaryAtsCoverageMetric = new Histogram({
+    name:       'job_strategist_summary_ats_coverage',
+    help:       'Covered ATS targets in the summary (0..N).',
+    buckets:    [0, 1, 2, 3],
     registers:  [obs.registry],
 });
 // Prose linting runs in 'flag' mode only — telemetry on AI-tell language in the
@@ -1118,9 +1131,20 @@ export async function main(): Promise<void> {
                 error: err instanceof Error ? err.message : String(err),
             }, 'summary_agent_failed_deterministic_fallback_used'),
         );
-        // Full diagnostics persisted/logged by Task 6 (pipeline_runs.metadata.analysis.summaryAts);
-        // this line only keeps the binding referenced so eslint's no-unused-vars stays quiet.
-        log.info({ pipelineRunId: env.pipelineRunId, summaryAtsDiag }, 'summary_ats_diagnostics');
+        // Summary-ATS observability: Loki event stream + bounded Prometheus outcome/coverage
+        // metrics. summaryAtsDiag itself is folded into the metadata.analysis write below
+        // (pipeline_runs.metadata.analysis.summaryAts) rather than a second
+        // updatePipelineRunMetadata call -- that call's top-level `analysis` key is a
+        // shallow-merge (jsonb `||`) and a second call would clobber the analysis object
+        // written later in this run. No traceId is in scope in this pipeline (only
+        // run-clustering.ts / run-case-study.ts thread one through) -- null here is correct,
+        // not a placeholder.
+        if (summaryAtsDiag) {
+            logSummaryAtsEvents(log, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId, traceId: null }, summaryAtsDiag);
+            const { outcome, reason } = summaryAtsOutcome(summaryAtsDiag);
+            summaryAtsOutcomeMetric.inc({ outcome, reason });
+            summaryAtsCoverageMetric.observe(summaryAtsDiag.coverageBefore.covered);
+        }
 
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
@@ -1436,7 +1460,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,

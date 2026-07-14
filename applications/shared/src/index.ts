@@ -340,6 +340,8 @@ export {
 } from './rds/index.js';
 
 export type { CostRecord, TitanCostContext } from './rds/index.js';
+export { summarizeSummaryCost } from './rds/summary-cost.js';
+export type { SummaryCostPass, SummaryCostSummary } from './rds/summary-cost.js';
 export type {
     IOAuthConnectionsRepository,
     OAuthConnection,
