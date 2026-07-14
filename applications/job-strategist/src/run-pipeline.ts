@@ -25,7 +25,7 @@ import { executeSummaryAgent } from './agents/writer/summary-agent.js';
 import { deterministicSummary } from './agents/writer/summary-fallback.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/jd/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/evidence/role-evidence-block.js';
-import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/evidence/project-evidence-block.js';
+import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets } from './agents/evidence/project-evidence-block.js';
 import { relocateProjectExperience, restoreProjectHighlights } from './agents/quality/relocate-project-experience.js';
 import { loadAchievementEvidence } from './agents/evidence/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/evidence/profile-intelligence-block.js';
@@ -65,6 +65,10 @@ import { executeExperienceAgent } from './agents/writer/experience-agent.js';
 import {
     rosterFromCareer, indexCareerLines, assembleExperience, validateExperienceProvenance, ExperienceProvenanceError,
 } from './agents/writer/experience-provenance.js';
+import { loadProjectAgentInputs, type ProjectAgentInputs } from './agents/evidence/project-agent-inputs.js';
+import { executeProjectsAgent } from './agents/writer/projects-agent.js';
+import { resolveProjectsAts, deterministicProjects, type ProjectsAgentDiagnostics } from './agents/writer/projects-ats-flow.js';
+import { assembleProjects, validateProjectsProvenance, ProjectsProvenanceError } from './agents/writer/projects-provenance.js';
 import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
@@ -254,6 +258,73 @@ async function fillResumeExperience(
                 rewriteViolations: [],
                 droppedLines: 0,
             },
+        };
+    }
+}
+
+/**
+ * Projects agent -- composes the candidate's documented projects into a
+ * JD-tailored Projects section. The writer body now emits an empty
+ * "projects": [] skeleton only; this dedicated Sonnet call authors the
+ * entries, provenance-guarded against the two-lane pool (see
+ * projects-provenance.ts -- every curated id and composed source must
+ * resolve to its OWN project's pool). On failure (schema/network/
+ * provenance) fall back to a deterministic, curated-bullets-only ranking
+ * so the pipeline never persists a fabricated project entry. Fail-open by
+ * design -- never throws into the pipeline. Same shape as
+ * fillResumeExperience.
+ *
+ * Empty pool (no documented projects, or none with a curated bullet) is
+ * left as the writer's own "projects": [] -- there is nothing safe for
+ * either the agent or the deterministic fallback to say.
+ */
+async function fillResumeProjects(
+    ctx: StrategistPipelineContext,
+    tailoredResumeData: StructuredResumeData | null,
+    projectAgentInputs: ProjectAgentInputs,
+    atsTargets: readonly ExperienceAtsTarget[],
+    targetRole: string,
+    metric: Counter<'outcome'>,
+    onFallback: (err: unknown) => void,
+): Promise<ProjectsAgentDiagnostics | null> {
+    if (!tailoredResumeData) return null;
+    const { pool, unresolvedRepos } = projectAgentInputs;
+    if (pool.every((p) => p.curated.length === 0)) return null;
+
+    const baseInput = { pool, atsTargets, targetRole };
+    try {
+        const first = await executeProjectsAgent(ctx, baseInput);
+        const firstViolations = validateProjectsProvenance(first.data, pool);
+        if (firstViolations.length > 0) throw new ProjectsProvenanceError(firstViolations);
+        const { output, diag } = await resolveProjectsAts({
+            first: first.data, pool, targets: atsTargets,
+            rewrite: async (draftText, missing) => {
+                const rw = await executeProjectsAgent(
+                    ctx,
+                    { ...baseInput, rewriteDraft: draftText, rewriteMissing: missing },
+                    { agentName: 'strategist-projects-rewrite' },
+                );
+                return rw.data;
+            },
+        });
+        (tailoredResumeData as { projects: unknown }).projects = assembleProjects(output, pool);
+        metric.inc({ outcome: 'agent' });
+        return { ...diag, unresolvedRepos };
+    } catch (err) {
+        (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets);
+        metric.inc({ outcome: 'fallback' });
+        onFallback(err);
+        return {
+            targets: [...atsTargets],
+            coverageBefore: { targets: atsTargets.length, covered: 0, missing: atsTargets.map((t) => t.skill) },
+            rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
+            fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
+            provenance: {
+                firstViolations: err instanceof ProjectsProvenanceError ? err.violations : [],
+                rewriteViolations: [],
+                composedCount: 0,
+            },
+            unresolvedRepos,
         };
     }
 }
@@ -573,6 +644,12 @@ const experienceOutcomeMetric = new Counter({
     name:       'job_strategist_experience_agent_outcome_total',
     help:       'Experience-agent lane outcome by result and reason.',
     labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
+const projectsOutcomeMetric = new Counter({
+    name:       'job_strategist_projects_agent_outcome_total',
+    help:       'Projects agent outcomes: agent (dedicated projects agent authored the projects section) vs fallback (agent call/provenance failed, deterministic curated-bullet ranking used).',
+    labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
 const experienceAgentCoverageMetric = new Histogram({
@@ -958,9 +1035,10 @@ export async function main(): Promise<void> {
         // profile intelligence" instruction had no matching section to draw
         // from (run 77e325ea: S3 slot filled with a second rigor close).
         const candidateGroundingBlock = [projectEvidenceBlock, profileIntelligenceBlock].filter(Boolean).join('\n\n');
-        // Writer prompt block for projects[].highlights selection; the structured
-        // form (projectResumeBullets) also anchors the post-writer relocation.
-        const projectResumeBulletsBlock = formatProjectResumeBulletsBlock(projectResumeBullets);
+        // projectResumeBullets (structured form) is no longer formatted for the
+        // writer prompt (Task 8: the writer emits an empty projects[] skeleton;
+        // the dedicated projects agent composes entries from this same pool via
+        // loadProjectAgentInputs) -- it still anchors the post-writer relocation.
         const educationBlock      = formatEducation(educationEntries);
         const certificationsBlock = formatCertifications(certificationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
@@ -1166,7 +1244,7 @@ export async function main(): Promise<void> {
         // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
         // composition. It feeds the post-writer Haiku weave + allowed-number sets.
         const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
-        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock, projectResumeBulletsBlock);
+        const analysis = await executeStrategistAgent(ctx, researchData, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -1268,6 +1346,23 @@ export async function main(): Promise<void> {
                 experienceAgentCoverageMetric.observe(experienceAgentDiag.coverageBefore.covered);
             }
         }
+
+        // -- Projects agent -- composes the writer's empty projects[] skeleton --
+        // Reuses experienceAtsTargets (the same top-6 ATS targets fed to the
+        // experience lane) -- one JD-target selection shared by both agent-owned
+        // sections, not a second independent pick. Loki events + reason-labeled
+        // metric/coverage histogram are Task 10 scope; this is the outcome-only
+        // Counter + metadata fold.
+        const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches);
+        const projectsAgentDiag = await fillResumeProjects(
+            ctx, tailoredResumeData, projectAgentInputs, experienceAtsTargets,
+            researchData.targetRole, projectsOutcomeMetric,
+            (err) => log.warn({
+                pipelineRunId: env.pipelineRunId,
+                agent: 'strategist-projects',
+                err: err instanceof Error ? err.message : String(err),
+            }, 'projects_agent_failed_deterministic_fallback_used'),
+        );
 
         // ── Summary agent — fills the body's empty summary field ──
         const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
@@ -1631,7 +1726,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag, projectsAgent: projectsAgentDiag },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,

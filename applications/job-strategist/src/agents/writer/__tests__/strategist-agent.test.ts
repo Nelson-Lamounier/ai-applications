@@ -59,7 +59,6 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
         const msg = buildStrategistMessage(
             MIN_RESEARCH,
             CTX,
-            '',    // projectEvidence
             '',    // educationFacts
             '',    // experienceFacts
             '',    // roleEvidence
@@ -72,7 +71,7 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
     });
 
     it('omits the achievement section when achievementEvidence is empty', () => {
-        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '');
         expect(msg).not.toContain('Achievement & Impact Evidence');
     });
 
@@ -80,7 +79,7 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
         const msg = buildStrategistMessage(
             MIN_RESEARCH,
             CTX,
-            '', '', '', '', '', '',
+            '', '', '', '', '',
             'Achievements:\n- Reduced latency by 40%',
         );
         expect(msg).toContain('Achievement & Impact Evidence');
@@ -88,7 +87,7 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
     });
 
     it('never carries a grounded-metrics section — feeding the ledger to the writer tripled its extended thinking (13.9K -> 37-56K output tokens, measured 2026-07-08); metrics enter via the post-writer Haiku weave', () => {
-        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '');
         expect(msg).not.toContain('GROUNDED METRICS');
     });
 });
@@ -96,32 +95,38 @@ describe('buildStrategistMessage — achievement evidence injection', () => {
 describe('buildStrategistMessage — profile intelligence section (the summary S3 source)', () => {
     const PROFILE = 'CANDIDATE PROFILE INTELLIGENCE — derived from GitHub.\nCode-demonstrated direction:\n- Platform & Infrastructure: senior';
 
-    it('injects the profile block under its OWN labelled section, not the case-studies wrapper (run 77e325ea shipped a summary with no S3 angle because the block sat inside the case-studies delimiters)', () => {
-        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, 'project case study text', '', '', '', '', '', '', PROFILE);
+    // Task 8: the writer message no longer carries a project case-studies
+    // section at all (buildProjectEvidence was removed -- projects are now
+    // composed by the dedicated projects agent from its own payload, not
+    // injected into the writer's prompt). The regression this test originally
+    // guarded (run 77e325ea: the profile block sat inside the case-studies
+    // wrapper and the summary's S3 angle had no section to draw from) is now
+    // structurally impossible -- there is no case-studies wrapper left for the
+    // profile block to be buried inside.
+    it('injects the profile block under its OWN labelled section; the case-studies wrapper it used to guard against no longer exists', () => {
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', PROFILE);
         expect(msg).toContain(PROFILE_INTELLIGENCE_HEADER);
         expect(msg).toContain('--- BEGIN PROFILE INTELLIGENCE ---');
         expect(msg).toContain('Platform & Infrastructure: senior');
-        // The profile block must NOT be inside the case-studies delimiters.
-        const caseStudies = msg.split('--- BEGIN PROJECT CASE STUDIES ---')[1]!.split('--- END PROJECT CASE STUDIES ---')[0]!;
-        expect(caseStudies).not.toContain('CANDIDATE PROFILE INTELLIGENCE');
+        expect(msg).not.toContain('PROJECT CASE STUDIES');
     });
 
     it('omits the section entirely when no profile intelligence exists (fail-open users)', () => {
-        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '');
         expect(msg).not.toContain('Profile Intelligence');
     });
 });
 
 describe('buildStrategistMessage — candidate contact section (per-user identity, any tenant)', () => {
     it('injects the contact block under its labelled section (the persona signoff placeholders reference it by name)', () => {
-        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '', undefined,
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', undefined,
             'name: Grace Hopper\nemail: grace@navy.example');
         expect(msg).toContain('### Candidate Contact');
         expect(msg).toContain('name: Grace Hopper');
     });
 
     it('omits the section when no contact exists — the persona instructs empty fields, never invention', () => {
-        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '', '');
+        const msg = buildStrategistMessage(MIN_RESEARCH, CTX, '', '', '', '', '', '');
         expect(msg).not.toContain('Candidate Contact');
     });
 });

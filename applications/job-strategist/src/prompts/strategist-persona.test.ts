@@ -93,6 +93,23 @@ describe('strategist-persona experience roster skeleton (Task 7)', () => {
 	});
 });
 
+// Task 8 (projects agent): the writer body's project-selection rules --
+// "highlights: 3-6 technical bullets SELECTED from ... PROJECT RESUME
+// BULLETS", the QUOTE-ONLY selection contract, and the EXPERIENCE-PURITY
+// guardrail against inventing a "Solo <role>" job to host project bullets --
+// moved to the dedicated strategist-projects agent persona (see
+// content/strategist/projects-agent.md); the writer body now emits an empty
+// projects[] skeleton only, so asserting the old selection text here would
+// pin text this prompt no longer (and should no longer) carry.
+describe('strategist-persona projects skeleton (Task 8)', () => {
+	it('the writer body no longer composes project entries -- it emits an empty projects[] skeleton for a dedicated projects pass', () => {
+		expect(joined).toMatch(/PROJECTS -- SKELETON ONLY/);
+		expect(joined).toMatch(/"projects": \[\]/);
+		expect(joined).not.toMatch(/EXPERIENCE-PURITY/);
+		expect(joined).not.toMatch(/PROJECT RESUME BULLETS/);
+	});
+});
+
 // v12 summary calibration + S3 <-> Profile Intelligence cross-reference
 // relocated to __tests__/strategist-summary-persona.test.ts: the body no
 // longer composes the summary (summary.md / STRATEGIST_SUMMARY_SYSTEM_PROMPT
