@@ -63,6 +63,10 @@
         "version": "1",
         "sha256": "83d33777ac7199db74988a6cff0337fe458e9e4125a37ad61e912f601694e122"
     },
+    "strategist/experience-agent": {
+        "version": "1",
+        "sha256": "483f0a2f00d7af7791ff3422d9cefdcce07d3f269a8dac2d7f26481c359deaf9"
+    },
     "strategist/gaps": {
         "version": "1",
         "sha256": "f11bd5d060f54a85fda6411b64b034be2ef5044c0a4ca34d7daac11747b5ed9a"
