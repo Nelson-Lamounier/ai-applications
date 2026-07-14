@@ -55,6 +55,9 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/gate/run-ats-check.js';
 import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
 import { reconcileAtsPassed } from './ats/gate/checks.js';
+import { selectSummaryAtsTargets, type SummaryAtsTarget } from './ats/gate/summary-ats-targets.js';
+import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/summary-ats-flow.js';
+import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
 import { splitAttainable } from './ats/gate/attainable.js';
@@ -132,25 +135,48 @@ async function fillResumeSummary(
     profileIntelligence: string,
     yearsGap: YearsGapLite,
     achievementEvidence: string,
+    atsTargets: readonly SummaryAtsTarget[],
     metric: Counter<'outcome'>,
     onFallback: (err: unknown) => void,
-): Promise<void> {
-    if (!tailoredResumeData) return;
+): Promise<SummaryAtsDiagnostics | null> {
+    if (!tailoredResumeData) return null;
+    const baseInput = {
+        research: researchData,
+        body: tailoredResumeData,
+        profileIntelligence,
+        yearsGapFraming: framingDirective(yearsGap) ?? '',
+        achievementEvidence,
+    };
     try {
-        const summaryRes = await executeSummaryAgent(ctx, {
-            research: researchData,
-            body: tailoredResumeData,
-            profileIntelligence,
-            yearsGapFraming: framingDirective(yearsGap) ?? '',
-            achievementEvidence,
+        const first = await executeSummaryAgent(ctx, { ...baseInput, atsTargets: atsTargets.map((t) => t.skill) });
+        const { summary, diag } = await resolveSummaryAts({
+            firstSummary: first.data.summary,
+            targets: atsTargets,
+            guard: (s) => (namesGap(s) ? 'namesGap' : null),
+            rewrite: async (draft, missing) => {
+                const rw = await executeSummaryAgent(
+                    ctx,
+                    { ...baseInput, atsTargets: missing, rewriteDraft: draft, rewriteMissing: missing },
+                    { agentName: 'strategist-summary-rewrite' },
+                );
+                return rw.data.summary;
+            },
         });
-        (tailoredResumeData as { summary: string }).summary = summaryRes.data.summary;
+        (tailoredResumeData as { summary: string }).summary = summary;
         metric.inc({ outcome: 'agent' });
+        return diag;
     } catch (err) {
         (tailoredResumeData as { summary: string }).summary =
             deterministicSummary(researchData.fitSummary, researchData.targetRole);
         metric.inc({ outcome: 'fallback' });
         onFallback(err);
+        return {
+            targets: [...atsTargets],
+            coverageBefore: { targets: atsTargets.length, covered: 0, missing: atsTargets.map((t) => t.skill) },
+            rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
+            fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
+            guardRejections: [],
+        };
     }
 }
 import { formatTechTransferContext } from './ats/context/tech-transfer-context.js';
@@ -1081,9 +1107,10 @@ export async function main(): Promise<void> {
         );
 
         // ── Summary agent — fills the body's empty summary field ──
-        await fillResumeSummary(
+        const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
+        const summaryAtsDiag = await fillResumeSummary(
             ctx, tailoredResumeData, researchData, profileIntelligenceBlock,
-            yearsGap, achievementEvidenceBlock,
+            yearsGap, achievementEvidenceBlock, summaryAtsTargets,
             summaryOutcomeMetric,
             (err) => log.warn({
                 pipelineRunId: env.pipelineRunId,
@@ -1091,6 +1118,9 @@ export async function main(): Promise<void> {
                 error: err instanceof Error ? err.message : String(err),
             }, 'summary_agent_failed_deterministic_fallback_used'),
         );
+        // Full diagnostics persisted/logged by Task 6 (pipeline_runs.metadata.analysis.summaryAts);
+        // this line only keeps the binding referenced so eslint's no-unused-vars stays quiet.
+        log.info({ pipelineRunId: env.pipelineRunId, summaryAtsDiag }, 'summary_ats_diagnostics');
 
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 

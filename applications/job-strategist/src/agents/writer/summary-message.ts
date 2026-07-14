@@ -23,6 +23,38 @@ export interface SummaryMessageInput {
     readonly achievementEvidence: string;
     /** Optional JD must-haves the summary should try to surface naturally (subordinate to the fit thesis). */
     readonly atsTargets?: readonly string[];
+    /** Optional re-write pass: the previous draft to weave missing targets into. */
+    readonly rewriteDraft?: string;
+    /** Optional re-write pass: the ATS targets the previous draft missed. */
+    readonly rewriteMissing?: readonly string[];
+}
+
+/** ATS-targets + re-write-pass blocks -- split out of buildSummaryMessage to keep
+ *  its complexity down; both blocks are optional and independent of each other. */
+function buildAtsBlocks(m: SummaryMessageInput): string[] {
+    const out: string[] = [];
+    const atsTargets = m.atsTargets ?? [];
+    if (atsTargets.length > 0) {
+        out.push(
+            '',
+            '## ATS Targets (subordinate to the fit thesis - surface naturally, never fabricate)',
+            'These JD must-haves are attainable and high-value. Surface them by name where a beat NATURALLY supports it, using the candidate evidence above. If a target has no honest home, OMIT it - never break the fit thesis, the word cap, the no-gap rule, or the altitude rule to fit one.',
+            ...atsTargets.map((t) => `- ${t}`),
+        );
+    }
+
+    if (m.rewriteDraft && (m.rewriteMissing?.length ?? 0) > 0) {
+        out.push(
+            '',
+            '## Re-write pass (keep the narrative; weave the missing targets only if honestly supported)',
+            'Below is your previous draft. Preserve its fit-thesis narrative and altitude. Weave in the missing ATS targets ONLY where the candidate evidence honestly supports it -- do not fabricate, do not exceed the word cap, do not name gaps. If a missing target has no honest home, leave it out.',
+            'Previous draft:',
+            m.rewriteDraft,
+            'Missing targets to weave if honestly supported:',
+            ...(m.rewriteMissing ?? []).map((t) => `- ${t}`),
+        );
+    }
+    return out;
 }
 
 /** Focused user message for the summary agent - only what S1-S4 need. */
@@ -79,16 +111,6 @@ export function buildSummaryMessage(m: SummaryMessageInput): string {
         out.push('', '## Achievement evidence (S3/S4 alternative)', m.achievementEvidence.trim());
     }
 
-    const atsTargets = m.atsTargets ?? [];
-    if (atsTargets.length > 0) {
-        out.push(
-            '',
-            '## ATS Targets (subordinate to the fit thesis - surface naturally, never fabricate)',
-            'These JD must-haves are attainable and high-value. Surface them by name where a beat NATURALLY supports it, using the candidate evidence above. If a target has no honest home, OMIT it - never break the fit thesis, the word cap, the no-gap rule, or the altitude rule to fit one.',
-            ...atsTargets.map((t) => `- ${t}`),
-        );
-    }
-
-    out.push('', 'Emit the four beats via the tool. 100 words total across s1-s4.');
+    out.push(...buildAtsBlocks(m), '', 'Emit the four beats via the tool. 100 words total across s1-s4.');
     return out.join('\n');
 }

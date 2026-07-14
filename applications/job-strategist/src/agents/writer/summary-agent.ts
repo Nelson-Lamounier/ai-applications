@@ -10,6 +10,7 @@ import {
     runAgent,
     parseJsonResponse,
     type AgentConfig,
+    type AgentName,
     type AgentResult,
     type StrategistPipelineContext,
 } from '@bedrock/shared';
@@ -50,14 +51,18 @@ const SUMMARY_CONFIG: AgentConfig = {
  * @param input - Focused summary-agent input (research verdicts, finished
  *                resume body, profile intelligence, years-gap framing,
  *                achievement evidence)
+ * @param opts  - Optional agent-name override (the ATS re-write pass books
+ *                under 'strategist-summary-rewrite' for cost isolation)
  * @returns The four beats plus the assembled summary string
  */
 export async function executeSummaryAgent(
     ctx: StrategistPipelineContext,
     input: SummaryMessageInput,
+    opts?: { agentName?: AgentName },
 ): Promise<AgentResult<{ summary: string; beats: SummaryBeats }>> {
+    const config = opts?.agentName ? { ...SUMMARY_CONFIG, agentName: opts.agentName } : SUMMARY_CONFIG;
     return runAgent<{ summary: string; beats: SummaryBeats }>({
-        config: SUMMARY_CONFIG,
+        config,
         userMessage: buildSummaryMessage(input),
         parseResponse: (text) => {
             const raw = parseJsonResponse<unknown>(text, 'strategist-summary');
