@@ -30,12 +30,9 @@ const EFFECTIVE_MODEL_ID = process.env['INFERENCE_PROFILE_ARN'] ?? EXPERIENCE_MO
  * Forced tool + thinkingBudget 0: constrained decoding, and the payload can
  * safely carry the metrics ledger (the 2026-07-08 thinking blowup applied to
  * the extended-thinking writer, not forced-tool calls).
- *
- * `agentName: 'strategist-experience'` is cast below -- the AgentName union
- * does not yet include the experience-agent names (Task 5 adds them).
  */
 const EXPERIENCE_CONFIG: AgentConfig = {
-    agentName: 'strategist-experience' as AgentName, // Task 5 adds these to the union
+    agentName: 'strategist-experience',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: 4000,
     thinkingBudget: 0,

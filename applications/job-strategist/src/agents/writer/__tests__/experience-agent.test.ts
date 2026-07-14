@@ -5,7 +5,7 @@ jest.mock('@bedrock/shared', () => ({
     log: () => undefined,
 }));
 import { runAgent } from '@bedrock/shared';
-import type { AgentName, StrategistResearchResult } from '@bedrock/shared';
+import type { StrategistResearchResult } from '@bedrock/shared';
 import { executeExperienceAgent } from '../experience-agent.js';
 import type { ExperienceMessageInput } from '../experience-message.js';
 
@@ -75,7 +75,7 @@ describe('experience agent', () => {
             data: opts.parseResponse(JSON.stringify(validOutput())),
         }));
 
-        await executeExperienceAgent(baseCtx, baseInput(), { agentName: 'strategist-experience-rewrite' as AgentName });
+        await executeExperienceAgent(baseCtx, baseInput(), { agentName: 'strategist-experience-rewrite' });
 
         const call = mockRun.mock.calls[0]![0] as { config: { agentName: string } };
         expect(call.config.agentName).toBe('strategist-experience-rewrite');
