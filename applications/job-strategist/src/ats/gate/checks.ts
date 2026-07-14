@@ -4,6 +4,11 @@ import { STANDARD_SECTIONS } from './parse-back.js';
 
 const REQUIRED_SECTIONS = ['Experience', 'Skills', 'Education'] as const;
 
+/** Collapse runs of whitespace (spaces, tabs, line-wraps) to a single space and trim. */
+function normalizeWhitespace(s: string): string {
+    return s.replace(/\s+/g, ' ').trim();
+}
+
 export type CoverageRow = AtsCheckResult['jdKeywordCoverage'][number];
 
 export interface BuildAtsCheckArgs {
@@ -89,6 +94,30 @@ function coverageScoreField(
     return score === undefined ? {} : { coverageScore: score };
 }
 
+/**
+ * Reconcile the headline `passed` bit against the two signals that can
+ * disagree (F5). `status` comes from this file's GROUNDED-keyword issue
+ * count (`deriveIssues` — a missing keyword only counts when verified OR
+ * partial evidence backs it). `attainablePassed` comes from
+ * `splitAttainable` in attainable.ts — a stricter, VERIFIED-only pass mark
+ * computed later, once the Skill Evidence Ledger is available. The two
+ * measure different things on purpose and are NOT collapsed into one
+ * check; this reconciler is the single arbiter of the headline `passed`
+ * bit so downstream consumers never have to compare them independently.
+ *
+ * Precedence: both must agree to pass. `status` must be `'passed'` AND
+ * `attainablePassed` must not be explicitly `false`. `attainablePassed` is
+ * `undefined` before the ledger split has run (e.g. inside `buildAtsCheck`
+ * itself, on first construction) — `undefined` never blocks the pass, only
+ * an explicit `false` does.
+ */
+export function reconcileAtsPassed(
+    status: AtsCheckResult['status'],
+    attainablePassed: boolean | undefined,
+): boolean {
+    return status === 'passed' && attainablePassed !== false;
+}
+
 /** Pure ATS assertions over the parsed-back PDF + structured + JD data. */
 export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
     // No usable text → cannot assert anything; fail closed as unverified.
@@ -103,8 +132,15 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
 
     const lower = a.text.toLowerCase();
     const standardSectionsDetected = a.sections.filter(s => (STANDARD_SECTIONS as readonly string[]).includes(s));
-    const nameFound = a.profile.name.trim().length > 0 && lower.includes(a.profile.name.toLowerCase());
-    const emailFound = a.profile.email.trim().length > 0 && lower.includes(a.profile.email.toLowerCase());
+    // Whitespace-normalise both sides before the containment check: a rendered
+    // PDF can collapse a double-space or line-wrap the name/email across a page
+    // break, and a raw `includes` against the un-normalised text then reports a
+    // false "not found" even though the name/email genuinely appears.
+    const normalizedLower = normalizeWhitespace(lower);
+    const nameFound = a.profile.name.trim().length > 0
+        && normalizedLower.includes(normalizeWhitespace(a.profile.name.toLowerCase()));
+    const emailFound = a.profile.email.trim().length > 0
+        && normalizedLower.includes(normalizeWhitespace(a.profile.email.toLowerCase()));
     // Use pre-computed coverage (with tier) when available; fall back to the
     // synchronous literal match for the legacy / test path.
     const jdKeywordCoverage: Coverage = a.coverage ?? (a.jdMustHaves ?? []).map(term => ({
@@ -118,14 +154,20 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
     const parseBreakers = /\t.+\t/.test(a.text) ? ['multi-column-tabs'] : [];
 
     const issues = deriveIssues({ standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage, parseBreakers, pages: a.pages });
-    const passed = issues.length === 0;
+    const status = issues.length === 0 ? ('passed' as const) : ('issues' as const);
+    // `attainablePassed` is not yet known here (the Skill Evidence Ledger
+    // split runs later, in run-pipeline.ts, once the ledger is built), so
+    // this is equivalent to `status === 'passed'`. run-pipeline.ts re-applies
+    // reconcileAtsPassed once attainablePassed is known and re-persists the
+    // updated value — see F5/F6 in checks.ts's reconcileAtsPassed doc.
+    const passed = reconcileAtsPassed(status, undefined);
     return {
         machineReadable: true,
         standardSectionsDetected,
         contactDetected: { name: a.profile.name, email: a.profile.email },
         parseBreakers,
         jdKeywordCoverage,
-        status: passed ? 'passed' : 'issues',
+        status,
         passed,
         issues,
         ...(typeof a.pages === 'number' ? { pageCount: a.pages } : {}),

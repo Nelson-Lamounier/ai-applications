@@ -19,6 +19,7 @@ import { CLAIM_STRENGTH_RULE } from '../../lib/claim-strength.js';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData, SkillEvidenceEntry } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../writer/resume-tool-schema.js';
 import { citableFiles } from '../../ats/grounding/tool-evidence-retrieval.js';
+import { stripInstructionMetrics } from '../../ats/grounding/number-provenance.js';
 
 const MODEL_ID = process.env['SURFACE_KEYWORDS_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
@@ -148,7 +149,12 @@ export async function surfaceKeywords(
                 return parsed.data as unknown as StructuredResumeData;
             },
         });
-        return result.data;
+        // This prompt interpolates its own numeric caps (e.g. "<= 32 words") next
+        // to the resume text it hands back — the same leak class the writer
+        // persona hit on 2026-07-08 (F3). Scrub against this call's own
+        // instruction text before returning; real grounded numbers survive via
+        // groundingFacts.
+        return stripInstructionMetrics(result.data, { instructionText: system, evidenceText: groundingFacts });
     } catch (e) {
         log('WARN', 'surface-keywords failed — keeping original resume', { error: e instanceof Error ? e.message : String(e) });
         return resume;

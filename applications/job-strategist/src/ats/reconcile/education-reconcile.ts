@@ -17,12 +17,25 @@ import type { VerifiedMatch, PartialMatch, SkillGap, JobRequirement } from '@bed
 import type { EducationEntry } from '../../agents/evidence/career-history.js';
 
 // A requirement that is actually about a degree/qualification (not e.g. "degree of automation").
-const DEGREE_REQ_RE = /\b(bachelor'?s?|master'?s?|degree|diploma|b\.?sc|b\.?eng|graduate|undergraduate|qualification in)\b/i;
+// The bare "degree" alternative requires a credential context ("degree in ...", "<field> degree"):
+// a negative lookahead excludes "degree of X" (e.g. "a high degree of ownership") without
+// disturbing the named-credential alternatives (bachelor's, master's, diploma, BSc, etc.).
+const DEGREE_REQ_RE =
+    /\b(bachelor'?s?|master'?s?|diploma|b\.?sc|b\.?eng|graduate|undergraduate|qualification in)\b|\bdegree\b(?!\s+of\b)/i;
 // Fields that count as a "relevant technical field". Stems are PREFIX-matched (no trailing
-// word boundary), so "comput" matches Computer/Computing, "engineer" matches Engineering, etc.
-const TECHNICAL_FIELD_RE = /\b(comput|software|engineer|informatics|information technology|data|cloud|devops|electronic|cyber|network|mathematic|science|\bit\b)/i;
+// word boundary), so "comput" matches Computer/Computing, "electronic" matches Engineering, etc.
+// Deliberately NO bare "engineer" or "science" stem: those credit unrelated fields (Political
+// Science, Mechanical Engineering). A computing-adjacent qualifier is still required — "Computer
+// Science"/"Data Science"/"Software Engineering"/"Computer Engineering"/"Electronic Engineering"
+// all still match via the comput/data/software/electronic stems below.
+const TECHNICAL_FIELD_RE = /\b(comput|software|informatics|information technology|data|cloud|devops|electronic|cyber|network|mathematic|\bit\b)/i;
 // The JD permits equivalents (relevant field / practical experience), not only a named degree.
 const ALLOWS_EQUIV_RE = /relevant technical field|equivalent|or another|practical experience|or related/i;
+
+/** True when `text` reads as a degree/qualification requirement (not e.g. "degree of X"). */
+export const isDegreeRequirement = (text: string): boolean => DEGREE_REQ_RE.test(text);
+/** True when `text` names a computing-adjacent technical field (not any Science/Engineering field). */
+export const isTechnicalField = (text: string): boolean => TECHNICAL_FIELD_RE.test(text);
 
 export interface DegreeReconcileDeps {
     readonly hardRequirements: ReadonlyArray<JobRequirement>;

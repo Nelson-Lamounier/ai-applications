@@ -3,7 +3,7 @@ import type { S3Client } from '@aws-sdk/client-s3';
 import type { StructuredResumeData, StrategistResearchResult } from '@bedrock/shared';
 import type { Pool } from 'pg';
 
-import type { AtsCheckResult } from './ats-check.schema.js';
+import { AtsCheckResultSchema, type AtsCheckResult } from './ats-check.schema.js';
 import type { CoverageRow } from './checks.js';
 import { buildAtsCheck } from './checks.js';
 import { collectJdMustHaves, buildGroundedChecker } from './jd-keywords.js';
@@ -52,6 +52,49 @@ const UNVERIFIED: AtsCheckResult = {
 };
 
 /**
+ * Runtime shape guard at the store boundary — AtsCheckResultSchema is the
+ * contract every consumer (resumes.ats_check_json readers, the coach) relies
+ * on; buildAtsCheck is trusted to honour it, but this surfaces silent drift
+ * (e.g. a future field rename) instead of persisting a shape nothing checked.
+ * Fail-open: never throws — the caller always proceeds with `check` as-is.
+ */
+function warnOnSchemaDrift(check: AtsCheckResult, log: AtsLogger, correlationId: string, resumeId: string): void {
+    const parsed = AtsCheckResultSchema.safeParse(check);
+    if (!parsed.success) {
+        log.warn(
+            { correlationId, resumeId, issues: parsed.error.issues },
+            'ATS check result failed schema validation — persisting as-is (fail-open)',
+        );
+    }
+}
+
+/**
+ * Catch-path recovery write: persists the UNVERIFIED claim under RLS. Stays
+ * fail-open for the pipeline (never throws — the caller already has an
+ * UNVERIFIED result to return), but a 0-row match or the write itself failing
+ * must be VISIBLE, mirroring storeAtsArtifacts's rowCount assertion without
+ * the throw.
+ */
+async function recoverUnverified(pool: Pool, userId: string, resumeId: string, log: AtsLogger, correlationId: string): Promise<void> {
+    try {
+        const res = await withUserRls(pool, userId, (client) =>
+            client.query(`UPDATE resumes SET ats_check_json = $1 WHERE id = $2`, [JSON.stringify(UNVERIFIED), resumeId]),
+        );
+        if (res.rowCount === 0) {
+            log.warn(
+                { correlationId, resumeId },
+                'ATS recovery UPDATE matched 0 rows — unverified status not persisted (not visible under RLS, or id mismatch)',
+            );
+        }
+    } catch (updateError) {
+        log.warn(
+            { correlationId, resumeId, error: (updateError as Error).message },
+            'ATS recovery UPDATE failed — unverified status not persisted',
+        );
+    }
+}
+
+/**
  * Render the AI-authored resume to a text-selectable PDF, prove it parses, and
  * store the canonical PDF + check. Fail-open for the pipeline (never throws);
  * fail-closed for the claim (a render/parse error is recorded as 'unverified',
@@ -83,17 +126,20 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
             resumeVector = await embedder.embed(text.slice(0, 8000)).catch(() => undefined);
         }
 
-        // Build coverage async — 4-tier matchTerm per term.
-        const coverage: CoverageRow[] = [];
-        for (const term of mustHaves) {
+        // Build coverage async — 4-tier matchTerm per term, run concurrently. The
+        // resume embedding is computed exactly ONCE above (resumeVector) and passed
+        // into every call, so this fan-out does not race N redundant resume embeds —
+        // only the (cheap, per-term) unmatched-term embeds run in parallel.
+        // Promise.all preserves array order, so coverage stays in mustHaves order.
+        const coverage: CoverageRow[] = await Promise.all(mustHaves.map(async (term) => {
             const m = await matchTerm(term, resumeTextLower, { familyVocab, embedder, threshold, resumeVector, techGroups: techGroups.length > 0 ? techGroups : undefined, techAliasMap });
-            coverage.push({
+            return {
                 term,
                 present:  m.present,
                 grounded: isGrounded(term),
                 tier:     m.tier,
-            });
-        }
+            };
+        }));
 
         const check = buildAtsCheck({
             text, sections, pages,
@@ -101,6 +147,7 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
             coverage,
             requiredSkills: a.jdExtraction?.requiredSkills ?? [],
         });
+        warnOnSchemaDrift(check, a.log, a.correlationId, a.resumeId);
         if (a.bucket) {
             await storeAtsArtifacts({
                 s3: a.s3, pool: a.pool, bucket: a.bucket,
@@ -129,9 +176,7 @@ export async function renderCheckAndStoreAts(a: RunAtsCheckArgs): Promise<AtsChe
         );
         // RLS-scoped write (same context requirement as storeAtsArtifacts), so the
         // 'unverified' claim actually persists instead of being silently dropped.
-        await withUserRls(a.pool, a.userId, (client) =>
-            client.query(`UPDATE resumes SET ats_check_json = $1 WHERE id = $2`, [JSON.stringify(UNVERIFIED), a.resumeId]),
-        ).catch(() => undefined);
+        await recoverUnverified(a.pool, a.userId, a.resumeId, a.log, a.correlationId);
         a.onOutcome('error');
         return UNVERIFIED;
     }

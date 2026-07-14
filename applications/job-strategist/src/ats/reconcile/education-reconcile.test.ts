@@ -1,11 +1,74 @@
 /** @format */
-import { reconcileDegree, applyDegreeReconcile } from './education-reconcile.js';
+import { reconcileDegree, applyDegreeReconcile, isDegreeRequirement, isTechnicalField } from './education-reconcile.js';
 import type { JobRequirement } from '@bedrock/shared';
 
 const edu = (degree: string) => ({ degree, institution: 'Dublin Business School', period: '2022-2024' });
 const softReq = (skill: string): JobRequirement => ({ skill, context: '' } as JobRequirement);
 
 const PREFERRED = "Bachelor's degree in Computer Science, Computer Engineering, or relevant technical field";
+
+describe('isDegreeRequirement (DEGREE_REQ_RE overmatch — F9)', () => {
+    it('does NOT treat "a high degree of ownership" as a degree requirement', () => {
+        expect(isDegreeRequirement('a high degree of ownership')).toBe(false);
+    });
+
+    it('does NOT treat "degree of automation" as a degree requirement', () => {
+        expect(isDegreeRequirement('degree of automation')).toBe(false);
+    });
+
+    it('treats "Bachelor\'s degree in Computer Science" as a degree requirement', () => {
+        expect(isDegreeRequirement("Bachelor's degree in Computer Science")).toBe(true);
+    });
+
+    it('treats "degree in Software Engineering" as a degree requirement', () => {
+        expect(isDegreeRequirement('degree in Software Engineering')).toBe(true);
+    });
+});
+
+describe('isTechnicalField (TECHNICAL_FIELD_RE overmatch — F9)', () => {
+    it('does NOT credit Political Science as a relevant technical field', () => {
+        expect(isTechnicalField('Political Science')).toBe(false);
+    });
+
+    it('does NOT credit Mechanical Engineering as a relevant technical field', () => {
+        expect(isTechnicalField('Mechanical Engineering')).toBe(false);
+    });
+
+    it('does NOT credit Civil Engineering, Chemical Engineering, Business or English', () => {
+        expect(isTechnicalField('Civil Engineering')).toBe(false);
+        expect(isTechnicalField('Chemical Engineering')).toBe(false);
+        expect(isTechnicalField('Business')).toBe(false);
+        expect(isTechnicalField('English')).toBe(false);
+    });
+
+    it('credits Computer Science, Data Science, Software Engineering, Electronic Engineering, Computing', () => {
+        expect(isTechnicalField('Computer Science')).toBe(true);
+        expect(isTechnicalField('Data Science')).toBe(true);
+        expect(isTechnicalField('Software Engineering')).toBe(true);
+        expect(isTechnicalField('Electronic Engineering')).toBe(true);
+        expect(isTechnicalField('Computing')).toBe(true);
+    });
+});
+
+describe('reconcileDegree — real-world overmatch regression (F9)', () => {
+    it('does NOT credit a Political Science degree against a Computer Science requirement (no false VERIFIED)', () => {
+        const r = reconcileDegree({
+            hardRequirements: [softReq("Bachelor's degree in Computer Science")],
+            softRequirements: [],
+            education: [edu('BA in Political Science')],
+        });
+        expect(r?.verified).toBeUndefined();
+    });
+
+    it('does NOT credit a Mechanical Engineering degree against a Computer Science requirement (no false VERIFIED)', () => {
+        const r = reconcileDegree({
+            hardRequirements: [softReq("Bachelor's degree in Computer Science")],
+            softRequirements: [],
+            education: [edu('BEng in Mechanical Engineering')],
+        });
+        expect(r?.verified).toBeUndefined();
+    });
+});
 
 describe('reconcileDegree', () => {
     it('VERIFIES a relevant technical-field qualification when the JD allows equivalents (the Higher Diploma case)', () => {

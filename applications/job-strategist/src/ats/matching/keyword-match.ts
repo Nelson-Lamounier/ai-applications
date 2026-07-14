@@ -14,6 +14,21 @@ const QUALIFIERS = new Set([
     'scripting', 'systems', 'system', 'tools', 'tooling',
 ]);
 
+/**
+ * Resolve a raw JD term to its canonical form: alias-map hit (looked up by the
+ * lowercased, trimmed term) wins; otherwise fall back to `normalizeTerm`, joining
+ * its tokens with underscores. Single source of truth for canonicalisation —
+ * every call site that needs "the" canonical for a raw term (retrieval-prefilter,
+ * tech-transfer-context, the tech-transfer match tier below) must resolve through
+ * this function so the same term never canonicalises differently in different
+ * places (a prior divergence: one site canonicalised "Node.js" -> "node.js" via a
+ * raw lowercase, another -> "node_js" via this normalized fallback).
+ */
+export function resolveCanonical(term: string, aliasMap: ReadonlyMap<string, string>): string {
+    const termLower = term.toLowerCase().trim();
+    return aliasMap.get(termLower) ?? normalizeTerm(term).replaceAll(' ', '_');
+}
+
 export function normalizeTerm(t: string): string {
     return t
         .toLowerCase()
@@ -26,6 +41,15 @@ export function normalizeTerm(t: string): string {
 
 function normalizeResume(text: string): string {
     return ' ' + text.toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
+}
+
+/**
+ * Space-pad free text to a lowercased alnum token stream for whole-word
+ * containment checks (e.g. `mentionsCanonical`). Single source of truth —
+ * previously copy-pasted identically across several ats/grounding modules.
+ */
+export function padded(text: string): string {
+    return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
 }
 
 // Generic "scripting / programming / languages" JD terms don't appear verbatim in
@@ -44,6 +68,70 @@ function matchSkillCategory(rawTermLower: string, paddedResume: string): boolean
     return LANGUAGE_EXEMPLARS.some((ex) => paddedResume.includes(ex));
 }
 
+// F4: multi-word terms need PROXIMITY, not just co-presence — "project" and "management"
+// each appearing somewhere in the resume, in unrelated sentences, is not the same as the
+// resume demonstrating "project management". A sentence boundary (.!?;\n) is a hard cut;
+// within a sentence, ALL significant tokens must additionally fall within a single span
+// of PROXIMITY_WINDOW words of each other (a true span check, not anchored on any one
+// token) so a long buzzword-list sentence doesn't bridge two unrelated mentions either.
+// WINDOW=12 is wide enough for ordinary prose ("owned the project timeline, budget, and
+// risk register while reporting to senior management weekly" — 10 words apart) while
+// still requiring genuine co-occurrence in one sentence.
+const PROXIMITY_WINDOW = 12;
+
+function splitSentences(text: string): string[] {
+    return text.split(/[.!?;\n]+/);
+}
+
+function sentenceWords(sentence: string): string[] {
+    return sentence.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter((w) => w.length > 0);
+}
+
+/**
+ * True span check: every token in `tokens` must occur somewhere in `words`, and there
+ * must exist a choice of one occurrence per token (tokens may repeat) whose positions
+ * fit within a single window of `windowSize` words — i.e. (max position - min position)
+ * <= windowSize across the whole token span, not measured from any one "anchor" token.
+ *
+ * Implemented as the classic "smallest range covering at least one element from each of
+ * k lists" sweep: merge every (position, tokenIndex) pair, sort by position, then slide
+ * a window over the merged list tracking how many distinct tokens are currently covered.
+ */
+function withinWindow(words: string[], tokens: string[], windowSize: number): boolean {
+    const merged: Array<{ pos: number; tokenIdx: number }> = [];
+    const tokenSeen = new Array(tokens.length).fill(false);
+    words.forEach((w, pos) => {
+        const tokenIdx = tokens.indexOf(w);
+        if (tokenIdx !== -1) {
+            merged.push({ pos, tokenIdx });
+            tokenSeen[tokenIdx] = true;
+        }
+    });
+    if (tokenSeen.some((seen) => !seen)) return false; // a token is absent from this sentence
+    merged.sort((a, b) => a.pos - b.pos);
+
+    const counts = new Array(tokens.length).fill(0);
+    let distinct = 0;
+    let left = 0;
+    let minSpan = Infinity;
+    for (let right = 0; right < merged.length; right++) {
+        if (counts[merged[right].tokenIdx] === 0) distinct++;
+        counts[merged[right].tokenIdx]++;
+        while (distinct === tokens.length) {
+            minSpan = Math.min(minSpan, merged[right].pos - merged[left].pos);
+            counts[merged[left].tokenIdx]--;
+            if (counts[merged[left].tokenIdx] === 0) distinct--;
+            left++;
+        }
+    }
+    return minSpan <= windowSize;
+}
+
+/** Co-occurrence check for multi-word terms: all tokens present in the SAME sentence, within a bounded window. */
+function tokensCoOccur(tokens: string[], resumeLowerText: string, windowSize = PROXIMITY_WINDOW): boolean {
+    return splitSentences(resumeLowerText).some((sentence) => withinWindow(sentenceWords(sentence), tokens, windowSize));
+}
+
 export function matchTier1(term: string, resumeLowerText: string): boolean {
     const resume = normalizeResume(resumeLowerText);
     const normTerm = normalizeTerm(term);
@@ -52,11 +140,47 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
         // 2-char atomic skill ("ML", "QA") matches its own word, not a substring of another.
         if (resume.includes(` ${normTerm} `)) return true;
         const tokens = normTerm.split(' ').filter((t) => t.length >= 3);
-        if (tokens.length > 0 && tokens.every((tok) => resume.includes(` ${tok} `))) return true;
+        if (tokens.length === 1) {
+            if (resume.includes(` ${tokens[0]} `)) return true;
+        } else if (tokens.length >= 2 && tokensCoOccur(tokens, resumeLowerText)) {
+            return true;
+        }
     }
     // Skill-category credit — e.g. "scripting languages" reduces to "languages" and won't
     // match literally, but the resume lists Python/Bash → the language skill IS present.
     return matchSkillCategory(term.toLowerCase(), resume);
+}
+
+/**
+ * Guard for the dropped-short-token case: when a multi-word term has a short
+ * (<3-char) token filtered out by the significant-token cut — e.g. "AI Automation"
+ * -> {automation} once "ai" is dropped, "UX Reporting" -> {reporting} once "ux" is
+ * dropped — the surviving single token is NOT a discriminating match on its own: it's
+ * whatever generic noun happened to be left after the acronym vanished. A bare ratio
+ * match on that one word would credit against ANY string containing it (e.g. "Data
+ * Automation Pipelines"), regardless of which noun it is — no fixed word list can
+ * enumerate every generic noun, so this generalises instead of allowlisting them.
+ *
+ * Triggers whenever the smaller side's SIGNIFICANT-token set collapses to exactly one
+ * token AND the term originally had >= 2 tokens after qualifier stripping (i.e. a
+ * token was lost specifically to the <3-char cut, not because the term was always a
+ * single word — a genuinely single-word term like "alerting" must still bridge via the
+ * ratio rule below). When it triggers, require the smaller side's FULL normalized
+ * phrase (including the short, filtered-out token) to appear as a substring in the
+ * other side's phrase. Returns `null` when the guard doesn't apply (caller falls back
+ * to the ratio rule).
+ */
+function droppedShortTokenGuard(
+    smaller: Set<string>,
+    smallerRaw: string,
+    otherRaw: string,
+): boolean | null {
+    if (smaller.size !== 1) return null;
+    const smallerFullPhrase = normalizeTerm(smallerRaw);
+    const rawTokenCount = smallerFullPhrase.length > 0 ? smallerFullPhrase.split(' ').length : 0;
+    if (rawTokenCount < 2) return null; // term was always a single word — no token was dropped
+    const otherFullPhrase = normalizeTerm(otherRaw);
+    return smallerFullPhrase.length > 0 && otherFullPhrase.includes(smallerFullPhrase);
 }
 
 /**
@@ -67,7 +191,8 @@ export function matchTier1(term: string, resumeLowerText: string): boolean {
  * compares the sets of significant (≥3-char) tokens.
  *
  * Matches when ≥ `minShared` tokens overlap OR ≥ 60% of the smaller token set overlaps
- * (so a short, fully-contained phrase like "alerting" vs "alerting dashboards" bridges).
+ * (so a short, fully-contained phrase like "alerting" vs "alerting dashboards" bridges),
+ * subject to the dropped-short-token guard above.
  */
 export function tokenOverlapMatch(a: string, b: string, minShared = 2): boolean {
     const toks = (s: string) => new Set(normalizeTerm(s).split(' ').filter((t) => t.length >= 3));
@@ -75,8 +200,14 @@ export function tokenOverlapMatch(a: string, b: string, minShared = 2): boolean 
     if (A.size === 0 || B.size === 0) return false;
     let shared = 0;
     for (const t of A) if (B.has(t)) shared++;
-    // match if ≥ minShared shared tokens OR ≥ 60% of the smaller set overlaps
-    return shared >= minShared || shared / Math.min(A.size, B.size) >= 0.6;
+    if (shared >= minShared) return true;
+
+    const [smaller, smallerRaw, otherRaw] = A.size <= B.size ? [A, a, b] : [B, b, a];
+    const guarded = droppedShortTokenGuard(smaller, smallerRaw, otherRaw);
+    if (guarded !== null) return guarded;
+
+    // match if ≥ 60% of the smaller set overlaps
+    return shared / Math.min(A.size, B.size) >= 0.6;
 }
 
 export type MatchTier = 'literal' | 'normalized' | 'ontology' | 'tech-transfer' | 'embedding' | 'none';
@@ -162,9 +293,7 @@ export function matchTechTransfer(
     techGroups: string[][],
     aliasMap: Map<string, string>,
 ): boolean {
-    const termLower = term.toLowerCase().trim();
-    // Resolve term → canonical: check aliasMap first, then normalized form
-    const jdCanonical = aliasMap.get(termLower) ?? normalizeTerm(term).replaceAll(' ', '_');
+    const jdCanonical = resolveCanonical(term, aliasMap);
 
     const reverseMap = buildReverseAliasMap(aliasMap);
     const resume = normalizeResume(resumeLowerText);

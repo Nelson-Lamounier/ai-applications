@@ -52,4 +52,74 @@ describe('attachPassageProvenance', () => {
         const [out] = attachPassageProvenance([entry('Salesforce Apex triggers')], passages);
         expect(out.provenance).toBeUndefined();
     });
+
+    describe('negation guard', () => {
+        const supportingKb = [
+            '[Source: Nelson-Lamounier/kubernetes-bootstrap/charts/api/values.yaml, Score: 0.55]\nKubernetes orchestrates the API deployment, with rolling updates and autoscaling configured across all pods.',
+        ].join(SEP);
+        const negatedKb = [
+            '[Source: Nelson-Lamounier/cdk-monitoring/docs/architecture/migration.md, Score: 0.55]\nThe platform migrated away from Kubernetes to a fully serverless Lambda architecture last quarter.',
+        ].join(SEP);
+        const noLongerKb = [
+            '[Source: Nelson-Lamounier/cdk-monitoring/docs/architecture/migration.md, Score: 0.55]\nThe team no longer uses Kubernetes for the ingestion pipeline; it now runs on managed Fargate tasks.',
+        ].join(SEP);
+
+        it('does NOT attach a passage saying "migrated away from Kubernetes" as support', () => {
+            const [out] = attachPassageProvenance([entry('Kubernetes')], parseKbPassages(negatedKb, SEP));
+            expect(out.provenance).toBeUndefined();
+        });
+
+        it('does NOT attach a passage saying "no longer use X" as support', () => {
+            const [out] = attachPassageProvenance([entry('Kubernetes')], parseKbPassages(noLongerKb, SEP));
+            expect(out.provenance).toBeUndefined();
+        });
+
+        it('DOES attach a genuinely-supporting passage for the same tool', () => {
+            const [out] = attachPassageProvenance([entry('Kubernetes')], parseKbPassages(supportingKb, SEP));
+            expect(out.provenance?.[0].source).toContain('kubernetes-bootstrap');
+        });
+    });
+
+    describe('short canonicals', () => {
+        const sqlKb = [
+            '[Source: Nelson-Lamounier/ai-applications/applications/shared/src/rds/schema.sql, Score: 0.6]\nSQL migrations define the RDS schema, including indexes and constraints for the ledger tables.',
+        ].join(SEP);
+
+        it('a short canonical (SQL) with a matching passage DOES get provenance attached', () => {
+            const [out] = attachPassageProvenance([entry('SQL')], parseKbPassages(sqlKb, SEP));
+            expect(out.provenance?.[0].source).toContain('schema.sql');
+        });
+
+        describe('word-boundary matching (2-char canonicals)', () => {
+            const ongoingKb = [
+                '[Source: Nelson-Lamounier/ai-applications/docs/decisions/0009-prose.md, Score: 0.6]\nThe team made ongoing decisions about efficient algorithms and shared learnings weekly.',
+            ].join(SEP);
+            const goKb = [
+                '[Source: Nelson-Lamounier/ai-applications/applications/shared/src/main.go, Score: 0.6]\nWe wrote the service in Go for its low-latency concurrency model.',
+            ].join(SEP);
+            const ciKb = [
+                '[Source: Nelson-Lamounier/kubernetes-bootstrap/.github/workflows/ci.yml, Score: 0.6]\nWe ran CI on every push to catch regressions before merge.',
+            ].join(SEP);
+
+            it('does NOT attach "ongoing"/"decisions"/"efficient" prose as support for skill "Go"', () => {
+                const [out] = attachPassageProvenance([entry('Go')], parseKbPassages(ongoingKb, SEP));
+                expect(out.provenance).toBeUndefined();
+            });
+
+            it('does NOT attach "ongoing"/"decisions"/"efficient" prose as support for skill "CI"', () => {
+                const [out] = attachPassageProvenance([entry('CI')], parseKbPassages(ongoingKb, SEP));
+                expect(out.provenance).toBeUndefined();
+            });
+
+            it('DOES attach a passage that genuinely mentions "Go" as a word', () => {
+                const [out] = attachPassageProvenance([entry('Go')], parseKbPassages(goKb, SEP));
+                expect(out.provenance?.[0].source).toContain('main.go');
+            });
+
+            it('DOES attach a passage that genuinely mentions "CI" as a word', () => {
+                const [out] = attachPassageProvenance([entry('CI')], parseKbPassages(ciKb, SEP));
+                expect(out.provenance?.[0].source).toContain('ci.yml');
+            });
+        });
+    });
 });

@@ -52,9 +52,11 @@ import {
 import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/gate/run-ats-check.js';
 import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
+import { reconcileAtsPassed } from './ats/gate/checks.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
 import { splitAttainable } from './ats/gate/attainable.js';
+import { storeAtsCheckJson } from './ats/gate/store-ats-artifacts.js';
 import { demoteMisattributedVendors } from './ats/grounding/vendor-provenance.js';
 import { buildCodeStackContext, demoteCodeContradictedMatches } from './ats/grounding/code-truth.js';
 import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type RepoProfile } from './ats/context/repo-profile.js';
@@ -62,6 +64,7 @@ import { detectStaleMigrations, reframeStaleMigrations } from './ats/reconcile/m
 import { buildRetrievalPrefilter } from './ats/context/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/grounding/number-provenance.js';
+import { buildGroundingFacts } from './ats/grounding/grounding-facts.js';
 import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
 import { reconcileExperienceRoster } from './lib/experience-roster.js';
 import { surfaceMetrics } from './agents/quality/surface-metrics.js';
@@ -380,7 +383,12 @@ const resumeViolationsMetric = new Counter({
 });
 const atsFeedback = new Counter({
     name:       'job_strategist_ats_feedback_total',
-    help:       'ATS feedback loop outcomes: fired (re-write ran), passed (no attainable missing), skipped (re-write not run).',
+    // 'passed' is the RECONCILED headline outcome (reconcileAtsPassed: status
+    // === 'passed' AND attainablePassed !== false) — the single truth a
+    // downstream consumer should read instead of comparing this against the
+    // per-render `ats_${status}` outcome on job_strategist_runs_total, which
+    // can legitimately disagree with the attainable-only signal (F5).
+    help:       'ATS feedback loop outcomes: fired (re-write ran), passed (reconciled headline pass-mark), skipped (re-write not run).',
     labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
@@ -1064,7 +1072,12 @@ export async function main(): Promise<void> {
         };
         // Grounding for the expand direction + the allowed-number set that
         // bounds ANY pass that can add content (expand, surface-keywords).
-        const budgetGroundingFacts = [
+        // VERBATIM sources only (F2) — researchData.verifiedMatches[].sourceCitation
+        // is the matcher's free-text PARAPHRASE of where a skill is demonstrated,
+        // not verbatim KB text; folding it in let a paraphrased number (e.g. "cut
+        // deploy time 40%") launder into the allowed set and surface in a bullet
+        // as if verified. See grounding-facts.ts and its F2 regression test.
+        const budgetGroundingFacts = buildGroundingFacts([
             experienceFactsBlock,
             projectEvidenceBlock,
             groundedMetricsBlock,
@@ -1072,8 +1085,7 @@ export async function main(): Promise<void> {
             // has no years value and the stripper deletes "N years" from the
             // summary mid-sentence (observed live on run a428bdf4).
             formatVerifiedYearsFact(careerEntries),
-            researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
-        ].filter(Boolean).join('\n\n');
+        ]);
         // Keep Experience to verified employers: relocate any project the writer
         // mis-filed as a "Solo <role> — <Project>" experience entry back into
         // projects[].highlights (its github link + description live there). Runs
@@ -1180,6 +1192,11 @@ export async function main(): Promise<void> {
             };
             const atsCheck = await renderCheckAndStoreAts({ ...atsArgs, resume: finalResume });
             finalAts = atsCheck;
+            // Tracks whichever resumes row holds the FINAL ATS check (the
+            // keyword-surfacing re-write below may persist a different
+            // resumeId) — F6 re-stores the attainable-enriched object onto
+            // this row after the merge below.
+            let atsResumeId = persisted.resumeId;
 
             // ── ATS feedback loop (pass-by-generation, ONE bounded honest re-write) ──
             // Surface attainable-but-missing keywords (verified/transferable the
@@ -1193,12 +1210,13 @@ export async function main(): Promise<void> {
                 // Red flags: no structured red-flag source exists in this scope today
                 // (StrategistResearchResult has no `redFlags`, no recruiter snapshot here) → [].
                 const redFlags: string[] = [];
-                // Grounding facts = verbatim career facts + project evidence + verified-match citations.
-                const groundingFacts = [
+                // Grounding facts = verbatim career facts + project evidence only (F2:
+                // verifiedMatches[].sourceCitation is a matcher paraphrase, not verbatim
+                // KB text, and must never seed the allowed-number set — see grounding-facts.ts).
+                const groundingFacts = buildGroundingFacts([
                     experienceFactsBlock,
                     projectEvidenceBlock,
-                    researchData.verifiedMatches.map((m) => `${m.skill}: ${m.sourceCitation}`).join('\n'),
-                ].filter(Boolean).join('\n\n');
+                ]);
                 // Allowed numbers = original resume + grounding facts. Any number the
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
@@ -1214,7 +1232,12 @@ export async function main(): Promise<void> {
                     // No groundingFacts here: round 1 already expanded to fill;
                     // this pass exists only to SHRINK keyword-rewrite overgrowth.
                     // (Observed live: a second expand+revalidate round cost ~50s.)
-                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code)).catch(() => surfaced);
+                    // scrubEvidenceText (F3): the condense rewrite this triggers
+                    // interpolates its own numeric budgets into the prompt next to
+                    // the resume text — feed it real evidence so a genuinely
+                    // grounded number survives the post-condense instruction-leak
+                    // scrub, without opting back into the expand direction.
+                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     violationLog.recordAll('revalidate_post_keywords', reval.violations);
@@ -1229,6 +1252,7 @@ export async function main(): Promise<void> {
                         tailoredResume: surfaced,
                     }).catch(() => null);
                     const reResumeId = rePersisted?.resumeId ?? persisted.resumeId;
+                    atsResumeId = reResumeId;
                     // Re-check the SURFACED resume. A silent fallback to the
                     // pre-rewrite verdict shipped stale "missing keyword" issues
                     // for a resume that had already fixed them — so retry once,
@@ -1249,16 +1273,39 @@ export async function main(): Promise<void> {
                 atsFeedback.inc({ outcome: 'skipped' });
             }
 
-            // Stamp the pass-mark from the FINAL coverage.
+            // Stamp the pass-mark from the FINAL coverage, then reconcile the
+            // headline `passed` bit (F5). `status` (buildAtsCheck, GROUNDED
+            // keywords) and `attainablePassed` (splitAttainable, VERIFIED-only)
+            // measure different things and can legitimately disagree —
+            // reconcileAtsPassed is the single arbiter; emit ONE reconciled
+            // outcome from it rather than reading `finalSplit.attainablePassed`
+            // and the per-render `ats_${status}` outcome as two independent
+            // (and possibly conflicting) truths.
             const finalSplit = splitAttainable(finalAts.jdKeywordCoverage, skillEvidenceLedger);
-            if (finalSplit.attainablePassed) atsFeedback.inc({ outcome: 'passed' });
+            const reconciledPassed = reconcileAtsPassed(finalAts.status, finalSplit.attainablePassed);
+            if (reconciledPassed) atsFeedback.inc({ outcome: 'passed' });
             finalAts = {
                 ...finalAts,
+                passed:            reconciledPassed,
                 attainableTotal:   finalSplit.attainableTotal,
                 attainableCovered: finalSplit.attainableCovered,
                 attainablePassed:  finalSplit.attainablePassed,
                 surfacedKeywords:  split.attainableMissing.map((e) => e.tool),
             };
+
+            // F6: renderCheckAndStoreAts already persisted the PRE-attainable
+            // check to resumes.ats_check_json via storeAtsArtifacts. The
+            // attainable fields + reconciled `passed` only become known here,
+            // after the Skill Evidence Ledger split — re-store the enriched
+            // object so the primary read path (resumes.ats_check_json) carries
+            // the same truth as pipeline_runs.metadata.analysis.atsCheck
+            // instead of only the latter.
+            await storeAtsCheckJson({ pool, userId: env.userId, resumeId: atsResumeId, check: finalAts }).catch((e) => {
+                log.warn(
+                    { pipelineRunId: env.pipelineRunId, resumeId: atsResumeId, error: (e as Error).message },
+                    'ats_check_json_attainable_restore_failed — resumes.ats_check_json lacks attainable fields; pipeline_runs.metadata still has them',
+                );
+            });
         }
 
         // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────

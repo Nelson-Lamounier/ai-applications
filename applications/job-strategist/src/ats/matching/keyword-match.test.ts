@@ -1,5 +1,38 @@
 /** @format */
-import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer, tokenOverlapMatch } from './keyword-match.js';
+import { normalizeTerm, matchTier1, matchTerm, matchTechTransfer, tokenOverlapMatch, padded, mentionsCanonical, buildReverseAliasMap, resolveCanonical } from './keyword-match.js';
+
+describe('padded', () => {
+    it('lowercases, collapses non-alnum runs to single spaces, and pads both ends', () => {
+        expect(padded('OpenAI API')).toBe(' openai api ');
+        expect(padded('  Amazon-Bedrock!!  ')).toBe(' amazon bedrock ');
+    });
+
+    it('produces whole-word-safe containment for mentionsCanonical (the single-source-of-truth pairing)', () => {
+        const reverse = buildReverseAliasMap(new Map([['amazon bedrock', 'bedrock']]));
+        expect(mentionsCanonical('bedrock', padded('We use Amazon Bedrock in production'), reverse)).toBe(true);
+    });
+});
+
+describe('resolveCanonical', () => {
+    it('alias-map hit (lowercased lookup) returns the mapped canonical', () => {
+        const aliasMap = new Map([['reactjs', 'react']]);
+        expect(resolveCanonical('ReactJS', aliasMap)).toBe('react');
+    });
+
+    it('no alias hit falls back to normalizeTerm, punctuation normalized to a token boundary (Node.js -> node_js)', () => {
+        expect(resolveCanonical('Node.js', new Map())).toBe('node_js');
+    });
+
+    it('no alias hit: multi-word fallback joins tokens with underscores', () => {
+        expect(resolveCanonical('Some New Tool', new Map())).toBe('some_new_tool');
+    });
+
+    it('is the single source of truth both call sites converge on for the same punctuation-bearing term', () => {
+        const emptyAliasMap = new Map<string, string>();
+        expect(resolveCanonical('Node.js', emptyAliasMap)).toBe(resolveCanonical('Node.js', emptyAliasMap));
+        expect(resolveCanonical('Node.js', emptyAliasMap)).toBe('node_js');
+    });
+});
 
 describe('normalizeTerm', () => {
     it('strips qualifiers + generic suffixes, collapses punctuation', () => {
@@ -59,6 +92,39 @@ describe('matchTier1', () => {
     });
 });
 
+describe('matchTier1 — proximity for multi-word terms (F4)', () => {
+    it('does NOT match when tokens appear in unrelated sentences', () => {
+        expect(matchTier1('project management',
+            'Shipped a side project last year. Handled stakeholder time management separately.')).toBe(false);
+    });
+    it('DOES match when the tokens co-occur as the actual phrase/skill', () => {
+        expect(matchTier1('project management', 'led project management for a 6-person team')).toBe(true);
+        expect(matchTier1('aws', 'deployed on aws')).toBe(true); // single-token unaffected
+    });
+    it('matches when tokens co-occur in the same sentence but are not adjacent (within window)', () => {
+        expect(matchTier1('project management',
+            'led the project through several phases of stakeholder management')).toBe(true);
+    });
+
+    it('true span check: ordinary prose with tokens ~10 words apart in one sentence matches', () => {
+        expect(matchTier1('project management',
+            'owned the project timeline, budget, and risk register while reporting to senior management weekly',
+        )).toBe(true);
+    });
+
+    it('true span check: tokens scattered across one sentence (not anchored on the first token) still match', () => {
+        expect(matchTier1('root cause analysis',
+            'traced the root of the failure back to its underlying cause through detailed analysis',
+        )).toBe(true);
+    });
+
+    it('regression guard: cross-sentence tokens still never match (the F4 honesty fix holds)', () => {
+        expect(matchTier1('project management',
+            'Shipped a side project last year. Handled stakeholder time management separately.',
+        )).toBe(false);
+    });
+});
+
 describe('tokenOverlapMatch', () => {
     it('≥2 shared significant tokens → true (bridges competency phrasing)', () => {
         // shares {root, cause, analysis}
@@ -99,6 +165,35 @@ describe('tokenOverlapMatch', () => {
     it('empty token set on either side → false', () => {
         expect(tokenOverlapMatch('', 'root cause analysis')).toBe(false);
         expect(tokenOverlapMatch('and or the', 'root cause analysis')).toBe(false);
+    });
+});
+
+describe('tokenOverlapMatch — dropped-short-token guard (F1)', () => {
+    it('does NOT match when a multi-word term collapses to a single token via the <3-char cut', () => {
+        // "AI Engineering" -> {engineering} after the <3-char "ai" is dropped;
+        // must NOT then match any string containing "engineering".
+        expect(tokenOverlapMatch('AI Engineering', 'Data Engineering Pipelines')).toBe(false);
+        expect(tokenOverlapMatch('ML Ops', 'Cloud Ops team')).toBe(false);
+    });
+
+    it('generalises beyond any fixed word list — ANY generic noun left after the short token drops', () => {
+        // These generic nouns (automation, reporting, governance) were never on the old
+        // hardcoded allowlist — the guard must still close the hole for them, since no
+        // fixed list can enumerate every generic noun a short acronym might leave behind.
+        expect(tokenOverlapMatch('AI Automation', 'Data Automation Pipelines')).toBe(false);
+        expect(tokenOverlapMatch('UX Reporting', 'Data Reporting Dashboard')).toBe(false);
+        expect(tokenOverlapMatch('ML Governance', 'Cloud Governance Team')).toBe(false);
+    });
+
+    it('still matches a genuine multi-token overlap (no short token was dropped)', () => {
+        expect(tokenOverlapMatch('root cause analysis', 'performed root-cause analysis on incidents')).toBe(true);
+        expect(tokenOverlapMatch('incident response', 'handled incident response on-call')).toBe(true);
+        expect(tokenOverlapMatch('data engineering', 'built data engineering pipelines')).toBe(true);
+        expect(tokenOverlapMatch('customer support', 'provided customer support')).toBe(true);
+    });
+
+    it('a genuinely single-word term still bridges via the ratio rule (no token was ever dropped)', () => {
+        expect(tokenOverlapMatch('alerting', 'alerting dashboards')).toBe(true);
     });
 });
 

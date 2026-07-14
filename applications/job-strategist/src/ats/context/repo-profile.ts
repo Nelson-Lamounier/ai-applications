@@ -20,6 +20,8 @@
 
 import type { Pool } from 'pg';
 
+import { withUserRls } from '../../lib/rls.js';
+
 /** IaC / delivery frameworks (ontology canonicals) that define HOW infra is built. */
 const FRAMEWORK_CANONICALS = new Set([
     'aws_cdk', 'terraform', 'pulumi', 'helm', 'cloudformation', 'argocd', 'ansible', 'serverless_framework',
@@ -214,7 +216,7 @@ export async function persistRepoProfiles(
         tuples.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7})`);
         values.push(meta.pipelineRunId, meta.userId, p.repoFullName, p.repoType, p.frameworks, p.services, p.concepts);
     }
-    await pool.query(
+    await withUserRls(pool, meta.userId, (client) => client.query(
         `INSERT INTO repo_profile
             (pipeline_run_id, user_id, repo_full_name, repo_type, frameworks, services, concepts)
          VALUES ${tuples.join(',')}
@@ -224,6 +226,6 @@ export async function persistRepoProfiles(
              services   = EXCLUDED.services,
              concepts   = EXCLUDED.concepts`,
         values,
-    );
+    ));
     return profiles.length;
 }

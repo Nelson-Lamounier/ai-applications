@@ -74,6 +74,26 @@ describe('detectStaleMigrations', () => {
         expect(r).toHaveLength(1);
     });
 
+    it('flags a stale claim in projects[].highlights', () => {
+        const resume = {
+            experience: [],
+            projects: [{ name: 'kubernetes-bootstrap', description: '', highlights: ['Operated a self-hosted Kubernetes cluster via kubeadm.'] }],
+        } as unknown as StructuredResumeData;
+        const r = detectStaleMigrations(resume, DEPS);
+        expect(r).toHaveLength(1);
+        expect(r[0].successors).toEqual(['aws_eks']);
+    });
+
+    it('flags a stale claim in projects[].description', () => {
+        const resume = {
+            experience: [],
+            projects: [{ name: 'kubernetes-bootstrap', description: 'Bootstrapped a self-managed Kubernetes cluster via kubeadm on AWS EC2.' }],
+        } as unknown as StructuredResumeData;
+        const r = detectStaleMigrations(resume, DEPS);
+        expect(r).toHaveLength(1);
+        expect(r[0].successors).toEqual(['aws_eks']);
+    });
+
     it('FAIL-SAFE: no succeeds edges → no flags', () => {
         expect(detectStaleMigrations(resumeWith('Self-hosted Kubernetes via kubeadm'), { ...DEPS, succeedsEdges: new Map() })).toHaveLength(0);
     });

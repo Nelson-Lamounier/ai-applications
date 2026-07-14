@@ -7,7 +7,7 @@
  * skills 2.3x over, a 91-word bullet). Prompt rules are the first attempt;
  * this module is the enforcement layer:
  *
- *   measure → (over budget?) one bounded Haiku condense rewrite, JD-aware →
+ *   measure → (over budget?) one bounded LLM (Sonnet) condense rewrite, JD-aware →
  *   re-measure → deterministic hard trims as the backstop.
  *
  * Hard trims only ever drop WHOLE units (skill items, trailing project
@@ -21,6 +21,7 @@ import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@be
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../../agents/writer/resume-tool-schema.js';
 import type { ResumeViolation } from '../../agents/quality/resume-guard.js';
 import { preserveExperienceRoster } from '../../agents/quality/resume-guard.js';
+import { stripInstructionMetrics } from '../grounding/number-provenance.js';
 
 export const LENGTH_BUDGET = {
     /** ~2 rendered A4 pages at the ATS template's density. */
@@ -144,7 +145,12 @@ function hardTrimProjects(resume: StructuredResumeData): StructuredResumeData {
 function hardTrimExperience(resume: StructuredResumeData): StructuredResumeData {
     const experience = (resume.experience ?? []).map((e) => ({
         ...e,
-        highlights: (e.highlights ?? []).slice(0, LENGTH_BUDGET.maxBulletsPerRole),
+        highlights: (e.highlights ?? [])
+            .slice(0, LENGTH_BUDGET.maxBulletsPerRole)
+            // Count cap alone is a no-op when a single surviving bullet is the
+            // over-budget one (e.g. the module's own 91-word motivating
+            // incident) — trim every bullet to the per-bullet word cap too.
+            .map((h) => (words(h) > LENGTH_BUDGET.perBulletWords ? trimSentences(h, LENGTH_BUDGET.perBulletWords) : h)),
     }));
     return { ...resume, experience };
 }
@@ -174,10 +180,19 @@ export function hardTrim(resume: StructuredResumeData): StructuredResumeData {
 }
 
 // =============================================================================
-// HAIKU CONDENSE (one bounded, JD-aware rewrite)
+// CONDENSE / EXPAND REWRITE (one bounded, JD-aware LLM call per direction)
 // =============================================================================
 
-const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
+/** Default model id for the condense/expand rewrite — Sonnet per CLAUDE.md
+ *  Section 4 (nuanced multi-section structured generation defaults to
+ *  Sonnet; Haiku flakiness on this class of task is a real signal). Exposed
+ *  as a pure resolver (rather than only a module-level const) so the default
+ *  vs. env-override behaviour is directly testable without a module reload. */
+export function resolveModelId(envOverride: string | undefined): string {
+    return envOverride ?? 'eu.anthropic.claude-sonnet-4-6';
+}
+
+const MODEL_ID = resolveModelId(process.env['RESUME_REWRITE_MODEL']);
 
 /** Ledger identities for the two inline prompts below (condense + expand) — bump version on any wording change (pairs with system_prompt_hash in prompt_invocations). */
 export const RESUME_CONDENSE_PROMPT_META = { id: 'resume-condense', version: '2' } as const;
@@ -197,6 +212,10 @@ export async function condenseResume(
     resume: StructuredResumeData,
     measure: ResumeMeasure,
     jd: JdPriorityContext,
+    /** Verbatim career facts + project evidence — evidence for the post-condense
+     *  instruction-leak scrub below (defaults to '' when no grounding was supplied,
+     *  which is the conservative, fail-closed case: every prompt number is stripped). */
+    groundingFacts = '',
 ): Promise<StructuredResumeData> {
     const system = [
         'You CONDENSE a tailored resume that is over its length budget. Call emit_resume with the full resume JSON.',
@@ -233,7 +252,11 @@ export async function condenseResume(
                 return parsed.data as unknown as StructuredResumeData;
             },
         });
-        return result.data;
+        // This prompt interpolates its OWN numeric budgets (e.g. "<= 32 words")
+        // right next to the resume text it hands back — the same class of leak
+        // that hit the writer persona on 2026-07-08. Scrub against this call's
+        // own instruction text before returning, so every rewrite owns its leak.
+        return stripInstructionMetrics(result.data, { instructionText: system, evidenceText: groundingFacts });
     } catch (e) {
         log('WARN', 'resume condense failed — falling through to hard trim', { error: e instanceof Error ? e.message : String(e) });
         return resume;
@@ -243,8 +266,16 @@ export async function condenseResume(
 /** Optional grounding for the expand direction (never expand without it). */
 export interface LengthBudgetOpts {
     /** Verbatim career facts + project evidence + verified citations — the ONLY
-     *  material the expand pass may draw on. */
+     *  material the expand pass may draw on. Also the DEFAULT evidence for the
+     *  condense direction's post-rewrite instruction-leak scrub below. */
     readonly groundingFacts?: string;
+    /** Evidence for the condense direction's instruction-leak scrub ONLY — does
+     *  NOT authorize the expand direction. Use this when a caller wants a
+     *  condense-only pass (e.g. a second, shrink-only budget enforcement after
+     *  an earlier pass already expanded) but still wants real grounded numbers
+     *  in the condensed output to survive the scrub. Defaults to
+     *  `groundingFacts` when omitted. */
+    readonly scrubEvidenceText?: string;
 }
 
 /**
@@ -289,7 +320,10 @@ export async function expandResume(
                 return parsed.data as unknown as StructuredResumeData;
             },
         });
-        return result.data;
+        // Same class of leak as condense (see condenseResume) — this prompt
+        // interpolates its own numeric targets too. Scrub against this call's
+        // own instruction text; real grounded numbers survive via groundingFacts.
+        return stripInstructionMetrics(result.data, { instructionText: system, evidenceText: groundingFacts });
     } catch (e) {
         log('WARN', 'resume expand failed — keeping original', { error: e instanceof Error ? e.message : String(e) });
         return resume;
@@ -305,10 +339,11 @@ async function shrinkToBudget(
     resume: StructuredResumeData,
     before: ResumeMeasure,
     jd: JdPriorityContext,
+    groundingFacts: string,
     onViolation?: (v: ResumeViolation) => void,
 ): Promise<StructuredResumeData> {
     onViolation?.({ code: 'length_over_budget', detail: `Sections over budget: ${before.overBudget.join(', ')} (total ${before.total}/${LENGTH_BUDGET.totalWords} words).` });
-    const condensed = preserveExperienceRoster(resume, await condenseResume(resume, before, jd), onViolation);
+    const condensed = preserveExperienceRoster(resume, await condenseResume(resume, before, jd, groundingFacts), onViolation);
     let out = condensed;
     let m = measureResume(out);
     if (condensed !== resume && m.total < before.total) {
@@ -346,7 +381,10 @@ export async function applyLengthBudget(
     opts: LengthBudgetOpts = {},
 ): Promise<StructuredResumeData> {
     const before = measureResume(resume);
-    if (before.overBudget.length > 0) return shrinkToBudget(resume, before, jd, onViolation);
+    if (before.overBudget.length > 0) {
+        const scrubEvidence = opts.scrubEvidenceText ?? opts.groundingFacts ?? '';
+        return shrinkToBudget(resume, before, jd, scrubEvidence, onViolation);
+    }
     if ((before.underFilled || before.thinRoles.length > 0) && opts.groundingFacts) {
         return growToFill(resume, before, jd, opts.groundingFacts, onViolation);
     }

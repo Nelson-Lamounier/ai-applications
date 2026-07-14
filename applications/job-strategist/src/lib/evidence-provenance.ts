@@ -14,6 +14,8 @@
 
 import type { Pool } from 'pg';
 
+import { withUserRls } from './rls.js';
+
 // Header on each assembled kbContext passage. Rerank captured (computeKbStats drops it).
 // The source is matched with a negated class `[^,\]]+` (linear, no backtracking) rather
 // than `.+?` — the path never contains a comma or `]`, and this avoids any ReDoS risk.
@@ -126,13 +128,13 @@ export async function persistEvidenceProvenance(
             r.repoFullName, r.filePath, r.cosine, r.rerank, r.passedFloor, r.usageStatus, r.demotionReason,
         );
     }
-    await pool.query(
+    await withUserRls(pool, meta.userId, (client) => client.query(
         `INSERT INTO evidence_provenance
             (pipeline_run_id, user_id, target_role, target_company, agent,
              repo_full_name, file_path, cosine, rerank, passed_floor, usage_status, demotion_reason)
          VALUES ${tuples.join(',')}`,
         values,
-    );
+    ));
     return rows.length;
 }
 
@@ -207,7 +209,7 @@ export async function persistRepoEvidenceQuality(
             r.passagesRetrieved, r.passagesCited, r.demotedCount, r.codeTechCount, r.citeRate,
         );
     }
-    await pool.query(
+    await withUserRls(pool, meta.userId, (client) => client.query(
         `INSERT INTO repo_evidence_quality
             (pipeline_run_id, user_id, target_role, repo_full_name,
              passages_retrieved, passages_cited, demoted_count, code_tech_count, cite_rate)
@@ -219,6 +221,6 @@ export async function persistRepoEvidenceQuality(
              code_tech_count    = EXCLUDED.code_tech_count,
              cite_rate          = EXCLUDED.cite_rate`,
         values,
-    );
+    ));
     return rows.length;
 }

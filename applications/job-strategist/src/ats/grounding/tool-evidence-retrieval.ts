@@ -18,7 +18,7 @@
  */
 
 import type { SkillEvidenceEntry } from '@bedrock/shared';
-import { buildReverseAliasMap, mentionsCanonical } from '../matching/keyword-match.js';
+import { buildReverseAliasMap, mentionsCanonical, padded } from '../matching/keyword-match.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -39,11 +39,6 @@ export interface LedgerEvidenceOpts {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Space-pad a phrase to a lowercased alnum token stream for whole-word containment. */
-function padded(text: string): string {
-    return ' ' + text.toLowerCase().replaceAll(/[^a-z0-9]+/g, ' ').trim() + ' ';
-}
 
 /**
  * Canonicals whose lowercase token collides with a differently-cased term of
