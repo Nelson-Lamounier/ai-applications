@@ -668,7 +668,13 @@ const ResearchModelSchema = z.object({
     }).strict()).default([]),
     overallFitRating: z.enum(['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH']),
     fitSummary: z.string(),
-    quantifiedEvidence: z.array(z.string()).default([]),
+    // Tolerate the matcher occasionally emitting a scalar instead of an array
+    // for this NON-load-bearing field (it only seeds the number allow-set):
+    // coerce a string -> [string], anything else -> [], so a structured-output
+    // flake never fail-fasts the whole pipeline (observed live 2026-07-14).
+    quantifiedEvidence: z.array(z.string())
+        .or(z.string().transform((s) => (s.trim() ? [s] : [])))
+        .catch([]),
     pillarClassification: z.object({
         primaryPillar: z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering']),
         secondaryPillars: z.array(z.enum(['swe-general','swe-dsa','devops-sre-platform','ai-engineering'])),

@@ -53,6 +53,24 @@ describe('validateResearchResult', () => {
         expect(r.resumeData).toBeNull();
     });
 
+    // Live 2026-07-14: the matcher returned quantifiedEvidence as a bare STRING
+    // (not string[]) and the strict schema fail-fasted, aborting the whole
+    // pipeline on a non-load-bearing field. Coerce instead of abort.
+    it('coerces a scalar quantifiedEvidence string into a one-element array', () => {
+        const r = validateResearchResult({ ...VALID, quantifiedEvidence: 'cut deploy time by half' }, INJECTED);
+        expect(r.quantifiedEvidence).toEqual(['cut deploy time by half']);
+    });
+
+    it('keeps a normal quantifiedEvidence array unchanged', () => {
+        const r = validateResearchResult({ ...VALID, quantifiedEvidence: ['a', 'b'] }, INJECTED);
+        expect(r.quantifiedEvidence).toEqual(['a', 'b']);
+    });
+
+    it('falls back to [] for a malformed quantifiedEvidence rather than aborting the run', () => {
+        const r = validateResearchResult({ ...VALID, quantifiedEvidence: 42 as unknown as string[] }, INJECTED);
+        expect(r.quantifiedEvidence).toEqual([]);
+    });
+
     it('throws fast when a required model field is missing', () => {
         const { fitSummary: _fitSummary, ...broken } = VALID;
         expect(() => validateResearchResult(broken, INJECTED)).toThrow(/schema validation/i);
