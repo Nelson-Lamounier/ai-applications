@@ -23,12 +23,14 @@ not thread a trace id; filter by `pipeline_run_id` to replay one run).
 - `job_strategist_summary_ats_outcome_total{outcome, reason}` (Counter). `outcome`
   is one of `aware` (coverage already met, no re-write), `rewritten` (re-write
   fired and kept), `kept_first` (re-write fired but first kept), `fallback`
-  (summary agent errored -> deterministic fallback). `reason` is a bounded enum
-  (`coverage-met`, `no-targets`, `coverage-below-min`, `rewrite-covers-more`,
-  `no-coverage-gain`, `rewrite-guard-failed`, `first-guard-failed`, `kept-first`,
-  `rewrite-error`/`rewrite-threw`, `agent-error`). The raw fallback error string is
-  NOT a label (it lives only in the Loki `summary_ats_fallback` event) -- this keeps
-  label cardinality bounded.
+  (summary agent errored -> deterministic fallback). `reason` is a bounded enum --
+  the metric label takes exactly one of `coverage-met`, `no-targets` (no re-write),
+  `rewrite-covers-more`, `first-guard-failed` (re-write kept), `no-coverage-gain`,
+  `rewrite-guard-failed`, `kept-first`, `rewrite-threw` (first kept), or
+  `agent-error` (fallback). The raw fallback error string is NOT a label (it lives
+  only in the Loki `summary_ats_fallback` event) -- this keeps label cardinality
+  bounded. Note `coverage-below-min` and `rewrite-error` appear only in the Loki
+  `summary_ats_rewrite` event and the durable diagnostics, never as a metric label.
 - `job_strategist_summary_ats_coverage` (Histogram, buckets `[0,1,2,3]`) -- covered
   target count of the first draft.
 

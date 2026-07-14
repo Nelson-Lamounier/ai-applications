@@ -1143,7 +1143,12 @@ export async function main(): Promise<void> {
             logSummaryAtsEvents(log, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId, traceId: null }, summaryAtsDiag);
             const { outcome, reason } = summaryAtsOutcome(summaryAtsDiag);
             summaryAtsOutcomeMetric.inc({ outcome, reason });
-            summaryAtsCoverageMetric.observe(summaryAtsDiag.coverageBefore.covered);
+            // Only a run that actually scored real targets contributes a coverage
+            // sample -- no-target runs and fallback runs (both report covered 0
+            // without a genuine measurement) would otherwise dilute the histogram.
+            if (summaryAtsDiag.coverageBefore.targets > 0 && !summaryAtsDiag.fallback.fired) {
+                summaryAtsCoverageMetric.observe(summaryAtsDiag.coverageBefore.covered);
+            }
         }
 
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
