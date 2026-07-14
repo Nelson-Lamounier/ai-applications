@@ -32,24 +32,24 @@
         "sha256": "3ac4c92db2186686c741721e992bc0f94ce3ae1b8c513007a959a90cf773d5f8"
     },
     "strategist/_base_1": {
-        "version": "5",
-        "sha256": "5efa87736a636207b0bb7472f1391e2797b6995c4f034c9464c3442b0cce637a"
+        "version": "6",
+        "sha256": "c8965e06aa0e912df4450ff1a539babcc099bc2a78cd445d8e502027fd6de466"
     },
     "strategist/_base_2": {
         "version": "1",
         "sha256": "7d3ce23ea95bd76e81cbfba151d82105808430b40b258711592d63b5bb4d5ab5"
     },
     "strategist/_base_3": {
-        "version": "3",
-        "sha256": "354044f78f7b5e6156c04401eafdb2bca0317f9ee64670d899ca042ba9ac44c2"
+        "version": "4",
+        "sha256": "8f665ab3c9f471eb3bcbfbd6fab4a60330ef1a3952436b0f0c088341f5ebe518"
     },
     "strategist/_base_4": {
         "version": "2",
         "sha256": "b3f376aa89a8b8ecccee25b7227df178df5e40832512919a6f51e68b5675d108"
     },
     "strategist/_base_5": {
-        "version": "1",
-        "sha256": "df31b055d7951fd7f0701e51fb858f2d6496d2872031262660d3d347c750f1e7"
+        "version": "3",
+        "sha256": "58d33213e52f3e6536c9d91f615078991eb3ebb44a29ebb67fdb21238b61d15d"
     },
     "strategist/archetype": {
         "version": "1",

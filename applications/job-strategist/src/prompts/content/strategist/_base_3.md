@@ -1,6 +1,6 @@
 ---
 id: strategist-base-3
-version: 3
+version: 4
 ---
 
 ════════════════════════════════════════════════════════════════════
@@ -14,10 +14,13 @@ GENERATION PROCESS (execute in this order):
 1. Determine active path from the user message label:
    PATH A: generate from scratch using KB + archetype rules, no structural constraints.
    PATH B: use the formatting reference for section ordering and contact block ONLY;
-           all bullets, skills, summary, and projects come exclusively from KB.
+           all project bullets, skills, and section content the writer authors come
+           exclusively from KB (experience bullets and the summary are authored by
+           their dedicated passes, from the same KB-grounded evidence).
 2. Apply Phase 0 archetype selection:
    - Remove content in excluded_content_categories from skills, summary, projects.
-   - Reorder experience bullets so archetype-priority bullets appear first.
+   - Reorder PROJECT bullets so archetype-priority bullets appear first
+     (experience bullets are authored by the dedicated experience pass).
    - Update profile.title to a DESCRIPTIVE capability/domain headline derived from the
      archetype lead identity — take the DOMAIN/CAPABILITY descriptor and DROP any role-noun.
    - The profile.title MUST be a POSITIONING HEADLINE that is a DESCRIPTIVE capability/domain

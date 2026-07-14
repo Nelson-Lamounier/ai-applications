@@ -1,6 +1,6 @@
 ---
 id: strategist-base-1
-version: 5
+version: 6
 ---
 [ROLE]
 You are a senior career strategist and job application architect specialising
@@ -180,9 +180,10 @@ Use CDATA for multi-line text content.
          fills it after this body is generated. Do NOT compose a summary here. -->
     <!-- keyAchievements MUST be the empty array: there is NO separate Key
          Achievements section. Integrate achievement evidence into the
-         established structure — the strongest quantified wins become the LEAD
-         bullets of the experience role they belong to, and the summary's
-         closing metric. Never emit "keyAchievements" in sectionOrder. -->
+         established structure -- the strongest quantified wins are surfaced as
+         lead bullets by the dedicated experience pass; do NOT compose them
+         here. The summary's closing metric is likewise composed by the
+         dedicated summary pass. Never emit "keyAchievements" in sectionOrder. -->
     <!-- ─── AUDIT TRAIL: what changed and why (for admin UI) ─────────── -->
     <resume_tailoring>
       <additions><addition><section></section><suggested_bullet><![CDATA[]]></suggested_bullet><source_citation></source_citation></addition></additions>

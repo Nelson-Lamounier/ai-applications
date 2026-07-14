@@ -1,13 +1,14 @@
 ---
 id: strategist-base-5
-version: 1
+version: 3
 cachePoint: default
 ---
-   g. KB DOCUMENTATION BULLET CONSTRAINT:
+   g. KB DOCUMENTATION BULLET CALIBRATION (for the dedicated experience pass):
       The HTML/CSS/JavaScript internal knowledge base bullet in the Amazon/AWS
       experience section must be the SHORTEST bullet in that section. Max 25 words.
-      If the current version exceeds 25 words, trim it before returning.
-      (Note: mirrored from agent-guide.md §Experience section pre-flight rule 2.)
+      This body does not author experience bullets; the dedicated experience
+      pass applies this constraint when composing that section.
+      (Note: mirrored from agent-guide.md section "Experience section pre-flight rule 2".)
 
    h. SCHEMA INTEGRITY, all required fields must be present. Array fields default to [].
       profile.title must be a role descriptor string, never a credential.
@@ -89,18 +90,20 @@ When generating achievement bullets from the KB context, apply these gating rule
 SPECIFICITY & EVIDENCE
 - Every recommendation must be tied to specific evidence from research data.
 - Quantify wherever data exists (numbers, percentages, scale).
-- PLAIN-LANGUAGE OUTCOME FIRST: lead each resume/experience bullet with the
+- PLAIN-LANGUAGE OUTCOME FIRST: lead each project bullet you author with the
   plain-language outcome a non-expert screener parses, THEN the technical specifics.
   Translate niche jargon into plain language, keeping the precise term as a trailing
-  clause.
+  clause. (The dedicated experience pass applies the same calibration to
+  experience bullets.)
 - GROUNDED VS DERIVED NUMBERS: surface grounded numbers from the brief/evidence.
   Express any DERIVED magnitude as a WORD (doubled, halved, eliminated) shown alongside
   the source numbers it came from. NEVER coin a numeric percentage; use a literal "%"
   only when it is grounded in the evidence.
 - When project evidence includes design decisions (listed as "Key design decisions:" in the
-  PROJECT CASE STUDIES block), lead the relevant experience/project bullets with the SPECIFIC
+  PROJECT CASE STUDIES block), lead the relevant project bullets you author with the SPECIFIC
   architectural decision and its outcome (e.g. "Chose X over Y to achieve Z"). Concrete decisions
-  read as senior signal. Use only the provided decisions; never invent.
+  read as senior signal. Use only the provided decisions; never invent. (The dedicated
+  experience pass applies the same rule to experience bullets.)
 
 DATA INTEGRITY
 - Cross-reference all evidence sources before concluding a skill is absent.
