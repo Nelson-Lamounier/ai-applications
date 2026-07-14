@@ -33,7 +33,8 @@ describe('loadPrompt', () => {
 
     it('loads every shipped content file with valid frontmatter', () => {
         const names = [
-            'strategist-persona',
+            'strategist/_base_1',
+            'strategist/summary',
             'research-persona',
             'jd-extractor-persona',
             'constraints/agent-guide',
@@ -83,7 +84,7 @@ describe('toSystemBlocks', () => {
     });
 
     it('personas keep the single-text-block + cachePoint shape Bedrock caching relies on', () => {
-        for (const name of ['strategist-persona', 'research-persona']) {
+        for (const name of ['strategist/summary', 'research-persona']) {
             const { blocks } = loadPersona(name);
             expect(blocks).toHaveLength(2);
             expect(blocks[0]).toHaveProperty('text');

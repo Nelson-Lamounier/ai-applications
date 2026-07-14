@@ -135,7 +135,7 @@ export interface PipelineContext {
  */
 export type AgentName =
     | 'research' | 'writer' | 'qa'
-    | 'strategist-research' | 'strategist-writer' | 'strategist-coach'
+    | 'strategist-research' | 'strategist-writer' | 'strategist-coach' | 'strategist-summary'
     | 'jd-extractor'
     | 'role-classifier'
     | 'resume-builder'

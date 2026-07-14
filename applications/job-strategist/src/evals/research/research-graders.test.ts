@@ -10,10 +10,11 @@ import {
     type ResearchEvalCase,
     type ResearchEvalOutput,
 } from './research-graders.js';
-import { FIXTURES, GOLDEN_OUTPUT } from './fixtures.js';
+import { FIXTURES, GOLDEN_OUTPUT, GOLDEN_OUTPUT_EXPERIENCE } from './fixtures.js';
 import { assessmentsToMatching } from '../../agents/research/research-assessment.js';
 
 const CASE = FIXTURES[0]!; // devops-sre-mixed
+const EXPERIENCE_CASE = FIXTURES.find((c) => c.name === 'experience-attested-responsibilities')!;
 
 describe('research-graders — golden output', () => {
     it('the golden output passes every grader', () => {
@@ -26,6 +27,28 @@ describe('research-graders — golden output', () => {
     it('verdictAccuracy is 1.0 when the golden output matches the labelled key', () => {
         const r = verdictAccuracyGrader(CASE, GOLDEN_OUTPUT);
         expect(r.score).toBe(1);
+    });
+});
+
+describe('research-graders — career-history authority (persona v3, tier 3)', () => {
+    it('a career-only verified skill (evidenceFiles: []) passes every grader', () => {
+        const report = runResearchGraders(EXPERIENCE_CASE, GOLDEN_OUTPUT_EXPERIENCE);
+        const failing = report.results.filter((r) => !r.pass);
+        expect(failing).toEqual([]);
+        expect(report.pass).toBe(true);
+    });
+
+    it('role responsibilities verify on career grounds while the named tool stays partial', () => {
+        const r = verdictAccuracyGrader(EXPERIENCE_CASE, GOLDEN_OUTPUT_EXPERIENCE);
+        expect(r.score).toBe(1);
+    });
+
+    it('schema accepts verified with a sourceCitation but no evidenceFiles (career-only)', () => {
+        const careerVerified = GOLDEN_OUTPUT_EXPERIENCE.assessments.filter(
+            (a) => a.verdict === 'verified' && (a.evidenceFiles ?? []).length === 0,
+        );
+        expect(careerVerified.length).toBeGreaterThan(0);
+        expect(schemaGrader(EXPERIENCE_CASE, GOLDEN_OUTPUT_EXPERIENCE).pass).toBe(true);
     });
 });
 
