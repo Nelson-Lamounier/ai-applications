@@ -113,13 +113,24 @@ wall-clock drops from ~8 min toward ~3 min; Sonnet spend roughly halves.
   - **Curated lane** `[p{i}.b{j}]`: verbatim quotes from `loadProjectResumeBullets`
     (withUserRls preserved). The narrative backbone -- quote-only, preferred.
   - **Repo-current lane** `[p{i}.r{k}]`: research `verifiedMatches` mapped to
-    THIS project STRICTLY by repo ownership -- a match is attributed to a
-    project ONLY when its evidence repo (`sourceCitation`/`evidenceFiles` repo,
-    per the match's repo-lane provenance) is byte-exactly in that project's
-    `project_repositories -> repositories.full_name` set (the same `array_agg`
-    the evidence loader already builds). Matches with no repo provenance, or
-    whose repo is owned by no project, appear in NO project's lane. A repo
-    owned by multiple projects contributes its matches to each owner.
+    THIS project STRICTLY by repo ownership, resolved by REPOSITORY ID, not by
+    name-vs-name string comparison:
+    1. Extract `owner/repo` from the match's `evidenceFiles`/`sourceCitation`
+       paths (REUSE the evidence-lane parser -- paths embed the repo name at
+       ingestion time; this name hop is unavoidable at entry).
+    2. Resolve that name to the `repositories` row (per-user lookup map of
+       `full_name -> {id, github_repo_id}` loaded once per run) -- the row
+       carries the internal UUID and the immutable GitHub numeric id.
+    3. Attribute the match to a project ONLY when the resolved `repositories.id`
+       is in that project's `project_repositories.repository_id` set (already a
+       UUID FK -- rename-proof on this hop).
+    An UNRESOLVED name (repo renamed after ingestion, not yet reconciled by the
+    reconcileRepoName maintenance path) attributes to NO project and increments
+    a labelled Loki/counter event (`projects_repo_unresolved`) -- fail-closed,
+    never guessed. Matches with no repo provenance, or whose repo is owned by
+    no project, appear in NO project's lane. A repo owned by multiple projects
+    contributes its matches to each owner. Lane records carry
+    `{repositoryId, githubRepoId, fullName}` in the diagnostics for audit.
 - **Payload** (`projects-message.ts`): the two-lane pool; documented
   pitch/stack/decisions/repo URLs from `loadProjectEvidenceBlock`; JD
   requirements + top-6 attainable targets (REUSE `selectExperienceAtsTargets`);
