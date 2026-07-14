@@ -1434,7 +1434,13 @@ export async function main(): Promise<void> {
         // recorded by recordProjectsAgentObservability below; projectsAgentDiag
         // itself is folded into the metadata.analysis write further down
         // (pipeline_runs.metadata.analysis.projectsAgent).
-        const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches);
+        // Fail-open like every peer loader: a transient DB error here must degrade
+        // the projects section (empty pool -> skeleton), never fail the whole run.
+        const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches)
+            .catch((err: unknown) => {
+                log.warn({ pipelineRunId: env.pipelineRunId, err: err instanceof Error ? err.message : String(err) }, 'project_agent_inputs_load_failed_fail_open');
+                return { pool: [], unresolvedRepos: [] };
+            });
         const projectsAgentDiag = await fillResumeProjects(
             ctx, tailoredResumeData, projectAgentInputs, experienceAtsTargets,
             researchData.targetRole,
