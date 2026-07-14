@@ -25,7 +25,7 @@ import { executeSummaryAgent } from './agents/writer/summary-agent.js';
 import { deterministicSummary } from './agents/writer/summary-fallback.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/jd/resolve-role-families.js';
 import { formatRoleEvidence } from './agents/evidence/role-evidence-block.js';
-import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets, formatProjectResumeBulletsBlock } from './agents/evidence/project-evidence-block.js';
+import { loadProjectEvidenceBlock, loadProjectLaneIndex, loadProjectResumeBullets } from './agents/evidence/project-evidence-block.js';
 import { relocateProjectExperience, restoreProjectHighlights } from './agents/quality/relocate-project-experience.js';
 import { loadAchievementEvidence } from './agents/evidence/achievement-evidence.js';
 import { loadProfileIntelligenceBlock } from './agents/evidence/profile-intelligence-block.js';
@@ -61,10 +61,15 @@ import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-
 import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate/experience-ats-targets.js';
 import { resolveExperienceAts, type ExperienceAgentDiagnostics } from './agents/writer/experience-ats-flow.js';
 import { logExperienceAgentEvents, experienceAgentOutcome } from './agents/writer/experience-agent-diagnostics.js';
+import { logProjectsAgentEvents, projectsAgentOutcome } from './agents/writer/projects-agent-diagnostics.js';
 import { executeExperienceAgent } from './agents/writer/experience-agent.js';
 import {
     rosterFromCareer, indexCareerLines, assembleExperience, validateExperienceProvenance, ExperienceProvenanceError,
 } from './agents/writer/experience-provenance.js';
+import { loadProjectAgentInputs, type ProjectAgentInputs } from './agents/evidence/project-agent-inputs.js';
+import { executeProjectsAgent } from './agents/writer/projects-agent.js';
+import { resolveProjectsAts, deterministicProjects, type ProjectsAgentDiagnostics } from './agents/writer/projects-ats-flow.js';
+import { assembleProjects, validateProjectsProvenance, ProjectsProvenanceError } from './agents/writer/projects-provenance.js';
 import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
 import { canonicalJdSkills } from './ats/context/canonical-jd-skills.js';
@@ -257,6 +262,101 @@ async function fillResumeExperience(
         };
     }
 }
+
+/**
+ * Projects agent -- composes the candidate's documented projects into a
+ * JD-tailored Projects section. The writer body now emits an empty
+ * "projects": [] skeleton only; this dedicated Sonnet call authors the
+ * entries, provenance-guarded against the two-lane pool (see
+ * projects-provenance.ts -- every curated id and composed source must
+ * resolve to its OWN project's pool). On failure (schema/network/
+ * provenance) fall back to a deterministic, curated-bullets-only ranking
+ * so the pipeline never persists a fabricated project entry. Fail-open by
+ * design -- never throws into the pipeline. Same shape as
+ * fillResumeExperience.
+ *
+ * Empty pool (no documented projects, or none with a curated bullet) is
+ * left as the writer's own "projects": [] -- there is nothing safe for
+ * either the agent or the deterministic fallback to say.
+ *
+ * No metric param (unlike fillResumeSummary) -- the outcome+reason Counter,
+ * coverage Histogram, and Loki event stream are all derived from the
+ * returned diagnostics by the caller (recordProjectsAgentObservability),
+ * same shape as fillResumeExperience.
+ */
+async function fillResumeProjects(
+    ctx: StrategistPipelineContext,
+    tailoredResumeData: StructuredResumeData | null,
+    projectAgentInputs: ProjectAgentInputs,
+    atsTargets: readonly ExperienceAtsTarget[],
+    targetRole: string,
+    onFallback: (err: unknown) => void,
+): Promise<ProjectsAgentDiagnostics | null> {
+    if (!tailoredResumeData) return null;
+    const { pool, unresolvedRepos } = projectAgentInputs;
+    if (pool.every((p) => p.curated.length === 0)) return null;
+
+    const baseInput = { pool, atsTargets, targetRole };
+    try {
+        const first = await executeProjectsAgent(ctx, baseInput);
+        const firstViolations = validateProjectsProvenance(first.data, pool);
+        if (firstViolations.length > 0) throw new ProjectsProvenanceError(firstViolations);
+        const { output, diag } = await resolveProjectsAts({
+            first: first.data, pool, targets: atsTargets,
+            rewrite: async (draftText, missing) => {
+                const rw = await executeProjectsAgent(
+                    ctx,
+                    { ...baseInput, rewriteDraft: draftText, rewriteMissing: missing },
+                    { agentName: 'strategist-projects-rewrite' },
+                );
+                return rw.data;
+            },
+        });
+        (tailoredResumeData as { projects: unknown }).projects = assembleProjects(output, pool);
+        return { ...diag, unresolvedRepos };
+    } catch (err) {
+        (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets);
+        onFallback(err);
+        return {
+            targets: [...atsTargets],
+            coverageBefore: { targets: atsTargets.length, covered: 0, missing: atsTargets.map((t) => t.skill) },
+            rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
+            fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
+            provenance: {
+                firstViolations: err instanceof ProjectsProvenanceError ? err.violations : [],
+                rewriteViolations: [],
+                composedCount: 0,
+            },
+            unresolvedRepos,
+        };
+    }
+}
+
+/**
+ * Projects-agent observability: Loki event stream + bounded Prometheus
+ * outcome/coverage metrics + the repo-unresolved counter, all derived from
+ * fillResumeProjects's returned diagnostics. Extracted to a helper (rather
+ * than the inline `if (diag) {...}` block used for experienceAgentDiag /
+ * summaryAtsDiag above) so main() doesn't gain new branch points -- main()
+ * is already flagged over the complexity threshold; a plain function call
+ * here adds none. Guards the null-diag case (no pool / no writer target)
+ * internally.
+ */
+function recordProjectsAgentObservability(
+    diag: ProjectsAgentDiagnostics | null,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    if (!diag) return;
+    logProjectsAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, diag);
+    const { outcome, reason } = projectsAgentOutcome(diag);
+    projectsOutcomeMetric.inc({ outcome, reason });
+    if (diag.targets.length > 0 && !diag.fallback.fired) {
+        projectsAgentCoverageMetric.observe(diag.coverageBefore.covered);
+    }
+    if (diag.unresolvedRepos.length > 0) {
+        projectsRepoUnresolvedMetric.inc(diag.unresolvedRepos.length);
+    }
+}
 import { formatTechTransferContext } from './ats/context/tech-transfer-context.js';
 import { attachCodeEvidence } from './ats/grounding/tool-evidence-retrieval.js';
 import { attachSourceLanes, mergeRepoLane } from './ats/grounding/evidence-lane.js';
@@ -369,12 +469,36 @@ function expSnapshot(resume: StructuredResumeData | null): string {
 }
 
 /**
- * Record a net-fired instrumentation hit when a downstream pass changed the
- * agent-owned Experience snapshot. Shared by the 4 call sites (guard, length
- * x2, surface_keywords) so main() doesn't repeat the inline `if` branch.
+ * Snapshot a resume's Projects section for the net-fired safety-net counter --
+ * the projects twin of expSnapshot above, agent-owned once fillResumeProjects
+ * has run.
  */
-function trackNetFired(pass: 'guard' | 'length' | 'surface_keywords', before: string, after: string): void {
-    if (before !== after) experienceNetFiredMetric.inc({ pass });
+function projSnapshot(resume: StructuredResumeData | null): string {
+    return JSON.stringify(resume?.projects ?? null);
+}
+
+/**
+ * Record a net-fired instrumentation hit when a downstream pass changed an
+ * agent-owned section snapshot. Shared by the 4 call sites (guard, length x2,
+ * surface_keywords) so main() doesn't repeat the inline `if` branch (and
+ * doesn't grow main()'s already-flagged complexity by inlining a second
+ * comparison at each site). Emits the generalised
+ * job_strategist_section_net_fired_total{section,pass} for BOTH agent-owned
+ * sections, plus the original job_strategist_experience_net_fired_total{pass}
+ * for experience only -- see sectionNetFiredMetric's comment above.
+ */
+function trackNetFired(
+    pass: 'guard' | 'length' | 'surface_keywords',
+    beforeExp: string, afterExp: string,
+    beforeProj: string, afterProj: string,
+): void {
+    if (beforeExp !== afterExp) {
+        experienceNetFiredMetric.inc({ pass });
+        sectionNetFiredMetric.inc({ section: 'experience', pass });
+    }
+    if (beforeProj !== afterProj) {
+        sectionNetFiredMetric.inc({ section: 'projects', pass });
+    }
 }
 
 /** The persona's full instruction text — the number DENY source for leak scrubbing. */
@@ -575,6 +699,28 @@ const experienceOutcomeMetric = new Counter({
     labelNames: ['outcome', 'reason'] as const,
     registers:  [obs.registry],
 });
+const projectsOutcomeMetric = new Counter({
+    name:       'job_strategist_projects_agent_outcome_total',
+    help:       'Projects-agent lane outcome by result and reason.',
+    labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
+const projectsAgentCoverageMetric = new Histogram({
+    name:       'job_strategist_projects_agent_coverage',
+    help:       'Covered ATS targets in the projects section (0..N).',
+    buckets:    [0, 1, 2, 3, 4, 5, 6],
+    registers:  [obs.registry],
+});
+/** Count of repo-citation names that failed fail-closed attribution to a
+ *  known project during projects-agent pool construction (see
+ *  ProjectAgentInputs.unresolvedRepos in project-agent-inputs.ts). Unlabelled
+ *  -- the name list itself goes to the Loki projects_repo_unresolved event
+ *  only, never a metric label (unbounded cardinality). */
+const projectsRepoUnresolvedMetric = new Counter({
+    name:      'job_strategist_projects_repo_unresolved_total',
+    help:      'Repo-citation names that failed fail-closed attribution to a known project during projects-agent pool construction.',
+    registers: [obs.registry],
+});
 const experienceAgentCoverageMetric = new Histogram({
     name:       'job_strategist_experience_agent_coverage',
     help:       'Covered ATS targets in the experience section (0..N).',
@@ -592,6 +738,16 @@ const experienceNetFiredMetric = new Counter({
     name:       'job_strategist_experience_net_fired_total',
     help:       'Downstream passes (guard/length/surface_keywords) that changed the agent-owned Experience section after fillResumeExperience ran.',
     labelNames: ['pass'] as const,
+    registers:  [obs.registry],
+});
+// Generalised twin of experienceNetFiredMetric above, covering BOTH agent-owned
+// sections (experience, projects) behind one metric name. experienceNetFiredMetric
+// is kept emitting unchanged for continuity -- PR-B removes it once dashboards
+// migrate to this one (section='experience' here is its exact equivalent).
+const sectionNetFiredMetric = new Counter({
+    name:       'job_strategist_section_net_fired_total',
+    help:       'Downstream passes (guard/length/surface_keywords) that changed an agent-owned section (experience/projects) after its fill pass ran.',
+    labelNames: ['section', 'pass'] as const,
     registers:  [obs.registry],
 });
 const correctiveRetrievalMetric = new Counter({
@@ -958,9 +1114,10 @@ export async function main(): Promise<void> {
         // profile intelligence" instruction had no matching section to draw
         // from (run 77e325ea: S3 slot filled with a second rigor close).
         const candidateGroundingBlock = [projectEvidenceBlock, profileIntelligenceBlock].filter(Boolean).join('\n\n');
-        // Writer prompt block for projects[].highlights selection; the structured
-        // form (projectResumeBullets) also anchors the post-writer relocation.
-        const projectResumeBulletsBlock = formatProjectResumeBulletsBlock(projectResumeBullets);
+        // projectResumeBullets (structured form) is no longer formatted for the
+        // writer prompt (Task 8: the writer emits an empty projects[] skeleton;
+        // the dedicated projects agent composes entries from this same pool via
+        // loadProjectAgentInputs) -- it still anchors the post-writer relocation.
         const educationBlock      = formatEducation(educationEntries);
         const certificationsBlock = formatCertifications(certificationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
@@ -1166,7 +1323,7 @@ export async function main(): Promise<void> {
         // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
         // composition. It feeds the post-writer Haiku weave + allowed-number sets.
         const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
-        const analysis = await executeStrategistAgent(ctx, researchData, projectEvidenceBlock, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock, projectResumeBulletsBlock);
+        const analysis = await executeStrategistAgent(ctx, researchData, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -1269,6 +1426,32 @@ export async function main(): Promise<void> {
             }
         }
 
+        // -- Projects agent -- composes the writer's empty projects[] skeleton --
+        // Reuses experienceAtsTargets (the same top-6 ATS targets fed to the
+        // experience lane) -- one JD-target selection shared by both agent-owned
+        // sections, not a second independent pick. Loki event stream + bounded
+        // Prometheus outcome/coverage metrics + repo-unresolved counter are
+        // recorded by recordProjectsAgentObservability below; projectsAgentDiag
+        // itself is folded into the metadata.analysis write further down
+        // (pipeline_runs.metadata.analysis.projectsAgent).
+        // Fail-open like every peer loader: a transient DB error here must degrade
+        // the projects section (empty pool -> skeleton), never fail the whole run.
+        const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches)
+            .catch((err: unknown) => {
+                log.warn({ pipelineRunId: env.pipelineRunId, err: err instanceof Error ? err.message : String(err) }, 'project_agent_inputs_load_failed_fail_open');
+                return { pool: [], unresolvedRepos: [] };
+            });
+        const projectsAgentDiag = await fillResumeProjects(
+            ctx, tailoredResumeData, projectAgentInputs, experienceAtsTargets,
+            researchData.targetRole,
+            (err) => log.warn({
+                pipelineRunId: env.pipelineRunId,
+                agent: 'strategist-projects',
+                err: err instanceof Error ? err.message : String(err),
+            }, 'projects_agent_failed_deterministic_fallback_used'),
+        );
+        recordProjectsAgentObservability(projectsAgentDiag, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });
+
         // ── Summary agent — fills the body's empty summary field ──
         const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
         const summaryAtsDiag = await fillResumeSummary(
@@ -1368,10 +1551,11 @@ export async function main(): Promise<void> {
         const projectHighlightsSnapshot = finalResume;
         if (finalResume) {
             const beforeGuard = expSnapshot(finalResume);
+            const beforeGuardProj = projSnapshot(finalResume);
             const guarded = await guardResume(finalResume, resumeGuardCtx);
             finalResume = guarded.resume;
             violationLog.recordAll('resume_guard', guarded.violations);
-            trackNetFired('guard', beforeGuard, expSnapshot(finalResume));
+            trackNetFired('guard', beforeGuard, expSnapshot(finalResume), beforeGuardProj, projSnapshot(finalResume));
         }
 
         // JD-priority context for length enforcement — required skills + the
@@ -1403,8 +1587,9 @@ export async function main(): Promise<void> {
             const preBudget = finalResume;
             const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
             const beforeLength = expSnapshot(preBudget);
+            const beforeLengthProj = projSnapshot(preBudget);
             const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
-            trackNetFired('length', beforeLength, expSnapshot(budgeted));
+            trackNetFired('length', beforeLength, expSnapshot(budgeted), beforeLengthProj, projSnapshot(budgeted));
             // Expansion may only add grounded numbers; strip anything else.
             const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
             // Metric weave (always-on when the ledger is non-empty): the writer
@@ -1502,9 +1687,10 @@ export async function main(): Promise<void> {
                 // rewrite introduces outside this set is stripped deterministically.
                 const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
                 const beforeSurface = expSnapshot(baseResume);
+                const beforeSurfaceProj = projSnapshot(baseResume);
                 const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
                 let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
-                trackNetFired('surface_keywords', beforeSurface, expSnapshot(surfaced));
+                trackNetFired('surface_keywords', beforeSurface, expSnapshot(surfaced), beforeSurfaceProj, projSnapshot(surfaced));
                 if (surfaced !== baseResume) {
                     // The keyword rewrite is the last stage that can GROW the
                     // resume (it inflated the 2026-07-02 Google run by pulling
@@ -1521,12 +1707,15 @@ export async function main(): Promise<void> {
                     // grounded number survives the post-condense instruction-leak
                     // scrub, without opting back into the expand direction.
                     const beforePostKeywordsLength = expSnapshot(surfaced);
+                    const beforePostKeywordsLengthProj = projSnapshot(surfaced);
                     surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
-                    trackNetFired('length', beforePostKeywordsLength, expSnapshot(surfaced));
+                    trackNetFired('length', beforePostKeywordsLength, expSnapshot(surfaced), beforePostKeywordsLengthProj, projSnapshot(surfaced));
                     surfaced = stripUngroundedNumbers(surfaced, allowed);
                     const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
                     violationLog.recordAll('revalidate_post_keywords', reval.violations);
                     surfaced = await applyResumeIntegrity(reval.resume, tailoredResumeData, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
+                    // close the silent-blanking path: the keyword-loop re-emit can drop projects[].highlights
+                    if (projectHighlightsSnapshot) surfaced = restoreProjectHighlights(projectHighlightsSnapshot, surfaced);
                     finalResume = surfaced;
                     const rePersisted = await persistTailoredResume(pool, {
                         applicationId:  env.applicationId,
@@ -1631,7 +1820,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag, projectsAgent: projectsAgentDiag },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,

@@ -21,7 +21,6 @@ import { formatResumeForPrompt } from '../../services/resume-service.js';
 export interface StrategistMessageInput {
     readonly research: StrategistResearchResult;
     readonly ctx: StrategistPipelineContext;
-    readonly projectEvidence: string;
     readonly educationFacts: string;
     readonly experienceFacts: string;
     readonly roleEvidence: string;
@@ -30,7 +29,6 @@ export interface StrategistMessageInput {
     readonly achievementEvidence: string;
     readonly profileIntelligence?: string;
     readonly candidateContact?: string;
-    readonly projectResumeBullets: string;
 }
 
 /** A prompt section: pushes its lines onto `out`, or no-ops when it has nothing to add. */
@@ -208,8 +206,8 @@ function buildResumeConstraints(out: string[], { research }: StrategistMessageIn
     out.push(
         '', '### Resume Domain Constraints (MANDATORY — Read Before Generating Bullets)',
         'These are NON-NEGOTIABLE rules and gap boundaries from the resume domain KB.',
-        'Apply these constraints BEFORE and AFTER generating each project bullet and section',
-        'you author (experience bullets are authored by a dedicated pass).',
+        'Apply these constraints BEFORE and AFTER generating each bullet and section you',
+        'author (experience and project bullets are authored by dedicated passes).',
         '--- BEGIN CONSTRAINTS ---',
         research.resumeConstraints,
         '--- END CONSTRAINTS ---',
@@ -249,38 +247,6 @@ function buildEducationFacts(out: string[], { educationFacts }: StrategistMessag
         '--- BEGIN EDUCATION ---',
         educationFacts,
         '--- END EDUCATION ---',
-    );
-}
-
-/** Documented project case studies — citeable evidence for grounding bullets. */
-function buildProjectEvidence(out: string[], { projectEvidence }: StrategistMessageInput): void {
-    if (!projectEvidence) return;
-    out.push(
-        '', '### Documented Project Case Studies (CITEABLE EVIDENCE)',
-        'These are the candidate\'s own documented projects. When a JD skill or achievement is',
-        'demonstrated by a project\'s stack or decisions, you MAY ground the bullet in it and name',
-        'the project (e.g. "… in <Project>"). Do NOT invent project facts beyond what is listed.',
-        '--- BEGIN PROJECT CASE STUDIES ---',
-        projectEvidence,
-        '--- END PROJECT CASE STUDIES ---',
-    );
-}
-
-/** Per-angle tailored bullets — the AUTHORITATIVE source for projects[].highlights. */
-function buildProjectResumeBullets(out: string[], { projectResumeBullets }: StrategistMessageInput): void {
-    if (!projectResumeBullets.trim()) return;
-    out.push(
-        '', '### Project Resume Bullets (SELECT projects[].highlights FROM THESE — quote-only, never invent)',
-        'For EACH project you include in <tailored_resume_json> "projects", populate its',
-        '"highlights" array by selecting the 3-6 bullets below that best answer THIS JD\'s named',
-        'requirements. Copy them verbatim or trim for length — never add a fact not present here.',
-        'Prefer bullets that surface a JD must-have skill. Match each bullet to its project by the',
-        '"## <name>" heading. These bullets are PROJECT work: they go ONLY in "projects", NEVER as',
-        'an Experience entry — do NOT invent a job title (e.g. "Solo SRE Engineer") or a "Project"',
-        'period to host them. One "projects" entry per "## <name>" — never split one project in two.',
-        '--- BEGIN PROJECT RESUME BULLETS ---',
-        projectResumeBullets.trim(),
-        '--- END PROJECT RESUME BULLETS ---',
     );
 }
 
@@ -354,8 +320,6 @@ export const STRATEGIST_MESSAGE_SECTIONS: readonly StrategistMessageSection[] = 
     { name: 'experience-facts',      build: buildExperienceFacts },
     { name: 'years-gap-framing',     build: buildYearsGapFraming },
     { name: 'education-facts',       build: buildEducationFacts },
-    { name: 'project-evidence',      build: buildProjectEvidence },
-    { name: 'project-resume-bullets', build: buildProjectResumeBullets },
     { name: 'profile-intelligence',  build: buildProfileIntelligence },
     { name: 'candidate-contact',     build: buildCandidateContact },
     { name: 'achievement-evidence',  build: buildAchievementEvidence },
@@ -371,7 +335,6 @@ export const STRATEGIST_MESSAGE_SECTIONS: readonly StrategistMessageSection[] = 
 export function buildStrategistMessage(
     research: StrategistResearchResult,
     ctx: StrategistPipelineContext,
-    projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
     roleEvidence = '',
@@ -380,12 +343,11 @@ export function buildStrategistMessage(
     achievementEvidence = '',
     profileIntelligence?: string,
     candidateContact?: string,
-    projectResumeBullets = '',
 ): string {
     const m: StrategistMessageInput = {
-        research, ctx, projectEvidence, educationFacts, experienceFacts, roleEvidence,
+        research, ctx, educationFacts, experienceFacts, roleEvidence,
         yearsGapFraming, codeStackContext, achievementEvidence, profileIntelligence,
-        candidateContact, projectResumeBullets,
+        candidateContact,
     };
     const out: string[] = [];
     for (const section of STRATEGIST_MESSAGE_SECTIONS) section.build(out, m);

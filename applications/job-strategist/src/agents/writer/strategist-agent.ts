@@ -69,10 +69,6 @@ import type {
 export interface StrategistAgentInput {
     /** Research Agent's structured output */
     readonly research: StrategistResearchResult;
-    /** Formatted documented project case studies (citeable evidence). Optional. */
-    readonly projectEvidence?: string;
-    /** Per-angle tailored project bullets to SELECT projects[].highlights from. Optional. */
-    readonly projectResumeBullets?: string;
     /** Verbatim education facts from user_career_history (degree + institution). Optional. */
     readonly educationFacts?: string;
     /** Verbatim experience facts (company + title + period). Optional. */
@@ -526,7 +522,7 @@ class StrategistAgent extends BaseAgent<StrategistAgentInput, StrategistAnalysis
      * @returns Formatted user message for Bedrock
      */
     protected buildUserMessage(input: StrategistAgentInput, ctx: StrategistPipelineContext): string {
-        return buildStrategistMessage(input.research, ctx, input.projectEvidence, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence, input.candidateContact, input.projectResumeBullets);
+        return buildStrategistMessage(input.research, ctx, input.educationFacts, input.experienceFacts, input.roleEvidence, input.yearsGapFraming, input.codeStackContext, input.achievementEvidence, input.profileIntelligence, input.candidateContact);
     }
 
     /**
@@ -657,7 +653,6 @@ export function framingDirective(yearsGap: { framingLine: string; requiredYears:
 export async function executeStrategistAgent(
     ctx: StrategistPipelineContext,
     research: StrategistResearchResult,
-    projectEvidence = '',
     educationFacts = '',
     experienceFacts = '',
     roleEvidenceBlock = '',
@@ -666,7 +661,6 @@ export async function executeStrategistAgent(
     achievementEvidence = '',
     profileIntelligence?: string,
     candidateContact?: string,
-    projectResumeBullets = '',
 ): Promise<AgentResult<StrategistAnalysisResult>> {
-    return strategistAgent.execute({ research, projectEvidence, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence, candidateContact, projectResumeBullets }, ctx);
+    return strategistAgent.execute({ research, educationFacts, experienceFacts, roleEvidence: roleEvidenceBlock, yearsGapFraming: framingDirective(yearsGap), codeStackContext, achievementEvidence, profileIntelligence, candidateContact }, ctx);
 }

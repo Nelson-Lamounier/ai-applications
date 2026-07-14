@@ -72,8 +72,12 @@
         "sha256": "f11bd5d060f54a85fda6411b64b034be2ef5044c0a4ca34d7daac11747b5ed9a"
     },
     "strategist/projects": {
-        "version": "2",
-        "sha256": "c598372f78b1349b90eb66c7777c611fc973312b6e3e4e15ce82c6a9dc252f60"
+        "version": "3",
+        "sha256": "7d9cb2a2883edbbe622889f6bf64f6d8808023040d850e3beb1d5607211809b5"
+    },
+    "strategist/projects-agent": {
+        "version": "1",
+        "sha256": "259fafb604cbce14f9587883546030a4ca6658175c94805fdeac8097c0493ab3"
     },
     "strategist/skills-education": {
         "version": "1",
