@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 
 import {
     buildProvenanceRows, buildRepoQualityRows, persistEvidenceProvenance, persistRepoEvidenceQuality,
-} from './evidence-provenance.js';
+} from '../evidence-provenance.js';
 
 const KB = [
     '[Source: Nelson-Lamounier/cdk-monitoring/docs/k8s.md, Cosine: 0.390, Rerank: 0.810]',

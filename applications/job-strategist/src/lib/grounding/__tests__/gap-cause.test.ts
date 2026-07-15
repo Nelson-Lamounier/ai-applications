@@ -1,7 +1,7 @@
 /** @format */
 import type { Pool } from 'pg';
 import type { SkillGap } from '@bedrock/shared';
-import { classifyGapCauses, annotateGapCauses } from './gap-cause.js';
+import { classifyGapCauses, annotateGapCauses } from '../gap-cause.js';
 
 const gap = (skill: string): SkillGap => ({
     skill, gapType: 'hard', impactSeverity: 'significant', disqualifyingAssessment: 'x',

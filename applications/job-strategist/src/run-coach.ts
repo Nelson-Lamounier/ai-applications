@@ -37,14 +37,14 @@ import { Counter, Histogram } from 'prom-client';
 
 import { executeCoachAgent, buildSkillCandidateBlock, buildConcernWalkthroughBlock } from './agents/coach/coach-agent.js';
 import { stageUsesSkillTransfer, stageUsesSystemDesignWalkthrough, stageUsesBarRaiserWalkthrough, stageUsesFinalPrep } from './prompts/coach/stages/index.js';
-import { validateFinalPrep } from './lib/final-validation.js';
+import { validateFinalPrep } from './lib/coach/final-validation.js';
 import {
     RdsLeadershipPrinciplesRepository, frameworkForCompany,
     type LeadershipPrinciple,
-} from './lib/leadership-principles-repository.js';
-import { detectPrincipleEvidence, buildBarRaiserBlock, validateBarRaiserWalkthrough } from './lib/bar-raiser-grounding.js';
-import { buildCoachContextChunks, extractCoachClaims } from './lib/coach-grounding.js';
-import { extractProseSections } from './lib/coach-prose.js';
+} from './lib/coach/leadership-principles-repository.js';
+import { detectPrincipleEvidence, buildBarRaiserBlock, validateBarRaiserWalkthrough } from './lib/coach/bar-raiser-grounding.js';
+import { buildCoachContextChunks, extractCoachClaims } from './lib/coach/coach-grounding.js';
+import { extractProseSections } from './lib/coach/coach-prose.js';
 import { parseCoachEnv }       from './env-coach.js';
 import { getPool, closePool }  from './lib/db/pg.js';
 import {

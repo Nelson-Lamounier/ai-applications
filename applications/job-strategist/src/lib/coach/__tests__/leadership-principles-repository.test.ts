@@ -4,7 +4,7 @@
  * mapping. The RDS load path is exercised by integration tests; here we only
  * cover the deterministic, I/O-free `frameworkForCompany` helper.
  */
-import { frameworkForCompany } from './leadership-principles-repository.js';
+import { frameworkForCompany } from '../leadership-principles-repository.js';
 
 describe('frameworkForCompany', () => {
   it('maps amazon → amazon, others → generic', () => {

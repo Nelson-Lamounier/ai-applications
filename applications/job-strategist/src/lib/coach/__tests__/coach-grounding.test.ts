@@ -1,5 +1,5 @@
 /** @format */
-import { buildCoachContextChunks, extractCoachClaims } from './coach-grounding.js';
+import { buildCoachContextChunks, extractCoachClaims } from '../coach-grounding.js';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
 describe('buildCoachContextChunks', () => {

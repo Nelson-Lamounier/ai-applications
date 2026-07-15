@@ -12,7 +12,7 @@
  * Fixtures below mirror the real cdk-monitoring ingestion (verified against
  * dev RDS document_embeddings on 2026-05-30).
  */
-import { extractCitedPaths, isPathGrounded, classifyCitedPaths } from './path-grounding.js';
+import { extractCitedPaths, isPathGrounded, classifyCitedPaths } from '../path-grounding.js';
 
 // A representative slice of the file_path values actually ingested for
 // Nelson-Lamounier/cdk-monitoring (top dirs: docs, infra, scripts, …).

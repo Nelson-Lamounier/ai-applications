@@ -5,14 +5,14 @@
  * System Design grounding tests (concern-detection / system-design-walkthrough).
  */
 import type { ProjectEvidenceInput } from '@bedrock/shared';
-import type { LeadershipPrinciple } from './leadership-principles-repository.js';
+import type { LeadershipPrinciple } from '../leadership-principles-repository.js';
 import {
   detectPrincipleEvidence,
   buildBarRaiserBlock,
   validateBarRaiserWalkthrough,
   type BarRaiserPrinciple,
   type PrincipleCoverage,
-} from './bar-raiser-grounding.js';
+} from '../bar-raiser-grounding.js';
 
 const emptyEvidence: ProjectEvidenceInput = {
   projects: [],

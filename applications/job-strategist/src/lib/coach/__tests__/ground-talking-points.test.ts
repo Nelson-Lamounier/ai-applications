@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { groundTalkingPoints } from './ground-talking-points.js';
+import { groundTalkingPoints } from '../ground-talking-points.js';
 
 describe('groundTalkingPoints', () => {
   const verified = ['AWS', 'CDK', 'Kubernetes'];

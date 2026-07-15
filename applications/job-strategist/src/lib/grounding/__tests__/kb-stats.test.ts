@@ -1,5 +1,5 @@
 /** @format */
-import { computeKbStats } from './kb-stats.js';
+import { computeKbStats } from '../kb-stats.js';
 
 const SEP = '\n\n---\n\n';
 

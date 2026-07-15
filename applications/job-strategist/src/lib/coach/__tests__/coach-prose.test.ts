@@ -1,5 +1,5 @@
 /** @format */
-import { extractProseSections } from './coach-prose.js';
+import { extractProseSections } from '../coach-prose.js';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
 const coaching = {

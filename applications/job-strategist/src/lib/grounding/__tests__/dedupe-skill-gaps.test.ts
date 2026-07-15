@@ -1,5 +1,5 @@
 /** @format */
-import { dedupeSkillGaps } from './dedupe-skill-gaps.js';
+import { dedupeSkillGaps } from '../dedupe-skill-gaps.js';
 import type { SkillGap } from '@bedrock/shared';
 
 const gap = (skill: string, over: Partial<SkillGap> = {}): SkillGap =>

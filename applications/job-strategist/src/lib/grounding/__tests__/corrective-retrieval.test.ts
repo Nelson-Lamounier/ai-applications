@@ -5,7 +5,7 @@ import {
     applyCorrectiveRetrieval, correctiveQuery,
     MAX_CORRECTIVE_GAPS,
     type CorrectiveCandidate, type CorrectiveVerdict,
-} from './corrective-retrieval.js';
+} from '../corrective-retrieval.js';
 
 const gap = (skill: string, impactSeverity = 'minor', gapType = 'soft'): SkillGap => ({
     skill,

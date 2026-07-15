@@ -3,7 +3,7 @@
  * Final-round prep hygiene — drops empty/whitespace talking points and
  * questions, passes through undefined, keeps real entries and prose fields.
  */
-import { validateFinalPrep } from './final-validation.js';
+import { validateFinalPrep } from '../final-validation.js';
 
 it('drops empty talking points + keeps real ones', () => {
   const out = validateFinalPrep({

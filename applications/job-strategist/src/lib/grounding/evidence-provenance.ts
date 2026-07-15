@@ -14,7 +14,7 @@
 
 import type { Pool } from 'pg';
 
-import { withUserRls } from './db/rls.js';
+import { withUserRls } from '../db/rls.js';
 
 // Header on each assembled kbContext passage. Rerank captured (computeKbStats drops it).
 // The source is matched with a negated class `[^,\]]+` (linear, no backtracking) rather
