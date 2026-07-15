@@ -207,9 +207,9 @@ export const LINUX_ANCHORED_LIVE: ExperienceEvalInput = {
  * Spec case 2 -- term-tolerant: the target has ZERO anchors (the selection
  * step found no career line that already names it), yet the rewritten bullet
  * honestly demonstrates the skill in the JD's vocabulary without the exact
- * phrase -- `scoreExperienceCoverage`'s term-tolerant path (`requiredTerms`/
- * `matchesAllTerms`) credits it on discriminating terms {aws, database}
- * alone, deliberately WITHOUT relying on an anchor citation.
+ * phrase -- `scoreExperienceCoverage`'s term-tolerant path (`experienceTermMatch`)
+ * credits it on discriminating terms {aws, database} alone, deliberately
+ * WITHOUT relying on an anchor citation.
  */
 const AWS_DB_CAREER_ENTRIES: CareerEntry[] = [
     {

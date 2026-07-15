@@ -201,8 +201,10 @@ describe('resolveExperienceAts', () => {
 
 describe('resolveExperienceAts -- term-tolerant, evidence-anchored coverage (Task 3)', () => {
   it('credits a paraphrased bullet that lacks the exact target phrase but names the discriminating term', async () => {
-    // "Linux systems engineering" -> requiredTerms strips the generic
-    // systems/engineering tokens down to {linux}; no exact phrase anywhere.
+    // "Linux systems engineering" -> experienceTermMatch strips the
+    // discipline-suffix "engineering" (EXPERIENCE_EMPHASIS_TOKENS) and
+    // matchTier1's QUALIFIERS strips "systems", reducing the target to its
+    // distinctive core {linux}; no exact phrase anywhere.
     const linuxTargets: ExperienceAtsTarget[] = [
       { skill: 'Linux systems engineering', source: 'hard', verdict: 'verified', requirement: 'Linux', anchors: [] },
     ];
