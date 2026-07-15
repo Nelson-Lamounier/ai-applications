@@ -16,7 +16,6 @@ import {
     runAgent,
     OutputSanitiser,
     type AgentConfig,
-    type AgentName,
     type AgentResult,
     type StrategistAnalysisResult,
     type StrategistPipelineContext,
@@ -42,12 +41,9 @@ const outputSanitiser = new OutputSanitiser();
  * generation). No tool -- this is a narrative XML text response, matching
  * the pre-split writer's output contract minus the resume/cover-letter
  * sections.
- *
- * `agentName: 'strategist-analysis'` is cast below -- the AgentName union
- * does not yet include it (Task 6 adds it).
  */
 const ANALYSIS_CONFIG: AgentConfig = {
-    agentName: 'strategist-analysis' as AgentName, // Task 6 adds these to the union
+    agentName: 'strategist-analysis',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: 8000,
     thinkingBudget: 2048,

@@ -28,12 +28,10 @@ const EFFECTIVE_MODEL_ID = process.env['INFERENCE_PROFILE_ARN'] ?? SKILLS_MODEL;
  * Agent configuration for the Strategist Skills Agent.
  *
  * Forced tool + thinkingBudget 0: constrained decoding, mirroring the
- * projects/experience agents. 'strategist-skills' is not yet in the shared
- * AgentName union -- cast until Task 6 adds it (mirrors strategist-analysis's
- * interim cast in analysis-agent.ts).
+ * projects/experience agents.
  */
 const SKILLS_CONFIG: AgentConfig = {
-    agentName: 'strategist-skills' as AgentName, // Task 6 adds to union
+    agentName: 'strategist-skills',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: 1500,
     thinkingBudget: 0,

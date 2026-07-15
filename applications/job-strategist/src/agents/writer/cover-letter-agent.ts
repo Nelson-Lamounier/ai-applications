@@ -14,7 +14,6 @@ import {
     runAgent,
     parseJsonResponse,
     type AgentConfig,
-    type AgentName,
     type AgentResult,
     type CoverLetter,
     type StrategistPipelineContext,
@@ -51,12 +50,10 @@ const COVER_LETTER_EMIT_INPUT_SCHEMA = {
  * Agent configuration for the Strategist Cover Letter Agent.
  *
  * Forced tool + thinkingBudget 0: constrained decoding, mirroring the
- * skills/projects/experience agents. 'strategist-cover-letter' is not yet in
- * the shared AgentName union -- cast until Task 6 adds it (mirrors
- * strategist-skills's interim cast in skills-agent.ts).
+ * skills/projects/experience agents.
  */
 const COVER_LETTER_CONFIG: AgentConfig = {
-    agentName: 'strategist-cover-letter' as AgentName, // Task 6 adds to union
+    agentName: 'strategist-cover-letter',
     modelId: EFFECTIVE_MODEL_ID,
     maxTokens: 1500,
     thinkingBudget: 0,
