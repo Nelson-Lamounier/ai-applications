@@ -101,7 +101,7 @@ describe('guardCoverLetter', () => {
         expect(mockRun).not.toHaveBeenCalled();
     });
     it('clean letter → unchanged, no rewrite call', async () => {
-        const clean = clObj(['I build production AI support. The AI Support Engineer role at OpenAI fits.']);
+        const clean = clObj(['I build production AI support. The AI Support Engineer role at OpenAI fits.', 'I own the platform end to end as a solo operator.', 'I would bring that operating depth to your team.']);
         const r = await guardCoverLetter(clean, 'AI Support Engineer', 'User Operations Engineer', '');
         expect(r.letter).toStrictEqual(clean);
         expect(r.violations).toEqual([]);
@@ -122,7 +122,7 @@ describe('guardCoverLetter', () => {
         expect(r.letter).toStrictEqual(bad);
     });
     it('clean letter with em-dash → em-dash replaced by comma, no rewrite call', async () => {
-        const withDash = clObj(['I build production AI support — the biggest win. The AI Support Engineer role at OpenAI fits.']);
+        const withDash = clObj(['I build production AI support — the biggest win. The AI Support Engineer role at OpenAI fits.', 'I own the platform end to end as a solo operator.', 'I would bring that operating depth to your team.']);
         const r = await guardCoverLetter(withDash, 'AI Support Engineer', 'User Operations Engineer', '');
         expect(r.violations).toEqual([]);
         expect(mockRun).not.toHaveBeenCalled();

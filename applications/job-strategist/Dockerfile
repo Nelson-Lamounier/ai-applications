@@ -45,7 +45,11 @@ RUN node_modules/.bin/tsc -b applications/shared applications/job-strategist --f
 # content dir must be copied into dist explicitly (mirrors the package build
 # script). The existence gate fails the image build, not the Job at runtime.
 RUN cp -R applications/job-strategist/src/prompts/content applications/job-strategist/dist/prompts/ \
- && [ -f applications/job-strategist/dist/prompts/content/strategist/_base_1.md ] \
+ && [ -f applications/job-strategist/dist/prompts/content/strategist/analysis-agent.md ] \
+ && [ -f applications/job-strategist/dist/prompts/content/strategist/experience-agent.md ] \
+ && [ -f applications/job-strategist/dist/prompts/content/strategist/projects-agent.md ] \
+ && [ -f applications/job-strategist/dist/prompts/content/strategist/skills-agent.md ] \
+ && [ -f applications/job-strategist/dist/prompts/content/strategist/cover-letter-agent.md ] \
  && [ -f applications/job-strategist/dist/prompts/content/strategist/summary.md ] \
  && [ -f applications/job-strategist/dist/prompts/content/jd-extractor-persona.md ]
 

@@ -2329,12 +2329,14 @@ export async function main(): Promise<void> {
                 kbTag:     cacheTag,
                 queryText: jdForCache,
                 response:  {
-                    // analysis.data.tailoredResumeData is always null (the
-                    // analysis agent authors no resume -- see analysis-agent.ts)
-                    // -- explicitly override it with the FULLY GUARDED finalResume
-                    // so a later cache HIT (~L1049-1075, replays this blob as-is)
-                    // persists the guarded resume, not a stub.
-                    analysis: { ...analysis.data, analysisXml: finalAnalysis, tailoredResumeData: finalResume },
+                    // analysis.data.tailoredResumeData AND .coverLetter are always
+                    // null post-split (the analysis agent authors neither -- see
+                    // analysis-agent.ts); explicitly override BOTH with the fully
+                    // guarded final artefacts so a later cache HIT (~L1049-1075,
+                    // replays this blob as-is) persists the guarded resume and the
+                    // guarded letter, not nulls (final-review MEDIUM: the letter
+                    // was silently dropped on new-shape cache hits).
+                    analysis: { ...analysis.data, analysisXml: finalAnalysis, tailoredResumeData: finalResume, coverLetter: finalCoverLetter },
                     research: researchData,
                 },
             }).catch(() => { /* fail-open — cache write must never break the run */ });

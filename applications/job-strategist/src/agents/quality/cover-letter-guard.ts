@@ -345,6 +345,12 @@ export async function guardCoverLetter(
     const violations = [
         ...validateCoverLetter(letter, targetRole, leadIdentity),
         ...validateCoverLetterNarrative(letter, narrative),
+        // Structural contracts, runtime-enforced (final-review LOW): the forced
+        // tool schema requires the fields PRESENT but not non-empty, and the
+        // paragraph count lived only in the tool description (prompt wording is
+        // not a safety control).
+        ...checkParagraphCount(letter),
+        ...checkSignoffComplete(letter),
     ];
     if (violations.length === 0) return { letter: stripEmDashes(letter), violations };
     const fixed = await rewriteCoverLetter(letter, violations, { targetRole, leadIdentity, yearsGapFraming, narrative });
