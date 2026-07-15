@@ -144,7 +144,7 @@ describe('executeAnalysisAgent', () => {
         expect(call.config.agentName).toBe('strategist-analysis');
         expect(call.config.tool).toBeUndefined();
         expect(call.config.thinkingBudget).toBe(2048);
-        expect(call.config.maxTokens).toBe(8000);
+        expect(call.config.maxTokens).toBe(24000);
         expect(call.config.modelId).not.toMatch(/haiku/i);
         expect(call.userMessage).toContain('Site Reliability Engineer');
     });
