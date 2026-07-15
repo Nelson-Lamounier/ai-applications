@@ -9,7 +9,7 @@
  *
  * Returns the raw text. The caller (extract-career.ts) passes this to Bedrock.
  */
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import {
   TextractClient,
   StartDocumentTextDetectionCommand,
@@ -130,15 +130,20 @@ export async function extractTextFromPdf(
   let pdfText = '';
 
   let fallbackReason: 'threw' | 'empty' | 'short_text' | null = null;
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
-    const parsed = await pdfParse(buffer);
-    pdfText = parsed.text.trim();
+    const parsed = await parser.getText();
+    pdfText = (parsed.text ?? '').trim();
   } catch (err) {
     // pdf-parse throws on encrypted PDFs, malformed structures, and certain
     // CIDFont/XFA documents. Fall through to Textract rather than crashing.
     fallbackReason = 'threw';
     log.warn({ event: 'pdf_parse.fallback', reason: 'threw', s3Key, err: (err as Error).message },
       'pdf-parse threw, falling back to Textract OCR');
+  } finally {
+    // Release the underlying pdf.js document worker; a destroy failure must
+    // not mask a successful extraction or the Textract fallback path.
+    await parser.destroy().catch(() => undefined);
   }
 
   if (pdfText.length >= MIN_USEFUL_TEXT_CHARS) {
