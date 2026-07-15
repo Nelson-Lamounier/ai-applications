@@ -83,6 +83,10 @@
         "version": "1",
         "sha256": "259fafb604cbce14f9587883546030a4ca6658175c94805fdeac8097c0493ab3"
     },
+    "strategist/skills-agent": {
+        "version": "1",
+        "sha256": "d1032ab8ab1f6b3f5f376966995acebcbea64864dc7f49773c0119ed4fba5752"
+    },
     "strategist/skills-education": {
         "version": "1",
         "sha256": "6bc5548b1df0104f914ca1e8a6aa8519b34d7deb032119d50fcb7b10d114801a"
