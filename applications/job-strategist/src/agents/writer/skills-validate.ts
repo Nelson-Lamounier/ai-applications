@@ -32,6 +32,16 @@ function skillMatchesTool(skillName: string, tool: string): boolean {
  *   - `category_cap:<n>`       -- more than 5 categories emitted
  *   - `item_cap:<category>:<n>` -- a category has more than 8 items
  */
+/** Thrown by the run-pipeline splice when the model's draft fails ledger-membership validation -- triggers the deterministic fallback, mirrors ExperienceProvenanceError / ProjectsProvenanceError. */
+export class SkillsValidationError extends Error {
+    readonly violations: string[];
+    constructor(violations: string[]) {
+        super(`skills ledger-membership violated: ${violations.join(', ')}`);
+        this.name = 'SkillsValidationError';
+        this.violations = violations;
+    }
+}
+
 export function validateSkillsMembership(out: SkillsAgentOutput, ledger: readonly SkillEvidenceEntry[]): string[] {
     const violations: string[] = [];
     const allowedTools = ledger.filter((e) => e.status === 'verified' || e.status === 'transferable').map((e) => e.tool);

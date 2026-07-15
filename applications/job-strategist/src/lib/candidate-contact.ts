@@ -88,27 +88,41 @@ function contactSource(contact: CandidateContact | null, profile: ResumeProfileR
     return profile && hasIdentity(profile.name, profile.email) ? 'resume_profile' : 'auth_identity';
 }
 
-/** Load the candidate's contact block text. Fail-open to ''. */
-export async function loadCandidateContactBlock(pool: Pool, userId: string): Promise<string> {
+/** Query + resolve the candidate's structured contact (no formatting). */
+async function fetchContact(pool: Pool, userId: string): Promise<CandidateContact | null> {
+    const [resumeRow, userRow] = await Promise.all([
+        pool.query<{ profile: ResumeProfileRow | null }>(
+            `SELECT content_json->'profile' AS profile FROM resumes WHERE user_id = $1 ORDER BY generated_at DESC LIMIT 1`,
+            [userId],
+        ),
+        pool.query<{ full_name: string | null; email: string | null }>(
+            `SELECT full_name, email FROM users WHERE id = $1`,
+            [userId],
+        ),
+    ]);
+    const profile = resumeRow.rows[0]?.profile ?? null;
+    const authRow = userRow.rows[0];
+    const auth = authRow ? { fullName: authRow.full_name ?? undefined, email: authRow.email ?? undefined } : null;
+    const contact = pickContact(profile, auth);
+    log('INFO', 'Candidate contact resolved', { agent: 'strategist', source: contactSource(contact, profile) });
+    return contact;
+}
+
+/**
+ * Load the candidate's STRUCTURED contact (name/email/linkedin/github/
+ * location) -- the skeleton resume's profile source (resume-skeleton.ts) and
+ * the cover-letter agent's verbatim signoff source. Fail-open to null.
+ */
+export async function loadCandidateContact(pool: Pool, userId: string): Promise<CandidateContact | null> {
     try {
-        const [resumeRow, userRow] = await Promise.all([
-            pool.query<{ profile: ResumeProfileRow | null }>(
-                `SELECT content_json->'profile' AS profile FROM resumes WHERE user_id = $1 ORDER BY generated_at DESC LIMIT 1`,
-                [userId],
-            ),
-            pool.query<{ full_name: string | null; email: string | null }>(
-                `SELECT full_name, email FROM users WHERE id = $1`,
-                [userId],
-            ),
-        ]);
-        const profile = resumeRow.rows[0]?.profile ?? null;
-        const authRow = userRow.rows[0];
-        const auth = authRow ? { fullName: authRow.full_name ?? undefined, email: authRow.email ?? undefined } : null;
-        const contact = pickContact(profile, auth);
-        log('INFO', 'Candidate contact resolved', { agent: 'strategist', source: contactSource(contact, profile) });
-        return formatCandidateContact(contact);
+        return await fetchContact(pool, userId);
     } catch (e) {
         log('WARN', 'candidate contact load failed (non-fatal)', { agent: 'strategist', error: (e as Error).message });
-        return '';
+        return null;
     }
+}
+
+/** Load the candidate's contact block text (formatCandidateContact over loadCandidateContact). Fail-open to ''. */
+export async function loadCandidateContactBlock(pool: Pool, userId: string): Promise<string> {
+    return formatCandidateContact(await loadCandidateContact(pool, userId));
 }
