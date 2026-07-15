@@ -1,7 +1,10 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { resolveExperienceAts, boundDropped } from '../experience-ats-flow.js';
-import { indexCareerLines, rosterFromCareer } from '../experience-provenance.js';
+import {
+  resolveExperienceAts, boundDropped,
+  stampExperienceCoverageFinal, experienceMutatedDownstream, routeJdEchoRewrite,
+} from '../experience-ats-flow.js';
+import { assembleExperience, indexCareerLines, rosterFromCareer } from '../experience-provenance.js';
 import type { ExperienceAgentOutput } from '../experience-schema.js';
 import type { ExperienceAtsTarget } from '../../../ats/gate/experience-ats-targets.js';
 
@@ -261,6 +264,105 @@ describe('resolveExperienceAts -- term-tolerant, evidence-anchored coverage (Tas
     });
     expect(r.diag.coverageBefore.covered).toBe(0);
     expect(r.diag.coverageBefore.missing).toEqual(['quantum computing']);
+  });
+});
+
+describe('stampExperienceCoverageFinal', () => {
+  it('scores the kept output against diag.targets and returns a NEW object with coverageFinal set', async () => {
+    const r = await resolveExperienceAts({
+      first, roster, careerLines: lines, targets,
+      rewrite: async () => rewriteFull,
+    });
+    expect(r.diag.coverageFinal).toBeNull();
+    const stamped = stampExperienceCoverageFinal(r.diag, r.output);
+    expect(stamped).not.toBe(r.diag);
+    expect(stamped.coverageFinal).toEqual({ targets: 3, covered: 3, missing: [] });
+    // original diag is untouched (readonly / non-mutating)
+    expect(r.diag.coverageFinal).toBeNull();
+  });
+
+  it('scores a kept output that covers fewer targets as missing', () => {
+    const bareDiag = {
+      targets, coverageBefore: { targets: 3, covered: 1, missing: ['TCP/IP', 'SSL/TLS'] },
+      rewrite: { fired: false, reason: 'no-targets', coverageAfter: null, kept: null, keptReason: null },
+      fallback: { fired: false, reason: null },
+      provenance: { firstViolations: [], rewriteViolations: [], droppedLines: 0, dropped: [] },
+      coverageFinal: null,
+    };
+    const stamped = stampExperienceCoverageFinal(bareDiag, first);
+    expect(stamped.coverageFinal).toEqual({ targets: 3, covered: 1, missing: ['TCP/IP', 'SSL/TLS'] });
+  });
+});
+
+describe('experienceMutatedDownstream', () => {
+  it('is false when the final section byte-matches assembleExperience(kept)', () => {
+    expect(experienceMutatedDownstream(assembleExperience(first), first)).toBe(false);
+  });
+
+  it('is true when the final section diverges from assembleExperience(kept)', () => {
+    const mutated = assembleExperience(first).map((r, i) => (i === 0 ? { ...r, highlights: ['a downstream pass rewrote this'] } : r));
+    expect(experienceMutatedDownstream(mutated, first)).toBe(true);
+  });
+});
+
+describe('routeJdEchoRewrite', () => {
+  it('does not call rewrite when there are zero echo violations', async () => {
+    let called = false;
+    const r = await routeJdEchoRewrite({
+      kept: first, roster, careerLines: lines, echoDetails: [],
+      rewrite: async () => { called = true; return rewriteFull; },
+    });
+    expect(called).toBe(false);
+    expect(r.rewritten).toBe(false);
+    expect(r.output).toBe(first);
+  });
+
+  it('splices a valid re-write and marks it rewritten (called exactly once)', async () => {
+    let calls = 0;
+    const r = await routeJdEchoRewrite({
+      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.'],
+      rewrite: async (instruction) => {
+        calls += 1;
+        expect(instruction).toContain('AWS: "Applied DNS resolution');
+        expect(instruction).toContain('Rephrase EACH flagged bullet');
+        return rewriteFull;
+      },
+    });
+    expect(calls).toBe(1);
+    expect(r.rewritten).toBe(true);
+    expect(r.output).toBe(rewriteFull);
+  });
+
+  it('discards a provenance-invalid re-write and keeps the original (advisory only)', async () => {
+    const rewriteBad: ExperienceAgentOutput = {
+      roles: [
+        { company: 'AWS', title: 'Support Engineer', period: '2023-2025',
+          highlights: first.roles[0].highlights },
+        { company: 'Acme', title: 'QA Analyst', period: '2021-2023',
+          // wrong: cites AWS's line instead of its own
+          highlights: [{ text: 'Automated regression suites gating releases', sources: ['c0.h0'], atsTargets: [] }] },
+      ],
+      accounting: { dropped: [] },
+    };
+    let calls = 0;
+    const r = await routeJdEchoRewrite({
+      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "..." leans on JD vocabulary'],
+      rewrite: async () => { calls += 1; return rewriteBad; },
+    });
+    expect(calls).toBe(1);
+    expect(r.rewritten).toBe(false);
+    expect(r.output).toBe(first);
+  });
+
+  it('discards a throwing re-write and keeps the original', async () => {
+    let calls = 0;
+    const r = await routeJdEchoRewrite({
+      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "..." leans on JD vocabulary'],
+      rewrite: async () => { calls += 1; throw new Error('bedrock 500'); },
+    });
+    expect(calls).toBe(1);
+    expect(r.rewritten).toBe(false);
+    expect(r.output).toBe(first);
   });
 });
 

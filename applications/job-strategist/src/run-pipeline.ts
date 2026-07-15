@@ -74,8 +74,11 @@ import { selectSummaryAtsTargets, type SummaryAtsTarget } from './ats/gate/summa
 import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/summary-ats-flow.js';
 import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-ats-diagnostics.js';
 import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate/experience-ats-targets.js';
-import { resolveExperienceAts, type ExperienceAgentDiagnostics } from './agents/writer/experience-ats-flow.js';
-import { logExperienceAgentEvents, experienceAgentOutcome } from './agents/writer/experience-agent-diagnostics.js';
+import {
+    resolveExperienceAts, stampExperienceCoverageFinal, experienceMutatedDownstream, routeJdEchoRewrite,
+    type ExperienceAgentDiagnostics,
+} from './agents/writer/experience-ats-flow.js';
+import { logExperienceAgentEvents, experienceAgentOutcome, logExperienceCoverageFinal } from './agents/writer/experience-agent-diagnostics.js';
 import { logProjectsAgentEvents, projectsAgentOutcome } from './agents/writer/projects-agent-diagnostics.js';
 import {
     logSectionAgentEvents, skillsAgentOutcome, skillsAgentEvents,
@@ -86,7 +89,9 @@ import {
 import { executeExperienceAgent } from './agents/writer/experience-agent.js';
 import {
     rosterFromCareer, indexCareerLines, assembleExperience, validateExperienceProvenance, ExperienceProvenanceError,
+    type RosterEntry, type IndexedCareerLine,
 } from './agents/writer/experience-provenance.js';
+import type { ExperienceAgentOutput } from './agents/writer/experience-schema.js';
 import { loadProjectAgentInputs, type ProjectAgentInputs } from './agents/evidence/project-agent-inputs.js';
 import { executeProjectsAgent } from './agents/writer/projects-agent.js';
 import { resolveProjectsAts, deterministicProjects, type ProjectsAgentDiagnostics } from './agents/writer/projects-ats-flow.js';
@@ -240,6 +245,20 @@ function verbatimExperienceFallback(careerEntries: readonly CareerEntry[]): Stru
     }));
 }
 
+/** fillResumeExperience's return -- the diagnostics (for observability) PLUS
+ *  everything the downstream jd-echo routing + final-text assert (Task 4)
+ *  need: the OUTPUT the flow chose (`kept`, whose assembled text was
+ *  spliced into the resume), and the roster/career-lines that stayed valid
+ *  the whole run so a routed re-write can be provenance-checked against
+ *  them too. `kept: null` on the verbatim-career fallback path -- there is
+ *  no agent output to route a re-write against or score final coverage on. */
+interface ExperienceFillResult {
+    readonly diag: ExperienceAgentDiagnostics | null;
+    readonly kept: ExperienceAgentOutput | null;
+    readonly roster: readonly RosterEntry[];
+    readonly careerLines: readonly IndexedCareerLine[];
+}
+
 async function fillResumeExperience(
     ctx: StrategistPipelineContext,
     tailoredResumeData: StructuredResumeData | null,
@@ -249,13 +268,13 @@ async function fillResumeExperience(
     groundedMetrics: string,
     codeStack: string,
     onFallback: (err: unknown) => void,
-): Promise<ExperienceAgentDiagnostics | null> {
-    if (!tailoredResumeData) return null;
+): Promise<ExperienceFillResult> {
+    if (!tailoredResumeData) return { diag: null, kept: null, roster: [], careerLines: [] };
     if (careerEntries.length === 0) {
         // no career facts: an experience entry without bullets can only be a fabricated roster row -- drop it
         (tailoredResumeData as { experience: unknown }).experience =
             tailoredResumeData.experience.filter((e) => e.highlights.length > 0);
-        return null;
+        return { diag: null, kept: null, roster: [], careerLines: [] };
     }
     const roster = rosterFromCareer(careerEntries);
     const careerLines = indexCareerLines(careerEntries);
@@ -277,21 +296,26 @@ async function fillResumeExperience(
             },
         });
         (tailoredResumeData as { experience: unknown }).experience = assembleExperience(output);
-        return diag;
+        return { diag, kept: output, roster, careerLines };
     } catch (err) {
         (tailoredResumeData as { experience: unknown }).experience = verbatim();
         onFallback(err);
         return {
-            targets: [...atsTargets],
-            coverageBefore: { targets: atsTargets.length, covered: 0, missing: atsTargets.map((t) => t.skill) },
-            rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
-            fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
-            provenance: {
-                firstViolations: err instanceof ExperienceProvenanceError ? err.violations : [],
-                rewriteViolations: [],
-                droppedLines: 0,
-                dropped: [],
+            diag: {
+                targets: [...atsTargets],
+                coverageBefore: { targets: atsTargets.length, covered: 0, missing: atsTargets.map((t) => t.skill) },
+                rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
+                fallback: { fired: true, reason: err instanceof Error ? err.message : String(err) },
+                provenance: {
+                    firstViolations: err instanceof ExperienceProvenanceError ? err.violations : [],
+                    rewriteViolations: [],
+                    droppedLines: 0,
+                    dropped: [],
+                },
+                coverageFinal: null,
             },
+            kept: null,
+            roster, careerLines,
         };
     }
 }
@@ -1019,7 +1043,7 @@ async function verifyAnalysisPaths(
 
 interface Batch1Result {
     readonly analysis: AgentResult<StrategistAnalysisResult>;
-    readonly experienceAgentDiag: ExperienceAgentDiagnostics | null;
+    readonly experience: ExperienceFillResult;
     readonly projectsAgentDiag: ProjectsAgentDiagnostics | null;
     readonly skillsAgentDiag: SkillsAgentDiagnostics | null;
 }
@@ -1062,7 +1086,7 @@ async function runBatch1Agents(args: {
         groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
         skillEvidenceLedger, jdExtraction, pipelineRunId,
     } = args;
-    const [analysis, experienceAgentDiag, projectsAgentDiag, skillsAgentDiag] = await Promise.all([
+    const [analysis, experience, projectsAgentDiag, skillsAgentDiag] = await Promise.all([
         executeAnalysisAgent(ctx, analysisInput),
         fillResumeExperience(
             ctx, skeleton, researchData, careerEntries, experienceAtsTargets, groundedMetricsBlock, codeStackContext,
@@ -1077,7 +1101,7 @@ async function runBatch1Agents(args: {
             (err) => log.warn({ pipelineRunId, agent: 'strategist-skills', err: err instanceof Error ? err.message : String(err) }, 'skills_agent_failed_deterministic_fallback_used'),
         ),
     ]);
-    return { analysis, experienceAgentDiag, projectsAgentDiag, skillsAgentDiag };
+    return { analysis, experience, projectsAgentDiag, skillsAgentDiag };
 }
 
 /**
@@ -1091,7 +1115,8 @@ function recordBatch1Observability(
     batch1: Batch1Result,
     keys: { pipelineRunId: string; applicationId: string | null },
 ): void {
-    const { experienceAgentDiag, projectsAgentDiag, skillsAgentDiag, analysis } = batch1;
+    const { experience, projectsAgentDiag, skillsAgentDiag, analysis } = batch1;
+    const experienceAgentDiag = experience.diag;
     if (experienceAgentDiag) {
         logExperienceAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, experienceAgentDiag);
         const { outcome, reason } = experienceAgentOutcome(experienceAgentDiag);
@@ -1289,7 +1314,13 @@ async function runGuardsStage(args: {
     resumeGuardCtx: ResumeGuardCtx;
     projectResumeBullets: ReadonlyArray<ProjectResumeBulletSet>;
     violationLog: ViolationLog;
-}): Promise<{ finalCoverLetter: CoverLetter | null; resume: StructuredResumeData; relocatedSnapshot: StructuredResumeData }> {
+}): Promise<{
+    finalCoverLetter: CoverLetter | null; resume: StructuredResumeData; relocatedSnapshot: StructuredResumeData;
+    /** The raw resume-guard violation set (code + detail) -- the jd-echo
+     *  routing stage (Task 4) filters this for 'experience_bullet_jd_echo'
+     *  to recover the flagged bullet text; `violationLog` only keeps codes. */
+    guardViolations: ResumeViolation[];
+}> {
     const { coverLetterCandidate, targetRole, leadIdentity, letterFraming, coverLetterNarrative, resume, resumeGuardCtx, projectResumeBullets, violationLog } = args;
 
     const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
@@ -1315,7 +1346,94 @@ async function runGuardsStage(args: {
     trackNetFired('guard', expSnapshot(relocated), expSnapshot(guardedResume), beforeGuardProj, projSnapshot(guardedResume));
     violationLog.recordAll('resume_guard', guardViolations);
 
-    return { finalCoverLetter, resume: guardedResume, relocatedSnapshot: relocated };
+    return { finalCoverLetter, resume: guardedResume, relocatedSnapshot: relocated, guardViolations };
+}
+
+/**
+ * jd-echo routing (Task 4, G2 tail) -- `guardResume`'s own rule-based repair
+ * on Experience is undone by the Task-2 lock (`runGuardsStage` wraps it in
+ * `withExperienceLock`, restoring any attempted fix, since Experience is
+ * agent-owned) -- so an `experience_bullet_jd_echo` violation stays purely
+ * advisory unless routed here. Splices the AUTHORISED re-write result
+ * directly (deliberately OUTSIDE any `withExperienceLock` wrapper -- it
+ * replaces `kept` too, so the Task-4 final assert stays consistent with
+ * whatever text ships) rather than going back through the lock.
+ *
+ * At most ONE `strategist-experience-rewrite` call per run: zero echo
+ * violations, or `kept === null` (verbatim-career fallback -- nothing to
+ * route a re-write against), short-circuit with no call at all.
+ */
+async function routeExperienceJdEcho(args: {
+    ctx: StrategistPipelineContext;
+    resume: StructuredResumeData;
+    kept: ExperienceAgentOutput | null;
+    roster: readonly RosterEntry[];
+    careerLines: readonly IndexedCareerLine[];
+    guardViolations: readonly ResumeViolation[];
+    researchData: StrategistResearchResult;
+    atsTargets: readonly ExperienceAtsTarget[];
+    groundedMetrics: string;
+    codeStack: string;
+    pipelineRunId: string;
+}): Promise<{ resume: StructuredResumeData; kept: ExperienceAgentOutput | null }> {
+    const {
+        ctx, resume, kept, roster, careerLines, guardViolations, researchData,
+        atsTargets, groundedMetrics, codeStack, pipelineRunId,
+    } = args;
+    if (!kept) return { resume, kept };
+    const echoDetails = guardViolations.filter((v) => v.code === 'experience_bullet_jd_echo').map((v) => v.detail);
+    if (echoDetails.length === 0) return { resume, kept };
+
+    const route = await routeJdEchoRewrite({
+        kept, roster, careerLines, echoDetails,
+        rewrite: async (instruction) => {
+            const rw = await executeExperienceAgent(
+                ctx,
+                {
+                    research: researchData, roster, careerLines, atsTargets, groundedMetrics, codeStack,
+                    rewriteDraft: instruction, rewriteMissing: ['jd-echo-cleanup'],
+                },
+                { agentName: 'strategist-experience-rewrite' },
+            );
+            return rw.data;
+        },
+    });
+    if (!route.rewritten) return { resume, kept };
+    log.info({ pipelineRunId, flagged: echoDetails.length }, 'experience_jd_echo_rewrite_applied');
+    return { resume: { ...resume, experience: assembleExperience(route.output) }, kept: route.output };
+}
+
+/**
+ * Final-text experience integrity (Task 4): after every resume-mutating pass
+ * (guards/length/ATS-gate), assert the section that actually shipped still
+ * equals `assembleExperience(kept)` byte-for-byte -- `withExperienceLock`
+ * already ENFORCES this for every wrapped pass, so this is a final PROOF,
+ * not a repair; a mismatch means some pass mutated Experience OUTSIDE the
+ * lock, recorded as resume_integrity/experience_mutated_downstream
+ * (fail-open, never throws). Then stamps `coverageFinal` with the SAME
+ * scorer as decision-time, scored against `kept` (its bullet sources remain
+ * valid for the locked final text), and emits the one-shot Loki final-
+ * coverage event. `diag`/`kept` null (no writer target, or the verbatim-
+ * career fallback) skips both -- nothing to assert or score against.
+ */
+function finaliseExperienceDiagnostics(args: {
+    diag: ExperienceAgentDiagnostics | null;
+    kept: ExperienceAgentOutput | null;
+    finalResume: StructuredResumeData;
+    violationLog: ViolationLog;
+    keys: { pipelineRunId: string; applicationId: string | null };
+}): ExperienceAgentDiagnostics | null {
+    const { diag, kept, finalResume, violationLog, keys } = args;
+    if (!diag || !kept) return diag;
+    if (experienceMutatedDownstream(finalResume.experience, kept)) {
+        violationLog.record('resume_integrity', 'experience_mutated_downstream');
+        log.warn({ pipelineRunId: keys.pipelineRunId }, 'experience_mutated_downstream');
+    }
+    const stamped = stampExperienceCoverageFinal(diag, kept);
+    if (stamped.coverageFinal) {
+        logExperienceCoverageFinal(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, stamped.coverageFinal);
+    }
+    return stamped;
 }
 
 /**
@@ -2119,7 +2237,7 @@ export async function main(): Promise<void> {
             experienceAtsTargets, groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
             skillEvidenceLedger, jdExtraction, pipelineRunId: env.pipelineRunId,
         }));
-        const { analysis, experienceAgentDiag, projectsAgentDiag, skillsAgentDiag } = batch1;
+        const { analysis, experience, projectsAgentDiag, skillsAgentDiag } = batch1;
         recordBatch1Observability(batch1, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
@@ -2265,6 +2383,23 @@ export async function main(): Promise<void> {
         }));
         const finalCoverLetter = guardsResult.finalCoverLetter;
 
+        // -- jd-echo routing (Task 4): route advisory experience_bullet_jd_echo
+        //    violations guardResume flagged (and the Task-2 lock then reverted) to
+        //    ONE provenance-guarded experience re-write; splice only if it validates --
+        const jdEchoRoute = await stageSeconds(pipelineStageSeconds, 'jd_echo_route', () => routeExperienceJdEcho({
+            ctx,
+            resume:          guardsResult.resume,
+            kept:            experience.kept,
+            roster:          experience.roster,
+            careerLines:     experience.careerLines,
+            guardViolations: guardsResult.guardViolations,
+            researchData,
+            atsTargets:      experienceAtsTargets,
+            groundedMetrics: groundedMetricsBlock,
+            codeStack:       codeStackContext,
+            pipelineRunId:   env.pipelineRunId,
+        }));
+
         // Grounding for the expand direction + the allowed-number set that
         // bounds ANY pass that can add content (expand, surface-keywords).
         // VERBATIM sources only (F2) — researchData.verifiedMatches[].sourceCitation
@@ -2292,7 +2427,7 @@ export async function main(): Promise<void> {
 
         // -- Length stage (migration reframe + budget + metric weave + revalidate) --
         let finalResume: StructuredResumeData = await stageSeconds(pipelineStageSeconds, 'length', () => runLengthStage({
-            resume: guardsResult.resume,
+            resume: jdEchoRoute.resume,
             baseline: resume,
             projectHighlightsSnapshot: guardsResult.relocatedSnapshot,
             resumeGuardCtx, jdPriority, budgetGroundingFacts, groundedMetricsBlock,
@@ -2365,6 +2500,18 @@ export async function main(): Promise<void> {
         // atsCheck is stashed here as well as on resumes.ats_check_json so the
         // value is never lost if the RLS-scoped resumes write fails — admin-api
         // falls back to metadata.analysis.atsCheck.
+        // Final-text experience coverage + downstream-mutation assert (Task 4):
+        // stamp coverageFinal against the text that actually shipped and assert
+        // it still equals assembleExperience(kept) -- the LAST point before this
+        // diagnostics object is persisted. Fail-open; never throws.
+        const experienceAgentDiagFinal = finaliseExperienceDiagnostics({
+            diag: experience.diag,
+            kept: jdEchoRoute.kept,
+            finalResume,
+            violationLog,
+            keys: { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId },
+        });
+
         // metadata.guard answers "which violations fired, at which stage?" per
         // run — the counters alone die with the Job pod. One structured log
         // line makes the same answer greppable in Loki.
@@ -2373,7 +2520,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag, projectsAgent: projectsAgentDiag, skillsAgent: skillsAgentDiag, coverLetterAgent: coverLetterAgentOutcome(batch2.coverLetterAgentResult), analysisAgent: analysisAgentSummary(analysis.data) },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiagFinal, projectsAgent: projectsAgentDiag, skillsAgent: skillsAgentDiag, coverLetterAgent: coverLetterAgentOutcome(batch2.coverLetterAgentResult), analysisAgent: analysisAgentSummary(analysis.data) },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,

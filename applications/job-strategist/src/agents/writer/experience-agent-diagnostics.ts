@@ -1,5 +1,6 @@
 /** @format */
 import type { ExperienceAgentDiagnostics } from './experience-ats-flow.js';
+import type { SummaryCoverage } from '../../ats/gate/summary-coverage.js';
 
 /** Correlation keys stamped on every experience-agent Loki event. */
 export interface ExperienceAgentLogKeys {
@@ -35,6 +36,18 @@ export function logExperienceAgentEvents(log: EventLogger, keys: ExperienceAgent
   if (diag.fallback.fired) {
     log.info({ ...base, event: 'experience_agent_fallback', reason: diag.fallback.reason }, 'experience_agent_fallback');
   }
+}
+
+/**
+ * Final-text coverage event (Task 4) -- emitted once, at the point
+ * `coverageFinal` is stamped (immediately before the metadata write).
+ * `logExperienceAgentEvents` above fires during BATCH-1 observability, long
+ * before `coverageFinal` exists, so this is a deliberately separate, later
+ * emission rather than a branch added to that function -- it stays untouched.
+ */
+export function logExperienceCoverageFinal(log: EventLogger, keys: ExperienceAgentLogKeys, coverage: SummaryCoverage): void {
+  const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
+  log.info({ ...base, event: 'experience_agent_coverage_final', covered: coverage.covered, of: coverage.targets, missing: coverage.missing }, 'experience_agent_coverage_final');
 }
 
 export type ExperienceAgentOutcome = 'aware' | 'rewritten' | 'kept_first' | 'fallback';

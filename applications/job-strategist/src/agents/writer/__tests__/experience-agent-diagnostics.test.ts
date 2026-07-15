@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
-import { logExperienceAgentEvents, experienceAgentOutcome, type ExperienceAgentLogKeys } from '../experience-agent-diagnostics.js';
+import { logExperienceAgentEvents, experienceAgentOutcome, logExperienceCoverageFinal, type ExperienceAgentLogKeys } from '../experience-agent-diagnostics.js';
 import type { ExperienceAgentDiagnostics } from '../experience-ats-flow.js';
 
 const keys: ExperienceAgentLogKeys = { pipelineRunId: 'pr1', applicationId: 'app1', traceId: 'tr1' };
@@ -11,6 +11,7 @@ const rewrittenDiag: ExperienceAgentDiagnostics = {
   rewrite: { fired: true, reason: 'coverage-below-targets', coverageAfter: { targets: 3, covered: 2, missing: ['Terraform'] }, kept: 'rewrite', keptReason: 'rewrite-covers-more' },
   fallback: { fired: false, reason: null },
   provenance: { firstViolations: [], rewriteViolations: ['line-3-not-cited'], droppedLines: 0, dropped: [] },
+  coverageFinal: null,
 };
 
 describe('logExperienceAgentEvents', () => {
@@ -45,6 +46,7 @@ describe('logExperienceAgentEvents', () => {
       rewrite: { fired: false, reason: null, coverageAfter: null, kept: null, keptReason: null },
       fallback: { fired: true, reason: 'schema parse failed' },
       provenance: { firstViolations: [], rewriteViolations: [], droppedLines: 0, dropped: [] },
+      coverageFinal: null,
     };
     logExperienceAgentEvents({ info } as never, keys, fbDiag);
     const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
@@ -96,5 +98,22 @@ describe('experienceAgentOutcome', () => {
       provenance: { firstViolations: ['line-1-not-cited'], rewriteViolations: [], droppedLines: 0, dropped: [] },
     };
     expect(experienceAgentOutcome(fb)).toEqual({ outcome: 'fallback', reason: 'provenance-invalid' });
+  });
+});
+
+describe('logExperienceCoverageFinal', () => {
+  it('emits experience_agent_coverage_final with correlation keys and coverage fields', () => {
+    const info = jest.fn();
+    logExperienceCoverageFinal({ info } as never, keys, { targets: 3, covered: 2, missing: ['Terraform'] });
+    expect(info).toHaveBeenCalledTimes(1);
+    const [payload, msg] = info.mock.calls[0] as [Record<string, unknown>, string];
+    expect(msg).toBe('experience_agent_coverage_final');
+    expect(payload['event']).toBe('experience_agent_coverage_final');
+    expect(payload['covered']).toBe(2);
+    expect(payload['of']).toBe(3);
+    expect(payload['missing']).toEqual(['Terraform']);
+    expect(payload['pipeline_run_id']).toBe('pr1');
+    expect(payload['application_id']).toBe('app1');
+    expect(payload['trace_id']).toBe('tr1');
   });
 });

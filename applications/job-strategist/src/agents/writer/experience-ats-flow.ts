@@ -45,6 +45,14 @@ export interface ExperienceAgentDiagnostics {
     readonly droppedLines: number;
     readonly dropped: DroppedLine[];
   };
+  /** Final-text coverage (Task 4) -- null until `stampExperienceCoverageFinal`
+   *  scores the text that actually ships, immediately before the metadata
+   *  write. Scored with the SAME scorer as `coverageBefore`/`coverageAfter`,
+   *  against the `kept` output's bullets -- their `sources` remain valid
+   *  because Experience is locked immutable after this flow runs (see
+   *  experience-lock.ts). Stays null on the verbatim-career fallback path
+   *  (no agent output to score against). */
+  readonly coverageFinal: SummaryCoverage | null;
 }
 
 /** Flattened score text for an experience output: every role's bullets, in order. */
@@ -128,6 +136,7 @@ export async function resolveExperienceAts(params: {
         droppedLines: params.first.accounting.dropped.length,
         dropped: boundDropped(params.first.accounting.dropped),
       },
+      coverageFinal: null,
     },
   });
 
@@ -150,6 +159,7 @@ export async function resolveExperienceAts(params: {
           droppedLines: params.first.accounting.dropped.length,
           dropped: boundDropped(params.first.accounting.dropped),
         },
+        coverageFinal: null,
       },
     };
   }
@@ -173,6 +183,91 @@ export async function resolveExperienceAts(params: {
         droppedLines: output.accounting.dropped.length,
         dropped: boundDropped(output.accounting.dropped),
       },
+      coverageFinal: null,
     },
   };
+}
+
+/**
+ * Final-text coverage (Task 4): score the SAME way as `coverageBefore`/
+ * `coverageAfter`, against the OUTPUT the flow actually kept -- Experience is
+ * locked immutable after `fillResumeExperience` runs (experience-lock.ts), so
+ * `kept`'s bullet `sources` remain valid for whatever text ships. Returns a
+ * NEW diagnostics object (every field on `ExperienceAgentDiagnostics` is
+ * readonly) -- call this exactly once, immediately before the metadata write.
+ */
+export function stampExperienceCoverageFinal(
+  diag: ExperienceAgentDiagnostics,
+  kept: ExperienceAgentOutput,
+): ExperienceAgentDiagnostics {
+  return { ...diag, coverageFinal: scoreExperienceCoverage(bulletsOf(kept), diag.targets) };
+}
+
+/**
+ * Downstream-mutation assert (Task 4): `withExperienceLock` (experience-lock.ts)
+ * already ENFORCES that no wrapped pass can drift Experience -- this is the
+ * final PROOF, a byte-for-byte compare of the section that actually shipped
+ * against `assembleExperience(kept)`. `true` means some pass mutated
+ * Experience OUTSIDE the lock; the caller records it
+ * (resume_integrity/experience_mutated_downstream) and moves on -- an
+ * integrity signal, never a gate (fail-open, this never throws).
+ */
+export function experienceMutatedDownstream(
+  finalExperience: ReturnType<typeof assembleExperience>,
+  kept: ExperienceAgentOutput,
+): boolean {
+  return JSON.stringify(finalExperience) !== JSON.stringify(assembleExperience(kept));
+}
+
+/** One flagged jd-echo bullet's advisory detail line, carried verbatim into
+ *  the routed re-write instruction so the model sees exactly what tripped
+ *  (company, the leaning bullet text, and the leaking JD terms). */
+function buildJdEchoInstruction(echoDetails: readonly string[]): string {
+  return [
+    'The following experience bullets were flagged for leaning on JD vocabulary that '
+      + 'this role\'s cited career lines do not support:',
+    ...echoDetails.map((d) => `- ${d}`),
+    '',
+    'Rephrase EACH flagged bullet using ONLY the same career lines already cited for it '
+      + '-- keep every citation/accounting rule, invent no new claim or line, just reduce '
+      + 'the JD-echo wording.',
+  ].join('\n');
+}
+
+export interface JdEchoRouteResult {
+  readonly output: ExperienceAgentOutput;
+  readonly rewritten: boolean;
+}
+
+/**
+ * Route advisory `experience_bullet_jd_echo` guard violations to ONE
+ * provenance-guarded re-write (Task 4, G2 tail). `guardResume`'s own
+ * rule-based repair on Experience is undone by the Task-2 lock (Experience is
+ * agent-owned) -- this is the only path that can actually FIX an echoing
+ * bullet post-fill, rather than just report it.
+ *
+ * Fires at most once: `echoDetails.length === 0` short-circuits with no call.
+ * The re-write is validated exactly like the ATS re-write
+ * (`validateExperienceProvenance`); an invalid or throwing re-write is
+ * discarded and the ORIGINAL `kept` output stands -- the flagged violations
+ * stay advisory, never block the run.
+ */
+export async function routeJdEchoRewrite(params: {
+  readonly kept: ExperienceAgentOutput;
+  readonly roster: readonly RosterEntry[];
+  readonly careerLines: readonly IndexedCareerLine[];
+  readonly echoDetails: readonly string[];
+  readonly rewrite: (instruction: string) => Promise<ExperienceAgentOutput>;
+}): Promise<JdEchoRouteResult> {
+  const { kept, roster, careerLines, echoDetails, rewrite } = params;
+  if (echoDetails.length === 0) return { output: kept, rewritten: false };
+  let rewriteOut: ExperienceAgentOutput;
+  try {
+    rewriteOut = await rewrite(buildJdEchoInstruction(echoDetails));
+  } catch {
+    return { output: kept, rewritten: false };
+  }
+  const violations = validateExperienceProvenance(rewriteOut, roster, careerLines);
+  if (violations.length > 0) return { output: kept, rewritten: false };
+  return { output: rewriteOut, rewritten: true };
 }
