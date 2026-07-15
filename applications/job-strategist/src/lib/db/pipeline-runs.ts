@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
-import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
+import { StructuredResumeDataSchema } from '../../schemas/resume-data.schema.js';
 import { withUserRls } from './rls.js';
 
 /**

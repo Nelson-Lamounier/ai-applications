@@ -10,7 +10,7 @@
  * them on pipeline_runs.metadata.guard and emit one queryable Loki line.
  */
 import { describe, it, expect, jest } from '@jest/globals';
-import { createViolationLog } from './violation-log.js';
+import { createViolationLog } from '../violation-log.js';
 
 describe('createViolationLog', () => {
     it('records single codes with their stage, preserving order', () => {

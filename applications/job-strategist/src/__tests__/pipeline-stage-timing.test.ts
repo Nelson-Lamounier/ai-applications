@@ -4,7 +4,7 @@
  * stage_seconds{stage}). Injected clock; no real timers.
  */
 import { describe, it, expect, jest } from '@jest/globals';
-import { stageSeconds, type Clock, type StageHistogram } from '../lib/stage-timing.js';
+import { stageSeconds, type Clock, type StageHistogram } from '../lib/observability/stage-timing.js';
 
 /** A clock that returns each value in `sequence` in order, then repeats the last. */
 function fakeClock(sequence: number[]): Clock {

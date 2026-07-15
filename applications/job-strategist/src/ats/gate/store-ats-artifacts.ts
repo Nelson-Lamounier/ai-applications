@@ -3,7 +3,7 @@ import { PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 import type { Pool } from 'pg';
 
 import type { AtsCheckResult } from './ats-check.schema.js';
-import { withUserRls } from '../../lib/rls.js';
+import { withUserRls } from '../../lib/db/rls.js';
 
 export interface StoreAtsArtifactsArgs {
     readonly s3:       S3Client;

@@ -29,7 +29,7 @@ import { executeCoverLetterAgent } from './agents/writer/cover-letter-agent.js';
 import type { CoverLetterMessageInput } from './agents/writer/cover-letter-message.js';
 import { buildSkeletonResume } from './lib/resume-skeleton.js';
 import { reconcileResume, type ReconcileInputs } from './lib/resume-reconciler.js';
-import { stageSeconds } from './lib/stage-timing.js';
+import { stageSeconds } from './lib/observability/stage-timing.js';
 import { framingDirective } from './agents/writer/framing.js';
 import { executeSummaryAgent } from './agents/writer/summary-agent.js';
 import { deterministicSummary } from './agents/writer/summary-fallback.js';
@@ -46,17 +46,17 @@ import { guardCoverLetter } from './agents/quality/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/quality/cover-letter-guard.js';
 import { guardResume, revalidateResumeContent, preserveExperienceRoster, restoreExperienceAfter } from './agents/quality/resume-guard.js';
 import type { ResumeGuardCtx } from './agents/quality/resume-guard.js';
-import type { ViolationLog } from './lib/violation-log.js';
+import type { ViolationLog } from './lib/observability/violation-log.js';
 import type { ProjectResumeBulletSet } from './agents/evidence/project-evidence-block.js';
 import type { JdPriorityContext } from './ats/length/length-budget.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
-import { createViolationLog } from './lib/violation-log.js';
+import { createViolationLog } from './lib/observability/violation-log.js';
 import { loadCandidateContact, formatCandidateContact } from './lib/candidate-contact.js';
 import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
 import { applyLengthBudget } from './ats/length/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/grounding/ledger-provenance.js';
 import { parseEnv, isFreeMode }   from './env.js';
-import { getPool, closePool }     from './lib/pg.js';
+import { getPool, closePool }     from './lib/db/pg.js';
 import { classifyCitedPaths }     from './lib/path-grounding.js';
 import { loadIngestedPaths }      from './lib/path-grounding-loader.js';
 import {
@@ -64,7 +64,7 @@ import {
     updatePipelineRunMetadata,
     updateJobApplicationStatus,
     persistTailoredResume,
-} from './lib/pipeline-runs.js';
+} from './lib/db/pipeline-runs.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { renderCheckAndStoreAts } from './ats/gate/run-ats-check.js';
 import type { AtsCheckResult } from './ats/gate/ats-check.schema.js';
@@ -107,7 +107,7 @@ import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from 
 import { reconcileExperienceRoster } from './lib/experience-roster.js';
 import { surfaceMetrics } from './agents/quality/surface-metrics.js';
 import { surfaceKeywords } from './agents/quality/surface-keywords.js';
-import { stripDocumentSections } from './lib/strip-document-sections.js';
+import { stripDocumentSections } from './lib/text/strip-document-sections.js';
 import { dedupeSkillGaps } from './lib/dedupe-skill-gaps.js';
 import { ensureSummaryIntegrity } from './lib/summary-integrity.js';
 import { preserveResumeFields } from './lib/preserve-resume-fields.js';

@@ -46,11 +46,11 @@ import { detectPrincipleEvidence, buildBarRaiserBlock, validateBarRaiserWalkthro
 import { buildCoachContextChunks, extractCoachClaims } from './lib/coach-grounding.js';
 import { extractProseSections } from './lib/coach-prose.js';
 import { parseCoachEnv }       from './env-coach.js';
-import { getPool, closePool }  from './lib/pg.js';
+import { getPool, closePool }  from './lib/db/pg.js';
 import {
     updatePipelineRun,
     persistCoachingContent,
-} from './lib/pipeline-runs.js';
+} from './lib/db/pipeline-runs.js';
 
 async function loadAnalysisAndResearch(
     pool: Pool,

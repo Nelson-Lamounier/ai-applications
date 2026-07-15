@@ -1,5 +1,5 @@
 /** @format */
-import { stripDocumentSections } from './strip-document-sections.js';
+import { stripDocumentSections } from '../strip-document-sections.js';
 
 describe('stripDocumentSections — grounding-verifier input trim', () => {
 	it('replaces the resume JSON and cover letter CDATA with omission markers', () => {

@@ -1,5 +1,5 @@
 /** @format */
-import { stripCdata, deepStripCdata } from './strip-cdata.js';
+import { stripCdata, deepStripCdata } from '../strip-cdata.js';
 
 describe('stripCdata', () => {
     it('unwraps a CDATA-wrapped string and trims inner whitespace', () => {

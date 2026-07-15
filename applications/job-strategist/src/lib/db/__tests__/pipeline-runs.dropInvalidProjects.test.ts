@@ -1,6 +1,6 @@
 /** @format */
-import { dropInvalidProjects } from './pipeline-runs.js';
-import { StructuredResumeDataSchema } from '../schemas/resume-data.schema.js';
+import { dropInvalidProjects } from '../pipeline-runs.js';
+import { StructuredResumeDataSchema } from '../../../schemas/resume-data.schema.js';
 
 const validProject = { name: 'Tucaken', description: 'A resume-tailoring platform.', github: 'x/y' };
 
