@@ -44,8 +44,9 @@ import { extractJobDescription, extractJdSignal } from './agents/jd/jd-extractor
 import { buildYearsGap } from './agents/writer/years-gap.js';
 import { guardCoverLetter } from './agents/quality/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/quality/cover-letter-guard.js';
-import { guardResume, revalidateResumeContent, preserveExperienceRoster, restoreExperienceAfter } from './agents/quality/resume-guard.js';
-import type { ResumeGuardCtx } from './agents/quality/resume-guard.js';
+import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/quality/resume-guard.js';
+import type { ResumeGuardCtx, ResumeViolation } from './agents/quality/resume-guard.js';
+import { withExperienceLock } from './agents/writer/experience-lock.js';
 import type { ViolationLog } from './lib/observability/violation-log.js';
 import type { ProjectResumeBulletSet } from './agents/evidence/project-evidence-block.js';
 import type { JdPriorityContext } from './ats/length/length-budget.js';
@@ -563,10 +564,17 @@ function projSnapshot(resume: StructuredResumeData | null): string {
  * surface_keywords) so main() doesn't repeat the inline `if` branch (and
  * doesn't grow main()'s already-flagged complexity by inlining a second
  * comparison at each site). Emits the generalised
- * job_strategist_section_net_fired_total{section,pass} for BOTH agent-owned
- * sections -- see sectionNetFiredMetric's comment above. PR-B removed the
- * older, experience-only job_strategist_experience_net_fired_total{pass}
- * counter this generalised one superseded.
+ * job_strategist_section_net_fired_total{section,pass,outcome="changed"} for
+ * BOTH agent-owned sections -- see sectionNetFiredMetric's comment above.
+ * PR-B removed the older, experience-only
+ * job_strategist_experience_net_fired_total{pass} counter this generalised
+ * one superseded. Every call site is now wrapped in withExperienceLock
+ * (experience-lock.ts) BEFORE it reaches this function, so `beforeExp` and
+ * `afterExp` are always equal in practice -- the lock enforces immutability
+ * rather than merely detecting drift, and its own onRestored callback emits
+ * the sibling outcome="restored" series. `projects` has no lock (Phase 5
+ * PR-A/B did not extend one), so `outcome="changed"` remains a live signal
+ * there.
  */
 function trackNetFired(
     pass: 'guard' | 'length' | 'surface_keywords',
@@ -574,10 +582,10 @@ function trackNetFired(
     beforeProj: string, afterProj: string,
 ): void {
     if (beforeExp !== afterExp) {
-        sectionNetFiredMetric.inc({ section: 'experience', pass });
+        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'changed' });
     }
     if (beforeProj !== afterProj) {
-        sectionNetFiredMetric.inc({ section: 'projects', pass });
+        sectionNetFiredMetric.inc({ section: 'projects', pass, outcome: 'changed' });
     }
 }
 
@@ -823,15 +831,23 @@ const experienceAgentCoverageMetric = new Histogram({
 // guard/length/keyword-surface pass changing either is unexpected.
 // preserveExperienceRoster only guarantees no ROLE is dropped -- it does not
 // stop a pass rewriting a bullet within a role that survives -- so this
-// counter is the only signal for that narrower drift. Ideally always zero; a
-// nonzero rate over time is the lead to investigate. Generalises the older,
+// counter is the only signal for that narrower drift. Generalises the older,
 // experience-only job_strategist_experience_net_fired_total{pass} counter
 // (removed PR-B) to cover BOTH agent-owned sections behind one metric name
 // (section='experience' here is that counter's exact equivalent).
+// `outcome` (added alongside withExperienceLock, experience-lock.ts):
+// 'changed' is the ORIGINAL tripwire increment -- a pass's output diverged
+// from the pre-pass snapshot. 'restored' fires only for section='experience'
+// (the only section wrapped in the lock so far) when withExperienceLock
+// reverted that divergence, turning the tripwire into enforcement --
+// section='experience' should now show 'changed' at effectively zero (every
+// divergence is caught and restored before it reaches the next stage) while
+// 'restored' becomes the signal to watch. section='projects' has no lock, so
+// it only ever emits 'changed'.
 const sectionNetFiredMetric = new Counter({
     name:       'job_strategist_section_net_fired_total',
-    help:       'Downstream passes (guard/length/surface_keywords) that changed an agent-owned section (experience/projects) after its fill pass ran.',
-    labelNames: ['section', 'pass'] as const,
+    help:       'Downstream passes (guard/length/surface_keywords/reframe/metric_weave/revalidate) that changed an agent-owned section (experience/projects) after its fill pass ran, by outcome (changed vs restored by the experience lock).',
+    labelNames: ['section', 'pass', 'outcome'] as const,
     registers:  [obs.registry],
 });
 const correctiveRetrievalMetric = new Counter({
@@ -1286,13 +1302,20 @@ async function runGuardsStage(args: {
     // projects[].highlights (its github link + description live there). Runs
     // BEFORE the guard so every downstream pass sees the corrected structure.
     const relocated = relocateProjectExperience(resume, resumeGuardCtx.verifiedEmployers ?? [], projectResumeBullets);
-    const beforeGuard = expSnapshot(relocated);
     const beforeGuardProj = projSnapshot(relocated);
-    const guarded = await guardResume(relocated, resumeGuardCtx);
-    trackNetFired('guard', beforeGuard, expSnapshot(guarded.resume), beforeGuardProj, projSnapshot(guarded.resume));
-    violationLog.recordAll('resume_guard', guarded.violations);
+    let guardViolations: ResumeViolation[] = [];
+    const guardedResume = await withExperienceLock(relocated, 'guard', async (r) => {
+        const guarded = await guardResume(r, resumeGuardCtx);
+        guardViolations = guarded.violations;
+        return guarded.resume;
+    }, (pass) => {
+        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+        violationLog.record('resume_guard', 'experience_lock_restored');
+    });
+    trackNetFired('guard', expSnapshot(relocated), expSnapshot(guardedResume), beforeGuardProj, projSnapshot(guardedResume));
+    violationLog.recordAll('resume_guard', guardViolations);
 
-    return { finalCoverLetter, resume: guarded.resume, relocatedSnapshot: relocated };
+    return { finalCoverLetter, resume: guardedResume, relocatedSnapshot: relocated };
 }
 
 /**
@@ -1336,7 +1359,12 @@ async function runLengthStage(args: {
             migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
         }, 'migration_reframe_fired');
         const preReframe = current;
-        current = preserveExperienceRoster(preReframe, await reframeStaleMigrations(preReframe, staleMigrations).catch(() => preReframe));
+        current = await withExperienceLock(preReframe, 'reframe', async (r) =>
+            preserveExperienceRoster(r, await reframeStaleMigrations(r, staleMigrations).catch(() => r)),
+        (pass) => {
+            sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+            violationLog.record('migration_reframe', 'experience_lock_restored');
+        });
     }
 
     // ── Length budget (measure → condense → hard trim; fail-open) ──
@@ -1346,10 +1374,14 @@ async function runLengthStage(args: {
     // keyword-surfacing rewrite — the last stage that can grow it.
     const preBudget = current;
     const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
-    const beforeLength = expSnapshot(preBudget);
     const beforeLengthProj = projSnapshot(preBudget);
-    const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
-    trackNetFired('length', beforeLength, expSnapshot(budgeted), beforeLengthProj, projSnapshot(budgeted));
+    const budgeted = await withExperienceLock(preBudget, 'length', (r) =>
+        applyLengthBudget(r, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => r),
+    (pass) => {
+        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+        violationLog.record('length_budget', 'experience_lock_restored');
+    });
+    trackNetFired('length', expSnapshot(preBudget), expSnapshot(budgeted), beforeLengthProj, projSnapshot(budgeted));
     // Expansion may only add grounded numbers; strip anything else.
     const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
     // Metric weave (always-on when the ledger is non-empty): no agent sees
@@ -1359,23 +1391,32 @@ async function runLengthStage(args: {
     const jdContextLine = `${targetRole}: ${requiredSkills.join(', ')}`;
     // Experience is agent-owned (fillResumeExperience already produced a
     // provenance-guarded final section) -- the weave may still legitimately
-    // rewrite project descriptions, so scope it OUT of experience by
-    // snapshot-restore rather than retiring it. See restoreExperienceAfter.
-    const expBeforeWeave = structuredClone(preMetrics.experience);
-    const numberSafe = restoreExperienceAfter(
-        await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
+    // rewrite project descriptions, so scope it OUT of experience via the
+    // shared lock (experience-lock.ts) rather than a bespoke snapshot.
+    const numberSafe = await withExperienceLock(preMetrics, 'metric_weave', (r) =>
+        weaveGroundedMetrics(r, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
             violationLog.record('metric_weave', code);
             log.warn({ pipelineRunId, code }, 'grounded_metric_weave');
         }),
-        expBeforeWeave,
-    );
+    (pass) => {
+        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+        violationLog.record('metric_weave', 'experience_lock_restored');
+    });
     // FINAL content re-validation: reframe/condense/expand can
     // reintroduce violations the early guard already repaired (the
     // A/B run regained 5 bullet-shared project numbers and a flat
     // "Terraform" claim). One bounded repair, then report residuals.
-    const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
-    violationLog.recordAll('revalidate', revalidated.violations);
-    let finalResume = await applyResumeIntegrity(revalidated.resume, baseline, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
+    let revalidateViolations: ResumeViolation[] = [];
+    const revalidatedResume = await withExperienceLock(numberSafe, 'revalidate', async (r) => {
+        const revalidated = await revalidateResumeContent(r, resumeGuardCtx).catch(() => ({ resume: r, violations: [] as ResumeViolation[] }));
+        revalidateViolations = revalidated.violations;
+        return revalidated.resume;
+    }, (pass) => {
+        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+        violationLog.record('revalidate', 'experience_lock_restored');
+    });
+    violationLog.recordAll('revalidate', revalidateViolations);
+    let finalResume = await applyResumeIntegrity(revalidatedResume, baseline, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
     // Restore any projects[].highlights the Haiku re-emit passes dropped
     // (the emit_resume tool round-trip blanks the Projects bullets).
     finalResume = restoreProjectHighlights(projectHighlightsSnapshot, finalResume);
@@ -1466,11 +1507,15 @@ async function runAtsGateStage(args: AtsGateArgs): Promise<{ finalResume: Struct
         // Allowed numbers = original resume + grounding facts. Any number the
         // rewrite introduces outside this set is stripped deterministically.
         const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
-        const beforeSurface = expSnapshot(baseResume);
         const beforeSurfaceProj = projSnapshot(baseResume);
-        const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
-        let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
-        trackNetFired('surface_keywords', beforeSurface, expSnapshot(surfaced), beforeSurfaceProj, projSnapshot(surfaced));
+        let surfaced = await withExperienceLock(baseResume, 'surface_keywords', async (r) => {
+            const refined = preserveExperienceRoster(r, await surfaceKeywords(r, split.attainableMissing, { redFlags, groundingFacts }).catch(() => r));
+            return refined === r ? r : stripUngroundedNumbers(refined, allowed);
+        }, (pass) => {
+            sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+            violationLog.record('surface_keywords', 'experience_lock_restored');
+        });
+        trackNetFired('surface_keywords', expSnapshot(baseResume), expSnapshot(surfaced), beforeSurfaceProj, projSnapshot(surfaced));
         if (surfaced !== baseResume) {
             // The keyword rewrite is the last stage that can GROW the
             // resume (it inflated the 2026-07-02 Google run by pulling
@@ -1486,14 +1531,27 @@ async function runAtsGateStage(args: AtsGateArgs): Promise<{ finalResume: Struct
             // the resume text — feed it real evidence so a genuinely
             // grounded number survives the post-condense instruction-leak
             // scrub, without opting back into the expand direction.
-            const beforePostKeywordsLength = expSnapshot(surfaced);
+            const beforePostKeywordsExp = expSnapshot(surfaced);
             const beforePostKeywordsLengthProj = projSnapshot(surfaced);
-            surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
-            trackNetFired('length', beforePostKeywordsLength, expSnapshot(surfaced), beforePostKeywordsLengthProj, projSnapshot(surfaced));
+            surfaced = await withExperienceLock(surfaced, 'length', (r) =>
+                applyLengthBudget(r, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => r),
+            (pass) => {
+                sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+                violationLog.record('length_budget_post_keywords', 'experience_lock_restored');
+            });
+            trackNetFired('length', beforePostKeywordsExp, expSnapshot(surfaced), beforePostKeywordsLengthProj, projSnapshot(surfaced));
             surfaced = stripUngroundedNumbers(surfaced, allowed);
-            const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
-            violationLog.recordAll('revalidate_post_keywords', reval.violations);
-            surfaced = await applyResumeIntegrity(reval.resume, baseline, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
+            let revalPostKeywordsViolations: ResumeViolation[] = [];
+            surfaced = await withExperienceLock(surfaced, 'revalidate', async (r) => {
+                const reval = await revalidateResumeContent(r, resumeGuardCtx).catch(() => ({ resume: r, violations: [] as ResumeViolation[] }));
+                revalPostKeywordsViolations = reval.violations;
+                return reval.resume;
+            }, (pass) => {
+                sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+                violationLog.record('revalidate_post_keywords', 'experience_lock_restored');
+            });
+            violationLog.recordAll('revalidate_post_keywords', revalPostKeywordsViolations);
+            surfaced = await applyResumeIntegrity(surfaced, baseline, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
             // close the silent-blanking path: the keyword-loop re-emit can drop projects[].highlights
             surfaced = restoreProjectHighlights(projectHighlightsSnapshot, surfaced);
             finalResume = surfaced;

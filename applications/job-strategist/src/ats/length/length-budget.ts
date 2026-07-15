@@ -142,15 +142,19 @@ function hardTrimProjects(resume: StructuredResumeData): StructuredResumeData {
     return { ...resume, projects };
 }
 
+/**
+ * Whole-bullet only: drop bullets beyond the per-role cap, never reword or
+ * truncate a surviving bullet. Experience is agent-owned (fillResumeExperience
+ * + the byte-identical lock in experience-lock.ts) once the dedicated agent
+ * has run -- a hard-trim rewrite here would defeat that lock downstream. The
+ * per-bullet word cap is now the agent's own prompt contract (Task 3), not a
+ * post-hoc rewrite; a bullet that ships over-length is a persona-tuning gap,
+ * not something this deterministic pass papers over.
+ */
 function hardTrimExperience(resume: StructuredResumeData): StructuredResumeData {
     const experience = (resume.experience ?? []).map((e) => ({
         ...e,
-        highlights: (e.highlights ?? [])
-            .slice(0, LENGTH_BUDGET.maxBulletsPerRole)
-            // Count cap alone is a no-op when a single surviving bullet is the
-            // over-budget one (e.g. the module's own 91-word motivating
-            // incident) — trim every bullet to the per-bullet word cap too.
-            .map((h) => (words(h) > LENGTH_BUDGET.perBulletWords ? trimSentences(h, LENGTH_BUDGET.perBulletWords) : h)),
+        highlights: (e.highlights ?? []).slice(0, LENGTH_BUDGET.maxBulletsPerRole),
     }));
     return { ...resume, experience };
 }

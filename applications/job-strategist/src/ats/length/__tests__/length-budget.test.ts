@@ -72,12 +72,17 @@ describe('hardTrim', () => {
         expect(out.experience[0].highlights).toHaveLength(LENGTH_BUDGET.maxBulletsPerRole);
     });
 
-    it('trims a single over-long bullet to the per-bullet word cap even when the role has <= 5 bullets (F7)', () => {
-        // The count cap alone is a no-op here (2 bullets, well under maxBulletsPerRole)
-        // but the second bullet is the module's own 91-word motivating incident.
-        // The over-budget trigger is 'total' (via bloated projects), mirroring the
-        // real run this module's docstring cites: projects blown out AND a
-        // 91-word bullet surviving because the count cap alone is a no-op.
+    it('a >32-word bullet now SURVIVES hard trim untouched -- the per-bullet cap moved to the agent contract (F7, superseded by Task 2 experience-lock)', () => {
+        // Was: hardTrimExperience truncated any surviving bullet over
+        // perBulletWords via trimSentences. Task 2 (job-strategist experience
+        // e2e-provenance) made Experience agent-owned and BYTE-IDENTICAL once
+        // fillResumeExperience has run -- see experience-lock.ts's
+        // withExperienceLock, which every run-pipeline.ts downstream pass
+        // (including applyLengthBudget/hardTrim) is now wrapped in. A rewrite
+        // here would be reverted by that lock anyway, so hardTrimExperience
+        // was simplified to whole-bullet slicing only (drop bullets beyond
+        // maxBulletsPerRole); the per-bullet word cap is now the Experience
+        // agent's own prompt contract (Task 3), not a post-hoc rewrite.
         const shortBullet = 'Cut enrichment cost to near-zero via dedup caching.';
         const longBullet = sentence(91);
         const r = base({
@@ -89,10 +94,11 @@ describe('hardTrim', () => {
         const out = hardTrim(r);
 
         expect(out.experience[0].highlights).toHaveLength(2);
-        expect(wordCount(out.experience[0].highlights[1])).toBeLessThanOrEqual(LENGTH_BUDGET.perBulletWords);
-        // Short bullet is untouched — no needless truncation.
+        // The long bullet survives byte-identical -- no truncation.
+        expect(out.experience[0].highlights[1]).toBe(longBullet);
+        expect(wordCount(out.experience[0].highlights[1])).toBeGreaterThan(LENGTH_BUDGET.perBulletWords);
+        // Short bullet is untouched too -- no needless truncation.
         expect(out.experience[0].highlights[0]).toBe(shortBullet);
-        expect(measureResume(out).experience).toBeLessThanOrEqual(LENGTH_BUDGET.experienceWords);
     });
 
     it('trims middle summary sentences, keeping the first and the closing metric', () => {

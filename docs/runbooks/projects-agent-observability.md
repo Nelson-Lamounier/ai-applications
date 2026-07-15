@@ -37,20 +37,28 @@ Every Loki event carries `pipeline_run_id`, `application_id`, and `trace_id`
 - `job_strategist_projects_agent_coverage` (Histogram, buckets `[0..6]`) --
   covered ATS targets in the FIRST pass; sampled only when targets exist and the
   run did not fall back.
-- `job_strategist_section_net_fired_total{section, pass}` (Counter,
-  `section = experience | projects`, `pass = guard | length | surface_keywords`)
-  -- increments when a downstream safety-net pass CHANGED an agent-owned
-  section after its fill pass ran. This is the retirement evidence for
-  `guard` and `surface_keywords` on `section="projects"`: those trending to
-  zero means the agent delivers fidelity/keywords by construction, and
+- `job_strategist_section_net_fired_total{section, pass, outcome}` (Counter,
+  `section = experience | projects`, `pass = guard | length | surface_keywords`
+  plus experience-only `reframe | metric_weave | revalidate`, `outcome = changed
+  | restored`) -- increments when a downstream safety-net pass diverged from
+  the pre-pass section snapshot. This is the retirement evidence for `guard`
+  and `surface_keywords` on `section="projects"`: `outcome="changed"` trending
+  to zero means the agent delivers fidelity/keywords by construction, and
   sustained firings mean it under-delivers (read the Loki events to see what
   changed). `pass="length"` is NOT a retirement signal -- it legitimately
   fires whenever the combined resume exceeds the page budget and trimming
-  touches projects. NOTE: PR-B removed the OLD, experience-only
+  touches projects. `section="projects"` has no immutability lock (unlike
+  `section="experience"`, see below), so it only ever emits
+  `outcome="changed"` -- `outcome="restored"` never appears for projects.
+  NOTE: PR-B removed the OLD, experience-only
   `job_strategist_experience_net_fired_total{pass}` counter this generalised
-  one superseded (`section="experience"` here is its exact equivalent) --
-  see the experience-agent-observability runbook for the experience-scoped
-  panel query.
+  one superseded (`section="experience"` here is its exact equivalent). The
+  job-strategist experience e2e-provenance work then wrapped every
+  `section="experience"` call site in `withExperienceLock`
+  (`agents/writer/experience-lock.ts`), turning that section's
+  `outcome="changed"` tripwire into enforcement (it now reads ~0; watch
+  `outcome="restored"` instead) -- see the experience-agent-observability
+  runbook for the experience-scoped panel query and semantics.
 - `job_strategist_projects_repo_unresolved_total` (Counter, unlabelled) --
   incremented by the COUNT of repo-citation names that failed fail-closed
   attribution to a known project's repository ID during pool construction
@@ -64,7 +72,7 @@ Panels (datasource UID `prometheus`):
 sum by (outcome) (increase(job_strategist_projects_agent_outcome_total[$__range]))
 sum by (outcome, reason) (increase(job_strategist_projects_agent_outcome_total[$__range]))
 sum by (le) (increase(job_strategist_projects_agent_coverage_bucket[$__range]))
-sum by (pass) (increase(job_strategist_section_net_fired_total{section="projects"}[$__range]))
+sum by (pass, outcome) (increase(job_strategist_section_net_fired_total{section="projects"}[$__range]))
 increase(job_strategist_projects_repo_unresolved_total[$__range])
 ```
 
@@ -162,10 +170,13 @@ ORDER BY invoked_at;
 - `outcome=aware`/`rewritten` dominate; a rising `fallback{reason=provenance-invalid}`
   means the agent is mis-citing across projects or over-composing -- read the
   `_provenance_reject` tokens and tune the persona, never loosen the validator.
-- `section_net_fired_total{section="projects",pass="surface_keywords"}`
+- `section_net_fired_total{section="projects",pass="surface_keywords",outcome="changed"}`
   trending to zero = the agent covers ATS keywords by construction; sustained
   firings = coverage gap, check which targets `projects_agent_scored` reports
-  missing.
+  missing. (Projects has no immutability lock yet, so `outcome="changed"`
+  is still the live signal here -- unlike `section="experience"`, where the
+  same label now reads ~0 because the lock restores every divergence; see
+  the experience-agent-observability runbook.)
 - `kept_first{reason=no-coverage-gain}` sustained high = the re-write pass
   burns a Sonnet call without improving coverage -- candidate for tuning or
   removal.

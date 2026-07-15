@@ -30,18 +30,29 @@ Every Loki event carries `pipeline_run_id`, `application_id`, and `trace_id`
 - `job_strategist_experience_agent_coverage` (Histogram, buckets `[0..6]`) --
   covered ATS targets in the FIRST pass; sampled only when targets exist and the
   run did not fall back.
-- `job_strategist_section_net_fired_total{section="experience", pass}`
-  (Counter, `pass = guard | length | surface_keywords`) -- increments when a
-  downstream safety-net pass CHANGED the experience section after the agent.
-  This is the retirement evidence for `guard` and `surface_keywords`: those
-  trending to zero means the agent delivers fidelity/keywords by
-  construction, and sustained firings mean it under-delivers (read the Loki
-  events to see what changed). `pass=length` is NOT a retirement signal -- it
-  legitimately fires whenever the combined resume exceeds the page budget and
-  trimming touches experience. PR-B removed the older, experience-only
-  `job_strategist_experience_net_fired_total{pass}` counter this generalised
-  one superseded (see the projects-agent-observability runbook, which shares
-  the same counter across both agent-owned sections).
+- `job_strategist_section_net_fired_total{section="experience", pass, outcome}`
+  (Counter, `pass = guard | length | reframe | metric_weave | revalidate |
+  surface_keywords`, `outcome = changed | restored`) -- increments when a
+  downstream safety-net pass diverged from the pre-pass experience snapshot.
+  Since the job-strategist experience e2e-provenance work (`withExperienceLock`,
+  `agents/writer/experience-lock.ts`), every one of those passes runs inside
+  the lock: `outcome="changed"` is the ORIGINAL tripwire increment (the pass's
+  raw output diverged) and should now read effectively ZERO for
+  `section="experience"` -- the lock always restores the divergence before it
+  reaches the next stage. `outcome="restored"` is the live signal: it fires
+  exactly when the lock caught and reverted a divergence, i.e. the pass tried
+  to touch agent-owned Experience. Sustained `restored` firings on `guard` or
+  `surface_keywords` mean the agent under-delivers fidelity/keywords by
+  construction (read the Loki events to see what changed before the revert).
+  `pass="length"` firing `restored` is less alarming on its own -- length
+  budget legitimately WANTS to touch experience when the resume is over
+  budget, and the lock is what stops it, so a nonzero rate here is expected
+  whenever the run overflows the page budget. PR-B removed the older,
+  experience-only `job_strategist_experience_net_fired_total{pass}` counter
+  this generalised one superseded (see the projects-agent-observability
+  runbook, which shares the same counter across both agent-owned sections --
+  `section="projects"` has no lock yet, so it only ever emits
+  `outcome="changed"`).
 
 Panels (datasource UID `prometheus`):
 
@@ -49,7 +60,7 @@ Panels (datasource UID `prometheus`):
 sum by (outcome) (increase(job_strategist_experience_agent_outcome_total[$__range]))
 sum by (outcome, reason) (increase(job_strategist_experience_agent_outcome_total[$__range]))
 sum by (le) (increase(job_strategist_experience_agent_coverage_bucket[$__range]))
-sum by (pass) (increase(job_strategist_section_net_fired_total{section="experience"}[$__range]))
+sum by (pass, outcome) (increase(job_strategist_section_net_fired_total{section="experience"}[$__range]))
 ```
 
 ## Surface 2 -- Loki event stream
@@ -129,10 +140,14 @@ ORDER BY invoked_at;
 - `outcome=aware`/`rewritten` dominate; a rising `fallback{reason=provenance-invalid}`
   means the agent is mis-citing -- read the `_provenance_reject` tokens and tune
   the persona, never loosen the validator.
-- `section_net_fired_total{section="experience",pass="surface_keywords"}`
-  trending to zero = the agent covers ATS keywords by construction; sustained
+- `section_net_fired_total{section="experience",pass="surface_keywords",outcome="restored"}`
+  trending to zero = the agent covers ATS keywords by construction (surface-keywords
+  never needed to touch experience, so the lock never fired); sustained
   firings = coverage gap, check which targets `experience_agent_scored`
-  reports missing.
+  reports missing. `outcome="changed"` on ANY pass for `section="experience"`
+  should never be nonzero -- if it is, a call site is missing its
+  `withExperienceLock` wrap (experience-lock.ts); treat that as a bug, not a
+  tuning signal.
 - `kept_first{reason=no-coverage-gain}` sustained high = the re-write pass burns
   a Sonnet call without improving coverage -- candidate for tuning or removal.
 - Dropped-lines counts in the diagnostics show how much of the user's history is
