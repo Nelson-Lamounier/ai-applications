@@ -63,6 +63,10 @@
         "version": "1",
         "sha256": "50b3136f1b6cb2bf3d0a0c383f550d25887d413dc314a2883d19b9adc22b8625"
     },
+    "strategist/cover-letter-agent": {
+        "version": "1",
+        "sha256": "718ad2385e5e566bf8a34a99ab40ac6001d796ac8eb6e2f0a6c333f8fdb32397"
+    },
     "strategist/experience": {
         "version": "3",
         "sha256": "e54b143c9f4339dd09fc5518d45771f455c422387f53b5c2dd28ad22fb1810a2"
