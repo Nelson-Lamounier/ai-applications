@@ -6,7 +6,7 @@
  * + an invented company label "Solo-built production SaaS platform (Tucaken)"),
  * shipping the same job twice on one resume.
  */
-import { reconcileExperienceRoster } from './experience-roster.js';
+import { reconcileExperienceRoster } from '../experience-roster.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const CAREER = [

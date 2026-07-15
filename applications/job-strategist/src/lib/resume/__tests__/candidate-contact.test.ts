@@ -10,7 +10,7 @@
  * arrives as a labelled user-message section sourced from the user's own data.
  */
 import { describe, it, expect } from '@jest/globals';
-import { formatCandidateContact, pickContact, type CandidateContact } from './candidate-contact.js';
+import { formatCandidateContact, pickContact, type CandidateContact } from '../candidate-contact.js';
 
 describe('pickContact', () => {
     it('prefers the latest resume profile (the contact the user actually publishes)', () => {

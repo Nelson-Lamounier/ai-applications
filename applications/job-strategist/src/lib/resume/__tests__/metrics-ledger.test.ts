@@ -6,7 +6,7 @@
  * the other evidence blocks), so extraction must preserve sentences verbatim.
  */
 import { describe, it, expect } from '@jest/globals';
-import { extractMetricSentences, formatMetricsLedger, resumeHasMetric, composeMetricsBlock } from './metrics-ledger.js';
+import { extractMetricSentences, formatMetricsLedger, resumeHasMetric, composeMetricsBlock } from '../metrics-ledger.js';
 
 describe('extractMetricSentences', () => {
     it('keeps only sentences that carry a number, verbatim', () => {

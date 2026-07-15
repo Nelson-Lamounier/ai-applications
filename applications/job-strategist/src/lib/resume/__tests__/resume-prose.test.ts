@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { extractResumeProseSections } from './resume-prose.js';
+import { extractResumeProseSections } from '../resume-prose.js';
 import type { StructuredResumeData, CoverLetter } from '@bedrock/shared';
 
 const RESUME = {

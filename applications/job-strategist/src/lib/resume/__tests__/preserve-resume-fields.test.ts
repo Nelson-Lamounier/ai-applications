@@ -1,5 +1,5 @@
 /** @format */
-import { preserveResumeFields } from './preserve-resume-fields.js';
+import { preserveResumeFields } from '../preserve-resume-fields.js';
 import type { StructuredResumeData } from '@bedrock/shared';
 
 const original = {

@@ -1,5 +1,5 @@
 /** @format */
-import { lintSummary, ensureSummaryIntegrity } from './summary-integrity.js';
+import { lintSummary, ensureSummaryIntegrity } from '../summary-integrity.js';
 
 const BROKEN =
 	'Platform builds containerised, automated infrastructure greenfield, Docker multi-service environments. ' +
