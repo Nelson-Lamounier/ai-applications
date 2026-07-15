@@ -4,7 +4,7 @@
  * rules flagged, via the shared emit_resume tool. FAIL-OPEN: returns the
  * input resume on any error — a failed repair must never void a paid run.
  */
-import { CLAIM_STRENGTH_RULE } from '../../../lib/claim-strength.js';
+import { CLAIM_STRENGTH_RULE } from '../../../lib/resume/claim-strength.js';
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../../writer/resume-tool-schema.js';

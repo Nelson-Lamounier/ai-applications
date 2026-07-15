@@ -36,11 +36,11 @@ import {
 import type { BasePipelineContext } from '@bedrock/shared';
 
 import { parseClusteringEnv } from './env-clustering.js';
-import { getPool, closePool } from './lib/pg.js';
+import { getPool, closePool } from './lib/db/pg.js';
 import {
     updatePipelineRun,
     updatePipelineRunMetadata,
-} from './lib/pipeline-runs.js';
+} from './lib/db/pipeline-runs.js';
 
 const FEATURE_FLAG = 'projects.clustering.enabled';
 

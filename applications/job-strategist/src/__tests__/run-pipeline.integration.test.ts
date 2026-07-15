@@ -91,12 +91,12 @@ jest.mock('../env', () => ({
     parseEnv: jest.fn(),
 }));
 
-jest.mock('../lib/pg', () => ({
+jest.mock('../lib/db/pg', () => ({
     getPool: jest.fn(),
     closePool: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../lib/pipeline-runs', () => ({
+jest.mock('../lib/db/pipeline-runs', () => ({
     updatePipelineRun:          jest.fn().mockResolvedValue(undefined),
     updatePipelineRunMetadata:  jest.fn().mockResolvedValue(undefined),
     updateJobApplicationStatus: jest.fn().mockResolvedValue(undefined),
@@ -500,9 +500,9 @@ describe('job-strategist run-pipeline — grounding (flag + block modes, in-proc
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { parseEnv }               = require('../env') as { parseEnv: jest.Mock };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getPool }                = require('../lib/pg') as { getPool: jest.Mock };
+    const { getPool }                = require('../lib/db/pg') as { getPool: jest.Mock };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { updatePipelineRunMetadata } = require('../lib/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock };
+    const { updatePipelineRunMetadata } = require('../lib/db/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock };
 
     /** Minimal env returned by mocked parseEnv */
     const FAKE_ENV = {
@@ -672,9 +672,9 @@ describe('job-strategist run-pipeline — semantic cache (in-process)', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { parseEnv }               = require('../env') as { parseEnv: jest.Mock };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getPool }                = require('../lib/pg') as { getPool: jest.Mock };
+    const { getPool }                = require('../lib/db/pg') as { getPool: jest.Mock };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { updatePipelineRunMetadata, persistTailoredResume } = require('../lib/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock; persistTailoredResume: jest.Mock };
+    const { updatePipelineRunMetadata, persistTailoredResume } = require('../lib/db/pipeline-runs') as { updatePipelineRunMetadata: jest.Mock; persistTailoredResume: jest.Mock };
 
     const executeResearchAgentMock        = executeResearchAgent;
     const executeStrategistAgentMock      = executeStrategistAgent;

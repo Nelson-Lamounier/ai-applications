@@ -1,7 +1,7 @@
 /** @format */
 import type { Pool } from 'pg';
 import { repoOfFile } from '../../ats/grounding/evidence-lane.js';
-import { withUserRls } from '../../lib/rls.js';
+import { withUserRls } from '../../lib/db/rls.js';
 import { loadProjectResumeBullets } from './project-evidence-block.js';
 
 /**

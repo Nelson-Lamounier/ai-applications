@@ -15,7 +15,7 @@
  * never mid-sentence chops. Bullets are ordered by JD relevance upstream, so
  * dropping from the end removes the least relevant content first.
  */
-import { CLAIM_STRENGTH_RULE } from '../../lib/claim-strength.js';
+import { CLAIM_STRENGTH_RULE } from '../../lib/resume/claim-strength.js';
 import { runAgent, log } from '@bedrock/shared';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../../agents/writer/resume-tool-schema.js';

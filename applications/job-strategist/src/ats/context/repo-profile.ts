@@ -20,7 +20,7 @@
 
 import type { Pool } from 'pg';
 
-import { withUserRls } from '../../lib/rls.js';
+import { withUserRls } from '../../lib/db/rls.js';
 
 /** IaC / delivery frameworks (ontology canonicals) that define HOW infra is built. */
 const FRAMEWORK_CANONICALS = new Set([

@@ -15,8 +15,8 @@
 import { z } from 'zod';
 import { BaseAgent, parseJsonResponse, log, validateSkillTransfer } from '@bedrock/shared';
 import { assembleCoachSystemPrompt } from '../../prompts/coach/stages/index.js';
-import { deepStripCdata } from '../../lib/strip-cdata.js';
-import { groundTalkingPoints } from '../../lib/ground-talking-points.js';
+import { deepStripCdata } from '../../lib/text/strip-cdata.js';
+import { groundTalkingPoints } from '../../lib/coach/ground-talking-points.js';
 import type {
     AgentConfig,
     AgentResult,

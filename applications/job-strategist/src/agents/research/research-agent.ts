@@ -30,7 +30,7 @@ import { loadCareerHistory, formatCareerHistory, type CareerEntry } from '../evi
 import { jdRetrievalQueries, formatJdExtraction } from '../jd/jd-extractor.js';
 import { assessmentsToMatching } from './research-assessment.js';
 import { canonicalJdSkills } from '../../ats/context/canonical-jd-skills.js';
-import { computeKbStats } from '../../lib/kb-stats.js';
+import { computeKbStats } from '../../lib/grounding/kb-stats.js';
 import type { Pool } from 'pg';
 import type {
     AgentConfig,
