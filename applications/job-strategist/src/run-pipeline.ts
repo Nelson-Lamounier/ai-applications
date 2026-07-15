@@ -566,8 +566,9 @@ function projSnapshot(resume: StructuredResumeData | null): string {
  * doesn't grow main()'s already-flagged complexity by inlining a second
  * comparison at each site). Emits the generalised
  * job_strategist_section_net_fired_total{section,pass} for BOTH agent-owned
- * sections, plus the original job_strategist_experience_net_fired_total{pass}
- * for experience only -- see sectionNetFiredMetric's comment above.
+ * sections -- see sectionNetFiredMetric's comment above. PR-B removed the
+ * older, experience-only job_strategist_experience_net_fired_total{pass}
+ * counter this generalised one superseded.
  */
 function trackNetFired(
     pass: 'guard' | 'length' | 'surface_keywords',
@@ -575,7 +576,6 @@ function trackNetFired(
     beforeProj: string, afterProj: string,
 ): void {
     if (beforeExp !== afterExp) {
-        experienceNetFiredMetric.inc({ pass });
         sectionNetFiredMetric.inc({ section: 'experience', pass });
     }
     if (beforeProj !== afterProj) {
@@ -810,23 +810,16 @@ const experienceAgentCoverageMetric = new Histogram({
     buckets:    [0, 1, 2, 3, 4, 5, 6],
     registers:  [obs.registry],
 });
-// Safety-net signal: experience is agent-owned once fillResumeExperience has
-// run (provenance-guarded bullets), so a downstream guard/length/keyword-
-// surface pass changing it is unexpected. preserveExperienceRoster only
-// guarantees no ROLE is dropped -- it does not stop a pass rewriting a
-// bullet within a role that survives -- so this counter is the only signal
-// for that narrower drift. Ideally always zero; a nonzero rate over time is
-// the lead to investigate.
-const experienceNetFiredMetric = new Counter({
-    name:       'job_strategist_experience_net_fired_total',
-    help:       'Downstream passes (guard/length/surface_keywords) that changed the agent-owned Experience section after fillResumeExperience ran.',
-    labelNames: ['pass'] as const,
-    registers:  [obs.registry],
-});
-// Generalised twin of experienceNetFiredMetric above, covering BOTH agent-owned
-// sections (experience, projects) behind one metric name. experienceNetFiredMetric
-// is kept emitting unchanged for continuity -- PR-B removes it once dashboards
-// migrate to this one (section='experience' here is its exact equivalent).
+// Safety-net signal: experience/projects are agent-owned once their fill
+// passes have run (provenance-guarded bullets), so a downstream
+// guard/length/keyword-surface pass changing either is unexpected.
+// preserveExperienceRoster only guarantees no ROLE is dropped -- it does not
+// stop a pass rewriting a bullet within a role that survives -- so this
+// counter is the only signal for that narrower drift. Ideally always zero; a
+// nonzero rate over time is the lead to investigate. Generalises the older,
+// experience-only job_strategist_experience_net_fired_total{pass} counter
+// (removed PR-B) to cover BOTH agent-owned sections behind one metric name
+// (section='experience' here is that counter's exact equivalent).
 const sectionNetFiredMetric = new Counter({
     name:       'job_strategist_section_net_fired_total',
     help:       'Downstream passes (guard/length/surface_keywords) that changed an agent-owned section (experience/projects) after its fill pass ran.',

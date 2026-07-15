@@ -31,57 +31,17 @@
         "version": "3",
         "sha256": "3ac4c92db2186686c741721e992bc0f94ce3ae1b8c513007a959a90cf773d5f8"
     },
-    "strategist/_base_1": {
-        "version": "6",
-        "sha256": "c8965e06aa0e912df4450ff1a539babcc099bc2a78cd445d8e502027fd6de466"
-    },
-    "strategist/_base_2": {
-        "version": "1",
-        "sha256": "7d3ce23ea95bd76e81cbfba151d82105808430b40b258711592d63b5bb4d5ab5"
-    },
-    "strategist/_base_3": {
-        "version": "4",
-        "sha256": "8f665ab3c9f471eb3bcbfbd6fab4a60330ef1a3952436b0f0c088341f5ebe518"
-    },
-    "strategist/_base_4": {
-        "version": "3",
-        "sha256": "31effbbe408d5fc84a29d1310e7fbe425cfc4d3132e6b84ef698cc1d03c5a0e0"
-    },
-    "strategist/_base_5": {
-        "version": "3",
-        "sha256": "58d33213e52f3e6536c9d91f615078991eb3ebb44a29ebb67fdb21238b61d15d"
-    },
     "strategist/analysis-agent": {
         "version": "1",
         "sha256": "bcf7cedf2fbca9e70446233589a8d06b3b83f531047eae85b57906691589a1c0"
-    },
-    "strategist/archetype": {
-        "version": "1",
-        "sha256": "ca8c1f6a38e0272d7261eed29e79ee5444a325bba14b7ad3de788ac46e056833"
-    },
-    "strategist/cover-letter": {
-        "version": "1",
-        "sha256": "50b3136f1b6cb2bf3d0a0c383f550d25887d413dc314a2883d19b9adc22b8625"
     },
     "strategist/cover-letter-agent": {
         "version": "1",
         "sha256": "718ad2385e5e566bf8a34a99ab40ac6001d796ac8eb6e2f0a6c333f8fdb32397"
     },
-    "strategist/experience": {
-        "version": "3",
-        "sha256": "e54b143c9f4339dd09fc5518d45771f455c422387f53b5c2dd28ad22fb1810a2"
-    },
     "strategist/experience-agent": {
         "version": "1",
         "sha256": "483f0a2f00d7af7791ff3422d9cefdcce07d3f269a8dac2d7f26481c359deaf9"
-    },
-    "strategist/gaps": {
-        "version": "1",
-        "sha256": "f11bd5d060f54a85fda6411b64b034be2ef5044c0a4ca34d7daac11747b5ed9a"
-    },
-    "strategist/projects": {
-        "version": "3",
-        "sha256": "7d9cb2a2883edbbe622889f6bf64f6d8808023040d850e3beb1d5607211809b5"
     },
     "strategist/projects-agent": {
         "version": "1",
@@ -90,10 +50,6 @@
     "strategist/skills-agent": {
         "version": "1",
         "sha256": "d1032ab8ab1f6b3f5f376966995acebcbea64864dc7f49773c0119ed4fba5752"
-    },
-    "strategist/skills-education": {
-        "version": "1",
-        "sha256": "6bc5548b1df0104f914ca1e8a6aa8519b34d7deb032119d50fcb7b10d114801a"
     },
     "strategist/summary": {
         "version": "5",

@@ -46,11 +46,11 @@ Every Loki event carries `pipeline_run_id`, `application_id`, and `trace_id`
   sustained firings mean it under-delivers (read the Loki events to see what
   changed). `pass="length"` is NOT a retirement signal -- it legitimately
   fires whenever the combined resume exceeds the page budget and trimming
-  touches projects. NOTE: the OLD, experience-only
-  `job_strategist_experience_net_fired_total{pass}` counter is STILL emitted
-  in parallel (`section="experience"` here is its exact equivalent) --
-  dashboards should migrate to `job_strategist_section_net_fired_total` and
-  the old counter is removed in PR-B, not this one.
+  touches projects. NOTE: PR-B removed the OLD, experience-only
+  `job_strategist_experience_net_fired_total{pass}` counter this generalised
+  one superseded (`section="experience"` here is its exact equivalent) --
+  see the experience-agent-observability runbook for the experience-scoped
+  panel query.
 - `job_strategist_projects_repo_unresolved_total` (Counter, unlabelled) --
   incremented by the COUNT of repo-citation names that failed fail-closed
   attribution to a known project's repository ID during pool construction

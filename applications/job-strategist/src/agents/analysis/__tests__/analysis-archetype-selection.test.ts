@@ -1,17 +1,19 @@
 /**
  * @format
- * Strategist Agent — Phase 0 archetype selection extraction.
+ * Analysis Agent — Phase 0 archetype selection extraction.
  *
- * Covers the clamp guard in `extractArchetypeSelection` so that
- * any newly-added archetype ID is not silently clamped to 1.
+ * Relocated from `agents/writer/__tests__/strategist-archetype-selection.test.ts`
+ * (Phase 5 PR-B Task 8 -- the writer's deletion): `extractArchetypeSelection`
+ * moved to `analysis-extractors.ts` in Task 3, byte-identical. Covers the
+ * clamp guard so that any newly-added archetype ID is not silently clamped to 1.
  */
 
-import type { extractArchetypeSelection as ExtractArchetypeSelectionFn } from '../strategist-agent.js';
+import type { extractArchetypeSelection as ExtractArchetypeSelectionFn } from '../analysis-extractors.js';
 
 let extractArchetypeSelection: typeof ExtractArchetypeSelectionFn;
 
 beforeAll(async () => {
-    ({ extractArchetypeSelection } = await import('../strategist-agent.js'));
+    ({ extractArchetypeSelection } = await import('../analysis-extractors.js'));
 });
 
 const wrap = (archetypeId: number, selectedArchetype: string) => `
