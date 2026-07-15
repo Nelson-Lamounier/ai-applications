@@ -17,7 +17,7 @@ import type { StrategistPipelineContext, StrategistResearchResult, StructuredRes
 import type { Pool } from 'pg';
 import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
-import { extractResumeProseSections } from './lib/resume-prose.js';
+import { extractResumeProseSections } from './lib/resume/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research/research-agent.js';
 import { executeAnalysisAgent } from './agents/analysis/analysis-agent.js';
@@ -27,8 +27,8 @@ import { validateSkillsMembership, deterministicSkills, SkillsValidationError } 
 import type { SkillsMessageInput } from './agents/writer/skills-message.js';
 import { executeCoverLetterAgent } from './agents/writer/cover-letter-agent.js';
 import type { CoverLetterMessageInput } from './agents/writer/cover-letter-message.js';
-import { buildSkeletonResume } from './lib/resume-skeleton.js';
-import { reconcileResume, type ReconcileInputs } from './lib/resume-reconciler.js';
+import { buildSkeletonResume } from './lib/resume/resume-skeleton.js';
+import { reconcileResume, type ReconcileInputs } from './lib/resume/resume-reconciler.js';
 import { stageSeconds } from './lib/observability/stage-timing.js';
 import { framingDirective } from './agents/writer/framing.js';
 import { executeSummaryAgent } from './agents/writer/summary-agent.js';
@@ -51,7 +51,7 @@ import type { ProjectResumeBulletSet } from './agents/evidence/project-evidence-
 import type { JdPriorityContext } from './ats/length/length-budget.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { createViolationLog } from './lib/observability/violation-log.js';
-import { loadCandidateContact, formatCandidateContact } from './lib/candidate-contact.js';
+import { loadCandidateContact, formatCandidateContact } from './lib/resume/candidate-contact.js';
 import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
 import { applyLengthBudget } from './ats/length/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/grounding/ledger-provenance.js';
@@ -103,14 +103,14 @@ import { buildRetrievalPrefilter } from './ats/context/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
 import { extractNumbers, stripUngroundedNumbers } from './ats/grounding/number-provenance.js';
 import { buildGroundingFacts } from './ats/grounding/grounding-facts.js';
-import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
-import { reconcileExperienceRoster } from './lib/experience-roster.js';
+import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/resume/metrics-ledger.js';
+import { reconcileExperienceRoster } from './lib/resume/experience-roster.js';
 import { surfaceMetrics } from './agents/quality/surface-metrics.js';
 import { surfaceKeywords } from './agents/quality/surface-keywords.js';
 import { stripDocumentSections } from './lib/text/strip-document-sections.js';
 import { dedupeSkillGaps } from './lib/dedupe-skill-gaps.js';
-import { ensureSummaryIntegrity } from './lib/summary-integrity.js';
-import { preserveResumeFields } from './lib/preserve-resume-fields.js';
+import { ensureSummaryIntegrity } from './lib/resume/summary-integrity.js';
+import { preserveResumeFields } from './lib/resume/preserve-resume-fields.js';
 
 /**
  * GROUNDED echoes the verifier's (document-stripped) answer back — keep the

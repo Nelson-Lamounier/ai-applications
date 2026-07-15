@@ -20,7 +20,7 @@
  */
 import type { AgentConfig } from '@bedrock/shared';
 import { runAgent, log } from '@bedrock/shared';
-import { extractNumbers } from '../ats/grounding/number-provenance.js';
+import { extractNumbers } from '../../ats/grounding/number-provenance.js';
 import { CLAIM_STRENGTH_RULE } from './claim-strength.js';
 
 const MODEL_ID = process.env['RESUME_REWRITE_MODEL'] ?? 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';

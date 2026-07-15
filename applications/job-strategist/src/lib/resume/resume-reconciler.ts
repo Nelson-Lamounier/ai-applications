@@ -9,7 +9,7 @@
  * project-less candidate is never padded with invented projects.
  */
 import type { StructuredResumeData } from '@bedrock/shared';
-import { TailoredResumeSchema } from '../schemas/tailored-resume.schema.js';
+import { TailoredResumeSchema } from '../../schemas/tailored-resume.schema.js';
 
 export type RepairedSection = 'experience' | 'projects' | 'skills';
 

@@ -23,7 +23,7 @@ import { COACH_PROMPT_META } from '../coach/coach-agent.js';
 import { RESUME_CONDENSE_PROMPT_META, RESUME_EXPAND_PROMPT_META } from '../../ats/length/length-budget.js';
 import { MIGRATION_REFRAME_PROMPT_META } from '../../ats/reconcile/migration-reframe.js';
 import { CORRECTIVE_RETRIEVAL_PROMPT_META } from '../../lib/corrective-retrieval.js';
-import { SUMMARY_REPAIR_PROMPT_META } from '../../lib/summary-integrity.js';
+import { SUMMARY_REPAIR_PROMPT_META } from '../../lib/resume/summary-integrity.js';
 
 const METAS = [
     SURFACE_KEYWORDS_PROMPT_META,

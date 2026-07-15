@@ -17,7 +17,7 @@
  */
 
 import { runAgent, log } from '@bedrock/shared';
-import { CLAIM_STRENGTH_RULE } from '../../lib/claim-strength.js';
+import { CLAIM_STRENGTH_RULE } from '../../lib/resume/claim-strength.js';
 import type { AgentConfig, BasePipelineContext, StructuredResumeData } from '@bedrock/shared';
 import { ResumeRewriteSchema, buildEmitResumeTool } from '../writer/resume-tool-schema.js';
 

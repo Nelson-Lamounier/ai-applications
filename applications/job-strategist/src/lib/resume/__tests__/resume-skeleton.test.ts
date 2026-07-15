@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from '@jest/globals';
 import { buildSkeletonResume } from '../resume-skeleton.js';
-import type { CareerEntry, EducationEntry, CertificationEntry } from '../../agents/evidence/career-history.js';
+import type { CareerEntry, EducationEntry, CertificationEntry } from '../../../agents/evidence/career-history.js';
 
 const CAREER: CareerEntry[] = [
     { title: 'Cloud & DevOps Engineer', company: 'Freelance', period: '2022 - Present', highlights: ['built X', 'shipped Y'] },

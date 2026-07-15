@@ -9,7 +9,7 @@
  * "genuinely empty".
  */
 import type { StructuredResumeData } from '@bedrock/shared';
-import type { CareerEntry, EducationEntry, CertificationEntry } from '../agents/evidence/career-history.js';
+import type { CareerEntry, EducationEntry, CertificationEntry } from '../../agents/evidence/career-history.js';
 
 export interface SkeletonContact {
     readonly name: string;
