@@ -45,7 +45,12 @@ const outputSanitiser = new OutputSanitiser();
 const ANALYSIS_CONFIG: AgentConfig = {
     agentName: 'strategist-analysis',
     modelId: EFFECTIVE_MODEL_ID,
-    maxTokens: 8000,
+    // 24000 not 8000: Bedrock counts the thinking budget INSIDE maxTokens, and
+    // a gap-heavy JD (17 gaps on the first live run, d192c81a) truncated the
+    // narrative at exactly 8000/8000 -> load-bearing pipeline failure. The old
+    // writer ran 64000 for analysis+resume+letter combined; 24000 bounds the
+    // narrative alone with ample headroom.
+    maxTokens: 24000,
     thinkingBudget: 2048,
     systemPrompt: STRATEGIST_ANALYSIS_SYSTEM_PROMPT,
     pipeline: 'job-strategist',
