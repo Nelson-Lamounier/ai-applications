@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { resolveExperienceAts } from '../experience-ats-flow.js';
+import { resolveExperienceAts, boundDropped } from '../experience-ats-flow.js';
 import { indexCareerLines, rosterFromCareer } from '../experience-provenance.js';
 import type { ExperienceAgentOutput } from '../experience-schema.js';
 import type { ExperienceAtsTarget } from '../../../ats/gate/experience-ats-targets.js';
@@ -61,6 +61,34 @@ describe('resolveExperienceAts', () => {
     expect(r.output).toBe(rewriteFull);
     expect(r.diag.provenance.rewriteViolations).toEqual([]);
     expect(r.diag.provenance.firstViolations).toEqual([]);
+    expect(r.diag.provenance.dropped).toEqual([]);
+  });
+
+  it('propagates bounded accounting.dropped from the kept candidate into diag.provenance.dropped', async () => {
+    const firstWithDropped: ExperienceAgentOutput = {
+      ...first,
+      accounting: { dropped: [{ line: 'c1.h1', reason: 'no ATS-relevant claim survives without fabricating scope' }] },
+    };
+    const r = await resolveExperienceAts({
+      first: firstWithDropped, roster, careerLines: lines, targets,
+      rewrite: async () => rewriteFull,
+    });
+    // kept === 'rewrite' here, so provenance.dropped must come from rewriteFull.accounting.dropped ([]), not first's
+    expect(r.diag.rewrite.kept).toBe('rewrite');
+    expect(r.diag.provenance.dropped).toEqual([]);
+  });
+
+  it('propagates bounded accounting.dropped from params.first on the no-rewrite path', async () => {
+    const fullyCoveredWithDropped: ExperienceAgentOutput = {
+      ...rewriteFull,
+      accounting: { dropped: [{ line: 'c1.h1', reason: 'redundant with kept bullet' }] },
+    };
+    const r = await resolveExperienceAts({
+      first: fullyCoveredWithDropped, roster, careerLines: lines, targets,
+      rewrite: async () => rewriteFull,
+    });
+    expect(r.diag.rewrite.fired).toBe(false);
+    expect(r.diag.provenance.dropped).toEqual([{ line: 'c1.h1', reason: 'redundant with kept bullet' }]);
   });
 
   it('keeps first when the re-write gains no coverage', async () => {
@@ -165,5 +193,31 @@ describe('resolveExperienceAts', () => {
     expect(r.diag.rewrite.kept).toBe('first');
     expect(r.diag.rewrite.keptReason).toBe('rewrite-names-gap');
     expect(r.output).toBe(first);
+  });
+});
+
+describe('boundDropped', () => {
+  it('caps each reason at 200 characters', () => {
+    const longReason = 'x'.repeat(250);
+    const [result] = boundDropped([{ line: 'c0.h0', reason: longReason }]);
+    expect(result.reason).toHaveLength(200);
+    expect(result.reason).toBe(longReason.slice(0, 200));
+  });
+
+  it('leaves a reason under the cap untouched', () => {
+    const [result] = boundDropped([{ line: 'c0.h0', reason: 'short reason' }]);
+    expect(result.reason).toBe('short reason');
+  });
+
+  it('caps the array at 30 entries', () => {
+    const dropped = Array.from({ length: 40 }, (_, i) => ({ line: `c0.h${i}`, reason: 'unused' }));
+    const result = boundDropped(dropped);
+    expect(result).toHaveLength(30);
+    expect(result[0].line).toBe('c0.h0');
+    expect(result[29].line).toBe('c0.h29');
+  });
+
+  it('returns an empty array for an empty input', () => {
+    expect(boundDropped([])).toEqual([]);
   });
 });

@@ -289,6 +289,7 @@ async function fillResumeExperience(
                 firstViolations: err instanceof ExperienceProvenanceError ? err.violations : [],
                 rewriteViolations: [],
                 droppedLines: 0,
+                dropped: [],
             },
         };
     }

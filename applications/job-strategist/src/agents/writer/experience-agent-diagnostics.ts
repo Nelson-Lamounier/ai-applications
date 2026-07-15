@@ -20,6 +20,9 @@ export function logExperienceAgentEvents(log: EventLogger, keys: ExperienceAgent
   const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
   log.info({ ...base, event: 'experience_agent_targets', targets: diag.targets.map((t) => ({ skill: t.skill, source: t.source, verdict: t.verdict })) }, 'experience_agent_targets');
   log.info({ ...base, event: 'experience_agent_scored', covered: diag.coverageBefore.covered, of: diag.coverageBefore.targets, missing: diag.coverageBefore.missing }, 'experience_agent_scored');
+  if (diag.provenance.dropped.length > 0) {
+    log.info({ ...base, event: 'experience_agent_dropped', dropped: diag.provenance.dropped }, 'experience_agent_dropped');
+  }
   if (diag.rewrite.fired) {
     log.info({ ...base, event: 'experience_agent_rewrite', reason: diag.rewrite.reason, coverage_after: diag.rewrite.coverageAfter?.covered ?? null, kept: diag.rewrite.kept, kept_reason: diag.rewrite.keptReason }, 'experience_agent_rewrite');
   }

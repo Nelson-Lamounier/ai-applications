@@ -8,6 +8,23 @@ import {
 } from './experience-provenance.js';
 import type { ExperienceAgentOutput } from './experience-schema.js';
 
+/** A single unused career line the experience agent declared instead of citing.
+ *  Bounded before it reaches Loki/DB -- see boundDropped. */
+export interface DroppedLine { readonly line: string; readonly reason: string; }
+
+const MAX_DROPPED_ENTRIES = 30;
+const MAX_DROPPED_REASON_CHARS = 200;
+
+/** Bound the raw accounting.dropped array before it is logged or persisted: cap
+ *  the entry count and per-reason length so a pathological agent response
+ *  cannot blow up a Loki log line or the pipeline_runs metadata payload. */
+export function boundDropped(dropped: ReadonlyArray<{ line: string; reason: string }>): DroppedLine[] {
+  return dropped.slice(0, MAX_DROPPED_ENTRIES).map((d) => ({
+    line: d.line,
+    reason: d.reason.length > MAX_DROPPED_REASON_CHARS ? d.reason.slice(0, MAX_DROPPED_REASON_CHARS) : d.reason,
+  }));
+}
+
 /** Per-run experience-ATS diagnostics. Logged (Loki) and persisted alongside the
  *  summary-ATS diagnostics (pipeline_runs.metadata.analysis.experienceAgent). */
 export interface ExperienceAgentDiagnostics {
@@ -21,7 +38,12 @@ export interface ExperienceAgentDiagnostics {
     readonly keptReason: string | null;
   };
   readonly fallback: { readonly fired: boolean; readonly reason: string | null };
-  readonly provenance: { readonly firstViolations: string[]; readonly rewriteViolations: string[]; readonly droppedLines: number };
+  readonly provenance: {
+    readonly firstViolations: string[];
+    readonly rewriteViolations: string[];
+    readonly droppedLines: number;
+    readonly dropped: DroppedLine[];
+  };
 }
 
 /** Flattened score text for an experience output: every role's bullets, in order. */
@@ -91,7 +113,11 @@ export async function resolveExperienceAts(params: {
       targets, coverageBefore,
       rewrite: { fired: false, reason, coverageAfter: null, kept: null, keptReason: null },
       fallback: { fired: false, reason: null },
-      provenance: { firstViolations: [], rewriteViolations: [], droppedLines: params.first.accounting.dropped.length },
+      provenance: {
+        firstViolations: [], rewriteViolations: [],
+        droppedLines: params.first.accounting.dropped.length,
+        dropped: boundDropped(params.first.accounting.dropped),
+      },
     },
   });
 
@@ -109,7 +135,11 @@ export async function resolveExperienceAts(params: {
         targets, coverageBefore,
         rewrite: { fired: true, reason: 'rewrite-error', coverageAfter: null, kept: 'first', keptReason: 'rewrite-threw' },
         fallback: { fired: false, reason: null },
-        provenance: { firstViolations: [], rewriteViolations: [], droppedLines: params.first.accounting.dropped.length },
+        provenance: {
+          firstViolations: [], rewriteViolations: [],
+          droppedLines: params.first.accounting.dropped.length,
+          dropped: boundDropped(params.first.accounting.dropped),
+        },
       },
     };
   }
@@ -128,7 +158,11 @@ export async function resolveExperienceAts(params: {
       targets, coverageBefore,
       rewrite: { fired: true, reason: 'coverage-below-targets', coverageAfter, kept, keptReason },
       fallback: { fired: false, reason: null },
-      provenance: { firstViolations: [], rewriteViolations, droppedLines: output.accounting.dropped.length },
+      provenance: {
+        firstViolations: [], rewriteViolations,
+        droppedLines: output.accounting.dropped.length,
+        dropped: boundDropped(output.accounting.dropped),
+      },
     },
   };
 }
