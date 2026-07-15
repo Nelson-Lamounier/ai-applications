@@ -76,6 +76,12 @@ import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate
 import { resolveExperienceAts, type ExperienceAgentDiagnostics } from './agents/writer/experience-ats-flow.js';
 import { logExperienceAgentEvents, experienceAgentOutcome } from './agents/writer/experience-agent-diagnostics.js';
 import { logProjectsAgentEvents, projectsAgentOutcome } from './agents/writer/projects-agent-diagnostics.js';
+import {
+    logSectionAgentEvents, skillsAgentOutcome, skillsAgentEvents,
+    coverLetterAgentOutcome, coverLetterAgentEvents,
+    analysisAgentSummary, analysisAgentEvents,
+    type SkillsAgentDiagnostics, type CoverLetterAgentResult,
+} from './agents/writer/section-agent-diagnostics.js';
 import { executeExperienceAgent } from './agents/writer/experience-agent.js';
 import {
     rosterFromCareer, indexCareerLines, assembleExperience, validateExperienceProvenance, ExperienceProvenanceError,
@@ -370,26 +376,19 @@ function skillItemCount(categories: readonly { skills: readonly string[] }[]): n
  * -> deterministicSkills (ledger-only, no model call) fallback. Fail-open by
  * design -- never throws into the pipeline.
  *
- * Diagnostics are intentionally minimal here (outcome/violations/categories/
- * items) -- a later task enriches this with the Loki event stream + coverage
- * histogram the experience/projects/summary lanes already have (see
- * recordProjectsAgentObservability / logExperienceAgentEvents for that
- * shape); this task only needs the plain outcome Counter wired.
+ * Diagnostics use the shared SkillsAgentDiagnostics shape (see
+ * section-agent-diagnostics.ts) -- the outcome+reason Counter and the Loki
+ * event stream are both derived from the returned diagnostics by the caller
+ * (recordSkillsAgentObservability), same shape as fillResumeExperience /
+ * fillResumeProjects. No metric param here (unlike the pre-T9 shape) -- see
+ * that helper's doc comment.
  */
-interface SkillsAgentDiagnostics {
-    readonly outcome: 'agent' | 'fallback';
-    readonly violations: string[];
-    readonly categories: number;
-    readonly items: number;
-}
-
 async function fillResumeSkills(
     ctx: StrategistPipelineContext,
     tailoredResumeData: StructuredResumeData | null,
     input: SkillsMessageInput,
     ledger: readonly SkillEvidenceEntry[],
     jd: JdSignal,
-    metric: Counter<'outcome'>,
     onFallback: (err: unknown) => void,
 ): Promise<SkillsAgentDiagnostics | null> {
     if (!tailoredResumeData) return null;
@@ -398,12 +397,10 @@ async function fillResumeSkills(
         const violations = validateSkillsMembership(first.data, ledger);
         if (violations.length > 0) throw new SkillsValidationError(violations);
         (tailoredResumeData as { skills: unknown }).skills = first.data.skills;
-        metric.inc({ outcome: 'agent' });
         return { outcome: 'agent', violations: [], categories: first.data.skills.length, items: skillItemCount(first.data.skills) };
     } catch (err) {
         const fallback = deterministicSkills(ledger, jd);
         (tailoredResumeData as { skills: unknown }).skills = fallback;
-        metric.inc({ outcome: 'fallback' });
         onFallback(err);
         return {
             outcome: 'fallback',
@@ -767,13 +764,12 @@ const summaryOutcomeMetric = new Counter({
     labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
-// Plain outcome-only Counter (no `reason` label yet) -- a later task enriches
-// this to the {outcome, reason} shape experienceOutcomeMetric/projectsOutcomeMetric
-// already have, once the Loki event stream + coverage histogram land too.
+// {outcome, reason} shape (Task 9) -- outcome in {agent, fallback}, reason in
+// {ok, membership-invalid, agent-error, caps} (see skillsAgentOutcome).
 const skillsOutcomeMetric = new Counter({
     name:       'job_strategist_skills_agent_outcome_total',
-    help:       'Skills agent outcomes: agent (dedicated skills agent filled the resume skills) vs fallback (agent call failed or violated ledger membership, deterministic skills used).',
-    labelNames: ['outcome'] as const,
+    help:       'Skills agent outcomes: agent (dedicated skills agent filled the resume skills) vs fallback (agent call failed or violated ledger membership, deterministic skills used), by reason.',
+    labelNames: ['outcome', 'reason'] as const,
     registers:  [obs.registry],
 });
 const experienceOutcomeMetric = new Counter({
@@ -785,6 +781,17 @@ const experienceOutcomeMetric = new Counter({
 const projectsOutcomeMetric = new Counter({
     name:       'job_strategist_projects_agent_outcome_total',
     help:       'Projects-agent lane outcome by result and reason.',
+    labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
+// Task 9 -- outcome in {agent, omitted}, reason in {ok, agent-error, not-requested}
+// (see coverLetterAgentOutcome). 'omitted' covers both "not requested"
+// (ctx.includeCoverLetter === false) and "requested but the agent call
+// failed" -- guardCoverLetter's rewrite pass never nulls a non-null letter,
+// so no third outcome is possible here.
+const coverLetterOutcomeMetric = new Counter({
+    name:       'job_strategist_cover_letter_agent_outcome_total',
+    help:       'Cover-letter agent outcomes: agent (letter generated) vs omitted (not requested, or the agent call failed), by reason.',
     labelNames: ['outcome', 'reason'] as const,
     registers:  [obs.registry],
 });
@@ -1049,7 +1056,7 @@ async function runBatch1Agents(args: {
             (err) => log.warn({ pipelineRunId, agent: 'strategist-projects', err: err instanceof Error ? err.message : String(err) }, 'projects_agent_failed_deterministic_fallback_used'),
         ),
         fillResumeSkills(
-            ctx, skeleton, skillsInput, skillEvidenceLedger, jdExtraction, skillsOutcomeMetric,
+            ctx, skeleton, skillsInput, skillEvidenceLedger, jdExtraction,
             (err) => log.warn({ pipelineRunId, agent: 'strategist-skills', err: err instanceof Error ? err.message : String(err) }, 'skills_agent_failed_deterministic_fallback_used'),
         ),
     ]);
@@ -1067,7 +1074,7 @@ function recordBatch1Observability(
     batch1: Batch1Result,
     keys: { pipelineRunId: string; applicationId: string | null },
 ): void {
-    const { experienceAgentDiag, projectsAgentDiag } = batch1;
+    const { experienceAgentDiag, projectsAgentDiag, skillsAgentDiag, analysis } = batch1;
     if (experienceAgentDiag) {
         logExperienceAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, experienceAgentDiag);
         const { outcome, reason } = experienceAgentOutcome(experienceAgentDiag);
@@ -1077,6 +1084,39 @@ function recordBatch1Observability(
         }
     }
     recordProjectsAgentObservability(projectsAgentDiag, keys);
+    recordSkillsAgentObservability(skillsAgentDiag, keys);
+    recordAnalysisAgentObservability(analysis.data, keys);
+}
+
+/**
+ * Skills-agent observability (Task 9): Loki event stream + bounded
+ * Prometheus outcome/reason metric, derived from fillResumeSkills's returned
+ * diagnostics via the shared section-agent-diagnostics.ts emitter/mapper.
+ * Guards the null-diag case (no writer target) internally, same shape as
+ * recordProjectsAgentObservability.
+ */
+function recordSkillsAgentObservability(
+    diag: SkillsAgentDiagnostics | null,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    if (!diag) return;
+    logSectionAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, 'skills_agent', skillsAgentEvents(diag));
+    const { outcome, reason } = skillsAgentOutcome(diag);
+    skillsOutcomeMetric.inc({ outcome, reason });
+}
+
+/**
+ * Analysis-agent observability (Task 9): Loki event stream only -- no
+ * Prometheus outcome counter (analysis failure aborts the whole run and is
+ * already visible in the pipeline_runs status transition; see
+ * analysisAgentSummary's doc comment). The compact summary object is folded
+ * into pipeline_runs.metadata.analysis.analysisAgent separately (main()).
+ */
+function recordAnalysisAgentObservability(
+    analysisData: StrategistAnalysisResult,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    logSectionAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, 'analysis_agent', analysisAgentEvents(analysisData));
 }
 
 /**
@@ -1123,6 +1163,31 @@ function reconcileResumeSections(
 interface Batch2Result {
     readonly summaryAtsDiag: SummaryAtsDiagnostics | null;
     readonly coverLetter: CoverLetter | null;
+    readonly coverLetterAgentResult: CoverLetterAgentResult;
+}
+
+/**
+ * Cover-letter fill -- wraps executeCoverLetterAgent with the
+ * CoverLetterAgentResult shape (requested/failed) the shared
+ * section-agent-diagnostics.ts emitter/mapper need, so the caller
+ * (runBatch2Agents) stays a plain Promise.all with no branching of its own.
+ * Never rejects: `coverLetterInput === null` (not requested) resolves
+ * immediately; an executeCoverLetterAgent rejection is caught and logged,
+ * same fail-open contract every other section-agent lane has.
+ */
+async function fillCoverLetter(
+    ctx: StrategistPipelineContext,
+    coverLetterInput: CoverLetterMessageInput | null,
+    pipelineRunId: string,
+): Promise<{ letter: CoverLetter | null; result: CoverLetterAgentResult }> {
+    if (!coverLetterInput) return { letter: null, result: { requested: false, failed: false } };
+    try {
+        const res = await executeCoverLetterAgent(ctx, coverLetterInput);
+        return { letter: res.data, result: { requested: true, failed: false } };
+    } catch (err) {
+        log.warn({ pipelineRunId, agent: 'strategist-cover-letter', err: err instanceof Error ? err.message : String(err) }, 'cover_letter_agent_failed_no_letter');
+        return { letter: null, result: { requested: true, failed: true } };
+    }
 }
 
 /**
@@ -1160,20 +1225,31 @@ async function runBatch2Agents(args: {
         ctx, resume, researchData, profileIntelligenceBlock, yearsGap,
         achievementEvidenceBlock, summaryAtsTargets, coverLetterInput, pipelineRunId,
     } = args;
-    const [summaryAtsDiag, coverLetterRes] = await Promise.all([
+    const [summaryAtsDiag, coverLetterOutcome] = await Promise.all([
         fillResumeSummary(
             ctx, resume, researchData, profileIntelligenceBlock, yearsGap, achievementEvidenceBlock,
             summaryAtsTargets, summaryOutcomeMetric,
             (err) => log.warn({ pipelineRunId, agent: 'strategist-summary', error: err instanceof Error ? err.message : String(err) }, 'summary_agent_failed_deterministic_fallback_used'),
         ),
-        coverLetterInput
-            ? executeCoverLetterAgent(ctx, coverLetterInput).catch((err: unknown) => {
-                log.warn({ pipelineRunId, agent: 'strategist-cover-letter', err: err instanceof Error ? err.message : String(err) }, 'cover_letter_agent_failed_no_letter');
-                return null;
-            })
-            : Promise.resolve(null),
+        fillCoverLetter(ctx, coverLetterInput, pipelineRunId),
     ]);
-    return { summaryAtsDiag, coverLetter: coverLetterRes?.data ?? null };
+    return { summaryAtsDiag, coverLetter: coverLetterOutcome.letter, coverLetterAgentResult: coverLetterOutcome.result };
+}
+
+/**
+ * Cover-letter agent observability (Task 9): Loki event stream + bounded
+ * Prometheus outcome/reason metric, derived from fillCoverLetter's returned
+ * CoverLetterAgentResult via the shared section-agent-diagnostics.ts
+ * emitter/mapper. Unlike recordSkillsAgentObservability there is no
+ * null-diag case -- fillCoverLetter always returns a result.
+ */
+function recordCoverLetterAgentObservability(
+    res: CoverLetterAgentResult,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    logSectionAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, 'cover_letter_agent', coverLetterAgentEvents(res));
+    const { outcome, reason } = coverLetterAgentOutcome(res);
+    coverLetterOutcomeMetric.inc({ outcome, reason });
 }
 
 /**
@@ -2092,6 +2168,7 @@ export async function main(): Promise<void> {
                 summaryAtsCoverageMetric.observe(summaryAtsDiag.coverageBefore.covered);
             }
         }
+        recordCoverLetterAgentObservability(batch2.coverLetterAgentResult, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });
 
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
@@ -2233,7 +2310,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag, projectsAgent: projectsAgentDiag, skillsAgent: skillsAgentDiag },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag, projectsAgent: projectsAgentDiag, skillsAgent: skillsAgentDiag, coverLetterAgent: coverLetterAgentOutcome(batch2.coverLetterAgentResult), analysisAgent: analysisAgentSummary(analysis.data) },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,
