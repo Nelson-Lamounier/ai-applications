@@ -177,6 +177,65 @@ export function stripEmDashes(cl: CoverLetter): CoverLetter {
 }
 
 // =============================================================================
+// STANDALONE RULE PREDICATES (Phase 5 PR-B Task 10 -- additive)
+// =============================================================================
+// The five checks below back the cover-letter eval (evals/cover-letter/). Two
+// of them (`checkTenureConditional`, `checkThirdPersonVoice`) isolate a rule
+// this file already enforced BUNDLED inside `validateCoverLetterNarrative` /
+// `validateCoverLetter` -- restated standalone here, reusing the same private
+// regexes (TENURE_RE, THIRD_PERSON_SELF), so the eval can grade that one rule
+// without also depending on the P1-technical-density / title / markdown /
+// sentence-length checks that ship in the same bundled function. The other
+// three (`checkParagraphCount`, `checkSignoffComplete`, `checkNoEmDash`) had
+// no standalone predicate at all -- the "exactly 3 paragraphs" contract lived
+// only in the `emit_cover_letter` tool description, the signoff was assumed
+// complete because it is copied verbatim from Candidate Contact, and em-dash
+// handling was mutate-only (`stripEmDashes`). None of these five are wired
+// into `guardCoverLetter`'s runtime violation list -- they exist purely so the
+// eval and any future runtime caller share one source of truth instead of the
+// eval re-implementing the rules.
+
+const EXPECTED_PARAGRAPH_COUNT = 3;
+
+/** Exactly `EXPECTED_PARAGRAPH_COUNT` paragraphs -- the `emit_cover_letter` tool description's contract, made a gradeable predicate. */
+export function checkParagraphCount(letter: CoverLetter): CoverLetterViolation[] {
+    if (letter.paragraphs.length === EXPECTED_PARAGRAPH_COUNT) return [];
+    return [{ code: 'paragraph_count', detail: `Letter has ${letter.paragraphs.length} paragraphs -- must be exactly ${EXPECTED_PARAGRAPH_COUNT}.` }];
+}
+
+const SIGNOFF_FIELDS: ReadonlyArray<keyof CoverLetter['signoff']> = ['name', 'email', 'linkedin', 'github'];
+
+/** Every signoff field non-empty -- the block is meant to be copied verbatim from the Candidate Contact block, so a blank field is a genuine defect. */
+export function checkSignoffComplete(letter: CoverLetter): CoverLetterViolation[] {
+    const missing = SIGNOFF_FIELDS.filter((f) => letter.signoff[f].trim().length === 0);
+    if (missing.length === 0) return [];
+    return [{ code: 'signoff_incomplete', detail: `Signoff is missing: ${missing.join(', ')}.` }];
+}
+
+const EM_DASH_RE = /\u2014/;
+
+/** No em-dash in any prose field -- the pre-normalisation detector counterpart to `stripEmDashes`, which silently repairs this downstream; the eval asserts the model itself avoided it. */
+export function checkNoEmDash(letter: CoverLetter): CoverLetterViolation[] {
+    const text = [letter.greeting, ...letter.paragraphs].join('\n');
+    if (!EM_DASH_RE.test(text)) return [];
+    return [{ code: 'has_em_dash', detail: 'Letter contains an em-dash -- prefer a comma or full stop.' }];
+}
+
+/** Isolated tenure-conditional check -- reuses TENURE_RE; passes vacuously whenever `hasYearsBar` is not explicitly `false` (the JD sets a years bar, or its presence is unknown). */
+export function checkTenureConditional(letter: CoverLetter, hasYearsBar: boolean): CoverLetterViolation[] {
+    if (hasYearsBar !== false) return [];
+    if (!letter.paragraphs.some((p) => TENURE_RE.test(p))) return [];
+    return [{ code: 'tenure_without_bar', detail: 'The JD sets no years requirement -- remove every tenure mention; demonstrate impact and ownership instead.' }];
+}
+
+/** Isolated first-person-voice check -- reuses THIRD_PERSON_SELF. */
+export function checkThirdPersonVoice(letter: CoverLetter): CoverLetterViolation[] {
+    const text = [letter.greeting, ...letter.paragraphs].join('\n');
+    if (!THIRD_PERSON_SELF.test(text)) return [];
+    return [{ code: 'third_person_voice', detail: 'Letter refers to "this candidate"/"the candidate" -- cover letters speak in first person.' }];
+}
+
+// =============================================================================
 // HAIKU REWRITE + GUARD ORCHESTRATOR
 // =============================================================================
 
@@ -286,6 +345,12 @@ export async function guardCoverLetter(
     const violations = [
         ...validateCoverLetter(letter, targetRole, leadIdentity),
         ...validateCoverLetterNarrative(letter, narrative),
+        // Structural contracts, runtime-enforced (final-review LOW): the forced
+        // tool schema requires the fields PRESENT but not non-empty, and the
+        // paragraph count lived only in the tool description (prompt wording is
+        // not a safety control).
+        ...checkParagraphCount(letter),
+        ...checkSignoffComplete(letter),
     ];
     if (violations.length === 0) return { letter: stripEmDashes(letter), violations };
     const fixed = await rewriteCoverLetter(letter, violations, { targetRole, leadIdentity, yearsGapFraming, narrative });

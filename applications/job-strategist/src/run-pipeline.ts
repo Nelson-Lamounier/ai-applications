@@ -13,14 +13,24 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter, StrategistAnalysisResult, AgentResult, SkillEvidenceEntry } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume-prose.js';
 
 import { executeResearchAgent, KB_CONTEXT_SEPARATOR, sanitiseJobDescription, querySingleRds } from './agents/research/research-agent.js';
-import { executeStrategistAgent, framingDirective } from './agents/writer/strategist-agent.js';
+import { executeAnalysisAgent } from './agents/analysis/analysis-agent.js';
+import type { AnalysisMessageInput } from './agents/analysis/analysis-message.js';
+import { executeSkillsAgent } from './agents/writer/skills-agent.js';
+import { validateSkillsMembership, deterministicSkills, SkillsValidationError } from './agents/writer/skills-validate.js';
+import type { SkillsMessageInput } from './agents/writer/skills-message.js';
+import { executeCoverLetterAgent } from './agents/writer/cover-letter-agent.js';
+import type { CoverLetterMessageInput } from './agents/writer/cover-letter-message.js';
+import { buildSkeletonResume } from './lib/resume-skeleton.js';
+import { reconcileResume, type ReconcileInputs } from './lib/resume-reconciler.js';
+import { stageSeconds } from './lib/stage-timing.js';
+import { framingDirective } from './agents/writer/framing.js';
 import { executeSummaryAgent } from './agents/writer/summary-agent.js';
 import { deterministicSummary } from './agents/writer/summary-fallback.js';
 import { resolveRoleFamilies, stageJdLearning } from './agents/jd/resolve-role-families.js';
@@ -35,9 +45,13 @@ import { buildYearsGap } from './agents/writer/years-gap.js';
 import { guardCoverLetter } from './agents/quality/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/quality/cover-letter-guard.js';
 import { guardResume, revalidateResumeContent, preserveExperienceRoster, restoreExperienceAfter } from './agents/quality/resume-guard.js';
+import type { ResumeGuardCtx } from './agents/quality/resume-guard.js';
+import type { ViolationLog } from './lib/violation-log.js';
+import type { ProjectResumeBulletSet } from './agents/evidence/project-evidence-block.js';
+import type { JdPriorityContext } from './ats/length/length-budget.js';
 import { annotateGapCauses } from './lib/gap-cause.js';
 import { createViolationLog } from './lib/violation-log.js';
-import { loadCandidateContactBlock } from './lib/candidate-contact.js';
+import { loadCandidateContact, formatCandidateContact } from './lib/candidate-contact.js';
 import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/corrective-retrieval.js';
 import { applyLengthBudget } from './ats/length/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/grounding/ledger-provenance.js';
@@ -62,6 +76,12 @@ import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate
 import { resolveExperienceAts, type ExperienceAgentDiagnostics } from './agents/writer/experience-ats-flow.js';
 import { logExperienceAgentEvents, experienceAgentOutcome } from './agents/writer/experience-agent-diagnostics.js';
 import { logProjectsAgentEvents, projectsAgentOutcome } from './agents/writer/projects-agent-diagnostics.js';
+import {
+    logSectionAgentEvents, skillsAgentOutcome, skillsAgentEvents,
+    coverLetterAgentOutcome, coverLetterAgentEvents,
+    analysisAgentSummary, analysisAgentEvents,
+    type SkillsAgentDiagnostics, type CoverLetterAgentResult,
+} from './agents/writer/section-agent-diagnostics.js';
 import { executeExperienceAgent } from './agents/writer/experience-agent.js';
 import {
     rosterFromCareer, indexCareerLines, assembleExperience, validateExperienceProvenance, ExperienceProvenanceError,
@@ -81,12 +101,11 @@ import { buildRepoProfiles, buildRepoProfileContext, persistRepoProfiles, type R
 import { detectStaleMigrations, reframeStaleMigrations } from './ats/reconcile/migration-reframe.js';
 import { buildRetrievalPrefilter } from './ats/context/retrieval-prefilter.js';
 import { buildProvenanceRows, persistEvidenceProvenance, buildRepoQualityRows, persistRepoEvidenceQuality } from './lib/evidence-provenance.js';
-import { extractNumbers, stripUngroundedNumbers, stripInstructionMetrics } from './ats/grounding/number-provenance.js';
+import { extractNumbers, stripUngroundedNumbers } from './ats/grounding/number-provenance.js';
 import { buildGroundingFacts } from './ats/grounding/grounding-facts.js';
 import { loadGroundedMetricsLedger, composeMetricsBlock, resumeHasMetric } from './lib/metrics-ledger.js';
 import { reconcileExperienceRoster } from './lib/experience-roster.js';
 import { surfaceMetrics } from './agents/quality/surface-metrics.js';
-import { STRATEGIST_PERSONA_SYSTEM_PROMPT } from './prompts/strategist-persona.js';
 import { surfaceKeywords } from './agents/quality/surface-keywords.js';
 import { stripDocumentSections } from './lib/strip-document-sections.js';
 import { dedupeSkillGaps } from './lib/dedupe-skill-gaps.js';
@@ -206,6 +225,20 @@ async function fillResumeSummary(
  * pipeline. Extracted from main() to keep its complexity at the baseline,
  * same shape as fillResumeSummary.
  */
+/**
+ * Verbatim experience fallback -- company/title/period/first-5-highlights
+ * straight from career history, no LLM. Shared by fillResumeExperience's own
+ * failure path AND reconcileResume's `fallbacks.experience` closure (the
+ * refuse-empty safety net if the agent-owned experience section is STILL
+ * empty after fillResumeExperience has already run its own fallback -- see
+ * resume-reconciler.ts).
+ */
+function verbatimExperienceFallback(careerEntries: readonly CareerEntry[]): StructuredResumeData['experience'] {
+    return careerEntries.map((e) => ({
+        company: e.company, title: e.title, period: e.period, highlights: e.highlights.slice(0, 5),
+    }));
+}
+
 async function fillResumeExperience(
     ctx: StrategistPipelineContext,
     tailoredResumeData: StructuredResumeData | null,
@@ -226,9 +259,7 @@ async function fillResumeExperience(
     const roster = rosterFromCareer(careerEntries);
     const careerLines = indexCareerLines(careerEntries);
     const baseInput = { research: researchData, roster, careerLines, atsTargets, groundedMetrics, codeStack };
-    const verbatim = () => careerEntries.map((e) => ({
-        company: e.company, title: e.title, period: e.period, highlights: e.highlights.slice(0, 5),
-    }));
+    const verbatim = () => verbatimExperienceFallback(careerEntries);
     try {
         const first = await executeExperienceAgent(ctx, baseInput);
         const firstViolations = validateExperienceProvenance(first.data, roster, careerLines);
@@ -328,6 +359,54 @@ async function fillResumeProjects(
                 composedCount: 0,
             },
             unresolvedRepos,
+        };
+    }
+}
+
+/** Total skill count across every category -- diagnostics field only. */
+function skillItemCount(categories: readonly { skills: readonly string[] }[]): number {
+    return categories.reduce((n, c) => n + c.skills.length, 0);
+}
+
+/**
+ * Skills agent -- fills the skeleton's empty skills[] field. Mirrors
+ * fillResumeExperience/fillResumeProjects: executeSkillsAgent ->
+ * validateSkillsMembership (ledger-membership contract, see
+ * skills-validate.ts) -> a violation throws SkillsValidationError -> catch
+ * -> deterministicSkills (ledger-only, no model call) fallback. Fail-open by
+ * design -- never throws into the pipeline.
+ *
+ * Diagnostics use the shared SkillsAgentDiagnostics shape (see
+ * section-agent-diagnostics.ts) -- the outcome+reason Counter and the Loki
+ * event stream are both derived from the returned diagnostics by the caller
+ * (recordSkillsAgentObservability), same shape as fillResumeExperience /
+ * fillResumeProjects. No metric param here (unlike the pre-T9 shape) -- see
+ * that helper's doc comment.
+ */
+async function fillResumeSkills(
+    ctx: StrategistPipelineContext,
+    tailoredResumeData: StructuredResumeData | null,
+    input: SkillsMessageInput,
+    ledger: readonly SkillEvidenceEntry[],
+    jd: JdSignal,
+    onFallback: (err: unknown) => void,
+): Promise<SkillsAgentDiagnostics | null> {
+    if (!tailoredResumeData) return null;
+    try {
+        const first = await executeSkillsAgent(ctx, input);
+        const violations = validateSkillsMembership(first.data, ledger);
+        if (violations.length > 0) throw new SkillsValidationError(violations);
+        (tailoredResumeData as { skills: unknown }).skills = first.data.skills;
+        return { outcome: 'agent', violations: [], categories: first.data.skills.length, items: skillItemCount(first.data.skills) };
+    } catch (err) {
+        const fallback = deterministicSkills(ledger, jd);
+        (tailoredResumeData as { skills: unknown }).skills = fallback;
+        onFallback(err);
+        return {
+            outcome: 'fallback',
+            violations: err instanceof SkillsValidationError ? err.violations : [],
+            categories: fallback.length,
+            items: skillItemCount(fallback),
         };
     }
 }
@@ -484,8 +563,9 @@ function projSnapshot(resume: StructuredResumeData | null): string {
  * doesn't grow main()'s already-flagged complexity by inlining a second
  * comparison at each site). Emits the generalised
  * job_strategist_section_net_fired_total{section,pass} for BOTH agent-owned
- * sections, plus the original job_strategist_experience_net_fired_total{pass}
- * for experience only -- see sectionNetFiredMetric's comment above.
+ * sections -- see sectionNetFiredMetric's comment above. PR-B removed the
+ * older, experience-only job_strategist_experience_net_fired_total{pass}
+ * counter this generalised one superseded.
  */
 function trackNetFired(
     pass: 'guard' | 'length' | 'surface_keywords',
@@ -493,36 +573,11 @@ function trackNetFired(
     beforeProj: string, afterProj: string,
 ): void {
     if (beforeExp !== afterExp) {
-        experienceNetFiredMetric.inc({ pass });
         sectionNetFiredMetric.inc({ section: 'experience', pass });
     }
     if (beforeProj !== afterProj) {
         sectionNetFiredMetric.inc({ section: 'projects', pass });
     }
-}
-
-/** The persona's full instruction text — the number DENY source for leak scrubbing. */
-function personaInstructionText(): string {
-    return STRATEGIST_PERSONA_SYSTEM_PROMPT
-        .map((b) => ('text' in b && typeof b.text === 'string' ? b.text : ''))
-        .join('\n');
-}
-
-/**
- * Strip instruction-leaked metrics from the writer's raw output (numbers that
- * appear in the persona but in none of the evidence handed to the writer).
- * Null-safe; reports via callback only when something was actually stripped.
- * Extracted from main() to keep its complexity bounded.
- */
-function scrubInstructionLeaks(
-    resume: StructuredResumeData | null,
-    evidenceText: string,
-    onStripped: () => void,
-): StructuredResumeData | null {
-    if (!resume) return null;
-    const scrubbed = stripInstructionMetrics(resume, { instructionText: personaInstructionText(), evidenceText });
-    if (JSON.stringify(scrubbed) !== JSON.stringify(resume)) onStripped();
-    return scrubbed;
 }
 
 /**
@@ -642,6 +697,22 @@ const strategistDuration = new Histogram({
     buckets:    [10, 30, 60, 120, 300, 600, 1200, 1800],
     registers:  [obs.registry],
 });
+/**
+ * Per-stage wall-clock breakdown of strategistDuration above -- the headline
+ * observability this task ships: the pre-split writer call alone cost ~6min
+ * of the end-to-end duration and that cost is now invisible unless it is
+ * broken out by stage. Stages: research, batch1 (analysis + experience +
+ * projects + skills, concurrent), reconcile, batch2 (summary + cover letter,
+ * concurrent), guards, length, ats_gate, persist. See lib/stage-timing.ts
+ * for the pure timing helper (stageSeconds) this histogram is fed through.
+ */
+const pipelineStageSeconds = new Histogram({
+    name:       'job_strategist_pipeline_stage_seconds',
+    help:       'Wall-clock duration of each Strategist pipeline stage, in seconds.',
+    labelNames: ['stage'] as const,
+    buckets:    [1, 5, 15, 30, 60, 120, 240, 480],
+    registers:  [obs.registry],
+});
 /** Count of file-path citations in the analysis that are NOT in the user's
  *  ingested document_embeddings — i.e. hallucinated/inferred source paths. */
 const ungroundedPaths = new Counter({
@@ -693,6 +764,14 @@ const summaryOutcomeMetric = new Counter({
     labelNames: ['outcome'] as const,
     registers:  [obs.registry],
 });
+// {outcome, reason} shape (Task 9) -- outcome in {agent, fallback}, reason in
+// {ok, membership-invalid, agent-error, caps} (see skillsAgentOutcome).
+const skillsOutcomeMetric = new Counter({
+    name:       'job_strategist_skills_agent_outcome_total',
+    help:       'Skills agent outcomes: agent (dedicated skills agent filled the resume skills) vs fallback (agent call failed or violated ledger membership, deterministic skills used), by reason.',
+    labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
 const experienceOutcomeMetric = new Counter({
     name:       'job_strategist_experience_agent_outcome_total',
     help:       'Experience-agent lane outcome by result and reason.',
@@ -702,6 +781,17 @@ const experienceOutcomeMetric = new Counter({
 const projectsOutcomeMetric = new Counter({
     name:       'job_strategist_projects_agent_outcome_total',
     help:       'Projects-agent lane outcome by result and reason.',
+    labelNames: ['outcome', 'reason'] as const,
+    registers:  [obs.registry],
+});
+// Task 9 -- outcome in {agent, omitted}, reason in {ok, agent-error, not-requested}
+// (see coverLetterAgentOutcome). 'omitted' covers both "not requested"
+// (ctx.includeCoverLetter === false) and "requested but the agent call
+// failed" -- guardCoverLetter's rewrite pass never nulls a non-null letter,
+// so no third outcome is possible here.
+const coverLetterOutcomeMetric = new Counter({
+    name:       'job_strategist_cover_letter_agent_outcome_total',
+    help:       'Cover-letter agent outcomes: agent (letter generated) vs omitted (not requested, or the agent call failed), by reason.',
     labelNames: ['outcome', 'reason'] as const,
     registers:  [obs.registry],
 });
@@ -727,23 +817,16 @@ const experienceAgentCoverageMetric = new Histogram({
     buckets:    [0, 1, 2, 3, 4, 5, 6],
     registers:  [obs.registry],
 });
-// Safety-net signal: experience is agent-owned once fillResumeExperience has
-// run (provenance-guarded bullets), so a downstream guard/length/keyword-
-// surface pass changing it is unexpected. preserveExperienceRoster only
-// guarantees no ROLE is dropped -- it does not stop a pass rewriting a
-// bullet within a role that survives -- so this counter is the only signal
-// for that narrower drift. Ideally always zero; a nonzero rate over time is
-// the lead to investigate.
-const experienceNetFiredMetric = new Counter({
-    name:       'job_strategist_experience_net_fired_total',
-    help:       'Downstream passes (guard/length/surface_keywords) that changed the agent-owned Experience section after fillResumeExperience ran.',
-    labelNames: ['pass'] as const,
-    registers:  [obs.registry],
-});
-// Generalised twin of experienceNetFiredMetric above, covering BOTH agent-owned
-// sections (experience, projects) behind one metric name. experienceNetFiredMetric
-// is kept emitting unchanged for continuity -- PR-B removes it once dashboards
-// migrate to this one (section='experience' here is its exact equivalent).
+// Safety-net signal: experience/projects are agent-owned once their fill
+// passes have run (provenance-guarded bullets), so a downstream
+// guard/length/keyword-surface pass changing either is unexpected.
+// preserveExperienceRoster only guarantees no ROLE is dropped -- it does not
+// stop a pass rewriting a bullet within a role that survives -- so this
+// counter is the only signal for that narrower drift. Ideally always zero; a
+// nonzero rate over time is the lead to investigate. Generalises the older,
+// experience-only job_strategist_experience_net_fired_total{pass} counter
+// (removed PR-B) to cover BOTH agent-owned sections behind one metric name
+// (section='experience' here is that counter's exact equivalent).
 const sectionNetFiredMetric = new Counter({
     name:       'job_strategist_section_net_fired_total',
     help:       'Downstream passes (guard/length/surface_keywords) that changed an agent-owned section (experience/projects) after its fill pass ran.',
@@ -906,6 +989,578 @@ async function verifyAnalysisPaths(
         }, 'Path-grounding check failed — skipping (fail-open)');
         return { grounded: [], ungrounded: [] };
     }
+}
+
+// =============================================================================
+// BATCH ORCHESTRATION (Phase 5 PR-B Task 7) -- the deterministic skeleton +
+// batch-1 (analysis + experience + projects + skills, concurrent) + reconcile
+// + batch-2 (summary + cover letter, concurrent) pipeline that replaces the
+// single sequential ~6-minute writer call. Extracted from main() so main()
+// gains no new branch points from this rewiring -- each helper below is its
+// own function for eslint's `complexity` rule too.
+// =============================================================================
+
+interface Batch1Result {
+    readonly analysis: AgentResult<StrategistAnalysisResult>;
+    readonly experienceAgentDiag: ExperienceAgentDiagnostics | null;
+    readonly projectsAgentDiag: ProjectsAgentDiagnostics | null;
+    readonly skillsAgentDiag: SkillsAgentDiagnostics | null;
+}
+
+/**
+ * Batch 1 -- the analysis agent (Phase 0 archetype + Phase 1-3 narrative) and
+ * the three section-agent fillers (experience/projects/skills) run
+ * CONCURRENTLY against the shared skeleton object built by buildSkeletonResume.
+ *
+ * Concurrency safety: accumulateContext (agent-runner.ts:232) has no `await`
+ * between its `+=` ops on ctx.cumulativeTokens/cumulativeCostUsd, so four
+ * agents racing to update the SAME pipeline-context counters never interleave
+ * a torn read/write. The three fillers each mutate a DISJOINT top-level field
+ * of the one skeleton (experience / projects / skills respectively) -- no
+ * data race on the resume object either.
+ *
+ * executeAnalysisAgent is the ONLY member that can reject: parseAnalysisResponse
+ * throws on an empty/blank analysisXml (load-bearing -- the semantic-cache
+ * hit gate requires a non-empty string). A rejection here fails the whole
+ * batch and propagates to main()'s outer catch, exactly like the pre-split
+ * writer's single call failing used to.
+ */
+async function runBatch1Agents(args: {
+    ctx: StrategistPipelineContext;
+    skeleton: StructuredResumeData | null;
+    analysisInput: AnalysisMessageInput;
+    researchData: StrategistResearchResult;
+    careerEntries: readonly CareerEntry[];
+    experienceAtsTargets: readonly ExperienceAtsTarget[];
+    groundedMetricsBlock: string;
+    codeStackContext: string;
+    projectAgentInputs: ProjectAgentInputs;
+    skillsInput: SkillsMessageInput;
+    skillEvidenceLedger: readonly SkillEvidenceEntry[];
+    jdExtraction: JdSignal;
+    pipelineRunId: string;
+}): Promise<Batch1Result> {
+    const {
+        ctx, skeleton, analysisInput, researchData, careerEntries, experienceAtsTargets,
+        groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
+        skillEvidenceLedger, jdExtraction, pipelineRunId,
+    } = args;
+    const [analysis, experienceAgentDiag, projectsAgentDiag, skillsAgentDiag] = await Promise.all([
+        executeAnalysisAgent(ctx, analysisInput),
+        fillResumeExperience(
+            ctx, skeleton, researchData, careerEntries, experienceAtsTargets, groundedMetricsBlock, codeStackContext,
+            (err) => log.warn({ pipelineRunId, agent: 'strategist-experience', err: err instanceof Error ? err.message : String(err) }, 'experience_agent_failed_verbatim_fallback_used'),
+        ),
+        fillResumeProjects(
+            ctx, skeleton, projectAgentInputs, experienceAtsTargets, researchData.targetRole,
+            (err) => log.warn({ pipelineRunId, agent: 'strategist-projects', err: err instanceof Error ? err.message : String(err) }, 'projects_agent_failed_deterministic_fallback_used'),
+        ),
+        fillResumeSkills(
+            ctx, skeleton, skillsInput, skillEvidenceLedger, jdExtraction,
+            (err) => log.warn({ pipelineRunId, agent: 'strategist-skills', err: err instanceof Error ? err.message : String(err) }, 'skills_agent_failed_deterministic_fallback_used'),
+        ),
+    ]);
+    return { analysis, experienceAgentDiag, projectsAgentDiag, skillsAgentDiag };
+}
+
+/**
+ * Batch-1 observability: Loki event stream + bounded Prometheus outcome/
+ * coverage metrics for the experience + projects lanes (mirrors the inline
+ * blocks the pre-split pipeline had after each sequential fill call).
+ * skillsAgentDiag has no event stream yet (see fillResumeSkills's doc
+ * comment) -- its Counter is incremented inside fillResumeSkills itself.
+ */
+function recordBatch1Observability(
+    batch1: Batch1Result,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    const { experienceAgentDiag, projectsAgentDiag, skillsAgentDiag, analysis } = batch1;
+    if (experienceAgentDiag) {
+        logExperienceAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, experienceAgentDiag);
+        const { outcome, reason } = experienceAgentOutcome(experienceAgentDiag);
+        experienceOutcomeMetric.inc({ outcome, reason });
+        if (experienceAgentDiag.targets.length > 0 && !experienceAgentDiag.fallback.fired) {
+            experienceAgentCoverageMetric.observe(experienceAgentDiag.coverageBefore.covered);
+        }
+    }
+    recordProjectsAgentObservability(projectsAgentDiag, keys);
+    recordSkillsAgentObservability(skillsAgentDiag, keys);
+    recordAnalysisAgentObservability(analysis.data, keys);
+}
+
+/**
+ * Skills-agent observability (Task 9): Loki event stream + bounded
+ * Prometheus outcome/reason metric, derived from fillResumeSkills's returned
+ * diagnostics via the shared section-agent-diagnostics.ts emitter/mapper.
+ * Guards the null-diag case (no writer target) internally, same shape as
+ * recordProjectsAgentObservability.
+ */
+function recordSkillsAgentObservability(
+    diag: SkillsAgentDiagnostics | null,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    if (!diag) return;
+    logSectionAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, 'skills_agent', skillsAgentEvents(diag));
+    const { outcome, reason } = skillsAgentOutcome(diag);
+    skillsOutcomeMetric.inc({ outcome, reason });
+}
+
+/**
+ * Analysis-agent observability (Task 9): Loki event stream only -- no
+ * Prometheus outcome counter (analysis failure aborts the whole run and is
+ * already visible in the pipeline_runs status transition; see
+ * analysisAgentSummary's doc comment). The compact summary object is folded
+ * into pipeline_runs.metadata.analysis.analysisAgent separately (main()).
+ */
+function recordAnalysisAgentObservability(
+    analysisData: StrategistAnalysisResult,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    logSectionAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, 'analysis_agent', analysisAgentEvents(analysisData));
+}
+
+/**
+ * sectionOrder for the reconciled resume. The pre-split writer emitted this
+ * field itself (an archetype-driven render-order decision baked into its
+ * single resume-JSON tool call); the analysis agent authors no resume JSON,
+ * so nothing downstream of the split can emit it anymore.
+ *
+ * DECISION: always undefined (renderer falls back to its own canonical
+ * order). Checked against prompts/content/constraints/role-archetypes.md --
+ * its ONLY archetype with an explicit `sectionOrder:` line (Archetype 7)
+ * lists the EXACT SAME order as the generic template example in
+ * _base_1.md's tool-call sample: summary, experience, projects, education,
+ * skills, certifications. No archetype in that doc actually reorders
+ * top-level sections -- the "lead with" guidance there is about WITHIN-
+ * section bullet emphasis, not section order -- so there is no archetype-
+ * implied order to derive from analysis.data.archetypeSelection. `undefined`
+ * here preserves today's EFFECTIVE behaviour, not a regression.
+ */
+function analysisSectionOrder(_analysis: StrategistAnalysisResult): string[] | undefined {
+    return undefined;
+}
+
+/**
+ * Reconcile the batch-1 output against the single-source TailoredResumeSchema
+ * and refuse-empty required sections (resume-reconciler.ts). Logs which
+ * sections were repaired (observability parity with the fill-lane fallback
+ * logs above) -- repaired == [] is the overwhelmingly common case (each
+ * filler already has its own fallback; this is the second-layer safety net).
+ */
+function reconcileResumeSections(
+    resume: StructuredResumeData,
+    sectionOrder: string[] | undefined,
+    fallbacks: ReconcileInputs['fallbacks'],
+    pipelineRunId: string,
+): StructuredResumeData {
+    const { resume: reconciled, repaired } = reconcileResume({ resume, sectionOrder, fallbacks });
+    if (repaired.length > 0) {
+        log.warn({ pipelineRunId, repaired }, 'resume_sections_repaired_by_reconciler');
+    }
+    return reconciled;
+}
+
+interface Batch2Result {
+    readonly summaryAtsDiag: SummaryAtsDiagnostics | null;
+    readonly coverLetter: CoverLetter | null;
+    readonly coverLetterAgentResult: CoverLetterAgentResult;
+}
+
+/**
+ * Cover-letter fill -- wraps executeCoverLetterAgent with the
+ * CoverLetterAgentResult shape (requested/failed) the shared
+ * section-agent-diagnostics.ts emitter/mapper need, so the caller
+ * (runBatch2Agents) stays a plain Promise.all with no branching of its own.
+ * Never rejects: `coverLetterInput === null` (not requested) resolves
+ * immediately; an executeCoverLetterAgent rejection is caught and logged,
+ * same fail-open contract every other section-agent lane has.
+ */
+async function fillCoverLetter(
+    ctx: StrategistPipelineContext,
+    coverLetterInput: CoverLetterMessageInput | null,
+    pipelineRunId: string,
+): Promise<{ letter: CoverLetter | null; result: CoverLetterAgentResult }> {
+    if (!coverLetterInput) return { letter: null, result: { requested: false, failed: false } };
+    try {
+        const res = await executeCoverLetterAgent(ctx, coverLetterInput);
+        return { letter: res.data, result: { requested: true, failed: false } };
+    } catch (err) {
+        log.warn({ pipelineRunId, agent: 'strategist-cover-letter', err: err instanceof Error ? err.message : String(err) }, 'cover_letter_agent_failed_no_letter');
+        return { letter: null, result: { requested: true, failed: true } };
+    }
+}
+
+/**
+ * Batch 2 -- the summary agent and the cover-letter agent run CONCURRENTLY
+ * once batch 1 + reconcile have produced the finished experience/projects/
+ * skills body. Both read that same assembled resume snapshot: the summary
+ * agent grounds its ATS coverage rewrite against it, and the cover-letter
+ * agent's lead echoes its strongest JD-relevant achievement (see
+ * cover-letter-message.ts's resumeBodyEchoSection). Because both run
+ * CONCURRENTLY, the snapshot the cover-letter agent sees does NOT yet
+ * include the summary text fillResumeSummary is writing in the other half
+ * of this same Promise.all -- cover-letter-message.ts already degrades
+ * gracefully for that case (falls back to the achievement-evidence block
+ * for its lead when the echo section has no summary to draw on). Trading a
+ * slightly less complete echo for the parallelism is the whole point of
+ * this task (the sequential pre-split writer cost ~6 minutes end to end).
+ *
+ * Cover letter is optional (ctx.includeCoverLetter, default true) and is
+ * caller-gated to null via `coverLetterInput` -- it never rejects the batch
+ * on failure (caught + logged, same fail-open contract every other
+ * section-agent lane has).
+ */
+async function runBatch2Agents(args: {
+    ctx: StrategistPipelineContext;
+    resume: StructuredResumeData;
+    researchData: StrategistResearchResult;
+    profileIntelligenceBlock: string;
+    yearsGap: YearsGapLite;
+    achievementEvidenceBlock: string;
+    summaryAtsTargets: readonly SummaryAtsTarget[];
+    coverLetterInput: CoverLetterMessageInput | null;
+    pipelineRunId: string;
+}): Promise<Batch2Result> {
+    const {
+        ctx, resume, researchData, profileIntelligenceBlock, yearsGap,
+        achievementEvidenceBlock, summaryAtsTargets, coverLetterInput, pipelineRunId,
+    } = args;
+    const [summaryAtsDiag, coverLetterOutcome] = await Promise.all([
+        fillResumeSummary(
+            ctx, resume, researchData, profileIntelligenceBlock, yearsGap, achievementEvidenceBlock,
+            summaryAtsTargets, summaryOutcomeMetric,
+            (err) => log.warn({ pipelineRunId, agent: 'strategist-summary', error: err instanceof Error ? err.message : String(err) }, 'summary_agent_failed_deterministic_fallback_used'),
+        ),
+        fillCoverLetter(ctx, coverLetterInput, pipelineRunId),
+    ]);
+    return { summaryAtsDiag, coverLetter: coverLetterOutcome.letter, coverLetterAgentResult: coverLetterOutcome.result };
+}
+
+/**
+ * Cover-letter agent observability (Task 9): Loki event stream + bounded
+ * Prometheus outcome/reason metric, derived from fillCoverLetter's returned
+ * CoverLetterAgentResult via the shared section-agent-diagnostics.ts
+ * emitter/mapper. Unlike recordSkillsAgentObservability there is no
+ * null-diag case -- fillCoverLetter always returns a result.
+ */
+function recordCoverLetterAgentObservability(
+    res: CoverLetterAgentResult,
+    keys: { pipelineRunId: string; applicationId: string | null },
+): void {
+    logSectionAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, 'cover_letter_agent', coverLetterAgentEvents(res));
+    const { outcome, reason } = coverLetterAgentOutcome(res);
+    coverLetterOutcomeMetric.inc({ outcome, reason });
+}
+
+/**
+ * Guards stage -- cover-letter guard (rule-based, rewrite-on-violation) +
+ * the project-to-experience relocation + resume guard (F-pattern content
+ * checks). Both guard passes are fail-open (guardCoverLetter/guardResume
+ * never throw). Moved verbatim from main() into a named function -- the
+ * INPUT `resume` here is always the reconciled, non-null batch-1 output
+ * (resume-reconciler.ts's refuse-empty guarantee), so this stage (and every
+ * stage after it) never needs a null guard the pre-split pipeline carried
+ * for the case the writer failed outright.
+ */
+async function runGuardsStage(args: {
+    coverLetterCandidate: CoverLetter | null;
+    targetRole: string;
+    leadIdentity: string;
+    letterFraming: string;
+    coverLetterNarrative: CoverLetterNarrativeOpts;
+    resume: StructuredResumeData;
+    resumeGuardCtx: ResumeGuardCtx;
+    projectResumeBullets: ReadonlyArray<ProjectResumeBulletSet>;
+    violationLog: ViolationLog;
+}): Promise<{ finalCoverLetter: CoverLetter | null; resume: StructuredResumeData; relocatedSnapshot: StructuredResumeData }> {
+    const { coverLetterCandidate, targetRole, leadIdentity, letterFraming, coverLetterNarrative, resume, resumeGuardCtx, projectResumeBullets, violationLog } = args;
+
+    const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
+        coverLetterCandidate, targetRole, leadIdentity, letterFraming, coverLetterNarrative,
+    );
+    violationLog.recordAll('cover_letter', coverViolations);
+
+    // Keep Experience to verified employers: relocate any agent-mis-filed
+    // "Solo <role> — <Project>" experience entry back into
+    // projects[].highlights (its github link + description live there). Runs
+    // BEFORE the guard so every downstream pass sees the corrected structure.
+    const relocated = relocateProjectExperience(resume, resumeGuardCtx.verifiedEmployers ?? [], projectResumeBullets);
+    const beforeGuard = expSnapshot(relocated);
+    const beforeGuardProj = projSnapshot(relocated);
+    const guarded = await guardResume(relocated, resumeGuardCtx);
+    trackNetFired('guard', beforeGuard, expSnapshot(guarded.resume), beforeGuardProj, projSnapshot(guarded.resume));
+    violationLog.recordAll('resume_guard', guarded.violations);
+
+    return { finalCoverLetter, resume: guarded.resume, relocatedSnapshot: relocated };
+}
+
+/**
+ * Length stage -- migration reframe + length budget (measure -> condense ->
+ * hard trim) + grounded-metric weave + final content re-validation +
+ * integrity restore. Moved verbatim from main() into a named function; the
+ * `writerOriginal` baseline for applyResumeIntegrity/preserveResumeFields is
+ * the RECONCILED pre-guard resume (`baseline` here), same as the pre-split
+ * pipeline used the writer's raw output for that baseline.
+ */
+async function runLengthStage(args: {
+    resume: StructuredResumeData;
+    baseline: StructuredResumeData;
+    projectHighlightsSnapshot: StructuredResumeData;
+    resumeGuardCtx: ResumeGuardCtx;
+    jdPriority: JdPriorityContext;
+    budgetGroundingFacts: string;
+    groundedMetricsBlock: string;
+    targetRole: string;
+    requiredSkills: readonly string[];
+    succeedsEdges: ReadonlyMap<string, ReadonlySet<string>>;
+    codeTechByRepo: ReadonlyMap<string, ReadonlySet<string>>;
+    aliasToCanonical: ReadonlyMap<string, string>;
+    violationLog: ViolationLog;
+    pipelineRunId: string;
+}): Promise<StructuredResumeData> {
+    const {
+        resume, baseline, projectHighlightsSnapshot, resumeGuardCtx, jdPriority, budgetGroundingFacts,
+        groundedMetricsBlock, targetRole, requiredSkills, succeedsEdges, codeTechByRepo, aliasToCanonical,
+        violationLog, pipelineRunId,
+    } = args;
+
+    // Career/bullet drift: reframe an experience bullet describing a tech the code
+    // has since superseded (e.g. self-hosted kubeadm → managed EKS) into an honest
+    // migration narrative. Deterministic detection + grounded Haiku reframe; fail-open.
+    let current = resume;
+    const staleMigrations = detectStaleMigrations(current, { succeedsEdges, codeTechByRepo, aliasToCanonical });
+    if (staleMigrations.length > 0) {
+        log.warn({
+            pipelineRunId,
+            migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
+        }, 'migration_reframe_fired');
+        const preReframe = current;
+        current = preserveExperienceRoster(preReframe, await reframeStaleMigrations(preReframe, staleMigrations).catch(() => preReframe));
+    }
+
+    // ── Length budget (measure → condense → hard trim; fail-open) ──
+    // The 2026-07-02 Google run shipped 1,723 words / 4 pages: the
+    // strategist emitted 1,045 and the guard + keyword rewrites added
+    // the rest. Enforce here (before persist/ATS) and again after the
+    // keyword-surfacing rewrite — the last stage that can grow it.
+    const preBudget = current;
+    const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
+    const beforeLength = expSnapshot(preBudget);
+    const beforeLengthProj = projSnapshot(preBudget);
+    const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
+    trackNetFired('length', beforeLength, expSnapshot(budgeted), beforeLengthProj, projSnapshot(budgeted));
+    // Expansion may only add grounded numbers; strip anything else.
+    const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
+    // Metric weave (always-on when the ledger is non-empty): no agent sees
+    // the ledger directly, so this Haiku pass is HOW grounded metrics enter
+    // the bullets. Values are protected by the allowed-number set; the
+    // number strip re-runs on its output.
+    const jdContextLine = `${targetRole}: ${requiredSkills.join(', ')}`;
+    // Experience is agent-owned (fillResumeExperience already produced a
+    // provenance-guarded final section) -- the weave may still legitimately
+    // rewrite project descriptions, so scope it OUT of experience by
+    // snapshot-restore rather than retiring it. See restoreExperienceAfter.
+    const expBeforeWeave = structuredClone(preMetrics.experience);
+    const numberSafe = restoreExperienceAfter(
+        await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
+            violationLog.record('metric_weave', code);
+            log.warn({ pipelineRunId, code }, 'grounded_metric_weave');
+        }),
+        expBeforeWeave,
+    );
+    // FINAL content re-validation: reframe/condense/expand can
+    // reintroduce violations the early guard already repaired (the
+    // A/B run regained 5 bullet-shared project numbers and a flat
+    // "Terraform" claim). One bounded repair, then report residuals.
+    const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
+    violationLog.recordAll('revalidate', revalidated.violations);
+    let finalResume = await applyResumeIntegrity(revalidated.resume, baseline, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
+    // Restore any projects[].highlights the Haiku re-emit passes dropped
+    // (the emit_resume tool round-trip blanks the Projects bullets).
+    finalResume = restoreProjectHighlights(projectHighlightsSnapshot, finalResume);
+    return finalResume;
+}
+
+/** Everything runAtsGateStage needs -- one wide args object (orchestration function, mirrors RunProvenanceInputs above). */
+interface AtsGateArgs {
+    readonly pool: Pool;
+    readonly env: { applicationId: string; userId: string; pipelineId: string; targetRole: string; pipelineRunId: string };
+    readonly researchData: StrategistResearchResult;
+    readonly jdExtraction: JdSignal;
+    readonly familyVocab: string[][];
+    readonly techGroups: string[][];
+    readonly techAliasMap: Map<string, string>;
+    readonly skillEvidenceLedger: readonly SkillEvidenceEntry[];
+    readonly resumeGuardCtx: ResumeGuardCtx;
+    readonly jdPriority: JdPriorityContext;
+    readonly experienceFactsBlock: string;
+    readonly projectEvidenceBlock: string;
+    readonly baseline: StructuredResumeData;
+    readonly projectHighlightsSnapshot: StructuredResumeData;
+    readonly violationLog: ViolationLog;
+    readonly persistedResumeId: string;
+    readonly resume: StructuredResumeData;
+    readonly archetype: string | null;
+}
+
+/**
+ * ATS-gate stage -- render + parse-back QA, then the attainable-keyword
+ * feedback loop (ONE bounded honest re-write + re-check). Moved verbatim
+ * from main() into a named function; every internal step keeps its original
+ * fail-open contract (errors here degrade the ATS verdict, never fail the
+ * run).
+ */
+async function runAtsGateStage(args: AtsGateArgs): Promise<{ finalResume: StructuredResumeData; finalAts: AtsCheckResult | null }> {
+    const {
+        pool, env, researchData, jdExtraction, familyVocab, techGroups, techAliasMap, skillEvidenceLedger,
+        resumeGuardCtx, jdPriority, experienceFactsBlock, projectEvidenceBlock, baseline,
+        projectHighlightsSnapshot, violationLog, persistedResumeId, archetype,
+    } = args;
+    let finalResume = args.resume;
+
+    // Build a shared embedder for 3-tier ATS keyword matching (Titan, fail-open).
+    const atsEmbedder = TitanEmbeddingProvider.fromEnvironment();
+    const atsArgs = {
+        s3, pool,
+        bucket:        process.env['ASSETS_BUCKET'] ?? '',
+        resumeId:      persistedResumeId,
+        userId:        env.userId,
+        research:      researchData,
+        log,
+        correlationId: env.pipelineRunId,
+        onOutcome:     (status: AtsCheckResult['status'] | 'error') => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
+        jdExtraction,
+        familyVocab,
+        embedder:      atsEmbedder,
+        techGroups,
+        techAliasMap,
+    };
+    const atsCheck = await renderCheckAndStoreAts({ ...atsArgs, resume: finalResume });
+    let finalAts: AtsCheckResult | null = atsCheck;
+    // Tracks whichever resumes row holds the FINAL ATS check (the
+    // keyword-surfacing re-write below may persist a different
+    // resumeId) — F6 re-stores the attainable-enriched object onto
+    // this row after the merge below.
+    let atsResumeId = persistedResumeId;
+
+    // ── ATS feedback loop (pass-by-generation, ONE bounded honest re-write) ──
+    // Surface attainable-but-missing keywords (verified/transferable the
+    // candidate genuinely has — GAPs are excluded by splitAttainable and
+    // can never be surfaced) using ONLY the provided evidence, then re-render
+    // + re-check ONCE. Fail-open at every await; never throws.
+    const split = splitAttainable(atsCheck.jdKeywordCoverage, skillEvidenceLedger);
+    if (split.attainableMissing.length > 0) {
+        atsFeedback.inc({ outcome: 'fired' });
+        const baseResume = finalResume;
+        // Red flags: no structured red-flag source exists in this scope today
+        // (StrategistResearchResult has no `redFlags`, no recruiter snapshot here) → [].
+        const redFlags: string[] = [];
+        // Grounding facts = verbatim career facts + project evidence only (F2:
+        // verifiedMatches[].sourceCitation is a matcher paraphrase, not verbatim
+        // KB text, and must never seed the allowed-number set — see grounding-facts.ts).
+        const groundingFacts = buildGroundingFacts([
+            experienceFactsBlock,
+            projectEvidenceBlock,
+        ]);
+        // Allowed numbers = original resume + grounding facts. Any number the
+        // rewrite introduces outside this set is stripped deterministically.
+        const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
+        const beforeSurface = expSnapshot(baseResume);
+        const beforeSurfaceProj = projSnapshot(baseResume);
+        const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
+        let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
+        trackNetFired('surface_keywords', beforeSurface, expSnapshot(surfaced), beforeSurfaceProj, projSnapshot(surfaced));
+        if (surfaced !== baseResume) {
+            // The keyword rewrite is the last stage that can GROW the
+            // resume (it inflated the 2026-07-02 Google run by pulling
+            // grounding-facts prose into projects) — re-enforce the
+            // length budget, then FINAL-revalidate content (surface
+            // rewrites were observed reintroducing inventory numbers
+            // and unbridged claims) before persisting and re-checking.
+            // No groundingFacts here: round 1 already expanded to fill;
+            // this pass exists only to SHRINK keyword-rewrite overgrowth.
+            // (Observed live: a second expand+revalidate round cost ~50s.)
+            // scrubEvidenceText (F3): the condense rewrite this triggers
+            // interpolates its own numeric budgets into the prompt next to
+            // the resume text — feed it real evidence so a genuinely
+            // grounded number survives the post-condense instruction-leak
+            // scrub, without opting back into the expand direction.
+            const beforePostKeywordsLength = expSnapshot(surfaced);
+            const beforePostKeywordsLengthProj = projSnapshot(surfaced);
+            surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
+            trackNetFired('length', beforePostKeywordsLength, expSnapshot(surfaced), beforePostKeywordsLengthProj, projSnapshot(surfaced));
+            surfaced = stripUngroundedNumbers(surfaced, allowed);
+            const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
+            violationLog.recordAll('revalidate_post_keywords', reval.violations);
+            surfaced = await applyResumeIntegrity(reval.resume, baseline, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
+            // close the silent-blanking path: the keyword-loop re-emit can drop projects[].highlights
+            surfaced = restoreProjectHighlights(projectHighlightsSnapshot, surfaced);
+            finalResume = surfaced;
+            const rePersisted = await persistTailoredResume(pool, {
+                applicationId:  env.applicationId,
+                userId:         env.userId,
+                pipelineId:     env.pipelineId,
+                targetRole:     env.targetRole,
+                archetype,
+                tailoredResume: surfaced,
+            }).catch(() => null);
+            const reResumeId = rePersisted?.resumeId ?? persistedResumeId;
+            atsResumeId = reResumeId;
+            // Re-check the SURFACED resume. A silent fallback to the
+            // pre-rewrite verdict shipped stale "missing keyword" issues
+            // for a resume that had already fixed them — so retry once,
+            // and if the re-check still fails, mark the verdict stale
+            // instead of presenting it as current.
+            finalAts = await renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced })
+                .catch(async () => {
+                    log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed — retrying once');
+                    return renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced });
+                })
+                .catch(() => {
+                    log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed_twice — stamping stale verdict');
+                    strategistRuns.inc({ operation: 'analyse', outcome: 'ats_recheck_stale' });
+                    return { ...atsCheck, staleForFinalResume: true };
+                });
+        }
+    } else {
+        atsFeedback.inc({ outcome: 'skipped' });
+    }
+
+    // Stamp the pass-mark from the FINAL coverage, then reconcile the
+    // headline `passed` bit (F5). `status` (buildAtsCheck, GROUNDED
+    // keywords) and `attainablePassed` (splitAttainable, VERIFIED-only)
+    // measure different things and can legitimately disagree —
+    // reconcileAtsPassed is the single arbiter; emit ONE reconciled
+    // outcome from it rather than reading `finalSplit.attainablePassed`
+    // and the per-render `ats_${status}` outcome as two independent
+    // (and possibly conflicting) truths.
+    const finalSplit = splitAttainable(finalAts.jdKeywordCoverage, skillEvidenceLedger);
+    const reconciledPassed = reconcileAtsPassed(finalAts.status, finalSplit.attainablePassed);
+    if (reconciledPassed) atsFeedback.inc({ outcome: 'passed' });
+    finalAts = {
+        ...finalAts,
+        passed:            reconciledPassed,
+        attainableTotal:   finalSplit.attainableTotal,
+        attainableCovered: finalSplit.attainableCovered,
+        attainablePassed:  finalSplit.attainablePassed,
+        surfacedKeywords:  split.attainableMissing.map((e) => e.tool),
+    };
+
+    // F6: renderCheckAndStoreAts already persisted the PRE-attainable
+    // check to resumes.ats_check_json via storeAtsArtifacts. The
+    // attainable fields + reconciled `passed` only become known here,
+    // after the Skill Evidence Ledger split — re-store the enriched
+    // object so the primary read path (resumes.ats_check_json) carries
+    // the same truth as pipeline_runs.metadata.analysis.atsCheck
+    // instead of only the latter.
+    await storeAtsCheckJson({ pool, userId: env.userId, resumeId: atsResumeId, check: finalAts }).catch((e) => {
+        log.warn(
+            { pipelineRunId: env.pipelineRunId, resumeId: atsResumeId, error: (e as Error).message },
+            'ats_check_json_attainable_restore_failed — resumes.ats_check_json lacks attainable fields; pipeline_runs.metadata still has them',
+        );
+    });
+
+    return { finalResume, finalAts };
 }
 
 export async function main(): Promise<void> {
@@ -1085,6 +1740,15 @@ export async function main(): Promise<void> {
             return;
         }
 
+        // Guard-violation ledger: every (stage, code) pair fired below is
+        // collected for pipeline_runs.metadata.guard — Prometheus counters
+        // alone do not survive short-lived Job pods (run 77e325ea: three
+        // rewrites fired, zero increments visible after the pod exited).
+        // Declared here (moved up from its old post-writer position) so the
+        // roster-reconcile call on the skeleton, below, can record into it.
+        const violationLog = createViolationLog((stage, code) =>
+            (stage === 'cover_letter' ? coverLetterViolations : resumeViolationsMetric).inc({ code }));
+
         // Independent pre-research inputs, loaded CONCURRENTLY (were sequential):
         //  - project case studies (citeable evidence for grounding + resume bullets)
         //  - education facts (verbatim degree/institution — no hallucinated schools)
@@ -1092,7 +1756,7 @@ export async function main(): Promise<void> {
         //    AND the Research agent's career history (was loaded twice)
         //  - JD-extractor: structured JD signal that sharpens KB retrieval
         // All fail-open.
-        const [projectEvidenceBlock, projectResumeBullets, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContactBlock] = await Promise.all([
+        const [projectEvidenceBlock, projectResumeBullets, projectLaneIndex, profileIntelligenceBlock, educationEntries, certificationEntries, careerEntries, jdExtraction, achievementEvidenceBlock, metricsLedgerBlock, candidateContact] = await Promise.all([
             loadProjectEvidenceBlock(pool, ctx.userId),
             loadProjectResumeBullets(pool, ctx.userId),
             loadProjectLaneIndex(pool, ctx.userId),
@@ -1103,24 +1767,59 @@ export async function main(): Promise<void> {
             extractJobDescription(ctx.jobDescription, ctx),
             loadAchievementEvidence(pool, ctx.userId),
             loadGroundedMetricsLedger(pool, ctx.userId),
-            loadCandidateContactBlock(pool, ctx.userId),
+            loadCandidateContact(pool, ctx.userId),
         ]);
-        // Candidate grounding fed to RESEARCH (and the writer's evidence text):
-        // documented project case studies PLUS the code-grounded Profile
-        // Intelligence. Both fail-open to '' independently. The STRATEGIST now
-        // receives the two blocks SEPARATELY — concatenating them buried the
+        // Candidate grounding fed to RESEARCH (and the section agents' evidence
+        // text): documented project case studies PLUS the code-grounded Profile
+        // Intelligence. Both fail-open to '' independently. The research/section
+        // agents receive the two blocks SEPARATELY — concatenating them buried the
         // profile block inside the case-studies wrapper (whose preamble scopes
         // usage to bullet grounding), and the persona's S3 "drawn from the
         // profile intelligence" instruction had no matching section to draw
         // from (run 77e325ea: S3 slot filled with a second rigor close).
         const candidateGroundingBlock = [projectEvidenceBlock, profileIntelligenceBlock].filter(Boolean).join('\n\n');
-        // projectResumeBullets (structured form) is no longer formatted for the
-        // writer prompt (Task 8: the writer emits an empty projects[] skeleton;
-        // the dedicated projects agent composes entries from this same pool via
-        // loadProjectAgentInputs) -- it still anchors the post-writer relocation.
+        // projectResumeBullets (structured form) is no longer formatted for a
+        // writer prompt (the dedicated projects agent composes entries from
+        // this same pool via loadProjectAgentInputs) -- it still anchors the
+        // post-agent relocation pass below.
         const educationBlock      = formatEducation(educationEntries);
         const certificationsBlock = formatCertifications(certificationEntries);
         const experienceFactsBlock = formatExperienceFacts(careerEntries);
+        // formatCandidateContact is pure (no I/O) -- deriving the formatted
+        // block from the already-loaded structured contact avoids a second DB
+        // round trip. Still needed downstream: the cover-letter agent's
+        // VERBATIM signoff source (see cover-letter-message.ts).
+        const candidateContactBlock = formatCandidateContact(candidateContact);
+
+        // -- Deterministic resume skeleton -- BEFORE any agent runs --------
+        // Profile/education/certifications copied verbatim from verified
+        // sources; experience reduced to a roster (company/title/period,
+        // highlights filled by fillResumeExperience in batch 1 below); every
+        // agent-owned section starts empty (resume-skeleton.ts). No LLM
+        // prose exists yet at this point, so there is nothing for the old
+        // scrubInstructionLeaks pass to strip -- see the removal note where
+        // the pre-split writer's scrub call used to run, further down.
+        const skeleton = buildSkeletonResume({
+            careerEntries,
+            education:      educationEntries,
+            certifications: certificationEntries,
+            contact:        candidateContact ?? { name: '', email: '' },
+        });
+        // Anchor the roster to career-history truth (merge duplicated roles,
+        // restore employer names) -- moved here from its old post-writer
+        // position (it used to run on the WRITER's roster to fix LLM drift;
+        // the skeleton's roster is already a 1:1 deterministic map from
+        // careerEntries, so this call is now a defence against duplicate/
+        // near-duplicate raw career-history rows rather than LLM drift, but
+        // it is still the single source of that anchoring logic).
+        const tailoredResumeData: StructuredResumeData | null = reconcileRosterAgainstCareer(
+            skeleton,
+            careerEntries,
+            (code) => {
+                violationLog.record('roster_reconcile', code);
+                log.warn({ pipelineRunId: env.pipelineRunId, code }, 'experience_roster_reconciled');
+            },
+        );
 
         // Role-ontology grounding — translate experience into target-role vocabulary. Fail-open.
         const roleRepo = new RoleOntologyRepository(pool);
@@ -1180,7 +1879,8 @@ export async function main(): Promise<void> {
         // ships dark; absent ⇒ today's pure-vector retrieval (fail-open).
         const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techGroups, aliasToCanonical);
 
-        const research = await executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock);
+        const research = await stageSeconds(pipelineStageSeconds, 'research', () =>
+            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock));
 
         // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line.
         // Computed BEFORE the guard chain so it can deterministically constrain the matcher's
@@ -1323,7 +2023,41 @@ export async function main(): Promise<void> {
         // measured 2026-07-08 across personas v6-v8) and correlated with WORSE
         // composition. It feeds the post-writer Haiku weave + allowed-number sets.
         const groundedMetricsBlock = composeMetricsBlock(metricsLedgerBlock, researchData.quantifiedEvidence);
-        const analysis = await executeStrategistAgent(ctx, researchData, educationBlock, experienceFactsBlock, roleEvidenceBlock, yearsGap, codeStackContext, achievementEvidenceBlock, profileIntelligenceBlock, candidateContactBlock);
+
+        // ATS target selection + the projects-agent evidence pool -- pulled up
+        // from their old post-writer positions so batch 1 (below) has them
+        // ready before it starts. Pure/fail-open reads of data already in
+        // scope (ledger, jdExtraction), except projectAgentInputs, which is
+        // one more fail-open DB read (a transient error degrades to an empty
+        // pool -> projects[] skeleton, never fails the run).
+        const experienceAtsTargets = selectExperienceAtsTargets(skillEvidenceLedger, jdExtraction, 6);
+        const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
+        const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches)
+            .catch((err: unknown) => {
+                log.warn({ pipelineRunId: env.pipelineRunId, err: err instanceof Error ? err.message : String(err) }, 'project_agent_inputs_load_failed_fail_open');
+                return { pool: [], unresolvedRepos: [] };
+            });
+
+        // -- BATCH 1: analysis + experience + projects + skills, concurrent --
+        // (see runBatch1Agents's doc comment for the concurrency-safety proof)
+        const analysisInput: AnalysisMessageInput = {
+            research: researchData,
+            codeStack: codeStackContext,
+            yearsGapFraming: framingDirective(yearsGap) ?? '',
+            profileIntelligence: profileIntelligenceBlock,
+        };
+        const skillsInput: SkillsMessageInput = {
+            jd: jdExtraction,
+            verifiedMatches: researchData.verifiedMatches,
+            partialMatches: researchData.partialMatches,
+        };
+        const batch1 = await stageSeconds(pipelineStageSeconds, 'batch1', () => runBatch1Agents({
+            ctx, skeleton: tailoredResumeData, analysisInput, researchData, careerEntries,
+            experienceAtsTargets, groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
+            skillEvidenceLedger, jdExtraction, pipelineRunId: env.pipelineRunId,
+        }));
+        const { analysis, experienceAgentDiag, projectsAgentDiag, skillsAgentDiag } = batch1;
+        recordBatch1Observability(batch1, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 
@@ -1367,103 +2101,54 @@ export async function main(): Promise<void> {
             strategistRuns.inc({ operation: 'analyse', outcome: 'grounding_skipped_no_context' });
         }
 
-        // Raw tailored resume from the Strategist (guard reads this as input) —
-        // scrubbed of instruction-leaked metrics FIRST: the 2026-07-08 run lifted
-        // "8 minutes to 30 seconds" from the persona's own impact-metric example,
-        // a class the provenance guard cannot catch (its allowed set is seeded
-        // with the writer's own output). Prompt numbers are never evidence.
-        const writerEvidenceText = [
-            experienceFactsBlock, candidateGroundingBlock, educationBlock, roleEvidenceBlock,
-            codeStackContext, achievementEvidenceBlock, groundedMetricsBlock, JSON.stringify(researchData),
-        ].join('\n');
-        // Guard-violation ledger: every (stage, code) pair fired below is
-        // collected for pipeline_runs.metadata.guard — Prometheus counters
-        // alone do not survive short-lived Job pods (run 77e325ea: three
-        // rewrites fired, zero increments visible after the pod exited).
-        const violationLog = createViolationLog((stage, code) =>
-            (stage === 'cover_letter' ? coverLetterViolations : resumeViolationsMetric).inc({ code }));
-        const tailoredResumeData = reconcileRosterAgainstCareer(
-            scrubInstructionLeaks(
-                analysis.data.tailoredResumeData ?? null,
-                writerEvidenceText,
-                () => {
-                    violationLog.record('instruction_scrub', 'instruction_metric_stripped');
-                    log.warn({ pipelineRunId: env.pipelineRunId }, 'instruction_metric_stripped_from_writer_output');
-                },
-            ),
-            careerEntries,
-            (code) => {
-                violationLog.record('roster_reconcile', code);
-                log.warn({ pipelineRunId: env.pipelineRunId, code }, 'experience_roster_reconciled');
-            },
-        );
-
-        // -- Experience agent -- rewrites the writer's roster skeleton into a
-        // JD-tailored, provenance-guarded Experience section. Runs BEFORE the
-        // summary splice so the summary agent sees the real experience body,
-        // not the empty-highlights skeleton the writer emitted. --
-        const experienceAtsTargets = selectExperienceAtsTargets(skillEvidenceLedger, jdExtraction, 6);
-        const experienceAgentDiag = await fillResumeExperience(
-            ctx, tailoredResumeData, researchData, careerEntries, experienceAtsTargets,
-            groundedMetricsBlock, codeStackContext,
-            (err) => log.warn({
-                pipelineRunId: env.pipelineRunId,
-                agent: 'strategist-experience',
-                err: err instanceof Error ? err.message : String(err),
-            }, 'experience_agent_failed_verbatim_fallback_used'),
-        );
-        // Experience-agent observability: Loki event stream + bounded Prometheus
-        // outcome/coverage metrics -- same pattern as the summary-ATS block below.
-        // experienceAgentDiag itself is folded into the metadata.analysis write
-        // further down (pipeline_runs.metadata.analysis.experienceAgent) rather
-        // than a second updatePipelineRunMetadata call (shallow-merge constraint).
-        if (experienceAgentDiag) {
-            logExperienceAgentEvents(log, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId, traceId: null }, experienceAgentDiag);
-            const { outcome, reason } = experienceAgentOutcome(experienceAgentDiag);
-            experienceOutcomeMetric.inc({ outcome, reason });
-            if (experienceAgentDiag.targets.length > 0 && !experienceAgentDiag.fallback.fired) {
-                experienceAgentCoverageMetric.observe(experienceAgentDiag.coverageBefore.covered);
-            }
+        // -- Reconcile: validate + refuse-empty (resume-reconciler.ts) -----
+        // sectionOrder: see analysisSectionOrder's doc comment for why this is
+        // always undefined, not a regression from the pre-split writer.
+        // scrubInstructionLeaks (the pre-split writer's instruction-leak
+        // scrub) is INTENTIONALLY gone: it stripped numbers that appeared in
+        // the WRITER's persona text but nowhere in its evidence -- a class of
+        // leak specific to that one giant persona. Every section agent now
+        // has its OWN small, dedicated persona (none of them is
+        // STRATEGIST_PERSONA_SYSTEM_PROMPT), so a leak from THAT specific
+        // persona text cannot occur in their output; there is nothing left
+        // for this pass to scrub.
+        // tailoredResumeData is StructuredResumeData | null only because
+        // reconcileRosterAgainstCareer's signature is shared with the
+        // (genuinely nullable) post-writer call site it used to serve;
+        // buildSkeletonResume above always returns a real object, so this is
+        // a real invariant, not a cast of convenience -- throw loudly if it
+        // is ever violated rather than silently coercing null through the
+        // reconciler (which requires a non-null resume).
+        if (!tailoredResumeData) {
+            throw new Error('run-pipeline: skeleton resume was unexpectedly null before reconcile');
         }
+        const resume: StructuredResumeData = await stageSeconds(pipelineStageSeconds, 'reconcile', async () => reconcileResumeSections(
+            tailoredResumeData,
+            analysisSectionOrder(analysis.data),
+            {
+                experience: () => verbatimExperienceFallback(careerEntries),
+                projects:   () => deterministicProjects(projectAgentInputs.pool, experienceAtsTargets),
+                skills:     () => deterministicSkills(skillEvidenceLedger, jdExtraction),
+            },
+            env.pipelineRunId,
+        ));
 
-        // -- Projects agent -- composes the writer's empty projects[] skeleton --
-        // Reuses experienceAtsTargets (the same top-6 ATS targets fed to the
-        // experience lane) -- one JD-target selection shared by both agent-owned
-        // sections, not a second independent pick. Loki event stream + bounded
-        // Prometheus outcome/coverage metrics + repo-unresolved counter are
-        // recorded by recordProjectsAgentObservability below; projectsAgentDiag
-        // itself is folded into the metadata.analysis write further down
-        // (pipeline_runs.metadata.analysis.projectsAgent).
-        // Fail-open like every peer loader: a transient DB error here must degrade
-        // the projects section (empty pool -> skeleton), never fail the whole run.
-        const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches)
-            .catch((err: unknown) => {
-                log.warn({ pipelineRunId: env.pipelineRunId, err: err instanceof Error ? err.message : String(err) }, 'project_agent_inputs_load_failed_fail_open');
-                return { pool: [], unresolvedRepos: [] };
-            });
-        const projectsAgentDiag = await fillResumeProjects(
-            ctx, tailoredResumeData, projectAgentInputs, experienceAtsTargets,
-            researchData.targetRole,
-            (err) => log.warn({
-                pipelineRunId: env.pipelineRunId,
-                agent: 'strategist-projects',
-                err: err instanceof Error ? err.message : String(err),
-            }, 'projects_agent_failed_deterministic_fallback_used'),
-        );
-        recordProjectsAgentObservability(projectsAgentDiag, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });
-
-        // ── Summary agent — fills the body's empty summary field ──
-        const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
-        const summaryAtsDiag = await fillResumeSummary(
-            ctx, tailoredResumeData, researchData, profileIntelligenceBlock,
-            yearsGap, achievementEvidenceBlock, summaryAtsTargets,
-            summaryOutcomeMetric,
-            (err) => log.warn({
-                pipelineRunId: env.pipelineRunId,
-                agent: 'strategist-summary',
-                error: err instanceof Error ? err.message : String(err),
-            }, 'summary_agent_failed_deterministic_fallback_used'),
-        );
+        // -- BATCH 2: summary + cover letter, concurrent -- both read `resume` --
+        const coverLetterInput: CoverLetterMessageInput | null = (ctx.includeCoverLetter ?? true) ? {
+            targetRole:          researchData.targetRole,
+            targetCompany:       researchData.targetCompany,
+            companyProblem:      jdExtraction.companyProblem,
+            achievementEvidence: achievementEvidenceBlock,
+            candidateContact:    candidateContactBlock,
+            yearsGapFraming:     framingDirective(yearsGap) ?? '',
+            profileIntelligence: profileIntelligenceBlock,
+            resumeBody:          resume,
+        } : null;
+        const batch2 = await stageSeconds(pipelineStageSeconds, 'batch2', () => runBatch2Agents({
+            ctx, resume, researchData, profileIntelligenceBlock, yearsGap, achievementEvidenceBlock,
+            summaryAtsTargets, coverLetterInput, pipelineRunId: env.pipelineRunId,
+        }));
+        const { summaryAtsDiag } = batch2;
         // Summary-ATS observability: Loki event stream + bounded Prometheus outcome/coverage
         // metrics. summaryAtsDiag itself is folded into the metadata.analysis write below
         // (pipeline_runs.metadata.analysis.summaryAts) rather than a second
@@ -1483,34 +2168,16 @@ export async function main(): Promise<void> {
                 summaryAtsCoverageMetric.observe(summaryAtsDiag.coverageBefore.covered);
             }
         }
+        recordCoverLetterAgentObservability(batch2.coverLetterAgentResult, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });
 
         const archetype = analysis.data.archetypeSelection?.selectedArchetype ?? null;
 
-        // ── Cover-letter guard (rule-based, fail-open, rewrite-on-violation) ──
-        // Validates the AI-authored cover letter against code-enforced rules
-        // (e.g. leadIdentity coherence, years-gap framing). Violations are
-        // rewritten in-place and counted for observability — never throws.
-        // Tenure framing is CONDITIONAL: when the JD sets no years bar (the
-        // Accenture JD explicitly de-emphasised years yet the letter led with
-        // "five years"), the letter must not mention tenure at all.
+        // -- Guards stage (cover-letter guard + relocation + resume guard) --
         const hasYearsBar = jdHasYearsBar(yearsGap);
         const letterFraming = tenureFramingFor(yearsGap);
-        const { letter: finalCoverLetter, violations: coverViolations } = await guardCoverLetter(
-            analysis.data.coverLetter,
-            researchData.targetRole,
-            analysis.data.archetypeSelection?.leadIdentity ?? '',
-            letterFraming,
-            buildCoverLetterNarrative(jdExtraction, projectLaneIndex.projectPitches, tailoredResumeData, hasYearsBar),
-        );
-        violationLog.recordAll('cover_letter', coverViolations);
-
-        // ── Resume guard — F-pattern content checks (fail-open, rewrite-on-violation) ──
-        // Validates the AI-authored resume against code-enforced rules (headline
-        // positioning, summary cluster, education accuracy, skills lead). Violations
-        // are rewritten in-place by Haiku and counted for observability — never throws.
         const archetypeId = analysis.data.archetypeSelection?.archetypeId ?? 0;
         const archetypeSkillLead = archetypeId === 7 ? 'Support & Troubleshooting' : '';
-        const resumeGuardCtx = {
+        const resumeGuardCtx: ResumeGuardCtx = {
             targetRole:        researchData.targetRole,
             leadIdentity:      analysis.data.archetypeSelection?.leadIdentity ?? '',
             verifiedEducation: (educationEntries ?? []).map((e) => e.degree),
@@ -1522,6 +2189,19 @@ export async function main(): Promise<void> {
             verifiedCertifications: toVerifiedCerts(certificationEntries),
             verifiedEmployers: toVerifiedEmployers(careerEntries),
         };
+        const guardsResult = await stageSeconds(pipelineStageSeconds, 'guards', () => runGuardsStage({
+            coverLetterCandidate: batch2.coverLetter,
+            targetRole:           researchData.targetRole,
+            leadIdentity:         analysis.data.archetypeSelection?.leadIdentity ?? '',
+            letterFraming,
+            coverLetterNarrative: buildCoverLetterNarrative(jdExtraction, projectLaneIndex.projectPitches, resume, hasYearsBar),
+            resume,
+            resumeGuardCtx,
+            projectResumeBullets,
+            violationLog,
+        }));
+        const finalCoverLetter = guardsResult.finalCoverLetter;
+
         // Grounding for the expand direction + the allowed-number set that
         // bounds ANY pass that can add content (expand, surface-keywords).
         // VERBATIM sources only (F2) — researchData.verifiedMatches[].sourceCitation
@@ -1538,248 +2218,58 @@ export async function main(): Promise<void> {
             // summary mid-sentence (observed live on run a428bdf4).
             formatVerifiedYearsFact(careerEntries),
         ]);
-        // Keep Experience to verified employers: relocate any project the writer
-        // mis-filed as a "Solo <role> — <Project>" experience entry back into
-        // projects[].highlights (its github link + description live there). Runs
-        // BEFORE the guard so every downstream pass sees the corrected structure.
-        let finalResume = tailoredResumeData
-            ? relocateProjectExperience(tailoredResumeData, resumeGuardCtx.verifiedEmployers, projectResumeBullets)
-            : tailoredResumeData;
-        // Snapshot the relocated/filled projects[].highlights so the downstream
-        // Haiku re-emit passes (condense, metric-weave, keyword-surfacing) can't
-        // silently blank them — restored just before persist.
-        const projectHighlightsSnapshot = finalResume;
-        if (finalResume) {
-            const beforeGuard = expSnapshot(finalResume);
-            const beforeGuardProj = projSnapshot(finalResume);
-            const guarded = await guardResume(finalResume, resumeGuardCtx);
-            finalResume = guarded.resume;
-            violationLog.recordAll('resume_guard', guarded.violations);
-            trackNetFired('guard', beforeGuard, expSnapshot(finalResume), beforeGuardProj, projSnapshot(finalResume));
-        }
 
         // JD-priority context for length enforcement — required skills + the
         // company problem decide what survives a condense (JD-relevant first).
-        const jdPriority = {
+        const jdPriority: JdPriorityContext = {
             requiredSkills:   jdExtraction.requiredSkills,
             companyProblem:   jdExtraction.companyProblem,
             responsibilities: jdExtraction.responsibilities,
         };
 
-        // Career/bullet drift: reframe an experience bullet describing a tech the code
-        // has since superseded (e.g. self-hosted kubeadm → managed EKS) into an honest
-        // migration narrative. Deterministic detection + grounded Haiku reframe; fail-open.
-        if (finalResume) {
-            const staleMigrations = detectStaleMigrations(finalResume, { succeedsEdges, codeTechByRepo, aliasToCanonical });
-            if (staleMigrations.length > 0) {
-                log.warn({
-                    pipelineRunId: env.pipelineRunId,
-                    migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
-                }, 'migration_reframe_fired');
-                const preReframe = finalResume;
-                finalResume = preserveExperienceRoster(preReframe, await reframeStaleMigrations(preReframe, staleMigrations).catch(() => preReframe));
-            }
-            // ── Length budget (measure → condense → hard trim; fail-open) ──
-            // The 2026-07-02 Google run shipped 1,723 words / 4 pages: the
-            // strategist emitted 1,045 and the guard + keyword rewrites added
-            // the rest. Enforce here (before persist/ATS) and again after the
-            // keyword-surfacing rewrite — the last stage that can grow it.
-            const preBudget = finalResume;
-            const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
-            const beforeLength = expSnapshot(preBudget);
-            const beforeLengthProj = projSnapshot(preBudget);
-            const budgeted = await applyLengthBudget(preBudget, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => preBudget);
-            trackNetFired('length', beforeLength, expSnapshot(budgeted), beforeLengthProj, projSnapshot(budgeted));
-            // Expansion may only add grounded numbers; strip anything else.
-            const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
-            // Metric weave (always-on when the ledger is non-empty): the writer
-            // never sees the ledger, so this Haiku pass is HOW grounded metrics
-            // enter the bullets. Values are protected by the allowed-number set;
-            // the number strip re-runs on its output.
-            const jdContextLine = `${researchData.targetRole}: ${jdExtraction.requiredSkills.join(', ')}`;
-            // Experience is agent-owned (fillResumeExperience above already produced
-            // a provenance-guarded final section) -- the weave may still legitimately
-            // rewrite project descriptions, so scope it OUT of experience by
-            // snapshot-restore rather than retiring it. See restoreExperienceAfter.
-            const expBeforeWeave = structuredClone(preMetrics.experience);
-            const numberSafe = restoreExperienceAfter(
-                await weaveGroundedMetrics(preMetrics, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
-                    violationLog.record('metric_weave', code);
-                    log.warn({ pipelineRunId: env.pipelineRunId, code }, 'grounded_metric_weave');
-                }),
-                expBeforeWeave,
-            );
-            // FINAL content re-validation: reframe/condense/expand can
-            // reintroduce violations the early guard already repaired (the
-            // A/B run regained 5 bullet-shared project numbers and a flat
-            // "Terraform" claim). One bounded repair, then report residuals.
-            const revalidated = await revalidateResumeContent(numberSafe, resumeGuardCtx).catch(() => ({ resume: numberSafe, violations: [] }));
-            violationLog.recordAll('revalidate', revalidated.violations);
-            finalResume = await applyResumeIntegrity(revalidated.resume, tailoredResumeData, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
-            // Restore any projects[].highlights the Haiku re-emit passes dropped
-            // (the emit_resume tool round-trip blanks the Projects bullets).
-            if (projectHighlightsSnapshot) finalResume = restoreProjectHighlights(projectHighlightsSnapshot, finalResume);
-        }
+        // -- Length stage (migration reframe + budget + metric weave + revalidate) --
+        let finalResume: StructuredResumeData = await stageSeconds(pipelineStageSeconds, 'length', () => runLengthStage({
+            resume: guardsResult.resume,
+            baseline: resume,
+            projectHighlightsSnapshot: guardsResult.relocatedSnapshot,
+            resumeGuardCtx, jdPriority, budgetGroundingFacts, groundedMetricsBlock,
+            targetRole: researchData.targetRole,
+            requiredSkills: jdExtraction.requiredSkills,
+            succeedsEdges, codeTechByRepo, aliasToCanonical,
+            violationLog,
+            pipelineRunId: env.pipelineRunId,
+        }));
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
-        const persisted = finalResume
-            ? await persistTailoredResume(pool, {
-                applicationId:  env.applicationId,
-                userId:         env.userId,
-                pipelineId:     env.pipelineId,
-                targetRole:     env.targetRole,
-                archetype,
-                tailoredResume: finalResume,
-              })
-            : null;
+        const persisted = await stageSeconds(pipelineStageSeconds, 'persist', () => persistTailoredResume(pool, {
+            applicationId:  env.applicationId,
+            userId:         env.userId,
+            pipelineId:     env.pipelineId,
+            targetRole:     env.targetRole,
+            archetype,
+            tailoredResume: finalResume,
+        }));
 
         // ── ATS render + parse-back QA (fail-open pipeline, fail-closed claim) ─
         // Renders the AI-authored resume to a text-selectable PDF, proves it
         // parses, and stores the canonical PDF + check. Delegated to a helper
         // that never throws (errors → 'unverified', never 'passed').
         let finalAts: AtsCheckResult | null = null;
-        if (persisted && finalResume) {
-            // Build a shared embedder for 3-tier ATS keyword matching (Titan, fail-open).
-            const atsEmbedder = TitanEmbeddingProvider.fromEnvironment();
-            const atsArgs = {
-                s3, pool,
-                bucket:        process.env['ASSETS_BUCKET'] ?? '',
-                resumeId:      persisted.resumeId,
-                userId:        env.userId,
-                research:      researchData,
-                log,
-                correlationId: env.pipelineRunId,
-                onOutcome:     (status: AtsCheckResult['status'] | 'error') => strategistRuns.inc({ operation: 'analyse', outcome: `ats_${status}` }),
-                jdExtraction,
-                familyVocab,
-                embedder:      atsEmbedder,
-                techGroups,
-                techAliasMap,
-            };
-            const atsCheck = await renderCheckAndStoreAts({ ...atsArgs, resume: finalResume });
-            finalAts = atsCheck;
-            // Tracks whichever resumes row holds the FINAL ATS check (the
-            // keyword-surfacing re-write below may persist a different
-            // resumeId) — F6 re-stores the attainable-enriched object onto
-            // this row after the merge below.
-            let atsResumeId = persisted.resumeId;
-
-            // ── ATS feedback loop (pass-by-generation, ONE bounded honest re-write) ──
-            // Surface attainable-but-missing keywords (verified/transferable the
-            // candidate genuinely has — GAPs are excluded by splitAttainable and
-            // can never be surfaced) using ONLY the provided evidence, then re-render
-            // + re-check ONCE. Fail-open at every await; never throws.
-            const split = splitAttainable(atsCheck.jdKeywordCoverage, skillEvidenceLedger);
-            if (split.attainableMissing.length > 0) {
-                atsFeedback.inc({ outcome: 'fired' });
-                const baseResume = finalResume; // non-null inside this guard; narrows fail-open return
-                // Red flags: no structured red-flag source exists in this scope today
-                // (StrategistResearchResult has no `redFlags`, no recruiter snapshot here) → [].
-                const redFlags: string[] = [];
-                // Grounding facts = verbatim career facts + project evidence only (F2:
-                // verifiedMatches[].sourceCitation is a matcher paraphrase, not verbatim
-                // KB text, and must never seed the allowed-number set — see grounding-facts.ts).
-                const groundingFacts = buildGroundingFacts([
-                    experienceFactsBlock,
-                    projectEvidenceBlock,
-                ]);
-                // Allowed numbers = original resume + grounding facts. Any number the
-                // rewrite introduces outside this set is stripped deterministically.
-                const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
-                const beforeSurface = expSnapshot(baseResume);
-                const beforeSurfaceProj = projSnapshot(baseResume);
-                const refined = preserveExperienceRoster(baseResume, await surfaceKeywords(baseResume, split.attainableMissing, { redFlags, groundingFacts }).catch(() => baseResume));
-                let surfaced = refined === baseResume ? baseResume : stripUngroundedNumbers(refined, allowed);
-                trackNetFired('surface_keywords', beforeSurface, expSnapshot(surfaced), beforeSurfaceProj, projSnapshot(surfaced));
-                if (surfaced !== baseResume) {
-                    // The keyword rewrite is the last stage that can GROW the
-                    // resume (it inflated the 2026-07-02 Google run by pulling
-                    // grounding-facts prose into projects) — re-enforce the
-                    // length budget, then FINAL-revalidate content (surface
-                    // rewrites were observed reintroducing inventory numbers
-                    // and unbridged claims) before persisting and re-checking.
-                    // No groundingFacts here: round 1 already expanded to fill;
-                    // this pass exists only to SHRINK keyword-rewrite overgrowth.
-                    // (Observed live: a second expand+revalidate round cost ~50s.)
-                    // scrubEvidenceText (F3): the condense rewrite this triggers
-                    // interpolates its own numeric budgets into the prompt next to
-                    // the resume text — feed it real evidence so a genuinely
-                    // grounded number survives the post-condense instruction-leak
-                    // scrub, without opting back into the expand direction.
-                    const beforePostKeywordsLength = expSnapshot(surfaced);
-                    const beforePostKeywordsLengthProj = projSnapshot(surfaced);
-                    surfaced = await applyLengthBudget(surfaced, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => surfaced);
-                    trackNetFired('length', beforePostKeywordsLength, expSnapshot(surfaced), beforePostKeywordsLengthProj, projSnapshot(surfaced));
-                    surfaced = stripUngroundedNumbers(surfaced, allowed);
-                    const reval = await revalidateResumeContent(surfaced, resumeGuardCtx).catch(() => ({ resume: surfaced, violations: [] }));
-                    violationLog.recordAll('revalidate_post_keywords', reval.violations);
-                    surfaced = await applyResumeIntegrity(reval.resume, tailoredResumeData, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
-                    // close the silent-blanking path: the keyword-loop re-emit can drop projects[].highlights
-                    if (projectHighlightsSnapshot) surfaced = restoreProjectHighlights(projectHighlightsSnapshot, surfaced);
-                    finalResume = surfaced;
-                    const rePersisted = await persistTailoredResume(pool, {
-                        applicationId:  env.applicationId,
-                        userId:         env.userId,
-                        pipelineId:     env.pipelineId,
-                        targetRole:     env.targetRole,
-                        archetype,
-                        tailoredResume: surfaced,
-                    }).catch(() => null);
-                    const reResumeId = rePersisted?.resumeId ?? persisted.resumeId;
-                    atsResumeId = reResumeId;
-                    // Re-check the SURFACED resume. A silent fallback to the
-                    // pre-rewrite verdict shipped stale "missing keyword" issues
-                    // for a resume that had already fixed them — so retry once,
-                    // and if the re-check still fails, mark the verdict stale
-                    // instead of presenting it as current.
-                    finalAts = await renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced })
-                        .catch(async () => {
-                            log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed — retrying once');
-                            return renderCheckAndStoreAts({ ...atsArgs, resumeId: reResumeId, resume: surfaced });
-                        })
-                        .catch(() => {
-                            log.warn({ pipelineRunId: env.pipelineRunId }, 'ats_recheck_failed_twice — stamping stale verdict');
-                            strategistRuns.inc({ operation: 'analyse', outcome: 'ats_recheck_stale' });
-                            return { ...atsCheck, staleForFinalResume: true };
-                        });
-                }
-            } else {
-                atsFeedback.inc({ outcome: 'skipped' });
-            }
-
-            // Stamp the pass-mark from the FINAL coverage, then reconcile the
-            // headline `passed` bit (F5). `status` (buildAtsCheck, GROUNDED
-            // keywords) and `attainablePassed` (splitAttainable, VERIFIED-only)
-            // measure different things and can legitimately disagree —
-            // reconcileAtsPassed is the single arbiter; emit ONE reconciled
-            // outcome from it rather than reading `finalSplit.attainablePassed`
-            // and the per-render `ats_${status}` outcome as two independent
-            // (and possibly conflicting) truths.
-            const finalSplit = splitAttainable(finalAts.jdKeywordCoverage, skillEvidenceLedger);
-            const reconciledPassed = reconcileAtsPassed(finalAts.status, finalSplit.attainablePassed);
-            if (reconciledPassed) atsFeedback.inc({ outcome: 'passed' });
-            finalAts = {
-                ...finalAts,
-                passed:            reconciledPassed,
-                attainableTotal:   finalSplit.attainableTotal,
-                attainableCovered: finalSplit.attainableCovered,
-                attainablePassed:  finalSplit.attainablePassed,
-                surfacedKeywords:  split.attainableMissing.map((e) => e.tool),
-            };
-
-            // F6: renderCheckAndStoreAts already persisted the PRE-attainable
-            // check to resumes.ats_check_json via storeAtsArtifacts. The
-            // attainable fields + reconciled `passed` only become known here,
-            // after the Skill Evidence Ledger split — re-store the enriched
-            // object so the primary read path (resumes.ats_check_json) carries
-            // the same truth as pipeline_runs.metadata.analysis.atsCheck
-            // instead of only the latter.
-            await storeAtsCheckJson({ pool, userId: env.userId, resumeId: atsResumeId, check: finalAts }).catch((e) => {
-                log.warn(
-                    { pipelineRunId: env.pipelineRunId, resumeId: atsResumeId, error: (e as Error).message },
-                    'ats_check_json_attainable_restore_failed — resumes.ats_check_json lacks attainable fields; pipeline_runs.metadata still has them',
-                );
-            });
+        if (persisted) {
+            const atsGateOut = await stageSeconds(pipelineStageSeconds, 'ats_gate', () => runAtsGateStage({
+                pool,
+                env: { applicationId: env.applicationId, userId: env.userId, pipelineId: env.pipelineId, targetRole: env.targetRole, pipelineRunId: env.pipelineRunId },
+                researchData, jdExtraction, familyVocab, techGroups, techAliasMap, skillEvidenceLedger,
+                resumeGuardCtx, jdPriority, experienceFactsBlock, projectEvidenceBlock,
+                baseline: resume,
+                projectHighlightsSnapshot: guardsResult.relocatedSnapshot,
+                violationLog,
+                persistedResumeId: persisted.resumeId,
+                resume: finalResume,
+                archetype,
+            }));
+            finalResume = atsGateOut.finalResume;
+            finalAts = atsGateOut.finalAts;
         }
 
         // ── Resume prose-quality (stop-slop, flag mode, fail-open) ─────────
@@ -1820,7 +2310,7 @@ export async function main(): Promise<void> {
             log.info({ pipelineRunId: env.pipelineRunId, guardTotal: guardMeta.total, guardViolations: guardMeta.violations }, 'guard_violations_recorded');
         }
         await updatePipelineRunMetadata(pool, env.pipelineRunId, {
-            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag, projectsAgent: projectsAgentDiag },
+            analysis:     { ...analysis.data, tailoredResumeData: finalResume, coverLetter: finalCoverLetter, analysisXml: finalAnalysis, pathGrounding, atsCheck: finalAts, yearsGap, summaryAts: summaryAtsDiag, experienceAgent: experienceAgentDiag, projectsAgent: projectsAgentDiag, skillsAgent: skillsAgentDiag, coverLetterAgent: coverLetterAgentOutcome(batch2.coverLetterAgentResult), analysisAgent: analysisAgentSummary(analysis.data) },
             research:     { ...researchData, gaps: gapsWithCauses, correctiveRetrieval: correctiveStats },
             jdExtraction,
             guard:   guardMeta,
@@ -1839,7 +2329,14 @@ export async function main(): Promise<void> {
                 kbTag:     cacheTag,
                 queryText: jdForCache,
                 response:  {
-                    analysis: { ...analysis.data, analysisXml: finalAnalysis },
+                    // analysis.data.tailoredResumeData AND .coverLetter are always
+                    // null post-split (the analysis agent authors neither -- see
+                    // analysis-agent.ts); explicitly override BOTH with the fully
+                    // guarded final artefacts so a later cache HIT (~L1049-1075,
+                    // replays this blob as-is) persists the guarded resume and the
+                    // guarded letter, not nulls (final-review MEDIUM: the letter
+                    // was silently dropped on new-shape cache hits).
+                    analysis: { ...analysis.data, analysisXml: finalAnalysis, tailoredResumeData: finalResume, coverLetter: finalCoverLetter },
                     research: researchData,
                 },
             }).catch(() => { /* fail-open — cache write must never break the run */ });

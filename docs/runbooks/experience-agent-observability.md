@@ -30,14 +30,18 @@ Every Loki event carries `pipeline_run_id`, `application_id`, and `trace_id`
 - `job_strategist_experience_agent_coverage` (Histogram, buckets `[0..6]`) --
   covered ATS targets in the FIRST pass; sampled only when targets exist and the
   run did not fall back.
-- `job_strategist_experience_net_fired_total{pass}` (Counter,
-  `pass = guard | length | surface_keywords`) -- increments when a downstream
-  safety-net pass CHANGED the experience section after the agent. This is the
-  retirement evidence for `guard` and `surface_keywords`: those trending to zero
-  means the agent delivers fidelity/keywords by construction, and sustained
-  firings mean it under-delivers (read the Loki events to see what changed).
-  `pass=length` is NOT a retirement signal -- it legitimately fires whenever the
-  combined resume exceeds the page budget and trimming touches experience.
+- `job_strategist_section_net_fired_total{section="experience", pass}`
+  (Counter, `pass = guard | length | surface_keywords`) -- increments when a
+  downstream safety-net pass CHANGED the experience section after the agent.
+  This is the retirement evidence for `guard` and `surface_keywords`: those
+  trending to zero means the agent delivers fidelity/keywords by
+  construction, and sustained firings mean it under-delivers (read the Loki
+  events to see what changed). `pass=length` is NOT a retirement signal -- it
+  legitimately fires whenever the combined resume exceeds the page budget and
+  trimming touches experience. PR-B removed the older, experience-only
+  `job_strategist_experience_net_fired_total{pass}` counter this generalised
+  one superseded (see the projects-agent-observability runbook, which shares
+  the same counter across both agent-owned sections).
 
 Panels (datasource UID `prometheus`):
 
@@ -45,7 +49,7 @@ Panels (datasource UID `prometheus`):
 sum by (outcome) (increase(job_strategist_experience_agent_outcome_total[$__range]))
 sum by (outcome, reason) (increase(job_strategist_experience_agent_outcome_total[$__range]))
 sum by (le) (increase(job_strategist_experience_agent_coverage_bucket[$__range]))
-sum by (pass) (increase(job_strategist_experience_net_fired_total[$__range]))
+sum by (pass) (increase(job_strategist_section_net_fired_total{section="experience"}[$__range]))
 ```
 
 ## Surface 2 -- Loki event stream
@@ -125,9 +129,10 @@ ORDER BY invoked_at;
 - `outcome=aware`/`rewritten` dominate; a rising `fallback{reason=provenance-invalid}`
   means the agent is mis-citing -- read the `_provenance_reject` tokens and tune
   the persona, never loosen the validator.
-- `net_fired_total{pass=surface_keywords}` trending to zero = the agent covers
-  ATS keywords by construction; sustained firings = coverage gap, check which
-  targets `experience_agent_scored` reports missing.
+- `section_net_fired_total{section="experience",pass="surface_keywords"}`
+  trending to zero = the agent covers ATS keywords by construction; sustained
+  firings = coverage gap, check which targets `experience_agent_scored`
+  reports missing.
 - `kept_first{reason=no-coverage-gain}` sustained high = the re-write pass burns
   a Sonnet call without improving coverage -- candidate for tuning or removal.
 - Dropped-lines counts in the diagnostics show how much of the user's history is

@@ -33,7 +33,6 @@ describe('loadPrompt', () => {
 
     it('loads every shipped content file with valid frontmatter', () => {
         const names = [
-            'strategist/_base_1',
             'strategist/summary',
             'research-persona',
             'jd-extractor-persona',

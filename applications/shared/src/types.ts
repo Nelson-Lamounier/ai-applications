@@ -135,7 +135,7 @@ export interface PipelineContext {
  */
 export type AgentName =
     | 'research' | 'writer' | 'qa'
-    | 'strategist-research' | 'strategist-writer' | 'strategist-coach' | 'strategist-summary' | 'strategist-summary-rewrite' | 'strategist-experience' | 'strategist-experience-rewrite' | 'strategist-projects' | 'strategist-projects-rewrite'
+    | 'strategist-research' | 'strategist-writer' | 'strategist-coach' | 'strategist-summary' | 'strategist-summary-rewrite' | 'strategist-experience' | 'strategist-experience-rewrite' | 'strategist-projects' | 'strategist-projects-rewrite' | 'strategist-analysis' | 'strategist-cover-letter' | 'strategist-skills'
     | 'jd-extractor'
     | 'role-classifier'
     | 'resume-builder'
