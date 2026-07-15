@@ -50,9 +50,9 @@ const POOL: ProjectPoolEntry[] = [
 ];
 
 const INFRA_TARGETS: ExperienceAtsTarget[] = [
-    { skill: 'Kubernetes', source: 'hard', verdict: 'verified', requirement: INFRA_REQUIREMENT },
-    { skill: 'PostgreSQL', source: 'hard', verdict: 'verified', requirement: INFRA_REQUIREMENT },
-    { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: INFRA_REQUIREMENT },
+    { skill: 'Kubernetes', source: 'hard', verdict: 'verified', requirement: INFRA_REQUIREMENT, anchors: [] },
+    { skill: 'PostgreSQL', source: 'hard', verdict: 'verified', requirement: INFRA_REQUIREMENT, anchors: [] },
+    { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: INFRA_REQUIREMENT, anchors: [] },
 ];
 
 /**

@@ -37,9 +37,9 @@ const CAREER_LINES = indexCareerLines(CAREER_ENTRIES);
 const ROSTER = rosterFromCareer(CAREER_ENTRIES);
 
 const NETWORKING_TARGETS: ExperienceAtsTarget[] = [
-    { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: NETWORKING_REQUIREMENT },
-    { skill: 'TCP/IP', source: 'hard', verdict: 'verified', requirement: NETWORKING_REQUIREMENT },
-    { skill: 'SSL/TLS', source: 'hard', verdict: 'transferable', requirement: NETWORKING_REQUIREMENT },
+    { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: NETWORKING_REQUIREMENT, anchors: [] },
+    { skill: 'TCP/IP', source: 'hard', verdict: 'verified', requirement: NETWORKING_REQUIREMENT, anchors: [] },
+    { skill: 'SSL/TLS', source: 'hard', verdict: 'transferable', requirement: NETWORKING_REQUIREMENT, anchors: [] },
 ];
 
 /**

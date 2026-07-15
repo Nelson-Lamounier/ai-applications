@@ -1,6 +1,7 @@
 /** @format */
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
-import { scoreSummaryCoverage, type SummaryCoverage } from '../../ats/gate/summary-coverage.js';
+import { scoreExperienceCoverage, type ScorableBullet } from '../../ats/gate/experience-coverage.js';
+import type { SummaryCoverage } from '../../ats/gate/summary-coverage.js';
 import { namesGap } from '../quality/guards/summary-rules.js';
 import {
   assembleExperience, validateExperienceProvenance,
@@ -49,6 +50,15 @@ export interface ExperienceAgentDiagnostics {
 /** Flattened score text for an experience output: every role's bullets, in order. */
 export function joinExperienceText(out: ExperienceAgentOutput): string {
   return assembleExperience(out).flatMap((r) => r.highlights).join('. ');
+}
+
+/** Every role's RAW bullets ({text, sources}), flattened for the
+ *  evidence-anchored coverage scorer -- `sources` lives on the raw
+ *  ExperienceAgentOutput bullet; `assembleExperience`/`joinExperienceText`
+ *  discard it once the section is final, so this reads the pre-assembly
+ *  output instead. */
+function bulletsOf(out: ExperienceAgentOutput): ScorableBullet[] {
+  return out.roles.flatMap((r) => r.highlights.map((h) => ({ text: h.text, sources: h.sources })));
 }
 
 /** Draft text handed to the re-write fn: per-role `company | title` header, then
@@ -105,7 +115,7 @@ export async function resolveExperienceAts(params: {
   readonly rewrite: (draftText: string, missing: string[]) => Promise<ExperienceAgentOutput>;
 }): Promise<{ output: ExperienceAgentOutput; diag: ExperienceAgentDiagnostics }> {
   const targets = [...params.targets];
-  const coverageBefore = scoreSummaryCoverage(joinExperienceText(params.first), targets);
+  const coverageBefore = scoreExperienceCoverage(bulletsOf(params.first), targets);
 
   const noRewrite = (reason: string): { output: ExperienceAgentOutput; diag: ExperienceAgentDiagnostics } => ({
     output: params.first,
@@ -144,7 +154,7 @@ export async function resolveExperienceAts(params: {
     };
   }
 
-  const coverageAfter = scoreSummaryCoverage(joinExperienceText(rewriteOut), targets);
+  const coverageAfter = scoreExperienceCoverage(bulletsOf(rewriteOut), targets);
   const rewriteViolations = validateExperienceProvenance(rewriteOut, params.roster, params.careerLines);
   const rewriteGapped = assembleExperience(rewriteOut).some((r) => r.highlights.some((h) => namesGap(h)));
   const rewriteValid = rewriteViolations.length === 0 && !rewriteGapped;

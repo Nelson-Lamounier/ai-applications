@@ -39,16 +39,37 @@ function careerSection(roster: readonly RosterEntry[], lines: readonly IndexedCa
   return out;
 }
 
+/** Per-target anchor line -- names the exact career line(s) that already
+ *  support this target (evidence to cite honestly), or says plainly that
+ *  none does (weave it ONLY if a line already cited for another reason
+ *  genuinely supports it too; otherwise leave it -- an unwoven, unsupported
+ *  target is reported as a gap, never fabricated). Mirrors the anchor rule
+ *  `selectExperienceAtsTargets`/`scoreExperienceCoverage` use, so the model
+ *  sees exactly the evidence the scorer will credit. */
+function targetLine(t: ExperienceAtsTarget, lineById: ReadonlyMap<string, IndexedCareerLine>): string {
+  if (t.anchors.length === 0) {
+    return `TARGET: ${t.skill} (${t.verdict}) -- no career line names this; weave ONLY if a line you are `
+      + 'already citing genuinely, honestly supports it too, otherwise leave it as a reported gap';
+  }
+  const cites = t.anchors
+    .map((id) => lineById.get(id))
+    .filter((l): l is IndexedCareerLine => l !== undefined)
+    .map((l) => `[${l.id}] "${l.text}"`)
+    .join('; ');
+  return `TARGET: ${t.skill} (${t.verdict}) -- grounded by ${cites}`;
+}
+
 /** ATS targets grouped under their JD requirement -- lets a composite
  *  requirement ("DNS, TCP/IP, SSL/TLS") surface each attainable member together. */
-function targetsSection(targets: readonly ExperienceAtsTarget[]): string[] {
+function targetsSection(targets: readonly ExperienceAtsTarget[], careerLines: readonly IndexedCareerLine[]): string[] {
   if (targets.length === 0) return [];
+  const lineById = new Map(careerLines.map((l) => [l.id, l]));
   const byReq = new Map<string, ExperienceAtsTarget[]>();
   for (const t of targets) byReq.set(t.requirement, [...(byReq.get(t.requirement) ?? []), t]);
   const out = ['', '## ATS Targets (weave each into a bullet ONLY where a cited line honestly supports it)'];
   for (const [req, ts] of byReq) {
     out.push(`Requirement: ${req}`);
-    for (const t of ts) out.push(`- ${t.skill} (${t.verdict})`);
+    for (const t of ts) out.push(targetLine(t, lineById));
   }
   return out;
 }
@@ -89,7 +110,7 @@ export function buildExperienceMessage(m: ExperienceMessageInput): string {
   return [
     `Target role: ${m.research.targetRole}`,
     ...careerSection(m.roster, m.careerLines),
-    ...targetsSection(m.atsTargets),
+    ...targetsSection(m.atsTargets, m.careerLines),
     ...evidenceSections(m),
     ...rewriteSection(m),
   ].join('\n');

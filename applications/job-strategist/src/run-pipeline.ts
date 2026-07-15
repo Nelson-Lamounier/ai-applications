@@ -2088,8 +2088,12 @@ export async function main(): Promise<void> {
         // ready before it starts. Pure/fail-open reads of data already in
         // scope (ledger, jdExtraction), except projectAgentInputs, which is
         // one more fail-open DB read (a transient error degrades to an empty
-        // pool -> projects[] skeleton, never fails the run).
-        const experienceAtsTargets = selectExperienceAtsTargets(skillEvidenceLedger, jdExtraction, 6);
+        // pool -> projects[] skeleton, never fails the run). indexCareerLines
+        // is pure/deterministic and re-run inside fillResumeExperience for
+        // provenance validation -- both computations agree on the same ids.
+        const experienceAtsTargets = selectExperienceAtsTargets(
+            skillEvidenceLedger, jdExtraction, indexCareerLines(careerEntries), 6,
+        );
         const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
         const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches)
             .catch((err: unknown) => {

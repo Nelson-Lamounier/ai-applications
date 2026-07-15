@@ -14,9 +14,9 @@ const lines = indexCareerLines(entries as never);
 const roster = rosterFromCareer(entries as never);
 
 const targets: ExperienceAtsTarget[] = [
-  { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: 'Networking' },
-  { skill: 'TCP/IP', source: 'hard', verdict: 'verified', requirement: 'Networking' },
-  { skill: 'SSL/TLS', source: 'hard', verdict: 'transferable', requirement: 'Networking' },
+  { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: 'Networking', anchors: [] },
+  { skill: 'TCP/IP', source: 'hard', verdict: 'verified', requirement: 'Networking', anchors: [] },
+  { skill: 'SSL/TLS', source: 'hard', verdict: 'transferable', requirement: 'Networking', anchors: [] },
 ];
 
 // covers DNS only (1/3)
@@ -193,6 +193,74 @@ describe('resolveExperienceAts', () => {
     expect(r.diag.rewrite.kept).toBe('first');
     expect(r.diag.rewrite.keptReason).toBe('rewrite-names-gap');
     expect(r.output).toBe(first);
+  });
+});
+
+describe('resolveExperienceAts -- term-tolerant, evidence-anchored coverage (Task 3)', () => {
+  it('credits a paraphrased bullet that lacks the exact target phrase but names the discriminating term', async () => {
+    // "Linux systems engineering" -> requiredTerms strips the generic
+    // systems/engineering tokens down to {linux}; no exact phrase anywhere.
+    const linuxTargets: ExperienceAtsTarget[] = [
+      { skill: 'Linux systems engineering', source: 'hard', verdict: 'verified', requirement: 'Linux', anchors: [] },
+    ];
+    const paraphrased: ExperienceAgentOutput = {
+      roles: [
+        { company: 'AWS', title: 'Support Engineer', period: '2023-2025',
+          highlights: [
+            {
+              text: 'Guided customers through Amazon Linux (AL2 and AL2023) system setup and configuration on EC2',
+              sources: ['c0.h0'], atsTargets: ['Linux systems engineering'],
+            },
+            { text: 'Resolved Sev-2 escalations with customer security teams', sources: ['c0.h1'], atsTargets: [] },
+          ] },
+        { company: 'Acme', title: 'QA Analyst', period: '2021-2023',
+          highlights: [{ text: 'Automated regression suites gating releases', sources: ['c1.h0'], atsTargets: [] }] },
+      ],
+      accounting: { dropped: [] },
+    };
+    let rewriteCalled = false;
+    const r = await resolveExperienceAts({
+      first: paraphrased, roster, careerLines: lines, targets: linuxTargets,
+      rewrite: async () => { rewriteCalled = true; return paraphrased; },
+    });
+    expect(r.diag.coverageBefore.covered).toBe(1);
+    expect(r.diag.coverageBefore.missing).toEqual([]);
+    expect(rewriteCalled).toBe(false); // coverage already met -- no re-write fired
+  });
+
+  it('credits an anchor-cited bullet even when its text carries none of the required terms', async () => {
+    const anchoredTargets: ExperienceAtsTarget[] = [
+      { skill: 'performance and scalability analysis', source: 'hard', verdict: 'verified', requirement: 'Perf', anchors: ['c0.h0'] },
+    ];
+    const anchoredOnly: ExperienceAgentOutput = {
+      roles: [
+        { company: 'AWS', title: 'Support Engineer', period: '2023-2025',
+          highlights: [
+            { text: 'Configured VPC networking and Route53 DNS', sources: ['c0.h0'], atsTargets: [] },
+            { text: 'Resolved Sev-2 escalations with customer security teams', sources: ['c0.h1'], atsTargets: [] },
+          ] },
+        { company: 'Acme', title: 'QA Analyst', period: '2021-2023',
+          highlights: [{ text: 'Automated regression suites gating releases', sources: ['c1.h0'], atsTargets: [] }] },
+      ],
+      accounting: { dropped: [] },
+    };
+    const r = await resolveExperienceAts({
+      first: anchoredOnly, roster, careerLines: lines, targets: anchoredTargets,
+      rewrite: async () => anchoredOnly,
+    });
+    expect(r.diag.coverageBefore.covered).toBe(1);
+  });
+
+  it('leaves a zero-anchor, zero-term-match target missing (fail-closed)', async () => {
+    const unsupported: ExperienceAtsTarget[] = [
+      { skill: 'quantum computing', source: 'hard', verdict: 'verified', requirement: 'Quantum', anchors: [] },
+    ];
+    const r = await resolveExperienceAts({
+      first, roster, careerLines: lines, targets: unsupported,
+      rewrite: async () => first,
+    });
+    expect(r.diag.coverageBefore.covered).toBe(0);
+    expect(r.diag.coverageBefore.missing).toEqual(['quantum computing']);
   });
 });
 

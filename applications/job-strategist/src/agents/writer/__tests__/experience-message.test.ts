@@ -11,7 +11,10 @@ const base = {
   research,
   roster: [{ company: 'AWS', title: 'Support Engineer', period: '2023-2025' }],
   careerLines: [{ id: 'c0.h0', roleIndex: 0, text: 'Configured VPC networking and Route53 DNS' }],
-  atsTargets: [{ skill: 'DNS', source: 'disqualifying' as const, verdict: 'verified' as const, requirement: 'Networking concepts and protocols (DNS, TCP/IP, SSL/TLS)' }],
+  atsTargets: [{
+    skill: 'DNS', source: 'disqualifying' as const, verdict: 'verified' as const,
+    requirement: 'Networking concepts and protocols (DNS, TCP/IP, SSL/TLS)', anchors: ['c0.h0'],
+  }],
   groundedMetrics: '- cut MTTR by 30% (runbooks/incident.md)',
   codeStack: 'Current: EKS, Terraform',
 };
@@ -26,7 +29,23 @@ describe('buildExperienceMessage', () => {
   it('groups ATS targets under their JD requirement', () => {
     const msg = buildExperienceMessage(base);
     expect(msg).toContain('Networking concepts and protocols (DNS, TCP/IP, SSL/TLS)');
-    expect(msg).toContain('- DNS (verified)');
+    expect(msg).toContain('TARGET: DNS (verified)');
+  });
+  it('grounds an anchored target with its career-line id and text', () => {
+    const msg = buildExperienceMessage(base);
+    expect(msg).toContain('grounded by [c0.h0] "Configured VPC networking and Route53 DNS"');
+  });
+  it('names a zero-anchor target as honestly unsupported, never fabricating a citation', () => {
+    const unanchored = {
+      ...base,
+      atsTargets: [{
+        skill: 'Kubernetes', source: 'hard' as const, verdict: 'verified' as const,
+        requirement: 'Kubernetes', anchors: [] as string[],
+      }],
+    };
+    const msg = buildExperienceMessage(unanchored);
+    expect(msg).toContain('TARGET: Kubernetes (verified) -- no career line names this');
+    expect(msg).toContain('leave it as a reported gap');
   });
   it('includes metrics and code stack; omits empty sections', () => {
     const msg = buildExperienceMessage(base);

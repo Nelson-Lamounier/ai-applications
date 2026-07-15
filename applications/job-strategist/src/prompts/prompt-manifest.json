@@ -40,8 +40,8 @@
         "sha256": "718ad2385e5e566bf8a34a99ab40ac6001d796ac8eb6e2f0a6c333f8fdb32397"
     },
     "strategist/experience-agent": {
-        "version": "1",
-        "sha256": "483f0a2f00d7af7791ff3422d9cefdcce07d3f269a8dac2d7f26481c359deaf9"
+        "version": "2",
+        "sha256": "98ee223f1c7204eb5c5a04c81a23e9d392b448ec1053901f85e6212128d8d667"
     },
     "strategist/projects-agent": {
         "version": "1",
