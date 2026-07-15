@@ -1448,7 +1448,7 @@ async function routeExperienceRepairs(args: {
         },
     });
     if (!route.rewritten) return { resume, kept };
-    log.info({ pipelineRunId, flagged: echoDetails.length, verbFindings: verbFindings.length }, 'experience_jd_echo_rewrite_applied');
+    log.info({ pipelineRunId, echo_count: echoDetails.length, verb_count: verbFindings.length }, 'experience_repair_rewrite_applied');
     // Diagnostics only (never a second rewrite) -- describes the shipped text.
     logExperienceVerbAlignment(log, logKeys, checkVerbAlignment(route.output, careerLines));
     return { resume: { ...resume, experience: assembleExperience(route.output) }, kept: route.output };

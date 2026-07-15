@@ -1,6 +1,7 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
 import { bulletsOf } from '../../agents/writer/experience-ats-flow.js';
+import { checkVerbAlignment } from '../../agents/writer/verb-alignment.js';
 import { scoreExperienceCoverage } from '../../ats/gate/experience-coverage.js';
 import {
     runExperienceGraders,
@@ -9,11 +10,14 @@ import {
     atsCoverageGrader,
     voiceGrader,
     reorderGrader,
+    verbAlignmentGrader,
 } from './experience-graders.js';
 import {
     GOLDEN_NETWORKING, ADVERSARIAL_CROSS_ROLE, ADVERSARIAL_FABRICATION, ADVERSARIAL_REORDER,
     LINUX_ANCHORED_LIVE, TERM_TOLERANT_AWS_DB, NO_EVIDENCE_MISSING,
     ECHO_CLEANUP_VALID, ECHO_CLEANUP_INVALID,
+    MISSION_CRITICAL_DB, CODE_SCRIPTING, RAPID_LEARNING,
+    VERB_UPGRADE, VERB_LEGITIMISED,
 } from './fixtures.js';
 
 describe('experience graders', () => {
@@ -125,5 +129,55 @@ describe('echo-cleanup (review finding B): jd-echo routed re-write output', () =
         expect(violations.pass).toBe(false);
         const r = runExperienceGraders(ECHO_CLEANUP_INVALID);
         expect(r.pass).toBe(false);
+    });
+});
+
+describe('term-rule v2 promotions (Task 3): experienceTermMatch LIVE/REGRESSION cases at grader level', () => {
+    it('MISSION_CRITICAL_DB is covered -- emphasis tokens strip out, leaving {production, database}', () => {
+        const coverage = scoreExperienceCoverage(bulletsOf(MISSION_CRITICAL_DB.output), MISSION_CRITICAL_DB.atsTargets);
+        expect(coverage).toEqual({ targets: 1, covered: 1, missing: [] });
+        const r = runExperienceGraders(MISSION_CRITICAL_DB);
+        expect(r.results.filter((x) => !x.pass)).toEqual([]);
+        expect(r.pass).toBe(true);
+    });
+
+    it('CODE_SCRIPTING is covered -- a named language plus lightStem-bridged read/script terms', () => {
+        const coverage = scoreExperienceCoverage(bulletsOf(CODE_SCRIPTING.output), CODE_SCRIPTING.atsTargets);
+        expect(coverage).toEqual({ targets: 1, covered: 1, missing: [] });
+        const r = runExperienceGraders(CODE_SCRIPTING);
+        expect(r.results.filter((x) => !x.pass)).toEqual([]);
+        expect(r.pass).toBe(true);
+    });
+
+    it('RAPID_LEARNING stays missing -- an honest synonym/evidence gap, never vacuously covered', () => {
+        const coverage = scoreExperienceCoverage(bulletsOf(RAPID_LEARNING.output), RAPID_LEARNING.atsTargets);
+        expect(coverage).toEqual({ targets: 1, covered: 0, missing: ['rapid technical learning'] });
+        expect(atsCoverageGrader(RAPID_LEARNING).pass).toBe(false);
+    });
+});
+
+describe('verb-alignment eval cases (Task 2 guard promoted to grader level)', () => {
+    it('VERB_UPGRADE: an assisted-only citation trips ONLY verbAlignmentGrader', () => {
+        // Exactly ONE finding, with the zero-support ceiling of 1 -- the cited
+        // line's only lexicon verb is "Assisted" (tier 1); no other word in it
+        // resolves against VERB_TIERS.
+        expect(checkVerbAlignment(VERB_UPGRADE.output, VERB_UPGRADE.careerLines))
+            .toEqual([{ role: 0, bullet: 0, verb: 'own', tier: 3, ceiling: 1 }]);
+        const r = runExperienceGraders(VERB_UPGRADE);
+        expect(provenanceGrader(VERB_UPGRADE).pass).toBe(true);
+        expect(noFabricationGrader(VERB_UPGRADE).pass).toBe(true);
+        expect(atsCoverageGrader(VERB_UPGRADE).pass).toBe(true);
+        expect(voiceGrader(VERB_UPGRADE).pass).toBe(true);
+        expect(reorderGrader(VERB_UPGRADE).pass).toBe(true);
+        expect(verbAlignmentGrader(VERB_UPGRADE).pass).toBe(false);
+        expect(r.results.filter((x) => !x.pass).map((x) => x.grader)).toEqual(['verbAlignment']);
+        expect(r.pass).toBe(false);
+    });
+
+    it('VERB_LEGITIMISED: the live two-citation case is clean end to end', () => {
+        const r = runExperienceGraders(VERB_LEGITIMISED);
+        expect(verbAlignmentGrader(VERB_LEGITIMISED).pass).toBe(true);
+        expect(r.results.filter((x) => !x.pass)).toEqual([]);
+        expect(r.pass).toBe(true);
     });
 });

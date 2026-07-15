@@ -65,35 +65,78 @@ sum by (pass, outcome) (increase(job_strategist_section_net_fired_total{section=
 
 ## Surface 2 -- Loki event stream
 
-Datasource UID `loki`. Two shapes coexist: BATCH-1 structured events (carry an
-`event` field, emitted by `logExperienceAgentEvents`/`logExperienceCoverageFinal`
-in `experience-agent-diagnostics.ts`) and two later, message-keyed lines
-(`log.info`/`log.warn` with no `event` field, emitted directly in
-`run-pipeline.ts`) added by the e2e-provenance work. NOTE the run-id field
-name SPLITS by shape -- the shared logger applies no key-casing transform:
-the seven structured events stamp snake_case `pipeline_run_id`; the two
-message-keyed lines emit camelCase `pipelineRunId` (the raw variable name at
-their call sites). A query filtering only `pipeline_run_id` silently drops
-the message-keyed lines.
+Datasource UID `loki`. Two shapes coexist: structured events (carry an
+`event` field -- BATCH-1's seven, emitted by
+`logExperienceAgentEvents`/`logExperienceCoverageFinal` in
+`experience-agent-diagnostics.ts`, plus the later `experience_verb_alignment`
+from `logExperienceVerbAlignment`, term-rule v2 / verb-alignment work) and two
+later, message-keyed lines (`log.info`/`log.warn` with no `event` field,
+emitted directly in `run-pipeline.ts`) added by the e2e-provenance work. NOTE
+the run-id field name SPLITS by shape -- the shared logger applies no
+key-casing transform: all eight structured events stamp snake_case
+`pipeline_run_id`; the two message-keyed lines emit camelCase `pipelineRunId`
+(the raw variable name at their call sites). A query filtering only
+`pipeline_run_id` silently drops the message-keyed lines.
 
 Structured (`event=` filterable): `experience_agent_targets`,
 `experience_agent_scored`, `experience_agent_dropped`, `experience_agent_rewrite`,
 `experience_agent_provenance_reject`, `experience_agent_fallback`,
-`experience_agent_coverage_final`.
+`experience_agent_coverage_final`, `experience_verb_alignment` (term-rule v2 /
+verb-alignment work, `logExperienceVerbAlignment` in
+`experience-agent-diagnostics.ts`; see its own subsection below).
 
 Message-keyed (filter by `msg=` instead of `event=`), both added in the
-e2e-provenance work: `experience_jd_echo_rewrite_applied` (the routed jd-echo
-re-write in `routeExperienceJdEcho` spliced a valid, provenance-clean rephrase
--- fires at most once per run, carries `flagged`, the count of guard
-violations it addressed) and `experience_mutated_downstream` (the Task-4
+e2e-provenance work: `experience_repair_rewrite_applied` (the routed repair
+re-write in `routeExperienceRepairs` spliced a valid, provenance-clean rephrase
+-- fires at most once per run, carries `echo_count` and `verb_count`, the
+bounded counts of jd-echo guard violations and verb-alignment findings it
+addressed; renamed from `experience_jd_echo_rewrite_applied` when the route
+was generalised beyond echo-only repairs -- see the term-rule v2 /
+verb-alignment note below) and `experience_mutated_downstream` (the Task-4
 final-text assert, `experienceMutatedDownstream`, found the shipped Experience
 section diverged from `assembleExperience(kept)` -- see "What good looks
 like": this should never fire).
 
-Replay one run end to end (structured events only):
+### Verb alignment (`experience_verb_alignment` event, `experience_verb_upgrade` violation code)
+
+`checkVerbAlignment` (verb-alignment.ts) flags an experience bullet whose LEAD
+verb claims more seniority/scope than its own cited career lines support (four
+ordered tiers -- see VERB_TIERS). Two surfaces, both bounded (indices + lexicon
+verbs + small ints only, never bullet text):
+
+- Loki `experience_verb_alignment` (structured, `event=` filterable) -- emitted
+  by `logExperienceVerbAlignment` whenever findings is non-empty, both at the
+  `routeExperienceRepairs` routing decision AND, diagnostics-only, on the
+  post-splice re-check (never a second rewrite). Each entry: `{role, bullet,
+  verb, tier, ceiling}`.
+- `resume_guard`/`experience_verb_upgrade` -- one `violationLog.record` call
+  per finding (run-pipeline.ts), independent of whether a repair fires;
+  advisory, never a gate. Query the violation log the same way as any other
+  `resume_guard` code.
 
 ```logql
-{namespace="job-strategist"} | json | event=~"experience_agent_.*"
+{namespace="job-strategist"} | json | event="experience_verb_alignment"
+  | pipeline_run_id="<PIPELINE_RUN_ID>"
+```
+
+### Term-rule v2 note
+
+`scoreExperienceCoverage`'s target matching (`experienceTermMatch` in
+ats/gate/experience-coverage.ts) is now term-tolerant: a target is covered
+when a bullet demonstrates it in the JD's vocabulary (emphasis-stripped +
+light-stemmed, `matchTier1` proximity/language-category credit), not only on
+the exact phrase. A target reported as `missing` (in `coverageBefore`,
+`coverageAfter`, or `coverageFinal`) is therefore now a TRUE synonym/evidence
+gap -- no bullet's text nor any anchored career line demonstrates it, even
+loosely -- rather than merely "the exact JD wording never appears". Treat a
+`missing` list from any of the three coverage snapshots as an honest signal to
+investigate the underlying career evidence, not a phrasing artefact.
+
+Replay one run end to end (structured events only -- `experience_verb_alignment`
+carries no `experience_agent_` prefix, so it needs its own alternative):
+
+```logql
+{namespace="job-strategist"} | json | event=~"experience_agent_.*|experience_verb_alignment"
   | pipeline_run_id="<PIPELINE_RUN_ID>"
 ```
 
@@ -103,7 +146,7 @@ see the field-name split above):
 ```logql
 {namespace="job-strategist"} | json
   | pipeline_run_id="<PIPELINE_RUN_ID>" or pipelineRunId="<PIPELINE_RUN_ID>"
-  | msg=~"experience_agent_.*|experience_jd_echo_rewrite_applied|experience_mutated_downstream"
+  | msg=~"experience_agent_.*|experience_verb_alignment|experience_repair_rewrite_applied|experience_mutated_downstream"
 ```
 
 Fallback investigation (the raw error lives here, not in the metric):
@@ -180,12 +223,12 @@ ORDER BY created_at DESC LIMIT 50;
 ## Surface 4 -- isolated LLM cost
 
 Up to three Bedrock calls can fire per run -- the first pass, the ATS
-coverage re-write (`resolveExperienceAts`), and the jd-echo cleanup re-write
-(`routeExperienceJdEcho`) -- but only two distinct agent names: the first pass
-books as `strategist-experience`; BOTH re-write paths book as
-`strategist-experience-rewrite` (the `LIKE` below captures all of them; the
-Loki `experience_agent_rewrite` and `experience_jd_echo_rewrite_applied`
-events are how you tell which one fired):
+coverage re-write (`resolveExperienceAts`), and the repair re-write
+(`routeExperienceRepairs`, echo-cleanup and/or verb-alignment findings) -- but
+only two distinct agent names: the first pass books as `strategist-experience`;
+BOTH re-write paths book as `strategist-experience-rewrite` (the `LIKE` below
+captures all of them; the Loki `experience_agent_rewrite` and
+`experience_repair_rewrite_applied` events are how you tell which one fired):
 
 ```sql
 SELECT agent,
@@ -220,11 +263,17 @@ ORDER BY invoked_at;
   is the number for any A/B or before/after comparison -- `coverageBefore`
   measures the FIRST draft, before the jd-echo route and every downstream
   safety-net pass; only `coverageFinal` reflects what actually shipped.
-- `experience_jd_echo_rewrite_applied` firing is expected and healthy whenever
-  `experience_bullet_jd_echo` guard violations were raised -- it means the
+- `experience_repair_rewrite_applied` firing is expected and healthy whenever
+  `experience_bullet_jd_echo` guard violations OR `experience_verb_alignment`
+  findings were raised (`echo_count`/`verb_count` show which) -- it means the
   advisory got FIXED, not just reported (`guardResume`'s own repair on
   Experience is undone by the lock, so this route is the only path that
-  actually rewrites an echoing bullet).
+  actually rewrites an echoing or verb-overstating bullet).
+- `experience_verb_alignment` firing (Loki) / `experience_verb_upgrade`
+  (resume_guard violation log) sustained high on the SAME cited lines across
+  runs = the agent's lead-verb choice is systematically outrunning the career
+  evidence it cites -- read the `findings[].verb`/`ceiling` pairs and tune the
+  persona toward the ceiling tier, never loosen `VERB_TIERS`.
 - `experience_mutated_downstream` should NEVER fire. It is the final,
   post-hoc proof that every resume-mutating pass respected the Task-2 lock; if
   it fires, some call site mutates Experience outside `withExperienceLock` --

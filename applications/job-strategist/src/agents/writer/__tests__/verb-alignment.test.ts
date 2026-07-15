@@ -76,4 +76,27 @@ describe('checkVerbAlignment', () => {
     expect(americanFinding?.tier).toBe(2);
     expect(britishFinding?.ceiling).toBe(americanFinding?.ceiling);
   });
+
+  it('REGRESSION: "Designed" resolves via the same-token prefix-match path -- lightStem does not '
+    + 'strip a trailing "-ed", so tierOf falls to startsWith("design"); ceiling equals tier (4 == 4), '
+    + 'no finding', () => {
+    const designEntries = [
+      { title: 'QA Lead', company: 'Acme', period: '2021-2023',
+        highlights: ['Designed and documented cross-functional QA validation processes for release readiness'] },
+    ];
+    const designLines = indexCareerLines(designEntries as never);
+    const out: ExperienceAgentOutput = {
+      roles: [{
+        company: 'Acme', title: 'QA Lead', period: '2021-2023',
+        highlights: [{
+          text: 'Designed and documented cross-functional QA processes ensuring release readiness',
+          sources: [designLines[0]!.id],
+          atsTargets: [],
+        }],
+      }],
+      accounting: { dropped: [] },
+    };
+    const findings = checkVerbAlignment(out, designLines);
+    expect(findings).toEqual([]);
+  });
 });
