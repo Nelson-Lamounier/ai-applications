@@ -75,10 +75,14 @@ import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/s
 import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-ats-diagnostics.js';
 import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate/experience-ats-targets.js';
 import {
-    resolveExperienceAts, stampExperienceCoverageFinal, experienceMutatedDownstream, routeJdEchoRewrite,
+    resolveExperienceAts, stampExperienceCoverageFinal, experienceMutatedDownstream,
+    routeExperienceRepairs as routeExperienceRepairsCore,
     type ExperienceAgentDiagnostics,
 } from './agents/writer/experience-ats-flow.js';
-import { logExperienceAgentEvents, experienceAgentOutcome, logExperienceCoverageFinal } from './agents/writer/experience-agent-diagnostics.js';
+import {
+    logExperienceAgentEvents, experienceAgentOutcome, logExperienceCoverageFinal, logExperienceVerbAlignment,
+} from './agents/writer/experience-agent-diagnostics.js';
+import { checkVerbAlignment, type VerbAlignmentFinding } from './agents/writer/verb-alignment.js';
 import { logProjectsAgentEvents, projectsAgentOutcome } from './agents/writer/projects-agent-diagnostics.js';
 import {
     logSectionAgentEvents, skillsAgentOutcome, skillsAgentEvents,
@@ -1349,21 +1353,57 @@ async function runGuardsStage(args: {
     return { finalCoverLetter, resume: guardedResume, relocatedSnapshot: relocated, guardViolations };
 }
 
+/** Evidence label per verb-alignment ceiling tier (Task 2) -- names the
+ *  strongest tier the bullet's cited lines DO support, rendered into
+ *  `ExperienceMessageInput.verbAlignment` so the model can either match it or
+ *  pick a verb the evidence honestly supports. Index 0 = no cited line named
+ *  any lexicon verb at all -- the guard's core case. */
+const VERB_TIER_LABEL: Readonly<Record<number, string>> = {
+    0: 'no lexicon verb at all',
+    1: 'assist/support-level help',
+    2: 'troubleshoot/resolve-level work',
+    3: 'own/lead-level ownership',
+    4: 'architect/design-level origination',
+};
+
+/** Render `checkVerbAlignment` findings into the experience-message shape
+ *  (Task 2) -- resolves each finding's bullet text from `kept` and its
+ *  ceiling tier into the short evidence label above. */
+function renderVerbFindings(
+    findings: readonly VerbAlignmentFinding[],
+    kept: ExperienceAgentOutput,
+): Array<{ bulletText: string; verb: string; supported: string }> {
+    return findings.map((f) => ({
+        bulletText: kept.roles[f.role]?.highlights[f.bullet]?.text ?? '',
+        verb: f.verb,
+        supported: VERB_TIER_LABEL[f.ceiling] ?? VERB_TIER_LABEL[0]!,
+    }));
+}
+
 /**
- * jd-echo routing (Task 4, G2 tail) -- `guardResume`'s own rule-based repair
- * on Experience is undone by the Task-2 lock (`runGuardsStage` wraps it in
+ * Experience-lane repair routing (Task 2 generalisation of the Task-4
+ * jd-echo tail) -- `guardResume`'s own rule-based repair on Experience is
+ * undone by the Task-2 lock (`runGuardsStage` wraps it in
  * `withExperienceLock`, restoring any attempted fix, since Experience is
- * agent-owned) -- so an `experience_bullet_jd_echo` violation stays purely
+ * agent-owned) -- so `experience_bullet_jd_echo` guard violations AND
+ * `checkVerbAlignment` (verb-alignment.ts) findings both stay purely
  * advisory unless routed here. Splices the AUTHORISED re-write result
  * directly (deliberately OUTSIDE any `withExperienceLock` wrapper -- it
  * replaces `kept` too, so the Task-4 final assert stays consistent with
  * whatever text ships) rather than going back through the lock.
  *
  * At most ONE `strategist-experience-rewrite` call per run: zero echo
- * violations, or `kept === null` (verbatim-career fallback -- nothing to
- * route a re-write against), short-circuit with no call at all.
+ * violations AND zero verb findings, or `kept === null` (verbatim-career
+ * fallback -- nothing to route a re-write against), short-circuit with no
+ * call at all. Every verb finding is recorded to `violationLog`
+ * (resume_guard/experience_verb_upgrade) and logged to Loki
+ * (experience_verb_alignment) regardless of whether a rewrite fires --
+ * advisory, never a gate. After a successful splice, `checkVerbAlignment`
+ * runs ONE more time against the spliced output for DIAGNOSTICS ONLY (never
+ * a second rewrite), so the persisted state describes the text that
+ * actually shipped.
  */
-async function routeExperienceJdEcho(args: {
+async function routeExperienceRepairs(args: {
     ctx: StrategistPipelineContext;
     resume: StructuredResumeData;
     kept: ExperienceAgentOutput | null;
@@ -1375,23 +1415,32 @@ async function routeExperienceJdEcho(args: {
     groundedMetrics: string;
     codeStack: string;
     pipelineRunId: string;
+    applicationId: string | null;
+    violationLog: ViolationLog;
 }): Promise<{ resume: StructuredResumeData; kept: ExperienceAgentOutput | null }> {
     const {
         ctx, resume, kept, roster, careerLines, guardViolations, researchData,
-        atsTargets, groundedMetrics, codeStack, pipelineRunId,
+        atsTargets, groundedMetrics, codeStack, pipelineRunId, applicationId, violationLog,
     } = args;
     if (!kept) return { resume, kept };
+    const logKeys = { pipelineRunId, applicationId, traceId: null };
     const echoDetails = guardViolations.filter((v) => v.code === 'experience_bullet_jd_echo').map((v) => v.detail);
-    if (echoDetails.length === 0) return { resume, kept };
+    const verbFindings = checkVerbAlignment(kept, careerLines);
+    verbFindings.forEach(() => violationLog.record('resume_guard', 'experience_verb_upgrade'));
+    logExperienceVerbAlignment(log, logKeys, verbFindings);
+    if (echoDetails.length === 0 && verbFindings.length === 0) return { resume, kept };
 
-    const route = await routeJdEchoRewrite({
-        kept, roster, careerLines, echoDetails,
-        rewrite: async (flaggedDetails) => {
+    const route = await routeExperienceRepairsCore({
+        kept, roster, careerLines, echoDetails, verbFindings,
+        rewrite: async (repairs) => {
             const rw = await executeExperienceAgent(
                 ctx,
                 {
                     research: researchData, roster, careerLines, atsTargets, groundedMetrics, codeStack,
-                    echoCleanup: { flaggedDetails },
+                    echoCleanup: repairs.echoDetails.length > 0 ? { flaggedDetails: repairs.echoDetails } : undefined,
+                    verbAlignment: repairs.verbFindings.length > 0
+                        ? { findings: renderVerbFindings(repairs.verbFindings, kept) }
+                        : undefined,
                 },
                 { agentName: 'strategist-experience-rewrite' },
             );
@@ -1399,7 +1448,9 @@ async function routeExperienceJdEcho(args: {
         },
     });
     if (!route.rewritten) return { resume, kept };
-    log.info({ pipelineRunId, flagged: echoDetails.length }, 'experience_jd_echo_rewrite_applied');
+    log.info({ pipelineRunId, flagged: echoDetails.length, verbFindings: verbFindings.length }, 'experience_jd_echo_rewrite_applied');
+    // Diagnostics only (never a second rewrite) -- describes the shipped text.
+    logExperienceVerbAlignment(log, logKeys, checkVerbAlignment(route.output, careerLines));
     return { resume: { ...resume, experience: assembleExperience(route.output) }, kept: route.output };
 }
 
@@ -2383,10 +2434,12 @@ export async function main(): Promise<void> {
         }));
         const finalCoverLetter = guardsResult.finalCoverLetter;
 
-        // -- jd-echo routing (Task 4): route advisory experience_bullet_jd_echo
-        //    violations guardResume flagged (and the Task-2 lock then reverted) to
-        //    ONE provenance-guarded experience re-write; splice only if it validates --
-        const jdEchoRoute = await stageSeconds(pipelineStageSeconds, 'jd_echo_route', () => routeExperienceJdEcho({
+        // -- experience-repair routing (Task 4 jd-echo tail, generalised by Task 2
+        //    to also carry checkVerbAlignment findings): route advisory
+        //    experience_bullet_jd_echo violations guardResume flagged (and the
+        //    Task-2 lock then reverted) plus deterministic verb-alignment findings
+        //    to ONE provenance-guarded experience re-write; splice only if it validates --
+        const jdEchoRoute = await stageSeconds(pipelineStageSeconds, 'jd_echo_route', () => routeExperienceRepairs({
             ctx,
             resume:          guardsResult.resume,
             kept:            experience.kept,
@@ -2398,6 +2451,8 @@ export async function main(): Promise<void> {
             groundedMetrics: groundedMetricsBlock,
             codeStack:       codeStackContext,
             pipelineRunId:   env.pipelineRunId,
+            applicationId:   env.applicationId,
+            violationLog,
         }));
 
         // Grounding for the expand direction + the allowed-number set that

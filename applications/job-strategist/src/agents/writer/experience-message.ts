@@ -28,6 +28,16 @@ export interface ExperienceMessageInput {
    *  pass above, which carries a previous draft + missed targets, not a
    *  cleanup instruction. */
   readonly echoCleanup?: { readonly flaggedDetails: readonly string[] };
+  /** verb-alignment routed re-write (Task 2): `checkVerbAlignment` findings
+   *  (verb-alignment.ts) -- a bullet's lead verb overstates what its own
+   *  cited career lines support -- rendered under their own heading, beside
+   *  `echoCleanup`. `supported` names the strongest verb tier the cited
+   *  lines DO evidence, so the model can either match it or pick a verb the
+   *  evidence honestly supports; it must never weaken a verb the evidence
+   *  already supports. */
+  readonly verbAlignment?: {
+    readonly findings: ReadonlyArray<{ readonly bulletText: string; readonly verb: string; readonly supported: string }>;
+  };
 }
 
 /** Indexed career lines, grouped by role in roster order -- the accounting
@@ -111,7 +121,7 @@ function rewriteSection(m: ExperienceMessageInput): string[] {
 }
 
 /** jd-echo cleanup block -- only emitted when the caller flagged bullets to
- *  rephrase (`routeJdEchoRewrite` in experience-ats-flow.ts). Purpose-built
+ *  rephrase (`routeExperienceRepairs` in experience-ats-flow.ts). Purpose-built
  *  heading and instruction, distinct from the ATS `rewriteSection` above:
  *  this is a targeted rephrase of specific flagged bullets from their OWN
  *  already-cited career lines, not a coverage-driven re-write. */
@@ -131,6 +141,23 @@ function echoCleanupSection(m: ExperienceMessageInput): string[] {
   ];
 }
 
+/** verb-alignment cleanup block -- only emitted when the caller flagged
+ *  bullets whose lead verb overstates its own cited career-line evidence
+ *  (`checkVerbAlignment` in verb-alignment.ts, routed via
+ *  `routeExperienceRepairs` in run-pipeline.ts). Purpose-built heading and
+ *  instruction, distinct from `echoCleanupSection` above -- this is about the
+ *  VERB, not the vocabulary the bullet leans on. */
+function verbAlignmentSection(m: ExperienceMessageInput): string[] {
+  const findings = m.verbAlignment?.findings ?? [];
+  if (findings.length === 0) return [];
+  return [
+    '',
+    '## Verb Alignment -- align each lead verb to what the cited lines support; '
+      + 'never weaken a verb the evidence does support',
+    ...findings.map((f) => `- "${f.bulletText}" leads with "${f.verb}", but its cited lines only support: ${f.supported}`),
+  ];
+}
+
 /** Focused user message for the experience agent -- indexed career lines,
  *  requirement-grouped ATS targets, evidence, metrics, and code stack. */
 export function buildExperienceMessage(m: ExperienceMessageInput): string {
@@ -141,5 +168,6 @@ export function buildExperienceMessage(m: ExperienceMessageInput): string {
     ...evidenceSections(m),
     ...rewriteSection(m),
     ...echoCleanupSection(m),
+    ...verbAlignmentSection(m),
   ].join('\n');
 }

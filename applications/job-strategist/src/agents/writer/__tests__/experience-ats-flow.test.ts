@@ -2,7 +2,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   resolveExperienceAts, boundDropped,
-  stampExperienceCoverageFinal, experienceMutatedDownstream, routeJdEchoRewrite,
+  stampExperienceCoverageFinal, experienceMutatedDownstream, routeExperienceRepairs,
 } from '../experience-ats-flow.js';
 import { assembleExperience, indexCareerLines, rosterFromCareer } from '../experience-provenance.js';
 import type { ExperienceAgentOutput } from '../experience-schema.js';
@@ -307,11 +307,11 @@ describe('experienceMutatedDownstream', () => {
   });
 });
 
-describe('routeJdEchoRewrite', () => {
-  it('does not call rewrite when there are zero echo violations', async () => {
+describe('routeExperienceRepairs', () => {
+  it('does not call rewrite when there are zero echo violations and zero verb findings', async () => {
     let called = false;
-    const r = await routeJdEchoRewrite({
-      kept: first, roster, careerLines: lines, echoDetails: [],
+    const r = await routeExperienceRepairs({
+      kept: first, roster, careerLines: lines, echoDetails: [], verbFindings: [],
       rewrite: async () => { called = true; return rewriteFull; },
     });
     expect(called).toBe(false);
@@ -319,13 +319,33 @@ describe('routeJdEchoRewrite', () => {
     expect(r.output).toBe(first);
   });
 
-  it('splices a valid re-write and marks it rewritten (called exactly once), passing the raw flagged details through', async () => {
+  it('splices a valid re-write and marks it rewritten (called exactly once), passing the raw echo details through', async () => {
     let calls = 0;
-    const r = await routeJdEchoRewrite({
-      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.'],
-      rewrite: async (flaggedDetails) => {
+    const r = await routeExperienceRepairs({
+      kept: first, roster, careerLines: lines,
+      echoDetails: ['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.'],
+      verbFindings: [],
+      rewrite: async (repairs) => {
         calls += 1;
-        expect(flaggedDetails).toEqual(['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.']);
+        expect(repairs.echoDetails).toEqual(['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.']);
+        expect(repairs.verbFindings).toEqual([]);
+        return rewriteFull;
+      },
+    });
+    expect(calls).toBe(1);
+    expect(r.rewritten).toBe(true);
+    expect(r.output).toBe(rewriteFull);
+  });
+
+  it('fires ONE rewrite call when only verbFindings is non-empty, passing them through', async () => {
+    let calls = 0;
+    const finding = { role: 0, bullet: 0, verb: 'own', tier: 3, ceiling: 1 };
+    const r = await routeExperienceRepairs({
+      kept: first, roster, careerLines: lines, echoDetails: [], verbFindings: [finding],
+      rewrite: async (repairs) => {
+        calls += 1;
+        expect(repairs.echoDetails).toEqual([]);
+        expect(repairs.verbFindings).toEqual([finding]);
         return rewriteFull;
       },
     });
@@ -346,8 +366,8 @@ describe('routeJdEchoRewrite', () => {
       accounting: { dropped: [] },
     };
     let calls = 0;
-    const r = await routeJdEchoRewrite({
-      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "..." leans on JD vocabulary'],
+    const r = await routeExperienceRepairs({
+      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "..." leans on JD vocabulary'], verbFindings: [],
       rewrite: async () => { calls += 1; return rewriteBad; },
     });
     expect(calls).toBe(1);
@@ -357,8 +377,8 @@ describe('routeJdEchoRewrite', () => {
 
   it('discards a throwing re-write and keeps the original', async () => {
     let calls = 0;
-    const r = await routeJdEchoRewrite({
-      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "..." leans on JD vocabulary'],
+    const r = await routeExperienceRepairs({
+      kept: first, roster, careerLines: lines, echoDetails: ['AWS: "..." leans on JD vocabulary'], verbFindings: [],
       rewrite: async () => { calls += 1; throw new Error('bedrock 500'); },
     });
     expect(calls).toBe(1);

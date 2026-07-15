@@ -1,6 +1,7 @@
 /** @format */
 import type { ExperienceAgentDiagnostics } from './experience-ats-flow.js';
 import type { SummaryCoverage } from '../../ats/gate/summary-coverage.js';
+import type { VerbAlignmentFinding } from './verb-alignment.js';
 
 /** Correlation keys stamped on every experience-agent Loki event. */
 export interface ExperienceAgentLogKeys {
@@ -48,6 +49,24 @@ export function logExperienceAgentEvents(log: EventLogger, keys: ExperienceAgent
 export function logExperienceCoverageFinal(log: EventLogger, keys: ExperienceAgentLogKeys, coverage: SummaryCoverage): void {
   const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
   log.info({ ...base, event: 'experience_agent_coverage_final', covered: coverage.covered, of: coverage.targets, missing: coverage.missing }, 'experience_agent_coverage_final');
+}
+
+/**
+ * Verb-alignment event (Task 2) -- emitted whenever `checkVerbAlignment`
+ * (verb-alignment.ts) returns at least one finding, both at the routing
+ * decision point (run-pipeline's `routeExperienceRepairs` stage) and again,
+ * diagnostics-only, on the post-splice re-check. Bounded like every other
+ * event here: only indices + lexicon verbs + small ints cross the wire, never
+ * bullet text -- `findings` is already exactly that shape.
+ */
+export function logExperienceVerbAlignment(
+  log: EventLogger,
+  keys: ExperienceAgentLogKeys,
+  findings: readonly VerbAlignmentFinding[],
+): void {
+  if (findings.length === 0) return;
+  const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
+  log.info({ ...base, event: 'experience_verb_alignment', findings: findings.map((f) => ({ role: f.role, bullet: f.bullet, verb: f.verb, tier: f.tier, ceiling: f.ceiling })) }, 'experience_verb_alignment');
 }
 
 export type ExperienceAgentOutcome = 'aware' | 'rewritten' | 'kept_first' | 'fallback';

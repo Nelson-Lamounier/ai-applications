@@ -296,7 +296,7 @@ export const NO_EVIDENCE_MISSING: ExperienceEvalInput = {
  * re-write must rephrase a flagged bullet using ONLY the career lines
  * already cited for it -- these fixtures share one career/roster/atsTargets
  * context and vary only the bullet the routed re-write produced.
- * `ECHO_CLEANUP_FLAGGED_DETAIL` is the advisory string `routeJdEchoRewrite`
+ * `ECHO_CLEANUP_FLAGGED_DETAIL` is the advisory string `routeExperienceRepairs`
  * hands to `ExperienceMessageInput.echoCleanup.flaggedDetails`.
  */
 const ECHO_CAREER_ENTRIES: CareerEntry[] = [

@@ -76,4 +76,20 @@ describe('buildExperienceMessage', () => {
     const empty = buildExperienceMessage({ ...base, echoCleanup: { flaggedDetails: [] } });
     expect(empty).not.toContain('## JD-Echo Cleanup');
   });
+  it('adds the verb-alignment block only when findings are present, under its own heading', () => {
+    expect(buildExperienceMessage(base)).not.toContain('## Verb Alignment');
+    const withFindings = buildExperienceMessage({
+      ...base,
+      verbAlignment: { findings: [{ bulletText: 'Owned end-to-end technical resolution', verb: 'own', supported: 'assist/support' }] },
+    });
+    expect(withFindings).toContain('## Verb Alignment');
+    expect(withFindings).toContain('align each lead verb to what the cited lines support');
+    expect(withFindings).toContain('never weaken a verb the evidence does support');
+    expect(withFindings).toContain('Owned end-to-end technical resolution');
+    expect(withFindings).not.toContain('## JD-Echo Cleanup');
+  });
+  it('omits the verb-alignment block when findings is empty', () => {
+    const empty = buildExperienceMessage({ ...base, verbAlignment: { findings: [] } });
+    expect(empty).not.toContain('## Verb Alignment');
+  });
 });
