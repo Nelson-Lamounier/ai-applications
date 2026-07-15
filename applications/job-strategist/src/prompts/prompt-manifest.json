@@ -51,6 +51,10 @@
         "version": "3",
         "sha256": "58d33213e52f3e6536c9d91f615078991eb3ebb44a29ebb67fdb21238b61d15d"
     },
+    "strategist/analysis-agent": {
+        "version": "1",
+        "sha256": "bcf7cedf2fbca9e70446233589a8d06b3b83f531047eae85b57906691589a1c0"
+    },
     "strategist/archetype": {
         "version": "1",
         "sha256": "ca8c1f6a38e0272d7261eed29e79ee5444a325bba14b7ad3de788ac46e056833"

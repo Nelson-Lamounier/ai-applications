@@ -204,6 +204,7 @@ export function extractCoverLetter(xml: string): CoverLetter | null {
  * defences were previously trapped in the raw XML while the UI rendered the
  * gap list without them.
  */
+// relocated to agents/analysis/analysis-extractors.ts (PR-B Task 3); deleted in Task 8
 export function extractGapMitigations(xml: string): GapMitigation[] {
     const out: GapMitigation[] = [];
     const tag = (block: string, name: string): string => {
@@ -342,6 +343,7 @@ function extractCdataValue(content: string, tag: string): string {
  * @param xml - Raw XML analysis output
  * @returns Parsed archetype selection, or null
  */
+// relocated to agents/analysis/analysis-extractors.ts (PR-B Task 3); deleted in Task 8
 export function extractArchetypeSelection(xml: string): RoleArchetypeSelection | null {
     const sectionPattern = /<phase_0_archetype_selection>([\s\S]*?)<\/phase_0_archetype_selection>/;
     const sectionMatch = xml.match(sectionPattern);
