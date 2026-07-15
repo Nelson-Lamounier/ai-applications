@@ -61,4 +61,19 @@ describe('buildExperienceMessage', () => {
     expect(rw).toContain('## Re-write pass');
     expect(rw).toContain('TCP/IP');
   });
+  it('adds the jd-echo cleanup block only when flagged details are present, under its own heading', () => {
+    expect(buildExperienceMessage(base)).not.toContain('## JD-Echo Cleanup');
+    const cleanup = buildExperienceMessage({
+      ...base,
+      echoCleanup: { flaggedDetails: ['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.'] },
+    });
+    expect(cleanup).toContain('## JD-Echo Cleanup');
+    expect(cleanup).toContain('AWS: "Applied DNS resolution');
+    expect(cleanup).toContain('Rephrase EACH flagged bullet');
+    expect(cleanup).not.toContain('## Re-write pass');
+  });
+  it('omits the jd-echo cleanup block when flaggedDetails is empty', () => {
+    const empty = buildExperienceMessage({ ...base, echoCleanup: { flaggedDetails: [] } });
+    expect(empty).not.toContain('## JD-Echo Cleanup');
+  });
 });

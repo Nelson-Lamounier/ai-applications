@@ -1386,12 +1386,12 @@ async function routeExperienceJdEcho(args: {
 
     const route = await routeJdEchoRewrite({
         kept, roster, careerLines, echoDetails,
-        rewrite: async (instruction) => {
+        rewrite: async (flaggedDetails) => {
             const rw = await executeExperienceAgent(
                 ctx,
                 {
                     research: researchData, roster, careerLines, atsTargets, groundedMetrics, codeStack,
-                    rewriteDraft: instruction, rewriteMissing: ['jd-echo-cleanup'],
+                    echoCleanup: { flaggedDetails },
                 },
                 { agentName: 'strategist-experience-rewrite' },
             );

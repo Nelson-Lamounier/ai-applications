@@ -22,6 +22,12 @@ export interface ExperienceMessageInput {
   readonly codeStack: string;
   readonly rewriteDraft?: string;
   readonly rewriteMissing?: readonly string[];
+  /** jd-echo routed re-write (Task 4 tail, review-fixed): the flagged-bullet
+   *  advisory details from `experience_bullet_jd_echo` guard violations,
+   *  rendered under their own heading -- distinct from the ATS re-write
+   *  pass above, which carries a previous draft + missed targets, not a
+   *  cleanup instruction. */
+  readonly echoCleanup?: { readonly flaggedDetails: readonly string[] };
 }
 
 /** Indexed career lines, grouped by role in roster order -- the accounting
@@ -104,6 +110,27 @@ function rewriteSection(m: ExperienceMessageInput): string[] {
   ];
 }
 
+/** jd-echo cleanup block -- only emitted when the caller flagged bullets to
+ *  rephrase (`routeJdEchoRewrite` in experience-ats-flow.ts). Purpose-built
+ *  heading and instruction, distinct from the ATS `rewriteSection` above:
+ *  this is a targeted rephrase of specific flagged bullets from their OWN
+ *  already-cited career lines, not a coverage-driven re-write. */
+function echoCleanupSection(m: ExperienceMessageInput): string[] {
+  const flagged = m.echoCleanup?.flaggedDetails ?? [];
+  if (flagged.length === 0) return [];
+  return [
+    '',
+    '## JD-Echo Cleanup (rephrase EACH flagged bullet from its own cited career lines)',
+    'The following experience bullets were flagged for leaning on JD vocabulary that '
+      + 'this role\'s cited career lines do not support:',
+    ...flagged.map((d) => `- ${d}`),
+    '',
+    'Rephrase EACH flagged bullet using ONLY the same career lines already cited for it '
+      + '-- keep every citation/accounting rule, invent no new claim or line, just reduce '
+      + 'the JD-echo wording.',
+  ];
+}
+
 /** Focused user message for the experience agent -- indexed career lines,
  *  requirement-grouped ATS targets, evidence, metrics, and code stack. */
 export function buildExperienceMessage(m: ExperienceMessageInput): string {
@@ -113,5 +140,6 @@ export function buildExperienceMessage(m: ExperienceMessageInput): string {
     ...targetsSection(m.atsTargets, m.careerLines),
     ...evidenceSections(m),
     ...rewriteSection(m),
+    ...echoCleanupSection(m),
   ].join('\n');
 }

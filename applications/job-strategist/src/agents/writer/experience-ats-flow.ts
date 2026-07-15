@@ -64,8 +64,10 @@ export function joinExperienceText(out: ExperienceAgentOutput): string {
  *  evidence-anchored coverage scorer -- `sources` lives on the raw
  *  ExperienceAgentOutput bullet; `assembleExperience`/`joinExperienceText`
  *  discard it once the section is final, so this reads the pre-assembly
- *  output instead. */
-function bulletsOf(out: ExperienceAgentOutput): ScorableBullet[] {
+ *  output instead. Exported so the eval graders (experience-graders.ts) score
+ *  against the EXACT same bullet shape the runtime scorer uses -- graders
+ *  reuse runtime logic, never a re-derived shape. */
+export function bulletsOf(out: ExperienceAgentOutput): ScorableBullet[] {
   return out.roles.flatMap((r) => r.highlights.map((h) => ({ text: h.text, sources: h.sources })));
 }
 
@@ -219,21 +221,6 @@ export function experienceMutatedDownstream(
   return JSON.stringify(finalExperience) !== JSON.stringify(assembleExperience(kept));
 }
 
-/** One flagged jd-echo bullet's advisory detail line, carried verbatim into
- *  the routed re-write instruction so the model sees exactly what tripped
- *  (company, the leaning bullet text, and the leaking JD terms). */
-function buildJdEchoInstruction(echoDetails: readonly string[]): string {
-  return [
-    'The following experience bullets were flagged for leaning on JD vocabulary that '
-      + 'this role\'s cited career lines do not support:',
-    ...echoDetails.map((d) => `- ${d}`),
-    '',
-    'Rephrase EACH flagged bullet using ONLY the same career lines already cited for it '
-      + '-- keep every citation/accounting rule, invent no new claim or line, just reduce '
-      + 'the JD-echo wording.',
-  ].join('\n');
-}
-
 export interface JdEchoRouteResult {
   readonly output: ExperienceAgentOutput;
   readonly rewritten: boolean;
@@ -247,23 +234,27 @@ export interface JdEchoRouteResult {
  * bullet post-fill, rather than just report it.
  *
  * Fires at most once: `echoDetails.length === 0` short-circuits with no call.
- * The re-write is validated exactly like the ATS re-write
- * (`validateExperienceProvenance`); an invalid or throwing re-write is
- * discarded and the ORIGINAL `kept` output stands -- the flagged violations
- * stay advisory, never block the run.
+ * `rewrite` receives the RAW flagged-detail strings -- the caller renders
+ * them into the prompt via `ExperienceMessageInput.echoCleanup` (a
+ * purpose-built message block, review-fixed: this used to stuff a composed
+ * instruction string into the unrelated ATS `rewriteDraft`/`rewriteMissing`
+ * fields, which rendered under the wrong heading). The re-write is validated
+ * exactly like the ATS re-write (`validateExperienceProvenance`); an invalid
+ * or throwing re-write is discarded and the ORIGINAL `kept` output stands --
+ * the flagged violations stay advisory, never block the run.
  */
 export async function routeJdEchoRewrite(params: {
   readonly kept: ExperienceAgentOutput;
   readonly roster: readonly RosterEntry[];
   readonly careerLines: readonly IndexedCareerLine[];
   readonly echoDetails: readonly string[];
-  readonly rewrite: (instruction: string) => Promise<ExperienceAgentOutput>;
+  readonly rewrite: (flaggedDetails: readonly string[]) => Promise<ExperienceAgentOutput>;
 }): Promise<JdEchoRouteResult> {
   const { kept, roster, careerLines, echoDetails, rewrite } = params;
   if (echoDetails.length === 0) return { output: kept, rewritten: false };
   let rewriteOut: ExperienceAgentOutput;
   try {
-    rewriteOut = await rewrite(buildJdEchoInstruction(echoDetails));
+    rewriteOut = await rewrite(echoDetails);
   } catch {
     return { output: kept, rewritten: false };
   }

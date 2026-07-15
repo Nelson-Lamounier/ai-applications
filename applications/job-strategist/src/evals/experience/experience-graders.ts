@@ -3,12 +3,16 @@
  * Experience-agent per-phase eval - offline structural graders.
  *
  * These reuse the exact predicates the runtime experience lane applies
- * (`validateExperienceProvenance`, `scoreSummaryCoverage`, `numbersIn`) so "eval
- * says good" and "guard accepts" can never drift. No Bedrock call - pure,
- * deterministic checks against a fixed ExperienceEvalInput.
+ * (`validateExperienceProvenance`, `scoreExperienceCoverage`, `numbersIn`) so
+ * "eval says good" and "guard accepts" can never drift. `scoreExperienceCoverage`
+ * is the evidence-anchored, term-tolerant scorer the experience lane actually
+ * gates on (Task 3) -- NOT the summary lane's exact-adjacent-phrase
+ * `scoreSummaryCoverage`, which stays deliberately stricter for its own
+ * grounds (see summary-coverage.ts's do-not-relax comment). No Bedrock call -
+ * pure, deterministic checks against a fixed ExperienceEvalInput.
  */
 import { numbersIn } from '../../agents/quality/guards/text.js';
-import { joinExperienceText } from '../../agents/writer/experience-ats-flow.js';
+import { bulletsOf } from '../../agents/writer/experience-ats-flow.js';
 import {
     validateExperienceProvenance,
     type IndexedCareerLine,
@@ -16,7 +20,7 @@ import {
 } from '../../agents/writer/experience-provenance.js';
 import type { ExperienceAgentOutput } from '../../agents/writer/experience-schema.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
-import { scoreSummaryCoverage } from '../../ats/gate/summary-coverage.js';
+import { scoreExperienceCoverage } from '../../ats/gate/experience-coverage.js';
 import { mkResult, type GraderResult } from '../graders.js';
 
 /** The exact input the experience phase produces + the context it was graded against. */
@@ -67,7 +71,7 @@ export function noFabricationGrader(i: ExperienceEvalInput): GraderResult {
 export function atsCoverageGrader(i: ExperienceEvalInput): GraderResult {
     const targets = i.atsTargets;
     if (targets.length === 0) return mkResult('atsCoverage', []);
-    const { covered } = scoreSummaryCoverage(joinExperienceText(i.output), targets);
+    const { covered } = scoreExperienceCoverage(bulletsOf(i.output), targets);
     const need = Math.min(2, targets.length);
     return mkResult(
         'atsCoverage',
@@ -100,7 +104,7 @@ export function reorderGrader(i: ExperienceEvalInput): GraderResult {
     for (const role of i.output.roles) {
         if (role.highlights.length === 0) continue;
         const coveringIdx = role.highlights
-            .map((b, idx) => ({ idx, covers: scoreSummaryCoverage(b.text, targets).covered > 0 }))
+            .map((b, idx) => ({ idx, covers: scoreExperienceCoverage([{ text: b.text, sources: b.sources }], targets).covered > 0 }))
             .filter((x) => x.covers)
             .map((x) => x.idx);
         if (coveringIdx.length === 0) continue;

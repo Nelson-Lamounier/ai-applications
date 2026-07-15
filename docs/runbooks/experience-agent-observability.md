@@ -65,15 +65,45 @@ sum by (pass, outcome) (increase(job_strategist_section_net_fired_total{section=
 
 ## Surface 2 -- Loki event stream
 
-Datasource UID `loki`. Events: `experience_agent_targets`, `experience_agent_scored`,
-`experience_agent_rewrite`, `experience_agent_provenance_reject`,
-`experience_agent_fallback`.
+Datasource UID `loki`. Two shapes coexist: BATCH-1 structured events (carry an
+`event` field, emitted by `logExperienceAgentEvents`/`logExperienceCoverageFinal`
+in `experience-agent-diagnostics.ts`) and two later, message-keyed lines
+(`log.info`/`log.warn` with no `event` field, emitted directly in
+`run-pipeline.ts`) added by the e2e-provenance work. NOTE the run-id field
+name SPLITS by shape -- the shared logger applies no key-casing transform:
+the seven structured events stamp snake_case `pipeline_run_id`; the two
+message-keyed lines emit camelCase `pipelineRunId` (the raw variable name at
+their call sites). A query filtering only `pipeline_run_id` silently drops
+the message-keyed lines.
 
-Replay one run end to end:
+Structured (`event=` filterable): `experience_agent_targets`,
+`experience_agent_scored`, `experience_agent_dropped`, `experience_agent_rewrite`,
+`experience_agent_provenance_reject`, `experience_agent_fallback`,
+`experience_agent_coverage_final`.
+
+Message-keyed (filter by `msg=` instead of `event=`), both added in the
+e2e-provenance work: `experience_jd_echo_rewrite_applied` (the routed jd-echo
+re-write in `routeExperienceJdEcho` spliced a valid, provenance-clean rephrase
+-- fires at most once per run, carries `flagged`, the count of guard
+violations it addressed) and `experience_mutated_downstream` (the Task-4
+final-text assert, `experienceMutatedDownstream`, found the shipped Experience
+section diverged from `assembleExperience(kept)` -- see "What good looks
+like": this should never fire).
+
+Replay one run end to end (structured events only):
 
 ```logql
 {namespace="job-strategist"} | json | event=~"experience_agent_.*"
   | pipeline_run_id="<PIPELINE_RUN_ID>"
+```
+
+Add the two message-keyed lines to the same replay (both run-id spellings --
+see the field-name split above):
+
+```logql
+{namespace="job-strategist"} | json
+  | pipeline_run_id="<PIPELINE_RUN_ID>" or pipelineRunId="<PIPELINE_RUN_ID>"
+  | msg=~"experience_agent_.*|experience_jd_echo_rewrite_applied|experience_mutated_downstream"
 ```
 
 Fallback investigation (the raw error lives here, not in the metric):
@@ -91,6 +121,23 @@ Provenance rejections (which validator tokens fired -- `cross_role_citation:*`,
 {namespace="job-strategist"} | json | event="experience_agent_provenance_reject"
 ```
 
+Which career lines were dropped and why (`experience_agent_dropped`, emitted
+only when `diag.provenance.dropped.length > 0`; bounded to 30 entries / 200
+chars per reason by `boundDropped`, see experience-ats-flow.ts):
+
+```logql
+{namespace="job-strategist"} | json | event="experience_agent_dropped"
+  | line_format "{{.pipeline_run_id}} {{.dropped}}"
+```
+
+Final-text coverage (`experience_agent_coverage_final` -- see Surface 3 for
+why this is the number to compare across an A/B, not `coverageBefore`):
+
+```logql
+{namespace="job-strategist"} | json | event="experience_agent_coverage_final"
+  | line_format "{{.pipeline_run_id}} covered={{.covered}}/{{.of}} missing={{.missing}}"
+```
+
 ## Surface 3 -- durable per-run diagnostics (SQL)
 
 Persisted at `pipeline_runs.metadata.analysis.experienceAgent` (same write as
@@ -104,13 +151,23 @@ FROM pipeline_runs WHERE id = '<PIPELINE_RUN_ID>';
 Shape: `{ targets:[{skill,source,verdict,requirement}],
 coverageBefore:{targets,covered,missing}, rewrite:{fired,reason,coverageAfter,
 kept,keptReason}, fallback:{fired,reason}, provenance:{firstViolations,
-rewriteViolations,droppedLines} }`.
+rewriteViolations,droppedLines,dropped}, coverageFinal:{targets,covered,missing}|null }`.
+
+`coverageFinal` is the ONE number to use for an A/B or before/after comparison:
+`coverageBefore`/`rewrite.coverageAfter` score DRAFT text at decision time
+(before the jd-echo route, guards, length budget, and surface-keywords all
+run); `coverageFinal` is stamped by `stampExperienceCoverageFinal` immediately
+before this metadata write, against whatever text actually shipped (`kept` is
+locked immutable after the agent runs -- see `experience-lock.ts` -- so its
+bullet `sources` stay valid for the final text). It is `null` only on the
+verbatim-career fallback path (no agent output to score).
 
 Fleet view:
 
 ```sql
 SELECT id,
-       metadata->'analysis'->'experienceAgent'->'coverageBefore'->>'covered' AS covered,
+       metadata->'analysis'->'experienceAgent'->'coverageBefore'->>'covered' AS covered_before,
+       metadata->'analysis'->'experienceAgent'->'coverageFinal'->>'covered'  AS covered_final,
        metadata->'analysis'->'experienceAgent'->'rewrite'->>'kept'           AS kept,
        metadata->'analysis'->'experienceAgent'->'fallback'->>'fired'         AS fell_back,
        metadata->'analysis'->'experienceAgent'->'provenance'->>'droppedLines' AS dropped
@@ -122,8 +179,13 @@ ORDER BY created_at DESC LIMIT 50;
 
 ## Surface 4 -- isolated LLM cost
 
-The two passes book under distinct agent names: `strategist-experience` (first
-pass) and `strategist-experience-rewrite`:
+Up to three Bedrock calls can fire per run -- the first pass, the ATS
+coverage re-write (`resolveExperienceAts`), and the jd-echo cleanup re-write
+(`routeExperienceJdEcho`) -- but only two distinct agent names: the first pass
+books as `strategist-experience`; BOTH re-write paths book as
+`strategist-experience-rewrite` (the `LIKE` below captures all of them; the
+Loki `experience_agent_rewrite` and `experience_jd_echo_rewrite_applied`
+events are how you tell which one fired):
 
 ```sql
 SELECT agent,
@@ -152,4 +214,19 @@ ORDER BY invoked_at;
   a Sonnet call without improving coverage -- candidate for tuning or removal.
 - Dropped-lines counts in the diagnostics show how much of the user's history is
   being consciously excluded; a spike means the JD relevance filter is too
-  aggressive.
+  aggressive -- read `experience_agent_dropped`'s `dropped[]` reasons, not just
+  the count.
+- `coverageFinal` (metadata + the `experience_agent_coverage_final` Loki event)
+  is the number for any A/B or before/after comparison -- `coverageBefore`
+  measures the FIRST draft, before the jd-echo route and every downstream
+  safety-net pass; only `coverageFinal` reflects what actually shipped.
+- `experience_jd_echo_rewrite_applied` firing is expected and healthy whenever
+  `experience_bullet_jd_echo` guard violations were raised -- it means the
+  advisory got FIXED, not just reported (`guardResume`'s own repair on
+  Experience is undone by the lock, so this route is the only path that
+  actually rewrites an echoing bullet).
+- `experience_mutated_downstream` should NEVER fire. It is the final,
+  post-hoc proof that every resume-mutating pass respected the Task-2 lock; if
+  it fires, some call site mutates Experience outside `withExperienceLock` --
+  treat it exactly like an `outcome="changed"` net-fired reading: a bug to fix,
+  not a tuning signal.

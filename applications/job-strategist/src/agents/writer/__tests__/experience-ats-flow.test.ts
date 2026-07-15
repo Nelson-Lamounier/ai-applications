@@ -317,14 +317,13 @@ describe('routeJdEchoRewrite', () => {
     expect(r.output).toBe(first);
   });
 
-  it('splices a valid re-write and marks it rewritten (called exactly once)', async () => {
+  it('splices a valid re-write and marks it rewritten (called exactly once), passing the raw flagged details through', async () => {
     let calls = 0;
     const r = await routeJdEchoRewrite({
       kept: first, roster, careerLines: lines, echoDetails: ['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.'],
-      rewrite: async (instruction) => {
+      rewrite: async (flaggedDetails) => {
         calls += 1;
-        expect(instruction).toContain('AWS: "Applied DNS resolution');
-        expect(instruction).toContain('Rephrase EACH flagged bullet');
+        expect(flaggedDetails).toEqual(['AWS: "Applied DNS resolution..." leans on JD vocabulary (foo, bar) absent from this role\'s verified facts.']);
         return rewriteFull;
       },
     });
