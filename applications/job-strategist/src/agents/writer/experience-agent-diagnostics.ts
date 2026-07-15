@@ -1,5 +1,6 @@
 /** @format */
 import type { ExperienceAgentDiagnostics } from './experience-ats-flow.js';
+import type { SummaryCoverage } from '../../ats/gate/summary-coverage.js';
 
 /** Correlation keys stamped on every experience-agent Loki event. */
 export interface ExperienceAgentLogKeys {
@@ -20,6 +21,9 @@ export function logExperienceAgentEvents(log: EventLogger, keys: ExperienceAgent
   const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
   log.info({ ...base, event: 'experience_agent_targets', targets: diag.targets.map((t) => ({ skill: t.skill, source: t.source, verdict: t.verdict })) }, 'experience_agent_targets');
   log.info({ ...base, event: 'experience_agent_scored', covered: diag.coverageBefore.covered, of: diag.coverageBefore.targets, missing: diag.coverageBefore.missing }, 'experience_agent_scored');
+  if (diag.provenance.dropped.length > 0) {
+    log.info({ ...base, event: 'experience_agent_dropped', dropped: diag.provenance.dropped }, 'experience_agent_dropped');
+  }
   if (diag.rewrite.fired) {
     log.info({ ...base, event: 'experience_agent_rewrite', reason: diag.rewrite.reason, coverage_after: diag.rewrite.coverageAfter?.covered ?? null, kept: diag.rewrite.kept, kept_reason: diag.rewrite.keptReason }, 'experience_agent_rewrite');
   }
@@ -32,6 +36,18 @@ export function logExperienceAgentEvents(log: EventLogger, keys: ExperienceAgent
   if (diag.fallback.fired) {
     log.info({ ...base, event: 'experience_agent_fallback', reason: diag.fallback.reason }, 'experience_agent_fallback');
   }
+}
+
+/**
+ * Final-text coverage event (Task 4) -- emitted once, at the point
+ * `coverageFinal` is stamped (immediately before the metadata write).
+ * `logExperienceAgentEvents` above fires during BATCH-1 observability, long
+ * before `coverageFinal` exists, so this is a deliberately separate, later
+ * emission rather than a branch added to that function -- it stays untouched.
+ */
+export function logExperienceCoverageFinal(log: EventLogger, keys: ExperienceAgentLogKeys, coverage: SummaryCoverage): void {
+  const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
+  log.info({ ...base, event: 'experience_agent_coverage_final', covered: coverage.covered, of: coverage.targets, missing: coverage.missing }, 'experience_agent_coverage_final');
 }
 
 export type ExperienceAgentOutcome = 'aware' | 'rewritten' | 'kept_first' | 'fallback';

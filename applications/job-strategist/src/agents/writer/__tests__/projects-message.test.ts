@@ -13,7 +13,7 @@ const pool = [
   },
 ];
 const atsTargets = [
-  { skill: 'DNS', source: 'hard' as const, verdict: 'verified' as const, requirement: 'Networking concepts and protocols (DNS, TCP/IP, SSL/TLS)' },
+  { skill: 'DNS', source: 'hard' as const, verdict: 'verified' as const, requirement: 'Networking concepts and protocols (DNS, TCP/IP, SSL/TLS)', anchors: [] },
 ];
 const base = { pool, atsTargets, targetRole: 'Technical Services Engineer' };
 

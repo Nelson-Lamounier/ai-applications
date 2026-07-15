@@ -31,8 +31,8 @@ const pool: ProjectPoolEntry[] = [
 ];
 
 const targets: ExperienceAtsTarget[] = [
-  { skill: 'Kubernetes', source: 'hard', verdict: 'verified', requirement: 'Infra' },
-  { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: 'Networking' },
+  { skill: 'Kubernetes', source: 'hard', verdict: 'verified', requirement: 'Infra', anchors: [] },
+  { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: 'Networking', anchors: [] },
 ];
 
 // covers Kubernetes only (1/2); Portfolio has no highlights emitted here on purpose --
@@ -190,7 +190,7 @@ describe('joinProjectsText', () => {
 
 describe('deterministicProjects', () => {
   const dnsTarget: ExperienceAtsTarget[] = [
-    { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: 'Networking' },
+    { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: 'Networking', anchors: [] },
   ];
   const longPitch = Array.from({ length: 45 }, (_, i) => `word${i}`).join(' ');
 

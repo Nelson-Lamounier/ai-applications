@@ -19,6 +19,16 @@ describe('strategist-experience-persona -- provenance contract + profile-voice r
         expect(joined).toContain('32 words');
     });
 
+    it('states the bullet contract as a hard, standalone rule', () => {
+        expect(joined).toContain('BULLET CONTRACT');
+    });
+
+    it('carries the zero-anchor honesty rule -- weave only what a cited line genuinely supports, else report a gap', () => {
+        expect(joined).toContain('TARGET HONESTY');
+        expect(joined).toContain('grounded by');
+        expect(joined).toContain('gap');
+    });
+
     it('instructs the model to emit only via the emit_experience tool', () => {
         expect(joined).toContain('emit_experience');
     });

@@ -23,7 +23,7 @@ budget produced the ENTIRE resume + cover letter + analysis narrative in one
 sequential pass -- roughly 360s of the end-to-end run, invisible as a single
 line inside `job_strategist_duration_seconds{operation="analyse"}`.
 
-After PR-B, that call is gone. The pipeline instead runs eight stages, four of
+After PR-B, that call is gone. The pipeline instead runs nine stages (the ninth, `jd_echo_route`, added by the experience e2e-provenance work), four of
 which (`batch1`) execute concurrently via `Promise.all`:
 
 | Stage       | What runs                                                              | Concurrency          |
@@ -181,5 +181,5 @@ ORDER BY invoked_at;
 references: neither mentions `job_strategist_pipeline_stage_seconds` or the
 old writer-stage cost. Their only cross-references are to the (already
 retired, already documented in both files) `job_strategist_experience_net_fired_total{pass}`
-counter, which `job_strategist_section_net_fired_total{section, pass}`
+counter, which `job_strategist_section_net_fired_total{section, pass, outcome}`
 superseded in Task 9 -- unrelated to stage timing. No pointer updates needed.
