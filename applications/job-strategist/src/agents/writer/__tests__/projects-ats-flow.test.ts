@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { resolveProjectsAts, joinProjectsText, deterministicProjects, scoreProjectsCoverage } from '../projects-ats-flow.js';
+import { resolveProjectsAts, deterministicProjects, scoreProjectsCoverage } from '../projects-ats-flow.js';
 import type { ProjectsAgentOutput } from '../projects-schema.js';
 import type { ProjectPoolEntry } from '../../evidence/project-agent-inputs.js';
 import type { ExperienceAtsTarget } from '../../../ats/gate/experience-ats-targets.js';
@@ -172,19 +172,6 @@ describe('resolveProjectsAts', () => {
     expect(r.diag.rewrite.keptReason).toBe('rewrite-provenance-invalid');
     expect(r.output).toBe(first);
     expect(r.diag.provenance.rewriteViolations).toContain('cross_project_citation:Tucaken:p1.b0');
-  });
-});
-
-describe('joinProjectsText', () => {
-  it('joins descriptions and assembled highlights with ". "', () => {
-    const text = joinProjectsText(first, pool);
-    expect(text).toBe(
-      [
-        'Tucaken is a career platform helping engineers land jobs faster with grounded evidence coaching.',
-        'Built the onboarding flow end to end',
-        'Wrote the RLS policies for multi-tenant Kubernetes clusters',
-      ].join('. '),
-    );
   });
 });
 

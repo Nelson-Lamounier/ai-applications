@@ -37,14 +37,6 @@ export interface ProjectsAgentDiagnostics {
   readonly unresolvedRepos: string[];
 }
 
-/** Flattened score text for a projects output: every project's description
- *  followed by its assembled highlights, in order. */
-export function joinProjectsText(out: ProjectsAgentOutput, pool: readonly ProjectPoolEntry[]): string {
-  return assembleProjects(out, pool)
-    .flatMap((p) => [p.description, ...p.highlights])
-    .join('. ');
-}
-
 /** Draft text handed to the re-write fn: per-project `name` line, then
  *  `- bullet` lines, projects separated by a blank line. */
 function buildDraftText(out: ProjectsAgentOutput, pool: readonly ProjectPoolEntry[]): string {

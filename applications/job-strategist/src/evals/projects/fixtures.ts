@@ -130,8 +130,9 @@ export const ADVERSARIAL_CROSS_PROJECT: ProjectsEvalInput = {
  * rendered `assembled` text is retyped (the Kubernetes bullet loses its
  * hyphen: "multi-tenant" -> "multi tenant"). Trips ONLY `quoteFidelityGrader`
  * (byte-identical check); every other grader reads `output`/`pool` directly
- * and is untouched, and the retype does not remove the "Kubernetes" token so
- * `atsCoverageGrader` (which DOES read `assembled`) still clears its bar.
+ * and is untouched -- `atsCoverageGrader` now scores `output`/`pool` via
+ * `scoreProjectsCoverage` (FIX 3, not `assembled`), so it is structurally
+ * unaffected by a retyped render, not merely coincidentally unaffected.
  */
 const RETYPED_ASSEMBLED: ReturnType<typeof assembleProjects> = assembleProjects(GOLDEN_OUTPUT, POOL).map((entry, i) =>
     i === 0 ? { ...entry, highlights: [entry.highlights[0]!.replace('multi-tenant', 'multi tenant'), ...entry.highlights.slice(1)] } : entry,

@@ -68,11 +68,13 @@ describe('projects graders', () => {
         expect(r.pass).toBe(true);
     });
 
-    it('atsCoverage fails when the rendered text misses too many targets', () => {
-        const r = atsCoverageGrader({
-            ...GOLDEN_TWO_LANE,
-            assembled: [{ name: 'Portfolio', description: 'unrelated filler text', github: 'github.com/o/portfolio', highlights: [] }],
-        });
+    // FIX 3: re-derived to drive the failure through `output`/`pool` (what
+    // `scoreProjectsCoverage` actually scores) rather than a swapped
+    // `assembled` render -- since the grader no longer reads `assembled` at
+    // all, a stale render swap would no longer exercise a real failure.
+    it('atsCoverage fails when the output has no highlights left to cover any target', () => {
+        const noHighlights = { entries: GOLDEN_TWO_LANE.output.entries.map((e) => ({ ...e, highlights: [] })) };
+        const r = atsCoverageGrader({ ...GOLDEN_TWO_LANE, output: noHighlights });
         expect(r.pass).toBe(false);
     });
 });

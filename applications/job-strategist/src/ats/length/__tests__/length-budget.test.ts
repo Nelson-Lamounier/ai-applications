@@ -6,7 +6,8 @@ jest.mock('@bedrock/shared', () => ({
 }));
 import { runAgent } from '@bedrock/shared';
 import type { StructuredResumeData } from '@bedrock/shared';
-import { LENGTH_BUDGET, measureResume, hardTrim, applyLengthBudget, resolveModelId } from '../length-budget.js';
+import { LENGTH_BUDGET, measureResume, hardTrim, applyLengthBudget, applyProjectsHighlightBudget, resolveModelId } from '../length-budget.js';
+import { restoreProjectHighlights } from '../../../agents/quality/relocate-project-experience.js';
 
 const mockRun = runAgent as jest.Mock;
 
@@ -227,6 +228,75 @@ describe('hardTrim', () => {
     });
 });
 
+// FIX 1 (final-review CRITICAL): restoreProjectHighlights (relocate-project-
+// experience.ts) restores a project's FULL pre-trim snapshot whenever a
+// downstream re-emit pass drops even ONE bullet from it -- run-pipeline calls
+// it with `guardsResult.relocatedSnapshot`, taken BEFORE this module's own
+// length-budget trim runs. That silently reverts a deliberate whole-bullet
+// trim right before persist. The fix is not to weaken the restore (it also
+// protects against a pass blanking highlights outright -- see
+// relocate-project-experience.test.ts) but to re-run the SAME deterministic
+// budget immediately after every restore call, via `applyProjectsHighlightBudget`
+// (which wraps `trimProjectHighlights` -- never duplicated). This test proves
+// the seam end to end: snapshot (over-budget) -> length-stage trim (in
+// budget) -> downstream pass blanks one entry -> restore (reintroduces the
+// over-budget snapshot) -> retrim (back in budget) -- the exact
+// restore-then-retrim ordering run-pipeline.ts now applies at both call sites.
+describe('restoreProjectHighlights -> applyProjectsHighlightBudget seam (FIX 1)', () => {
+    it('re-trims to budget after a restore reintroduces the pre-trim, over-budget highlights a legitimate trim already removed', () => {
+        // 3 entries x 3 x 25-word bullets = 225 words, 45 over the 180-word
+        // budget -- the same shape as the hardTrim round-robin test above.
+        const h = (label: string) => Array.from({ length: 3 }, (_, i) => `${label}${i} ${sentence(24)}`);
+        const [p1, p2, p3] = [h('p'), h('q'), h('r')];
+        // This IS `guardsResult.relocatedSnapshot`: taken before the length
+        // stage's own trim ever runs.
+        const snapshot = base({
+            projects: [
+                { name: 'P', description: '', github: '', highlights: p1 },
+                { name: 'Q', description: '', github: '', highlights: p2 },
+                { name: 'R', description: '', github: '', highlights: p3 },
+            ],
+        } as never);
+
+        // The length stage's deterministic trim already ran once (Task 4):
+        // Q and R each lose their last bullet, landing at 175/180 words.
+        const trimmed = hardTrim(snapshot);
+        expect(measureResume(trimmed).overBudget).not.toContain('projects_highlights');
+        expect(trimmed.projects[1].highlights).toEqual(p2.slice(0, -1));
+
+        // A downstream re-emit pass (surface-keywords / condense round-trip)
+        // then blanks Q's highlights outright -- restoreProjectHighlights'
+        // actual, legitimate purpose.
+        const blanked = {
+            ...trimmed,
+            projects: trimmed.projects.map((p, i) => (i === 1 ? { ...p, highlights: [] } : p)),
+        } as StructuredResumeData;
+
+        const restored = restoreProjectHighlights(snapshot, blanked);
+        // The bug: restore compares against the PRE-TRIM snapshot, so Q comes
+        // back with its full 3 bullets -- the trim's own removal is undone
+        // and the section is over budget again.
+        expect(restored.projects[1].highlights).toEqual(p2);
+        expect(measureResume(restored).overBudget).toContain('projects_highlights');
+
+        const reTrimmed = applyProjectsHighlightBudget(restored);
+        // The seam: retrim lands back within budget...
+        expect(measureResume(reTrimmed).overBudget).not.toContain('projects_highlights');
+        // ...and the floor-of-1 guarantee still holds -- no entry stripped bare.
+        expect(reTrimmed.projects.every((p) => (p.highlights?.length ?? 0) >= 1)).toBe(true);
+    });
+
+    it('a resume already within budget after a restore is returned untouched (no needless re-run)', () => {
+        const highlights = [sentence(20), sentence(20)];
+        const snapshot = base({ projects: [{ name: 'P', description: '', github: '', highlights } as never] } as never);
+        const after = { ...snapshot, projects: [{ ...snapshot.projects[0], highlights: [] }] } as StructuredResumeData;
+        const restored = restoreProjectHighlights(snapshot, after);
+        const out = applyProjectsHighlightBudget(restored);
+        expect(out).toBe(restored); // identity -- untouched when within budget
+        expect(out.projects[0].highlights).toEqual(highlights);
+    });
+});
+
 describe('applyLengthBudget', () => {
     beforeEach(() => { mockRun.mockReset(); });
 
@@ -338,18 +408,26 @@ describe('applyLengthBudget — condense self-scrubs its own instruction leaks (
     });
 });
 
-describe('condense prompt — project pitch protection (run 9216cf25)', () => {
+describe('condense prompt -- project descriptions (run 9216cf25 pitch-protection retired; FIX 2 lock coherence)', () => {
     beforeEach(() => { mockRun.mockReset(); });
 
-    it('the condense system prompt PROTECTS project pitch openings — "cut non-JD content first" made the guard-restored pitches the first casualty on the live run', async () => {
+    // Superseded: descriptions are now system-stamped + LOCKED
+    // (stampProjectDescription / withProjectsDescriptionLock, Task 2) --
+    // asking the condense LLM to shrink text the lock reverts is the same
+    // contradiction class as the retired guard three-beat, so the prompt no
+    // longer carries a per-description shrink target at all; it tells the
+    // model descriptions are out of scope instead.
+    it('the condense system prompt does NOT ask the LLM to shrink project descriptions -- they are system-stamped and LOCKED, so any such ask is only reverted', async () => {
         const fixed = base();
         mockRun.mockResolvedValue({ data: fixed });
         const fat = base({ projects: [{ name: 'P', description: sentence(300), github: '' }] } as never);
         await applyLengthBudget(fat, jd, () => {});
         const config = mockRun.mock.calls[0]![0].config;
         const system = config.systemPrompt.map((b: { text?: string }) => b.text ?? '').join('\n');
-        expect(system).toContain('PITCH OPENINGS ARE PROTECTED');
-        expect(system).toMatch(/opening sentence/i);
+        expect(system).not.toMatch(/each description <=/);
+        expect(system).not.toContain(`projects total <= ${LENGTH_BUDGET.projectsWords}`);
+        expect(system).toContain('PROJECT DESCRIPTIONS ARE LOCKED');
+        expect(system).toMatch(/only project HIGHLIGHTS are in scope/i);
     });
 
     it('the condense system prompt gives the LLM the projects-highlights word target (run 1eda06eb: a 12-bullet/~330-word Projects section was invisible to the condense pass)', async () => {

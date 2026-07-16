@@ -55,7 +55,7 @@ import { annotateGapCauses } from './lib/grounding/gap-cause.js';
 import { createViolationLog } from './lib/observability/violation-log.js';
 import { loadCandidateContact, formatCandidateContact } from './lib/resume/candidate-contact.js';
 import { applyCorrectiveRetrieval, buildBedrockAdjudicator, type CorrectiveStats } from './lib/grounding/corrective-retrieval.js';
-import { applyLengthBudget } from './ats/length/length-budget.js';
+import { applyLengthBudget, applyProjectsHighlightBudget } from './ats/length/length-budget.js';
 import { parseKbPassages, attachPassageProvenance } from './ats/grounding/ledger-provenance.js';
 import { parseEnv, isFreeMode }   from './env.js';
 import { getPool, closePool }     from './lib/db/pg.js';
@@ -1657,8 +1657,13 @@ async function runLengthStage(args: {
     violationLog.recordAll('revalidate', revalidateViolations);
     let finalResume = await applyResumeIntegrity(revalidatedResume, baseline, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
     // Restore any projects[].highlights the Haiku re-emit passes dropped
-    // (the emit_resume tool round-trip blanks the Projects bullets).
+    // (the emit_resume tool round-trip blanks the Projects bullets). The
+    // restore's snapshot predates this stage's own length-budget trim above,
+    // so a restore can silently reintroduce the exact bullets that trim just
+    // dropped -- re-apply the same deterministic budget immediately after so
+    // the retrim, not the restore, has the last word (FIX 1).
     finalResume = restoreProjectHighlights(projectHighlightsSnapshot, finalResume);
+    finalResume = applyProjectsHighlightBudget(finalResume);
     return finalResume;
 }
 
@@ -1784,6 +1789,9 @@ async function runAtsGateStage(args: AtsGateArgs): Promise<{ finalResume: Struct
             surfaced = await applyResumeIntegrity(surfaced, baseline, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
             // close the silent-blanking path: the keyword-loop re-emit can drop projects[].highlights
             surfaced = restoreProjectHighlights(projectHighlightsSnapshot, surfaced);
+            // Same seam as runLengthStage above: re-apply the deterministic
+            // highlights budget so the restore can never outlive the trim (FIX 1).
+            surfaced = applyProjectsHighlightBudget(surfaced);
             finalResume = surfaced;
             const rePersisted = await persistTailoredResume(pool, {
                 applicationId:  env.applicationId,

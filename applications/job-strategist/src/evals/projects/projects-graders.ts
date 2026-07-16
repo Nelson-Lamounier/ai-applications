@@ -3,10 +3,10 @@
  * Projects-agent per-phase eval - offline structural graders.
  *
  * These reuse the exact predicates the runtime projects lane applies
- * (`validateProjectsProvenance`, `assembleProjects`, `scoreSummaryCoverage`,
- * `stampProjectDescription`) so "eval says good" and "guard accepts" can never
- * drift. No Bedrock call - pure, deterministic checks against a fixed
- * ProjectsEvalInput.
+ * (`validateProjectsProvenance`, `assembleProjects`, `scoreProjectsCoverage`,
+ * `scoreSummaryCoverage`, `stampProjectDescription`) so "eval says good" and
+ * "guard accepts" can never drift. No Bedrock call - pure, deterministic
+ * checks against a fixed ProjectsEvalInput.
  *
  * `assembled` is the RENDERED final section handed to the fixture separately
  * from `output`/`pool` -- in the real pipeline this is what `assembleProjects`
@@ -16,6 +16,7 @@
  * deliberately retyped copy to prove `quoteFidelityGrader` actually reads it.
  */
 import type { RepoCurrentFact, ProjectPoolEntry } from '../../agents/evidence/project-agent-inputs.js';
+import { scoreProjectsCoverage } from '../../agents/writer/projects-ats-flow.js';
 import { stampProjectDescription } from '../../agents/writer/projects-description.js';
 import { assembleProjects, PROJECTS_MAX_BULLETS_PER_ENTRY, validateProjectsProvenance } from '../../agents/writer/projects-provenance.js';
 import { isCurated, type ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
@@ -109,14 +110,23 @@ export function compositionGrader(i: ProjectsEvalInput): GraderResult {
 
 /**
  * ATS coverage: a well-composed projects section should surface at least
- * min(2, N) of its attainable targets across the RENDERED (assembled) text.
- * Vacuously passes when a fixture set no targets.
+ * min(2, N) of its attainable targets. Delegates to `scoreProjectsCoverage`
+ * (projects-ats-flow.ts) -- the SAME term-tolerant `experienceTermMatch`
+ * primitive the runtime resolver scores coverage with, over HIGHLIGHTS ONLY
+ * (`output`/`pool`, not `assembled`). This grader previously scored the
+ * RENDERED text (description + highlights) via the summary lane's strict
+ * adjacent-phrase `scoreSummaryCoverage` -- a different predicate than the
+ * runtime ever applies to projects, so "eval says good" could drift from
+ * "guard accepts" in either direction (a description-only keyword mention
+ * passing here while the runtime, which never scores descriptions, saw no
+ * coverage at all; or a genuinely on-topic but non-adjacent highlight failing
+ * here while the runtime's term-match credited it). Vacuously passes when a
+ * fixture set no targets.
  */
 export function atsCoverageGrader(i: ProjectsEvalInput): GraderResult {
     const targets = i.atsTargets;
     if (targets.length === 0) return mkResult('atsCoverage', []);
-    const joined = i.assembled.flatMap((p) => [p.description, ...p.highlights]).join('. ');
-    const { covered } = scoreSummaryCoverage(joined, targets);
+    const { covered } = scoreProjectsCoverage(i.output, i.pool, targets);
     const need = Math.min(2, targets.length);
     return mkResult(
         'atsCoverage',

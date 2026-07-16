@@ -33,6 +33,17 @@ export const LENGTH_BUDGET = {
     summaryWords:             100,
     experienceWords:          370,
     skillsWords:              150,
+    /** Descriptions are system-stamped (`stampProjectDescription`, <= 80w/entry,
+     *  projects-description.ts) and LOCKED against downstream rewrite
+     *  (`withProjectsDescriptionLock`) -- at 3+ entries, 3 * 80 = 240 can
+     *  legitimately exceed this 160 threshold. That is ACCEPTED, not a defect:
+     *  `hardTrimProjects`'s sentence-trim is a structural no-op on an
+     *  already-stamped, already-under-80-word description (nothing left to
+     *  cut), and the condense LLM is no longer asked to shrink descriptions
+     *  either (see the condense prompt below) -- the lock would revert it
+     *  anyway. The `projects` overBudget signal stays purely diagnostic once
+     *  descriptions are stamp-shaped; `projects_highlights` is the budget that
+     *  actually enforces. */
     projectsWords:            160,
     /** Run 1eda06eb: a 12-bullet/~330-word Projects section shipped INVISIBLE
      *  to this whole module -- measureResume only ever counted description
@@ -197,6 +208,26 @@ function trimProjectHighlights(resume: StructuredResumeData): StructuredResumeDa
 }
 
 /**
+ * Re-applies the deterministic projects-highlights budget trim (the SAME
+ * whole-bullet, floor-of-1, round-robin logic `hardTrim` runs above --
+ * `trimProjectHighlights` is never duplicated, only reused) when, and only
+ * when, `projects_highlights` is currently over budget. No-op otherwise
+ * (returns `resume` unchanged, no clone).
+ *
+ * Exists for `restoreProjectHighlights` callers (relocate-project-experience.ts):
+ * that restore's snapshot is taken BEFORE this module's length-budget trim
+ * runs, so restoring a downstream pass's blanked/shrunk highlights can
+ * reintroduce the exact bullets the trim deliberately dropped -- silently
+ * reverting Task 4's budget enforcement right before persist. Call this
+ * immediately after every `restoreProjectHighlights` call so the retrim is
+ * always the last word on the highlights budget, not the restore.
+ */
+export function applyProjectsHighlightBudget(resume: StructuredResumeData): StructuredResumeData {
+    const m = measureResume(resume);
+    return m.overBudget.includes('projects_highlights') ? trimProjectHighlights(resume) : resume;
+}
+
+/**
  * Whole-bullet only: drop bullets beyond the per-role cap, never reword or
  * truncate a surviving bullet. Experience is agent-owned (fillResumeExperience
  * + the byte-identical lock in experience-lock.ts) once the dedicated agent
@@ -293,8 +324,7 @@ export async function condenseResume(
         `- experience total <= ${LENGTH_BUDGET.experienceWords} (currently ${measure.experience}); max ${LENGTH_BUDGET.maxBulletsPerRole} bullets per role; EVERY bullet <= ${LENGTH_BUDGET.perBulletWords} words, one sentence, verb-first, dry — no "as measured by X, by Y" chains.`,
         '- IMPACT CLAUSES ARE PROTECTED: every bullet keeps exactly ONE impact clause (its measured number or qualitative benefit, e.g. "eliminating static credentials"). When cutting, remove scope enumerations, adjectives, and tool lists FIRST — never the benefit.',
         `- skills total <= ${LENGTH_BUDGET.skillsWords} (currently ${measure.skills}); a skill is a NAME (<= ${LENGTH_BUDGET.perSkillItemWords} words), never a sentence; max ${LENGTH_BUDGET.maxSkillItemsPerCategory} items per category; keep JD-required skills first, cut the rest.`,
-        `- projects total <= ${LENGTH_BUDGET.projectsWords} (currently ${measure.projects}); each description <= ${LENGTH_BUDGET.perProjectWords} words — what it is, the JD-relevant proof, one metric. No stack dumps.`,
-        '- PROJECT PITCH OPENINGS ARE PROTECTED: each project description KEEPS its opening sentence stating what the project is and who it serves (it rarely contains JD keywords — that does NOT make it cuttable). Cut stack enumerations and secondary clauses first, never the opening pitch.',
+        '- PROJECT DESCRIPTIONS ARE LOCKED: each project description is a system-stamped pitch (already <= 80 words) -- any rewrite, including a shrink, is reverted before this resume is used. Do not spend effort shrinking or rewording descriptions; only project HIGHLIGHTS are in scope below.',
         `- projects highlights total <= ${LENGTH_BUDGET.projectsHighlightWords} words; drop the least JD-relevant bullets first, never reword a quoted bullet.`,
         `- grand total <= ${LENGTH_BUDGET.totalWords} (currently ${measure.total}).`,
         'Style: industry-standard, terse, no adjectives without evidence, no repeated technology lists across sections.',
