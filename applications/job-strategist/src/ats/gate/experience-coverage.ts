@@ -161,9 +161,80 @@ function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
   return LANE_LANGUAGE_EXEMPLARS.some((exemplar) => paddedText.includes(exemplar));
 }
 
+// Pass 5 (G3, run d3d9ab76): soft-skill synonym groups. JD soft-skill targets
+// ("collaboration", "full-stack troubleshooting") legitimately miss career
+// lines that demonstrate the skill in synonym vocabulary (partnered,
+// coordinated, end-to-end resolution) without ever using the JD's token.
+//
+// Fail-closed by construction, three conditions all required:
+//  - at least ONE target token must be in the group's `anchors` -- the
+//    concept word itself (collaboration/teamwork; full/stack/end), so a
+//    generic satellite token alone ("teams", "troubleshooting") never
+//    rides the group and stays with passes 1-4;
+//  - EVERY target token must sit inside the group's `vocab` -- the target
+//    has to BE the soft skill, so a tech phrase that merely contains a
+//    soft-skill token ("collaboration tools (Jira, Confluence)") never
+//    rides the group;
+//  - EVERY regex in `evidence` must match `text` -- "full-stack
+//    troubleshooting" needs BOTH a span signal (end-to-end / full-stack /
+//    across the stack) AND a troubleshooting/resolution signal, so a line
+//    about shipping a feature end-to-end does not credit it.
+//
+// Tokens are RAW `tokenize` output (stemmed), deliberately NOT
+// `emphasisStrippedTokens`: that helper strips management/analysis/
+// engineering, which for THIS pass are part of the requirement's meaning --
+// "team management" must never collapse to a bare {team} that rides the
+// collaboration group (review-found over-credit; a false credit cascades
+// through anchorsFor into a quoted grounding line).
+interface SoftSkillSynonymGroup {
+  readonly anchors: ReadonlySet<string>;
+  readonly vocab: ReadonlySet<string>;
+  readonly evidence: readonly RegExp[];
+}
+
+const SOFT_SKILL_SYNONYM_GROUPS: readonly SoftSkillSynonymGroup[] = [
+  {
+    // Stemmed forms (lightStem strips -ing: collaborating -> collaborat).
+    anchors: new Set(['collaboration', 'collaborate', 'collaborated', 'collaborat', 'collaborative', 'teamwork']),
+    vocab: new Set([
+      'collaboration', 'collaborate', 'collaborated', 'collaborat', 'collaborative',
+      'teamwork', 'team', 'teams', 'cross', 'functional', 'stakeholder', 'stakeholders',
+    ]),
+    // Inflected verb / action-noun forms only -- bare stems and adjectives
+    // are domain vocabulary, not teamwork evidence: "AWS partners programme",
+    // "user engagement metrics", "collaborative filtering", "coordinate
+    // system" must all stay inert. Engage forms additionally need a "with"
+    // object cue (one optional adverb allowed: "engaging directly with") so
+    // the UX adjective ("engaging user interfaces") stays inert too.
+    evidence: [
+      /\bpartner(ed|ing)\b|\b(coordinat|collaborat)(ed|ing|ion)\b|\bliais(ed|ing|on)\b|\bengag(ed|ing)\s(\w+\s)?with\b|\bcross[- ]functional\b/i,
+    ],
+  },
+  {
+    anchors: new Set(['full', 'stack', 'fullstack', 'end']),
+    // Stemmed forms: troubleshooting -> troubleshoot, debugging -> debugg.
+    vocab: new Set([
+      'full', 'stack', 'fullstack', 'end', 'to', 'troubleshoot', 'troubleshot',
+      'debugg', 'debug', 'diagnosis', 'diagnostics',
+    ]),
+    evidence: [
+      /\b(end[- ]to[- ]end|full[- ]stack|across the stack)\b/i,
+      /\b(troubleshoot|troubleshot|resolut|resolv|diagnos|debug)\w*/i,
+    ],
+  },
+];
+
+function softSkillSynonymMatch(targetSkill: string, text: string): boolean {
+  const stemmedTokens = tokenize(targetSkill).map(lightStem);
+  return SOFT_SKILL_SYNONYM_GROUPS.some((group) =>
+    stemmedTokens.some((token) => group.anchors.has(token))
+    && stemmedTokens.every((token) => group.vocab.has(token))
+    && group.evidence.every((re) => re.test(text)));
+}
+
 /**
  * Experience-lane term match: does `text` demonstrate `targetSkill` in the
- * JD's vocabulary, without demanding its exact wording? A four-way OR, still
+ * JD's vocabulary, without demanding its exact wording? A five-way OR, still
  * pure and deterministic:
  *
  *  1. `unstemmedMatch` -- exact-phrase + matchTier1's own raw language cue.
@@ -174,6 +245,11 @@ function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
  *     class ("code reading"/"code review(s)"/"code comprehension"/"reading
  *     code" -- NOT a bare "code" token) covered when `text` names a real
  *     language.
+ *  5. `softSkillSynonymMatch` -- a target that IS a soft-skill concept
+ *     (every significant token inside one group's vocabulary) covered when
+ *     `text` demonstrates it in synonym vocabulary (partnered/coordinated
+ *     for collaboration; end-to-end + a troubleshooting signal for
+ *     full-stack troubleshooting).
  *
  * Single source of matching truth for the experience lane -- also used by
  * `anchorsFor` in experience-ats-targets.ts and the projects lane (via
@@ -186,7 +262,8 @@ function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
 export function experienceTermMatch(targetSkill: string, text: string): boolean {
   return matchesCoreTerm(targetSkill, text)
     || enumerationMatch(targetSkill, text)
-    || laneLanguageCueMatch(targetSkill, text);
+    || laneLanguageCueMatch(targetSkill, text)
+    || softSkillSynonymMatch(targetSkill, text);
 }
 
 export interface ScorableBullet {

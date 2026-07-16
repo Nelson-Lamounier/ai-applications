@@ -186,6 +186,75 @@ describe('experienceTermMatch', () => {
       expect(experienceTermMatch('production database', text)).toBe(false);
     });
   });
+
+  describe('G3: soft-skill synonym groups (run d3d9ab76 misses)', () => {
+    // The live career lines demonstrate collaboration in synonym vocabulary
+    // (partnered, coordinated, engaging) without ever using the JD's token.
+    const collaborationLine = 'Partnered with internal engineering teams and coordinated '
+      + 'cross-team escalations, engaging directly with customers throughout resolution.';
+
+    it('LIVE MISS 1: "collaboration" is covered by a partnered/coordinated career line', () => {
+      expect(experienceTermMatch('collaboration', collaborationLine)).toBe(true);
+    });
+
+    it('a modified collaboration target ("cross-functional collaboration") still rides the group', () => {
+      expect(experienceTermMatch('cross-functional collaboration', collaborationLine)).toBe(true);
+    });
+
+    it('GUARD: a tech-phrase target containing a collaboration token never rides the group -- '
+      + '"collaboration tools (Jira, Confluence)" stays false against the same line', () => {
+      expect(experienceTermMatch('collaboration tools (Jira, Confluence)', collaborationLine)).toBe(false);
+    });
+
+    it('LIVE MISS 2: "full-stack troubleshooting" is covered by an end-to-end resolution line', () => {
+      const text = 'Owned end-to-end technical resolution of customer cases across compute, '
+        + 'storage, and networking services.';
+      expect(experienceTermMatch('full-stack troubleshooting', text)).toBe(true);
+    });
+
+    it('GUARD: "full-stack troubleshooting" stays false when the line shows end-to-end work '
+      + 'with no troubleshooting or resolution signal', () => {
+      const text = 'Delivered the onboarding flow end-to-end, from design hand-off to launch.';
+      expect(experienceTermMatch('full-stack troubleshooting', text)).toBe(false);
+    });
+
+    it('GUARD: a collaboration target with zero synonym evidence stays missing (fail-closed)', () => {
+      const text = 'Maintained Terraform modules for the shared VPC baseline.';
+      expect(experienceTermMatch('collaboration', text)).toBe(false);
+    });
+
+    it('REVIEW GUARD: "team management" never collapses to a bare {team} that rides the group -- '
+      + 'stays false against a noun-only "engagement" line', () => {
+      const text = 'Analysed user engagement metrics to prioritise the roadmap.';
+      expect(experienceTermMatch('team management', text)).toBe(false);
+    });
+
+    it('REVIEW GUARD: "stakeholder management" stays false against a partner-as-noun line', () => {
+      const text = 'Integrated with AWS Partner Central APIs and synced partner programme data feeds.';
+      expect(experienceTermMatch('stakeholder management', text)).toBe(false);
+    });
+
+    it('REVIEW GUARD: a bare satellite token ("teams", "troubleshooting") never rides a group '
+      + 'without its anchor concept word', () => {
+      expect(experienceTermMatch('teams', 'Partnered with the platform group on rollouts.')).toBe(false);
+      expect(experienceTermMatch('troubleshooting', 'Owned end-to-end technical resolution of cases.')).toBe(false);
+    });
+
+    it('REVIEW GUARD: domain vocabulary sharing a stem is not teamwork evidence -- '
+      + '"collaborative filtering" and "coordinate system" stay inert', () => {
+      expect(experienceTermMatch('collaboration',
+        'Built a collaborative filtering recommendation engine for the product catalogue.')).toBe(false);
+      expect(experienceTermMatch('collaboration',
+        'Mapped coordinate system transforms for the robotics perception stack.')).toBe(false);
+    });
+
+    it('REVIEW GUARD: the UX adjective "engaging" is not teamwork evidence, but engage-with is', () => {
+      expect(experienceTermMatch('collaboration',
+        'Designed engaging user interfaces for the checkout flow, increasing conversion by 12%.')).toBe(false);
+      expect(experienceTermMatch('collaboration',
+        'Engaged with enterprise customers to gather requirements ahead of each release.')).toBe(true);
+    });
+  });
 });
 
 describe('scoreExperienceCoverage', () => {
