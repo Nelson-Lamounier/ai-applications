@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { InterviewCoachResult } from '@bedrock/shared';
 
+import { stampCanonicalSectionOrder } from '../resume/section-order.js';
 import { StructuredResumeDataSchema } from '../../schemas/resume-data.schema.js';
 import { withUserRls } from './rls.js';
 
@@ -166,7 +167,15 @@ export async function persistTailoredResume(
         });
     }
 
-    const validated = StructuredResumeDataSchema.safeParse(cleanedResume);
+    // Section order is a system decision: stamp the canonical order here, at
+    // the single choke point every persist path flows through (main persist,
+    // the ATS surface-keywords re-persist, semantic-cache replay, free tier),
+    // so no LLM-echoed sectionOrder can reach the resumes row the UI honours.
+    const stampedResume = typeof cleanedResume === 'object' && cleanedResume !== null
+        ? stampCanonicalSectionOrder(cleanedResume)
+        : cleanedResume;
+
+    const validated = StructuredResumeDataSchema.safeParse(stampedResume);
     if (!validated.success) {
         console.warn('[strategist] tailored_resume_json failed schema validation — skipping persistence', {
             pipelineId: args.pipelineId, error: validated.error.message,
