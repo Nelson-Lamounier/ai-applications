@@ -88,6 +88,14 @@ function projectsScorableBullets(out: ProjectsAgentOutput, pool: readonly Projec
  * MongoDB TSE run scored 0/6 despite genuinely relevant bullets). Diagnostics
  * and persistence are untouched -- only the predicate deciding "covered"
  * changed, not the shape callers read.
+ *
+ * NOTE: `scoreExperienceCoverage`'s anchor-credit branch (`target.anchors`,
+ * populated with career-line ids like `c{i}.h{j}`) is structurally inert
+ * here -- projects bullets only ever cite `p{i}.b{j}` (curated) or `p{i}.r{k}`
+ * (repo-current) ids, a disjoint namespace from career anchors, so that
+ * branch can never match and every projects target is decided purely by
+ * `experienceTermMatch`. Not a bug to fix -- just why anchors never fire
+ * on this call path.
  */
 export function scoreProjectsCoverage(
   out: ProjectsAgentOutput,

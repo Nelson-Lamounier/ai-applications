@@ -3,9 +3,10 @@
  * Projects-agent per-phase eval - offline structural graders.
  *
  * These reuse the exact predicates the runtime projects lane applies
- * (`validateProjectsProvenance`, `assembleProjects`, `scoreSummaryCoverage`) so
- * "eval says good" and "guard accepts" can never drift. No Bedrock call - pure,
- * deterministic checks against a fixed ProjectsEvalInput.
+ * (`validateProjectsProvenance`, `assembleProjects`, `scoreSummaryCoverage`,
+ * `stampProjectDescription`) so "eval says good" and "guard accepts" can never
+ * drift. No Bedrock call - pure, deterministic checks against a fixed
+ * ProjectsEvalInput.
  *
  * `assembled` is the RENDERED final section handed to the fixture separately
  * from `output`/`pool` -- in the real pipeline this is what `assembleProjects`
@@ -15,14 +16,12 @@
  * deliberately retyped copy to prove `quoteFidelityGrader` actually reads it.
  */
 import type { RepoCurrentFact, ProjectPoolEntry } from '../../agents/evidence/project-agent-inputs.js';
+import { stampProjectDescription } from '../../agents/writer/projects-description.js';
 import { assembleProjects, PROJECTS_MAX_BULLETS_PER_ENTRY, validateProjectsProvenance } from '../../agents/writer/projects-provenance.js';
 import { isCurated, type ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { scoreSummaryCoverage } from '../../ats/gate/summary-coverage.js';
 import { mkResult, type GraderResult } from '../graders.js';
-
-const MAX_DESCRIPTION_WORDS = 40;
-const MIN_PITCH_OVERLAP = 0.3;
 
 /** The exact input the projects phase produces + the rendered artefact + the
  *  context it was graded against. */
@@ -125,36 +124,31 @@ export function atsCoverageGrader(i: ProjectsEvalInput): GraderResult {
     );
 }
 
-/** Lowercase alnum tokens, length > 3 -- the exact formula `pitchOverlapViolation`
- *  in projects-provenance.ts uses, restated locally so this grader has no
- *  cross-module coupling to the validator's internals. */
-function distinctiveTokens(text: string): Set<string> {
-    return new Set(text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter((t) => t.length > 3));
-}
-
 /**
- * Description quality: <=40 words, and >=30% of the pool pitch's distinctive
- * tokens must reappear in the description -- the same formula the runtime
- * validator applies. Re-checking it here as its own grader gives the eval
- * report a dedicated, readable failure line even though `validateProjectsProvenance`
- * enforces the identical rule.
+ * Description quality, checked WITH the runtime primitive itself
+ * (`stampProjectDescription`, projects-description.ts -- Task 2's SOLE
+ * description producer on every path) rather than a parallel restatement of
+ * its rules: a valid description must be non-empty and a FIXED POINT of the
+ * stamp at its 80-word default cap -- `stampProjectDescription(description,
+ * 80) === description.trim()`. Every genuine stamp output is idempotent
+ * (single paragraph, whole sentences within the cap, an over-cap single
+ * sentence word-sliced and re-terminated with '.'), so any description the
+ * stamp would ALTER -- over-budget, multi-paragraph, or a mid-sentence
+ * truncation the stamp would re-trim -- cannot have been produced by it and
+ * fails. The runtime validator deliberately has NO description rules (the
+ * field is system-stamped post-validation -- see `validateEntry`,
+ * projects-provenance.ts); this grader checks the STAMPED artefact the
+ * fixture carries, a surface the runtime guard never re-reads.
  */
 export function descriptionGrader(i: ProjectsEvalInput): GraderResult {
-    const failures: string[] = [];
-    const poolByName = new Map(i.pool.map((p) => [p.name, p]));
-    for (const entry of i.output.entries) {
-        const poolEntry = poolByName.get(entry.name);
-        if (!poolEntry) continue;
-        const words = entry.description.trim().split(/\s+/).filter((w) => w.length > 0);
-        if (words.length > MAX_DESCRIPTION_WORDS) failures.push(`description_words:${entry.name}:${words.length}`);
-
-        const pitchTokens = distinctiveTokens(poolEntry.pitch);
-        if (pitchTokens.size === 0) continue;
-        const descTokens = distinctiveTokens(entry.description);
-        let hit = 0;
-        for (const t of pitchTokens) if (descTokens.has(t)) hit++;
-        if (hit / pitchTokens.size < MIN_PITCH_OVERLAP) failures.push(`pitch_overlap:${entry.name}`);
-    }
+    const poolNames = new Set(i.pool.map((p) => p.name));
+    const failures = i.output.entries.flatMap((entry) => {
+        if (!poolNames.has(entry.name)) return []; // unknown-project is provenanceGrader's job
+        const trimmed = entry.description.trim();
+        if (trimmed.length === 0) return [`description_empty:${entry.name}`];
+        if (stampProjectDescription(entry.description, 80) !== trimmed) return [`description_not_stamp_shaped:${entry.name}`];
+        return [];
+    });
     return mkResult('description', failures);
 }
 

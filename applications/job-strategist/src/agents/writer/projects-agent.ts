@@ -5,8 +5,11 @@
  * forced through the `emit_projects` tool (constrained decoding -- see
  * structure-output-checklist section 2). The two-lane pool splits curated
  * case-study bullets (quote-only, selected by id) from repo-current evidence
- * facts (composable, capped at 2 per project, cited by id) -- the contract
- * enforced by ProjectsAgentOutputSchema.
+ * facts (composable, cited by id) -- lane mix is chosen purely by JD
+ * relevance, both lanes competing for the same per-entry bullet cap
+ * (PROJECTS_MAX_BULLETS_PER_ENTRY, projects-provenance.ts; Task 3 lifted the
+ * old separate "capped at 2 per project" composed-only allowance) -- the
+ * contract enforced by ProjectsAgentOutputSchema.
  */
 import {
     runAgent,

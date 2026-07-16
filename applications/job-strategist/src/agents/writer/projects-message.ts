@@ -20,7 +20,11 @@ export interface ProjectsMessageInput {
 }
 
 /** One project's two-lane block: curated bullets (quote-only) and
- *  repo-current facts (composable, capped at 2 per project downstream). */
+ *  repo-current facts (composable, chosen purely by JD relevance up to the
+ *  SAME per-entry bullet cap as curated bullets, PROJECTS_MAX_BULLETS_PER_ENTRY
+ *  -- Task 3 lifted the old separate "capped at 2 per project" composed-only
+ *  allowance so curated and composed bullets compete for slots on equal
+ *  footing rather than composed evidence losing to a stale curated bullet). */
 function projectBlock(p: ProjectPoolEntry): string[] {
   const out = [
     '',

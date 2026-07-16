@@ -3,7 +3,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   validateProjectsProvenance, assembleProjects, ProjectsProvenanceError, PROJECTS_MAX_BULLETS_PER_ENTRY,
 } from '../projects-provenance.js';
-import type { ProjectsAgentOutput } from '../projects-schema.js';
+import { normaliseProjectsAgentOutput, ProjectsAgentOutputSchema, type ProjectsAgentOutput } from '../projects-schema.js';
 import type { ProjectPoolEntry } from '../../evidence/project-agent-inputs.js';
 
 const pool: ProjectPoolEntry[] = [
@@ -116,16 +116,23 @@ describe('validateProjectsProvenance', () => {
     expect(validateProjectsProvenance(bad, pool)).toContain('github_mismatch:Tucaken');
   });
 
-  it('rejects a description over 40 words', () => {
-    const bad = structuredClone(good);
-    bad.entries[0]!.description = `${bad.entries[0]!.description} ${Array.from({ length: 40 }, () => 'filler').join(' ')}`;
-    expect(validateProjectsProvenance(bad, pool)).toContain('description_words:Tucaken:57');
-  });
-
-  it('rejects a description with under 30% distinctive-token overlap with the pitch', () => {
-    const bad = structuredClone(good);
-    bad.entries[0]!.description = 'Wrote generic prose unrelated to any earlier concept described previously somewhere else.';
-    expect(validateProjectsProvenance(bad, pool)).toContain('pitch_overlap:Tucaken');
+  // REGRESSION (cross-task seam, T1 x this validator): the normaliser blanks
+  // every agent-emitted description to '' BEFORE this validator runs
+  // (run-pipeline validates the parsed output, then stamps descriptions).
+  // The retired pitch_overlap rule fired on that blanked echo for EVERY
+  // entry on EVERY run, so the agent lane could never pass validation and
+  // always fell back. Descriptions are system-authored (stamped from the
+  // stored pitch after validation) -- a blanked description with valid
+  // highlights MUST validate clean.
+  it('accepts a normalised output (all descriptions blanked to "") when highlights are valid', () => {
+    const raw = {
+      entries: good.entries.map((e) => ({ ...e, description: 'a model-authored pitch the normaliser discards' })),
+    };
+    const { output, normalisedExtras } = normaliseProjectsAgentOutput(raw);
+    expect(normalisedExtras).toBe(2);
+    const parsed = ProjectsAgentOutputSchema.parse(output);
+    expect(parsed.entries.every((e) => e.description === '')).toBe(true);
+    expect(validateProjectsProvenance(parsed, pool)).toEqual([]);
   });
 });
 
