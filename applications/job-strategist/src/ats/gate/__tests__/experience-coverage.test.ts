@@ -123,6 +123,18 @@ describe('experienceTermMatch', () => {
       expect(experienceTermMatch('database systems (Oracle, MongoDB)', text)).toBe(false);
     });
 
+    it('ENUMERATION SHORT-TOKEN GUARD: members under 3 chars never participate -- "tools (Git, Go, '
+      + 'C, R)" is NOT credited by prose "go"/"c"/"r" tokens', () => {
+      const text = 'Led the go-live checklist and c r review';
+      expect(experienceTermMatch('tools (Git, Go, C, R)', text)).toBe(false);
+    });
+
+    it('ENUMERATION SHORT-TOKEN GUARD: a >= 3-char member still credits -- the same target is '
+      + 'covered by a bullet naming Git', () => {
+      const text = 'Managed branching workflows in Git for every release.';
+      expect(experienceTermMatch('tools (Git, Go, C, R)', text)).toBe(true);
+    });
+
     // NOTE: this case is actually covered by the STEMMED proximity path
     // (pass 2: "reading"->"read" bridges the bullet's leading "Read", and
     // {code, read} co-occur in one sentence) -- NOT by the pass-4 cue. The

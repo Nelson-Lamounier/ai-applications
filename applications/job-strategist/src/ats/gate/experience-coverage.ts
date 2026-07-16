@@ -117,6 +117,15 @@ function splitEnumeration(targetSkill: string): { base: string; membersRaw: stri
  * drops "etc"/"etc." (a QUALIFIERS entry), so the trailing "etc." in the
  * source pattern needs no special-casing here. Returns `false` for a
  * non-enumeration target (no parenthetical suffix).
+ *
+ * Short-token guard: a member must be >= 3 characters (normalized) to
+ * participate -- "tools (Git, Go, C, R)" must never be credited by prose
+ * "go" ("led the go-live"), "c" or "r" tokens, and a false credit here
+ * cascades (a falsely-anchored career line is quoted as grounding in the
+ * prompt, and any bullet citing it then passes anchor-credit coverage).
+ * Dropped members rely on the base/cue passes instead. Same >= 3 precedent
+ * as matchTier1's own significant-token fallback, and the language exemplar
+ * lists deliberately spell ' golang ', never ' go '.
  */
 function enumerationMatch(targetSkill: string, text: string): boolean {
   const split = splitEnumeration(targetSkill);
@@ -125,7 +134,7 @@ function enumerationMatch(targetSkill: string, text: string): boolean {
   if (split.base.length > 0 && matchesCoreTerm(split.base, text)) return true;
 
   const paddedText = padded(text);
-  const members = split.membersRaw.split(',').map((member) => normalizeTerm(member)).filter((m) => m.length > 0);
+  const members = split.membersRaw.split(',').map((member) => normalizeTerm(member)).filter((m) => m.length >= 3);
   return members.some((member) => paddedText.includes(` ${member} `));
 }
 
