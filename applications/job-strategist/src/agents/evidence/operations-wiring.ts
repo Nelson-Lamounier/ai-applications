@@ -11,8 +11,8 @@
  *
  * See docs/superpowers/specs/2026-07-16-projects-operations-evidence-design.md.
  */
-import type { JdSignal } from '@bedrock/shared';
-import { activateThemes } from './operations-themes.js';
+import type { JdSignal, JobRequirement } from '@bedrock/shared';
+import { activateThemes, type TieredJdString } from './operations-themes.js';
 import { gatherOperationsEvidence, type RetrievedPassage } from './operations-evidence.js';
 import { buildProjectPool, type ProjectAgentBulletSet, type ProjectAgentInputs, type ProjectAgentMeta, type RepoLookupRow, type VerifiedMatch } from './project-agent-inputs.js';
 import { EMPTY_OPERATIONS_THEMES_DIAG, type ProjectsAgentDiagnostics } from '../writer/projects-ats-flow.js';
@@ -27,12 +27,41 @@ export interface WiringLogger {
     warn(obj: object, msg: string): void;
 }
 
-/** JD strings `activateThemes` matches against: the flattened hard-requirement
- *  skills + preferred skills + concepts (operations-themes.ts's documented
- *  flattening contract -- kept here since `JdSignal` is jd-extractor's type,
- *  not operations-themes.ts's business). */
-export function jdStringsForThemes(jd: JdSignal): string[] {
-    return [...jd.hardRequirements.map((r) => r.skill), ...jd.preferredSkills, ...jd.concepts];
+/** A hard requirement with `disqualifying: true` tags 'disqualifying';
+ *  any other hard requirement (explicit `false` or the field simply absent,
+ *  which is the common case -- `disqualifying` is optional on
+ *  `JobRequirement`) tags 'required'. */
+function tierForHardRequirement(requirement: JobRequirement): TieredJdString['tier'] {
+    return requirement.disqualifying === true ? 'disqualifying' : 'required';
+}
+
+/**
+ * Tier-tagged JD strings `activateThemes` scores against: hard-requirement
+ * skills (disqualifying/required, per `tierForHardRequirement`) + preferred
+ * skills + concepts (both 'preferred') -- operations-themes.ts's documented
+ * tiering contract (docs/superpowers/specs/2026-07-16-projects-narrative-
+ * quality-design.md, Component 1). Kept here, not in operations-themes.ts,
+ * since `JdSignal` is jd-extractor's type, not operations-themes.ts's
+ * business.
+ *
+ * GENERALITY: tiers come ONLY from these three generic `JdSignal` fields --
+ * never a per-user or per-JD lookup. Fail-open on a malformed signal: each
+ * field defaults to `[]` when missing/undefined at runtime (the type marks
+ * them required, but a signal round-tripped through JSONB can drift), so a
+ * missing tier-bearing field simply contributes no strings rather than
+ * throwing or manufacturing a false required/disqualifying tier from absent
+ * data -- the same fail-open direction as degrading to 'preferred'.
+ */
+export function jdStringsForThemes(jd: JdSignal): TieredJdString[] {
+    const hardRequirements = jd.hardRequirements ?? [];
+    const preferredSkills = jd.preferredSkills ?? [];
+    const concepts = jd.concepts ?? [];
+
+    return [
+        ...hardRequirements.map((r) => ({ text: r.skill, tier: tierForHardRequirement(r) })),
+        ...preferredSkills.map((text) => ({ text, tier: 'preferred' as const })),
+        ...concepts.map((text) => ({ text, tier: 'preferred' as const })),
+    ];
 }
 
 export interface BuildProjectAgentInputsFromMetaArgs {

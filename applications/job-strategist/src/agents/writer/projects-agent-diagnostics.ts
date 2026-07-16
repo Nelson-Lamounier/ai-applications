@@ -20,6 +20,23 @@ export interface ProjectsAgentLogKeys {
 interface EventLogger { info(obj: object, msg: string): void; }
 
 /**
+ * Emit `projects_style_findings` (kinds + counts only, never the flagged
+ * bullet text/token -- see the runbook's Surface 6) -- fired ONLY when either
+ * bounded counter on `diag.style` is positive (Component 3/4, see
+ * `ProjectsStyleDiagnostics`'s own doc comment, projects-ats-flow.ts).
+ * Extracted from `logProjectsAgentEvents` below to keep that function's
+ * complexity under the lint threshold, same reasoning as
+ * `logProjectsThemeEvidence` being its own exported function.
+ */
+function logProjectsStyleFindings(log: EventLogger, base: Record<string, unknown>, style: ProjectsAgentDiagnostics['style']): void {
+  if (style.composedFindings === 0 && style.curatedAdvisories === 0) return;
+  log.info({
+    ...base, event: 'projects_style_findings',
+    composed: style.composedFindings, curated: style.curatedAdvisories, kinds: style.kinds,
+  }, 'projects_style_findings');
+}
+
+/**
  * Emit the projects-agent event stream to Loki (via the pipeline's structured
  * logger). Stable schema; every line carries pipeline_run_id / application_id /
  * trace_id. Mirrors experience-agent-diagnostics.ts's logExperienceAgentEvents,
@@ -30,6 +47,8 @@ interface EventLogger { info(obj: object, msg: string): void; }
  * projects_agent_normalised, fired once (with the bounded int count) when the
  * normalise-then-validate pass (normaliseProjectsAgentOutput) stripped at
  * least one item/field from the agent's raw response before it could parse.
+ * `projects_style_findings` (Component 3/4) is emitted via the extracted
+ * `logProjectsStyleFindings` helper above.
  */
 export function logProjectsAgentEvents(log: EventLogger, keys: ProjectsAgentLogKeys, diag: ProjectsAgentDiagnostics): void {
   const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
@@ -38,6 +57,7 @@ export function logProjectsAgentEvents(log: EventLogger, keys: ProjectsAgentLogK
   if (diag.normalisedExtras > 0) {
     log.info({ ...base, event: 'projects_agent_normalised', extras: diag.normalisedExtras }, 'projects_agent_normalised');
   }
+  logProjectsStyleFindings(log, base, diag.style);
   if (diag.rewrite.fired) {
     log.info({ ...base, event: 'projects_agent_rewrite', reason: diag.rewrite.reason, coverage_after: diag.rewrite.coverageAfter?.covered ?? null, kept: diag.rewrite.kept, kept_reason: diag.rewrite.keptReason }, 'projects_agent_rewrite');
   }

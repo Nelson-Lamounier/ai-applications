@@ -161,12 +161,49 @@ describe('buildProjectAgentInputsFromMeta -- wiring order + append semantics (fo
 });
 
 describe('jdStringsForThemes', () => {
-    it('flattens hardRequirements[].skill + preferredSkills + concepts, in that order', () => {
+    it('flattens hardRequirements[].skill + preferredSkills + concepts, in that order, tier-tagged', () => {
         const jd = mongoJd();
         expect(jdStringsForThemes(jd)).toEqual([
-            'MongoDB administration', 'backup and recovery',
-            'PostgreSQL replication',
-            'disaster recovery planning',
+            { text: 'MongoDB administration', tier: 'disqualifying' },
+            { text: 'backup and recovery', tier: 'required' },
+            { text: 'PostgreSQL replication', tier: 'preferred' },
+            { text: 'disaster recovery planning', tier: 'preferred' },
         ]);
+    });
+
+    it('tags a hard requirement with disqualifying: false as required, not disqualifying', () => {
+        const jd = mongoJd({
+            hardRequirements: [{ skill: 'Linux systems administration', context: 'production support', disqualifying: false }],
+            preferredSkills: [],
+            concepts: [],
+        });
+        expect(jdStringsForThemes(jd)).toEqual([{ text: 'Linux systems administration', tier: 'required' }]);
+    });
+
+    it('tags a hard requirement with no disqualifying field at all as required (the common case)', () => {
+        const jd = mongoJd({
+            hardRequirements: [{ skill: 'Linux systems administration', context: 'production support' }],
+            preferredSkills: [],
+            concepts: [],
+        });
+        expect(jdStringsForThemes(jd)).toEqual([{ text: 'Linux systems administration', tier: 'required' }]);
+    });
+
+    it('fails open on a malformed JdSignal missing tier-bearing fields -- degrades to whatever preferred-tier strings ARE present, never throws, never invents a required/disqualifying tier from absent data', () => {
+        const malformed = { ...mongoJd(), hardRequirements: undefined } as unknown as JdSignal;
+        expect(jdStringsForThemes(malformed)).toEqual([
+            { text: 'PostgreSQL replication', tier: 'preferred' },
+            { text: 'disaster recovery planning', tier: 'preferred' },
+        ]);
+    });
+
+    it('fails open when ALL three tier-bearing fields are missing -- returns an empty array, not a throw', () => {
+        const malformed = {
+            ...mongoJd(),
+            hardRequirements: undefined,
+            preferredSkills: undefined,
+            concepts: undefined,
+        } as unknown as JdSignal;
+        expect(jdStringsForThemes(malformed)).toEqual([]);
     });
 });

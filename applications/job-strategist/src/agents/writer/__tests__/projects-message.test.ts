@@ -82,4 +82,30 @@ describe('buildProjectsMessage', () => {
     const noMissing = buildProjectsMessage({ ...base, rewriteDraft: 'Tucaken -- prior draft', rewriteMissing: [] });
     expect(noMissing).not.toContain('## Re-write pass');
   });
+
+  it('always restates the composed-bullet four-beat narrative contract + hard style rules, '
+    + 'independent of pool/target contents', () => {
+    const msg = buildProjectsMessage(base);
+    expect(msg).toContain('## Composed-bullet narrative contract');
+    expect(msg).toContain('WHAT you did');
+    expect(msg).toContain('CONCEPT in public');
+    expect(msg).toContain('WHY it mattered');
+    expect(msg).toContain('RESULT/VALUE');
+    expect(msg).toContain('never a bare "N+" or "Nk+"');
+    expect(msg).toContain('Prefer composing the clean version');
+  });
+
+  it('adds the style-repair block only when styleFindings is non-empty, listing kind + token', () => {
+    expect(buildProjectsMessage(base)).not.toContain('## Style repair');
+    const withFindings = buildProjectsMessage({
+      ...base,
+      styleFindings: [{ kind: 'internal_identifier', token: 'RETRIEVAL_PREFILTER' }, { kind: 'bare_plus_numeric', token: '100+' }],
+    });
+    expect(withFindings).toContain('## Style repair');
+    expect(withFindings).toContain('internal_identifier: "RETRIEVAL_PREFILTER"');
+    expect(withFindings).toContain('bare_plus_numeric: "100+"');
+    expect(withFindings).toContain('never touch curated quotes');
+    const withEmptyFindings = buildProjectsMessage({ ...base, styleFindings: [] });
+    expect(withEmptyFindings).not.toContain('## Style repair');
+  });
 });

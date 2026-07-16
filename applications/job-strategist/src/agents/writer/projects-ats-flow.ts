@@ -6,6 +6,7 @@ import type { ProjectPoolEntry } from '../evidence/project-agent-inputs.js';
 import { stampProjectDescription } from './projects-description.js';
 import { assembleProjects, PROJECTS_MAX_BULLETS_PER_ENTRY, validateProjectsProvenance } from './projects-provenance.js';
 import { isCurated, type ProjectsAgentOutput } from './projects-schema.js';
+import { checkComposedBulletStyle, type StyleFinding } from './projects-style.js';
 
 /** Per-run projects-ATS diagnostics. Logged (Loki) and persisted alongside the
  *  summary/experience-ATS diagnostics (pipeline_runs.metadata.analysis.projectsAgent).
@@ -43,6 +44,78 @@ export interface ProjectsAgentDiagnostics {
   readonly normalisedExtras: number;
   readonly unresolvedRepos: string[];
   readonly themes: { readonly activated: readonly string[]; readonly factCounts: Record<string, number> };
+  readonly style: ProjectsStyleDiagnostics;
+}
+
+/** Composed-bullet narrative style diagnostics (Component 3/4, see
+ *  `projects-style.ts`) -- persisted alongside the rest of
+ *  `ProjectsAgentDiagnostics` (`pipeline_runs.metadata.analysis.projectsAgent.style`).
+ *  `composedFindings` counts style findings across the KEPT output's composed
+ *  (model-authored) highlights ONLY -- these are the findings that were, or
+ *  could have been, routed into the ATS re-write for repair (see
+ *  `resolveProjectsAts` below). `curatedAdvisories` counts findings across the
+ *  KEPT output's curated (quote-only) highlights, resolved to their VERBATIM
+ *  pool text -- curated bullets are NEVER repaired at resume time (byte-
+ *  fidelity contract, `projects-provenance.ts`), so these are visibility-only,
+ *  for the future multi-angle case-study loop to act on. `kinds` is a
+ *  bounded (at most three keys -- `StyleFindingKind` is a fixed union)
+ *  tally of finding kind -> count across BOTH lanes, carried purely so the
+ *  Loki `projects_style_findings` event (projects-agent-diagnostics.ts) can
+ *  report "kinds + counts" without re-linting already-assembled text. */
+export interface ProjectsStyleDiagnostics {
+  readonly composedFindings: number;
+  readonly curatedAdvisories: number;
+  readonly kinds: Readonly<Record<string, number>>;
+}
+
+/** No-composed-content default for `ProjectsAgentDiagnostics.style` -- the
+ *  deterministic (no-LLM) fallback path in `fillResumeProjects` (run-pipeline.ts)
+ *  never composes and does not re-lint the curated bullets it selects, so it
+ *  always sets `style` to this literal (mirrors `EMPTY_OPERATIONS_THEMES_DIAG`'s
+ *  role for `themes` on the same fallback path). */
+export const EMPTY_PROJECTS_STYLE_DIAG: ProjectsStyleDiagnostics = { composedFindings: 0, curatedAdvisories: 0, kinds: {} };
+
+/** Composed-bullet style findings for one output, flattened across every
+ *  entry -- curated highlights are excluded (curated bullets are exempt from
+ *  the guard; see `projects-style.ts`'s module doc). This is the SAME set fed
+ *  into the ATS re-write's style-repair context below AND, via
+ *  `projectsStyleDiagnostics`, counted into `style.composedFindings` on
+ *  whichever output ships. */
+function composedStyleFindings(out: ProjectsAgentOutput): StyleFinding[] {
+  return out.entries.flatMap((e) => e.highlights.flatMap((h) => (isCurated(h) ? [] : checkComposedBulletStyle(h.text))));
+}
+
+/** Curated-bullet style findings for one output, resolved to the pool's
+ *  VERBATIM text -- advisory-only, NEVER repaired (curated bullets are
+ *  byte-fidelity quotes, `projects-provenance.ts`). Feeds
+ *  `style.curatedAdvisories` only. */
+function curatedStyleFindings(out: ProjectsAgentOutput, pool: readonly ProjectPoolEntry[]): StyleFinding[] {
+  const poolByName = new Map(pool.map((p) => [p.name, p]));
+  return out.entries.flatMap((entry) => {
+    const curatedById = new Map((poolByName.get(entry.name)?.curated ?? []).map((c) => [c.id, c.text]));
+    return entry.highlights.flatMap((h) => (isCurated(h) ? checkComposedBulletStyle(curatedById.get(h.bulletId) ?? '') : []));
+  });
+}
+
+/** Kind -> count tally over one combined findings list -- at most three keys
+ *  (`StyleFindingKind` is a fixed three-member union), so this is bounded
+ *  regardless of how many findings fed it. */
+function tallyKinds(findings: readonly StyleFinding[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of findings) out[f.kind] = (out[f.kind] ?? 0) + 1;
+  return out;
+}
+
+/** `ProjectsAgentDiagnostics.style` for whichever output ships (the first
+ *  draft, or the kept re-write) -- see the field's own doc comment above. */
+export function projectsStyleDiagnostics(out: ProjectsAgentOutput, pool: readonly ProjectPoolEntry[]): ProjectsStyleDiagnostics {
+  const composed = composedStyleFindings(out);
+  const curated = curatedStyleFindings(out, pool);
+  return {
+    composedFindings: composed.length,
+    curatedAdvisories: curated.length,
+    kinds: tallyKinds([...composed, ...curated]),
+  };
 }
 
 /** Empty-gather default for `ProjectsAgentDiagnostics.themes` -- see that
@@ -226,12 +299,29 @@ export function deterministicProjects(
  * enforces cross-project citation isolation), or it is discarded in favour of
  * the (already-valid) first draft. Worst case (re-write invalid or no gain)
  * equals today's behaviour: the first, already-validated draft is used.
+ *
+ * STYLE REPAIR ROUTING (Component 3, generalised from the experience lane's
+ * jd-echo pattern but SIMPLER -- there is no second, style-only rewrite
+ * trigger here): `params.first`'s composed-bullet style findings
+ * (`composedStyleFindings`, generic patterns only -- `projects-style.ts`) are
+ * computed once and handed to `params.rewrite` as a THIRD argument ONLY when
+ * the ATS re-write is about to fire anyway (the existing coverage-below-
+ * targets trigger) -- the caller renders them into the SAME rewrite call's
+ * message as extra repair context. If coverage is already met, the re-write
+ * never fires and any style findings on `params.first` stay advisory only
+ * (see `diag.style`) -- a style violation alone NEVER triggers a new LLM
+ * call. Whichever output ships (first or rewrite) is re-linted via
+ * `projectsStyleDiagnostics` for `diag.style`, so an invalid or no-gain
+ * re-write's style findings are reported against `params.first` again, and a
+ * kept re-write's `diag.style` reflects whatever style debt IT still carries
+ * (the repair is best-effort, not a second guard gate -- still-dirty output
+ * ships with advisory violations, never a fallback).
  */
 export async function resolveProjectsAts(params: {
   readonly first: ProjectsAgentOutput;
   readonly pool: readonly ProjectPoolEntry[];
   readonly targets: readonly ExperienceAtsTarget[];
-  readonly rewrite: (draftText: string, missing: string[]) => Promise<ProjectsAgentOutput>;
+  readonly rewrite: (draftText: string, missing: string[], styleFindings: readonly StyleFinding[]) => Promise<ProjectsAgentOutput>;
 }): Promise<{ output: ProjectsAgentOutput; diag: ProjectsAgentDiagnostics }> {
   const targets = [...params.targets];
   const coverageBefore = scoreProjectsCoverage(params.first, params.pool, targets);
@@ -246,6 +336,7 @@ export async function resolveProjectsAts(params: {
       unresolvedRepos: [],
       normalisedExtras: 0,
       themes: EMPTY_OPERATIONS_THEMES_DIAG,
+      style: projectsStyleDiagnostics(params.first, params.pool),
     },
   });
 
@@ -253,9 +344,10 @@ export async function resolveProjectsAts(params: {
   if (coverageBefore.covered >= targets.length) return noRewrite('coverage-met');
 
   const draftText = buildDraftText(params.first, params.pool);
+  const firstStyleFindings = composedStyleFindings(params.first);
   let rewriteOut: ProjectsAgentOutput;
   try {
-    rewriteOut = await params.rewrite(draftText, coverageBefore.missing);
+    rewriteOut = await params.rewrite(draftText, coverageBefore.missing, firstStyleFindings);
   } catch {
     return {
       output: params.first,
@@ -267,6 +359,7 @@ export async function resolveProjectsAts(params: {
         unresolvedRepos: [],
         normalisedExtras: 0,
         themes: EMPTY_OPERATIONS_THEMES_DIAG,
+        style: projectsStyleDiagnostics(params.first, params.pool),
       },
     };
   }
@@ -287,6 +380,7 @@ export async function resolveProjectsAts(params: {
       unresolvedRepos: [],
       normalisedExtras: 0,
       themes: EMPTY_OPERATIONS_THEMES_DIAG,
+      style: projectsStyleDiagnostics(output, params.pool),
     },
   };
 }

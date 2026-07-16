@@ -4,6 +4,7 @@ import { resolveProjectsAts, deterministicProjects, scoreProjectsCoverage, sumPr
 import type { ProjectsAgentOutput } from '../projects-schema.js';
 import type { ProjectPoolEntry } from '../../evidence/project-agent-inputs.js';
 import type { ExperienceAtsTarget } from '../../../ats/gate/experience-ats-targets.js';
+import type { StyleFinding } from '../projects-style.js';
 
 const pool: ProjectPoolEntry[] = [
   {
@@ -172,6 +173,140 @@ describe('resolveProjectsAts', () => {
     expect(r.diag.rewrite.keptReason).toBe('rewrite-provenance-invalid');
     expect(r.output).toBe(first);
     expect(r.diag.provenance.rewriteViolations).toContain('cross_project_citation:Tucaken:p1.b0');
+  });
+});
+
+// Component 3/4: composed-bullet narrative style guard, routed into the
+// SAME existing ATS re-write call (never a new trigger) -- see
+// resolveProjectsAts's own doc comment above.
+describe('resolveProjectsAts -- composed-bullet style guard (Component 3)', () => {
+  it('a style finding alone never triggers a re-write -- coverage-met stays advisory-only', async () => {
+    const firstDirtyCovered: ProjectsAgentOutput = {
+      entries: [
+        {
+          name: 'Tucaken',
+          github: 'github.com/o/tucaken-app',
+          description: 'Tucaken is a career platform helping engineers land jobs faster with grounded evidence coaching.',
+          highlights: [
+            { bulletId: 'p0.b0' },
+            { bulletId: 'p0.b1' }, // Kubernetes
+            { text: 'Configured (RETRIEVAL_PREFILTER) for DNS resolution across every cluster', sources: ['p0.r0'] }, // DNS
+          ],
+        },
+        portfolioEntry,
+      ],
+    };
+    let called = false;
+    const r = await resolveProjectsAts({
+      first: firstDirtyCovered, pool, targets,
+      rewrite: async () => { called = true; return firstDirtyCovered; },
+    });
+    expect(called).toBe(false);
+    expect(r.diag.rewrite.fired).toBe(false);
+    expect(r.diag.rewrite.reason).toBe('coverage-met');
+    expect(r.diag.style.composedFindings).toBe(1);
+    expect(r.diag.style.curatedAdvisories).toBe(0);
+    expect(r.diag.style.kinds).toEqual({ internal_identifier: 1 });
+  });
+
+  it('a curated bullet carrying the same style patterns is advisory-only -- NEVER routed for repair', async () => {
+    const styleCuratedPool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'Tucaken',
+        pitch: 'career platform',
+        repoUrls: ['github.com/o/tucaken-app'],
+        curated: [{ id: 'p0.b0', text: 'Scaled the retrieval pipeline to handle 100+ concurrent requests.' }],
+        repoCurrent: [],
+      },
+    ];
+    const curatedOnly: ProjectsAgentOutput = {
+      entries: [{ name: 'Tucaken', github: 'github.com/o/tucaken-app', description: '', highlights: [{ bulletId: 'p0.b0' }] }],
+    };
+    let called = false;
+    const r = await resolveProjectsAts({
+      first: curatedOnly, pool: styleCuratedPool, targets: [],
+      rewrite: async () => { called = true; return curatedOnly; },
+    });
+    expect(called).toBe(false); // no-targets short-circuit -- proves advisory alone never calls the model
+    expect(r.diag.style.composedFindings).toBe(0);
+    expect(r.diag.style.curatedAdvisories).toBe(1);
+    expect(r.diag.style.kinds).toEqual({ bare_plus_numeric: 1 });
+  });
+
+  it('when the coverage re-write already fires, the first draft\'s composed style findings are handed to '
+    + 'the SAME rewrite call, and a clean rewrite zeroes out diag.style on the kept output', async () => {
+    const firstDirty: ProjectsAgentOutput = {
+      entries: [
+        {
+          name: 'Tucaken',
+          github: 'github.com/o/tucaken-app',
+          description: 'Tucaken is a career platform helping engineers land jobs faster with grounded evidence coaching.',
+          highlights: [
+            { bulletId: 'p0.b0' },
+            { bulletId: 'p0.b1' }, // Kubernetes only -- DNS still missing, coverage 1/2
+            { text: 'Wired the RETRIEVAL_PREFILTER stage to speed up lookups', sources: ['p0.r0'] },
+          ],
+        },
+        portfolioEntry,
+      ],
+    };
+    let captured: readonly StyleFinding[] | undefined;
+    const r = await resolveProjectsAts({
+      first: firstDirty, pool, targets,
+      rewrite: async (_draftText, _missing, styleFindings) => {
+        captured = styleFindings;
+        return rewriteFull; // clean, provenance-valid, covers both targets
+      },
+    });
+    expect(captured).toEqual([{ kind: 'internal_identifier', token: 'RETRIEVAL_PREFILTER' }]);
+    expect(r.diag.rewrite.fired).toBe(true);
+    expect(r.diag.rewrite.kept).toBe('rewrite');
+    expect(r.diag.style.composedFindings).toBe(0);
+    expect(r.diag.style.curatedAdvisories).toBe(0);
+  });
+
+  it('an invalid rewrite ships the ORIGINAL, and diag.style reflects the ORIGINAL\'s findings -- never a fallback', async () => {
+    const firstDirty: ProjectsAgentOutput = {
+      entries: [
+        {
+          name: 'Tucaken',
+          github: 'github.com/o/tucaken-app',
+          description: 'Tucaken is a career platform helping engineers land jobs faster with grounded evidence coaching.',
+          highlights: [
+            { bulletId: 'p0.b0' },
+            { bulletId: 'p0.b1' },
+            { text: 'Wired the RETRIEVAL_PREFILTER stage to speed up lookups', sources: ['p0.r0'] },
+          ],
+        },
+        portfolioEntry,
+      ],
+    };
+    const rewriteBad: ProjectsAgentOutput = {
+      entries: [
+        {
+          name: 'Tucaken',
+          github: 'github.com/o/tucaken-app',
+          description: 'Tucaken is a career platform helping engineers land jobs faster with grounded evidence coaching.',
+          highlights: [
+            { bulletId: 'p0.b0' },
+            { bulletId: 'p0.b1' },
+            // cites Portfolio's bullet -- provenance-invalid
+            { text: 'Configured DNS resolution for Kubernetes ingress across every cluster', sources: ['p1.b0'] },
+          ],
+        },
+        portfolioEntry,
+      ],
+    };
+    const r = await resolveProjectsAts({
+      first: firstDirty, pool, targets,
+      rewrite: async () => rewriteBad,
+    });
+    expect(r.diag.rewrite.kept).toBe('first');
+    expect(r.diag.rewrite.keptReason).toBe('rewrite-provenance-invalid');
+    expect(r.output).toBe(firstDirty);
+    expect(r.diag.style.composedFindings).toBe(1); // the ORIGINAL's own finding, not the (discarded) rewrite's
+    expect(r.diag.style.kinds).toEqual({ internal_identifier: 1 });
   });
 });
 

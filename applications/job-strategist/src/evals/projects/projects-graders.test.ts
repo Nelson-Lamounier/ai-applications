@@ -8,6 +8,7 @@ import {
     compositionGrader,
     atsCoverageGrader,
     descriptionGrader,
+    styleGrader,
 } from './projects-graders.js';
 import {
     GOLDEN_TWO_LANE, ADVERSARIAL_CROSS_PROJECT, ADVERSARIAL_RETYPED_QUOTE, ADVERSARIAL_OVER_CAP_COMPOSED,
@@ -16,6 +17,7 @@ import {
     LANE_MIX_TARGETS, LANE_MIX_CURATED_WINS, LANE_MIX_COMPOSED_WINS,
     ALL_COMPOSED_UNCAPPED,
     STRINGIFIED_ENTRIES_RAW_PAYLOAD,
+    STYLE_DIRTY_COMPOSED, STYLE_DIRTY_CURATED,
 } from './fixtures.js';
 import { normaliseProjectsAgentOutput, ProjectsAgentOutputSchema, isCurated } from '../../agents/writer/projects-schema.js';
 import { assembleProjects } from '../../agents/writer/projects-provenance.js';
@@ -77,6 +79,35 @@ describe('projects graders', () => {
         const noHighlights = { entries: GOLDEN_TWO_LANE.output.entries.map((e) => ({ ...e, highlights: [] })) };
         const r = atsCoverageGrader({ ...GOLDEN_TWO_LANE, output: noHighlights });
         expect(r.pass).toBe(false);
+    });
+});
+
+// Component 4 (c): style guard graders -- reuses checkComposedBulletStyle via
+// projectsStyleDiagnostics, no parallel pattern logic.
+describe('styleGrader (Component 3/4)', () => {
+    it('fails ONLY styleGrader when a COMPOSED bullet leaks an internal identifier '
+        + '-- "(RETRIEVAL_PREFILTER)", the run fe421faf leak', () => {
+        const r = runProjectsGraders(STYLE_DIRTY_COMPOSED);
+        expect(provenanceGrader(STYLE_DIRTY_COMPOSED).pass).toBe(true);
+        expect(quoteFidelityGrader(STYLE_DIRTY_COMPOSED).pass).toBe(true);
+        expect(compositionGrader(STYLE_DIRTY_COMPOSED).pass).toBe(true);
+        expect(atsCoverageGrader(STYLE_DIRTY_COMPOSED).pass).toBe(true);
+        expect(descriptionGrader(STYLE_DIRTY_COMPOSED).pass).toBe(true);
+        expect(styleGrader(STYLE_DIRTY_COMPOSED).pass).toBe(false);
+        expect(r.results.filter((x) => !x.pass).map((x) => x.grader)).toEqual(['style']);
+        expect(r.pass).toBe(false);
+    });
+
+    it('the SAME internal-identifier pattern on a CURATED (quote-only) bullet is advisory-only -- '
+        + 'styleGrader passes (curated bullets are never repaired at resume time)', () => {
+        const r = runProjectsGraders(STYLE_DIRTY_CURATED);
+        expect(styleGrader(STYLE_DIRTY_CURATED).pass).toBe(true);
+        expect(r.results.filter((x) => !x.pass)).toEqual([]);
+        expect(r.pass).toBe(true);
+    });
+
+    it('the golden two-lane output has zero style findings', () => {
+        expect(styleGrader(GOLDEN_TWO_LANE).pass).toBe(true);
     });
 });
 

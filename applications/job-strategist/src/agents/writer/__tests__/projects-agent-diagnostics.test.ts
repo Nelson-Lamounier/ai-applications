@@ -1,7 +1,7 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
 import { logProjectsAgentEvents, logProjectsThemeEvidence, projectsAgentOutcome, type ProjectsAgentLogKeys } from '../projects-agent-diagnostics.js';
-import { EMPTY_OPERATIONS_THEMES_DIAG, type ProjectsAgentDiagnostics } from '../projects-ats-flow.js';
+import { EMPTY_OPERATIONS_THEMES_DIAG, EMPTY_PROJECTS_STYLE_DIAG, type ProjectsAgentDiagnostics } from '../projects-ats-flow.js';
 import type { VerifiedMatch } from '../../evidence/project-agent-inputs.js';
 
 const keys: ProjectsAgentLogKeys = { pipelineRunId: 'pr1', applicationId: 'app1', traceId: 'tr1' };
@@ -15,6 +15,7 @@ const rewrittenDiag: ProjectsAgentDiagnostics = {
   unresolvedRepos: [],
   normalisedExtras: 0,
   themes: EMPTY_OPERATIONS_THEMES_DIAG,
+  style: EMPTY_PROJECTS_STYLE_DIAG,
 };
 
 describe('logProjectsAgentEvents', () => {
@@ -69,6 +70,7 @@ describe('logProjectsAgentEvents', () => {
       unresolvedRepos: [],
       normalisedExtras: 0,
       themes: EMPTY_OPERATIONS_THEMES_DIAG,
+      style: EMPTY_PROJECTS_STYLE_DIAG,
     };
     logProjectsAgentEvents({ info } as never, keys, fbDiag);
     const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
@@ -91,6 +93,39 @@ describe('logProjectsAgentEvents', () => {
     logProjectsAgentEvents({ info } as never, keys, rewrittenDiag);
     const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
     expect(events).not.toContain('projects_repo_unresolved');
+  });
+
+  it('emits projects_style_findings (kinds + counts only) when composedFindings is positive', () => {
+    const info = jest.fn();
+    const styleDiag: ProjectsAgentDiagnostics = {
+      ...rewrittenDiag,
+      style: { composedFindings: 2, curatedAdvisories: 0, kinds: { internal_identifier: 2 } },
+    };
+    logProjectsAgentEvents({ info } as never, keys, styleDiag);
+    const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
+    expect(events).toContain('projects_style_findings');
+    const styleEvent = info.mock.calls.find((c) => (c[0] as { event: string }).event === 'projects_style_findings')?.[0] as Record<string, unknown>;
+    expect(styleEvent['composed']).toBe(2);
+    expect(styleEvent['curated']).toBe(0);
+    expect(styleEvent['kinds']).toEqual({ internal_identifier: 2 });
+  });
+
+  it('emits projects_style_findings when ONLY curatedAdvisories is positive', () => {
+    const info = jest.fn();
+    const styleDiag: ProjectsAgentDiagnostics = {
+      ...rewrittenDiag,
+      style: { composedFindings: 0, curatedAdvisories: 1, kinds: { bare_plus_numeric: 1 } },
+    };
+    logProjectsAgentEvents({ info } as never, keys, styleDiag);
+    const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
+    expect(events).toContain('projects_style_findings');
+  });
+
+  it('does not emit projects_style_findings when both counters are zero', () => {
+    const info = jest.fn();
+    logProjectsAgentEvents({ info } as never, keys, rewrittenDiag);
+    const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
+    expect(events).not.toContain('projects_style_findings');
   });
 });
 

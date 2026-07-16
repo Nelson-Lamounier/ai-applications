@@ -28,3 +28,30 @@ describe('strategist-projects-persona -- two-lane quote-only contract', () => {
         expect(joined.toUpperCase()).toContain('OPERATED');
     });
 });
+
+describe('strategist-projects-persona -- composed-bullet narrative contract (Component 2)', () => {
+    it('states the four-beat contract: WHAT -> CONCEPT -> WHY -> RESULT/VALUE', () => {
+        expect(joined).toContain('COMPOSED-BULLET NARRATIVE CONTRACT');
+        expect(joined).toContain('WHAT');
+        expect(joined).toContain('CONCEPT in public');
+        expect(joined).toContain('WHY it mattered');
+        expect(joined).toContain('RESULT/VALUE');
+    });
+
+    it('bans internal identifiers and bare acronyms, requiring an acronym\'s concept on first use', () => {
+        const flat = joined.replace(/\s+/g, ' ');
+        expect(flat).toContain('never write an internal identifier');
+        expect(flat).toContain('introduce an acronym WITH its concept on first use');
+    });
+
+    it('requires exact figures or "more than N" -- never a bare "N+"', () => {
+        const flat = joined.replace(/\s+/g, ' ');
+        expect(flat).toContain('never a bare "N+" or "Nk+"');
+    });
+
+    it('states the jargon-preference rule: compose clean over a jargony curated quote when pool evidence supports the same fact', () => {
+        const flat = joined.replace(/\s+/g, ' ');
+        expect(flat).toContain('Jargon-preference rule');
+        expect(flat).toContain('COMPOSE the clean version instead of selecting the jargony quote');
+    });
+});

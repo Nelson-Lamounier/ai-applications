@@ -15,7 +15,7 @@ import { validateProjectsProvenance } from '../../agents/writer/projects-provena
 import type { ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
 import { mkResult, type GraderResult } from '../graders.js';
 import {
-    MONGODB_TSE_JD_STRINGS, FRONTEND_JD_STRINGS,
+    MONGODB_TSE_JD_STRINGS, FRONTEND_JD_STRINGS, DATA_ENGINEERING_JD_STRINGS,
     OPS_PROJECT_META, OPS_REPO_LOOKUP, PGBOUNCER_DOCS_CHUNK, OUTSIDE_PROJECT_CHUNK_FILE,
     MIXED_KIND_PROJECT_META, ML_ONLY_CHUNK,
 } from './fixtures.js';
@@ -30,10 +30,13 @@ function retrieveOnce(passages: readonly RetrievedPassage[]): Retrieve {
 const DATABASE_OPERATIONS_THEME = OPERATIONS_THEMES.find((t) => t.key === 'database-operations')!;
 
 /**
- * (a) The MongoDB TSE JD activates database-operations + backup-recovery
- * (plus one more, capped at 3 by `activateThemes`); a frontend-only JD
- * activates zero -- the whole feature stays a no-op for JDs with no
- * operations angle.
+ * (a) Tier-weighted activation (Task 1, docs/superpowers/specs/2026-07-16-
+ * projects-narrative-quality-design.md, Component 1): the MongoDB TSE JD
+ * activates database-operations (disqualifying) + backup-recovery (required)
+ * + networking-protocols -- the REQUIRED box that lost the top-3 cut under
+ * live run fe421faf's raw-hit-count ranking -- plus one more, capped at 4; a
+ * frontend-only JD still activates zero -- the whole feature stays a no-op
+ * for JDs with no operations angle.
  */
 export function themeActivationGrader(): GraderResult {
     const mongoActivated = activateThemes(MONGODB_TSE_JD_STRINGS).map((t) => t.key);
@@ -42,9 +45,34 @@ export function themeActivationGrader(): GraderResult {
     const failures: string[] = [];
     if (!mongoActivated.includes('database-operations')) failures.push('mongodb_jd_missing:database-operations');
     if (!mongoActivated.includes('backup-recovery')) failures.push('mongodb_jd_missing:backup-recovery');
-    if (mongoActivated.length !== 3) failures.push(`mongodb_jd_theme_count:${mongoActivated.length}`);
+    if (!mongoActivated.includes('networking-protocols')) failures.push('mongodb_jd_missing:networking-protocols');
+    if (mongoActivated.length !== 4) failures.push(`mongodb_jd_theme_count:${mongoActivated.length}`);
     if (frontendActivated.length !== 0) failures.push(`frontend_jd_activated:${frontendActivated.length}`);
     return mkResult('themeActivation', failures);
+}
+
+/**
+ * (b) GENERALITY: a data-engineering JD -- entirely different vocabulary from
+ * the MongoDB fixture, proving tier weighting is generic JD-signal behaviour,
+ * not coupled to any one JD. `storage` (required, ONE hit) must outrank
+ * `cluster-orchestration` (preferred, TWO hits) -- tier beating raw
+ * concept-accumulation on a second, unrelated domain -- and
+ * `database-operations` (disqualifying) must rank first outright.
+ */
+export function generalityTierActivationGrader(): GraderResult {
+    const activated = activateThemes(DATA_ENGINEERING_JD_STRINGS).map((t) => t.key);
+    const storageRank = activated.indexOf('storage');
+    const clusterRank = activated.indexOf('cluster-orchestration');
+
+    const failures: string[] = [];
+    if (activated[0] !== 'database-operations') failures.push(`disqualifying_theme_not_first:${activated[0] ?? 'none'}`);
+    if (storageRank === -1) failures.push('required_theme_not_activated:storage');
+    if (clusterRank === -1) failures.push('preferred_theme_not_activated:cluster-orchestration');
+    if (storageRank !== -1 && clusterRank !== -1 && storageRank >= clusterRank) {
+        failures.push(`required_theme_outranked_by_raw_hit_count:storage=${storageRank},cluster-orchestration=${clusterRank}`);
+    }
+    if (activated.length > 4) failures.push(`cap_exceeded:${activated.length}`);
+    return mkResult('generalityTierActivation', failures);
 }
 
 /**
