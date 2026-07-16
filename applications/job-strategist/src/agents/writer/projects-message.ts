@@ -9,6 +9,7 @@
  */
 import type { ProjectPoolEntry } from '../evidence/project-agent-inputs.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
+import { PROJECTS_MAX_BULLETS_PER_ENTRY } from './projects-provenance.js';
 
 export interface ProjectsMessageInput {
   readonly pool: readonly ProjectPoolEntry[];
@@ -28,7 +29,7 @@ function projectBlock(p: ProjectPoolEntry): string[] {
     'Curated bullets (quote-only, select by id):',
   ];
   for (const b of p.curated) out.push(`[${b.id}] ${b.text}`);
-  out.push('Repo-current evidence (compose at most 2 bullets per project, cite ids):');
+  out.push('Repo-current evidence (compose ONLY when a fact beats every curated bullet for JD relevance, cite ids):');
   for (const f of p.repoCurrent) out.push(`[${f.id}] ${f.skill} -- ${f.sourceCitation}`);
   return out;
 }
@@ -56,17 +57,21 @@ function targetsSection(targets: readonly ExperienceAtsTarget[]): string[] {
 }
 
 /** Fixed composition rules -- always present, independent of pool/target
- *  contents. Curated bullets take priority; composed bullets are capped,
- *  grounded in the pitch, and stay one entry per project. */
+ *  contents. Task 3 (JD-ranked lane mix): choose each highlight slot by JD
+ *  relevance regardless of lane -- a repo-current fact wins a slot over a
+ *  curated bullet when it demonstrates the JD target more directly, up to
+ *  the per-entry bullet cap (curated and composed compete on the same
+ *  footing, not a separate low composed-only allowance); entries themselves
+ *  are ordered most-JD-relevant project first. */
 function compositionRulesSection(): string[] {
   return [
     '',
     '## Composition rules',
-    '- Use curated bullets first; quote them, do not rewrite them.',
-    '- Compose a new bullet from repo-current evidence ONLY for a JD target the curated pool does not already answer.',
-    '- Compose at most 2 bullets per project.',
+    '- Choose each highlight slot by JD relevance regardless of lane -- quote curated bullets first, but '
+      + 'compose from repo-current facts whenever they beat curated bullets at answering a JD target.',
+    `- Up to ${PROJECTS_MAX_BULLETS_PER_ENTRY} bullets per project, any mix of curated and composed.`,
     '- Keep any composed bullet description to 40 words or fewer, grounded in the project pitch -- never invent detail beyond it.',
-    '- Emit exactly one entry per project.',
+    '- Emit exactly one entry per project, ordered most-JD-relevant project first.',
     '- When citing a repository, use one of the URLs listed under that project\'s Repos line.',
   ];
 }

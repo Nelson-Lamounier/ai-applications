@@ -15,13 +15,12 @@
  * deliberately retyped copy to prove `quoteFidelityGrader` actually reads it.
  */
 import type { RepoCurrentFact, ProjectPoolEntry } from '../../agents/evidence/project-agent-inputs.js';
-import { assembleProjects, validateProjectsProvenance } from '../../agents/writer/projects-provenance.js';
+import { assembleProjects, PROJECTS_MAX_BULLETS_PER_ENTRY, validateProjectsProvenance } from '../../agents/writer/projects-provenance.js';
 import { isCurated, type ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { scoreSummaryCoverage } from '../../ats/gate/summary-coverage.js';
 import { mkResult, type GraderResult } from '../graders.js';
 
-const MAX_COMPOSED = 2;
 const MAX_DESCRIPTION_WORDS = 40;
 const MIN_PITCH_OVERLAP = 0.3;
 
@@ -64,17 +63,21 @@ export function quoteFidelityGrader(i: ProjectsEvalInput): GraderResult {
 }
 
 /**
- * Composition quality: composed bullets stay <=2/project, every cited source
- * belongs to the SAME project's pool, and -- the staleness-appropriateness
- * check -- each composed bullet's cited repo-current fact's skill must NOT
- * already be answerable by any of the project's curated bullets (per-bullet
- * `scoreSummaryCoverage` of that single skill against each curated text).
- * A composed bullet answering an already-curated skill means the model
- * manufactured a redundant fact instead of using the two-lane pool correctly.
+ * Composition quality: composed bullets stay <= the per-entry bullet cap
+ * (Task 3: raised from a separate `<=2/project` allowance to
+ * `PROJECTS_MAX_BULLETS_PER_ENTRY` -- the SAME cap `bullet_count` enforces,
+ * imported from `projects-provenance.ts` so eval and runtime can never
+ * drift), every cited source belongs to the SAME project's pool, and -- the
+ * staleness-appropriateness check -- each composed bullet's cited
+ * repo-current fact's skill must NOT already be answerable by any of the
+ * project's curated bullets (per-bullet `scoreSummaryCoverage` of that
+ * single skill against each curated text). A composed bullet answering an
+ * already-curated skill means the model manufactured a redundant fact
+ * instead of using the two-lane pool correctly.
  *
- * The `<=2/project` cap is ALSO enforced by `validateProjectsProvenance`
- * (defence in depth, not a coincidence): a fixture that violates the cap
- * legitimately fails BOTH `provenanceGrader` and `compositionGrader`.
+ * The cap is ALSO enforced by `validateProjectsProvenance` (defence in
+ * depth, not a coincidence): a fixture that violates the cap legitimately
+ * fails BOTH `provenanceGrader` and `compositionGrader`.
  */
 export function compositionGrader(i: ProjectsEvalInput): GraderResult {
     const failures: string[] = [];
@@ -86,7 +89,7 @@ export function compositionGrader(i: ProjectsEvalInput): GraderResult {
         const repoCurrentById = new Map<string, RepoCurrentFact>(poolEntry.repoCurrent.map((r) => [r.id, r]));
         const composed = entry.highlights.filter((h): h is { text: string; sources: string[] } => !isCurated(h));
 
-        if (composed.length > MAX_COMPOSED) failures.push(`composed_cap:${entry.name}:${composed.length}`);
+        if (composed.length > PROJECTS_MAX_BULLETS_PER_ENTRY) failures.push(`composed_cap:${entry.name}:${composed.length}`);
 
         composed.forEach((h, idx) => {
             for (const s of h.sources) {

@@ -8,7 +8,7 @@ import {
     atsCoverageGrader,
     descriptionGrader,
 } from './projects-graders.js';
-import { GOLDEN_TWO_LANE, ADVERSARIAL_CROSS_PROJECT, ADVERSARIAL_RETYPED_QUOTE, ADVERSARIAL_THREE_COMPOSED } from './fixtures.js';
+import { GOLDEN_TWO_LANE, ADVERSARIAL_CROSS_PROJECT, ADVERSARIAL_RETYPED_QUOTE, ADVERSARIAL_OVER_CAP_COMPOSED } from './fixtures.js';
 
 describe('projects graders', () => {
     it('the golden two-lane (staleness) output passes every grader', () => {
@@ -39,13 +39,14 @@ describe('projects graders', () => {
         expect(r.pass).toBe(false);
     });
 
-    it('three composed bullets for one project fails provenanceGrader AND compositionGrader (shared cap invariant), nothing else', () => {
-        const r = runProjectsGraders(ADVERSARIAL_THREE_COMPOSED);
-        expect(provenanceGrader(ADVERSARIAL_THREE_COMPOSED).pass).toBe(false);
-        expect(quoteFidelityGrader(ADVERSARIAL_THREE_COMPOSED).pass).toBe(true);
-        expect(compositionGrader(ADVERSARIAL_THREE_COMPOSED).pass).toBe(false);
-        expect(atsCoverageGrader(ADVERSARIAL_THREE_COMPOSED).pass).toBe(true);
-        expect(descriptionGrader(ADVERSARIAL_THREE_COMPOSED).pass).toBe(true);
+    it('seven composed bullets for one project (one over the Task 3 raised per-entry cap) fails '
+        + 'provenanceGrader AND compositionGrader (shared cap invariant), nothing else', () => {
+        const r = runProjectsGraders(ADVERSARIAL_OVER_CAP_COMPOSED);
+        expect(provenanceGrader(ADVERSARIAL_OVER_CAP_COMPOSED).pass).toBe(false);
+        expect(quoteFidelityGrader(ADVERSARIAL_OVER_CAP_COMPOSED).pass).toBe(true);
+        expect(compositionGrader(ADVERSARIAL_OVER_CAP_COMPOSED).pass).toBe(false);
+        expect(atsCoverageGrader(ADVERSARIAL_OVER_CAP_COMPOSED).pass).toBe(true);
+        expect(descriptionGrader(ADVERSARIAL_OVER_CAP_COMPOSED).pass).toBe(true);
         expect(r.results.filter((x) => !x.pass).map((x) => x.grader).sort()).toEqual(['composition', 'provenance']);
         expect(r.pass).toBe(false);
     });

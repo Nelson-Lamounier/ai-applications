@@ -2,8 +2,24 @@
 import type { ProjectPoolEntry } from '../evidence/project-agent-inputs.js';
 import { isCurated, type ProjectsAgentEntry, type ProjectsAgentOutput } from './projects-schema.js';
 
-const MAX_BULLETS = 6;
-const MAX_COMPOSED = 2;
+/** Per-entry highlight cap for the projects lane -- SINGLE SOURCE OF TRUTH,
+ *  re-exported so every other module that needs the same number (the
+ *  deterministic fallback's `rankProjectEntry` slice in projects-ats-flow.ts,
+ *  the lane-mix composition rules in projects-message.ts and the persona
+ *  content/strategist/projects-agent.md) never drifts from this file's own
+ *  `bullet_count` gate. Matches the live agent-message/persona bullet cap
+ *  ("3-6 bullets per project") that shipped before Task 3.
+ *
+ *  Task 3 (JD-ranked lane mix): this used to also bound `bullet_count`
+ *  (6) while a SEPARATE, stricter `MAX_COMPOSED = 2` capped composed
+ *  highlights -- forcing curated bullets to win slots even when repo-current
+ *  evidence was the more JD-relevant lane (the MongoDB TSE live run: near-
+ *  zero-signal frontend-portfolio bullets shipped while Kubernetes repo-
+ *  current evidence sat unused in the platform project's own pool). The
+ *  composed cap is now the SAME constant as the per-entry bullet cap --
+ *  lane mix is chosen purely by JD relevance, so a project's slots may be
+ *  any mix of curated and composed, up to the one per-entry limit. */
+export const PROJECTS_MAX_BULLETS_PER_ENTRY = 6;
 const MAX_DESCRIPTION_WORDS = 40;
 const MIN_PITCH_OVERLAP = 0.3;
 
@@ -94,10 +110,10 @@ function validateEntry(
 
   const poolSize = poolEntry.curated.length + poolEntry.repoCurrent.length;
   const min = Math.min(3, poolSize);
-  if (entry.highlights.length < min || entry.highlights.length > MAX_BULLETS) {
+  if (entry.highlights.length < min || entry.highlights.length > PROJECTS_MAX_BULLETS_PER_ENTRY) {
     violations.push(`bullet_count:${entry.name}:${entry.highlights.length}`);
   }
-  if (composedCount > MAX_COMPOSED) violations.push(`composed_cap:${entry.name}:${composedCount}`);
+  if (composedCount > PROJECTS_MAX_BULLETS_PER_ENTRY) violations.push(`composed_cap:${entry.name}:${composedCount}`);
   if (entry.github !== '' && !poolEntry.repoUrls.includes(entry.github)) {
     violations.push(`github_mismatch:${entry.name}`);
   }

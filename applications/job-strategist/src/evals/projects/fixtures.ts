@@ -37,6 +37,13 @@ const POOL: ProjectPoolEntry[] = [
             { id: 'p0.r0', skill: 'DNS', sourceCitation: 'infra/dns.ts', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
             { id: 'p0.r1', skill: 'Redis', sourceCitation: 'infra/cache.ts', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
             { id: 'p0.r2', skill: 'GraphQL', sourceCitation: 'src/api/schema.ts', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
+            // p0.r3-r6 exist ONLY to give ADVERSARIAL_OVER_CAP_COMPOSED enough
+            // distinct, not-already-curated repo-current facts to genuinely
+            // breach the raised (Task 3) per-entry composed cap.
+            { id: 'p0.r3', skill: 'Terraform', sourceCitation: 'infra/main.tf', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
+            { id: 'p0.r4', skill: 'RabbitMQ', sourceCitation: 'infra/queue.ts', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
+            { id: 'p0.r5', skill: 'Elasticsearch', sourceCitation: 'src/search/es.ts', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
+            { id: 'p0.r6', skill: 'Prometheus', sourceCitation: 'infra/metrics.ts', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
         ],
     },
     {
@@ -137,17 +144,20 @@ export const ADVERSARIAL_RETYPED_QUOTE: ProjectsEvalInput = {
 };
 
 /**
- * Adversarial: Tucaken gets three composed highlights instead of two (DNS,
- * Redis, GraphQL -- each citing its own distinct, valid, not-already-curated
- * repo-current fact). This deliberately fails BOTH `provenanceGrader` (which
- * enforces the <=2 composed cap via `validateProjectsProvenance`) AND
+ * Adversarial: Tucaken gets seven composed highlights (DNS, Redis, GraphQL,
+ * Terraform, RabbitMQ, Elasticsearch, Prometheus -- each citing its own
+ * distinct, valid, not-already-curated repo-current fact), one over Task 3's
+ * raised per-entry cap (`PROJECTS_MAX_BULLETS_PER_ENTRY`, currently 6). This
+ * deliberately fails BOTH `provenanceGrader` (which enforces the cap via
+ * `validateProjectsProvenance`'s `composed_cap` AND `bullet_count` -- nine
+ * highlights total also breaches the general per-entry bullet count) AND
  * `compositionGrader` (which enforces the identical cap as its own
  * predicate, by design -- see the comment on `compositionGrader`).
  * `quoteFidelityGrader`, `atsCoverageGrader` and `descriptionGrader` are
  * unaffected: `assembled` is a fresh `assembleProjects` call, coverage only
  * grows with the extra bullets, and descriptions are untouched.
  */
-const THREE_COMPOSED_OUTPUT: ProjectsAgentOutput = {
+const OVER_CAP_COMPOSED_OUTPUT: ProjectsAgentOutput = {
     ...GOLDEN_OUTPUT,
     entries: [
         {
@@ -156,15 +166,19 @@ const THREE_COMPOSED_OUTPUT: ProjectsAgentOutput = {
                 ...GOLDEN_OUTPUT.entries[0]!.highlights,
                 { text: 'Introduced Redis caching for hot read paths', sources: ['p0.r1'] },
                 { text: 'Wired GraphQL schema stitching across services', sources: ['p0.r2'] },
+                { text: 'Provisioned Terraform-managed infrastructure for every environment', sources: ['p0.r3'] },
+                { text: 'Wired RabbitMQ consumers for asynchronous job processing', sources: ['p0.r4'] },
+                { text: 'Indexed search documents into an Elasticsearch cluster', sources: ['p0.r5'] },
+                { text: 'Instrumented Prometheus metrics across every service', sources: ['p0.r6'] },
             ],
         },
         GOLDEN_OUTPUT.entries[1]!,
     ],
 };
 
-export const ADVERSARIAL_THREE_COMPOSED: ProjectsEvalInput = {
-    output: THREE_COMPOSED_OUTPUT,
+export const ADVERSARIAL_OVER_CAP_COMPOSED: ProjectsEvalInput = {
+    output: OVER_CAP_COMPOSED_OUTPUT,
     pool: POOL,
-    assembled: assembleProjects(THREE_COMPOSED_OUTPUT, POOL),
+    assembled: assembleProjects(OVER_CAP_COMPOSED_OUTPUT, POOL),
     atsTargets: INFRA_TARGETS,
 };

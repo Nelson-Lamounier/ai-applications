@@ -25,7 +25,7 @@ describe('buildProjectsMessage', () => {
     expect(msg).toContain('Repos: github.com/o/tucaken-app');
     expect(msg).toContain('Curated bullets (quote-only, select by id):');
     expect(msg).toContain('[p0.b0] Shipped RLS-scoped multi-tenant Postgres schema');
-    expect(msg).toContain('Repo-current evidence (compose at most 2 bullets per project, cite ids):');
+    expect(msg).toContain('Repo-current evidence (compose ONLY when a fact beats every curated bullet for JD relevance, cite ids):');
     expect(msg).toContain('[p0.r0] DNS -- o/tucaken-app/infra/dns.ts');
   });
 
@@ -38,11 +38,14 @@ describe('buildProjectsMessage', () => {
     expect(bare).not.toContain('## ATS Targets');
   });
 
-  it('always includes the composition rules section', () => {
+  it('always includes the composition rules section with the JD-ranked lane-mix + entry-ordering rules '
+    + '(Task 3: choose each slot by JD relevance regardless of lane; entries most-JD-relevant first)', () => {
     const msg = buildProjectsMessage(base);
     expect(msg).toContain('## Composition rules');
     expect(msg).toContain('curated');
-    expect(msg).toContain('at most 2 bullets per project');
+    expect(msg).toContain('JD relevance regardless of lane');
+    expect(msg).toContain('Up to 6 bullets per project, any mix of curated and composed.');
+    expect(msg).toContain('ordered most-JD-relevant project first');
   });
 
   it('adds the re-write block only on the re-write pass', () => {
