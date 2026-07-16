@@ -217,7 +217,7 @@ describe('deterministicProjects', () => {
     },
   ];
 
-  it('ranks the DNS-target bullet to the lead position, trims the pitch to 40 words, and skips empty-curated projects', () => {
+  it('ranks the DNS-target bullet to the lead position, stamps the description from the pitch, and skips empty-curated projects', () => {
     const result = deterministicProjects(detPool, dnsTarget);
     expect(result).toHaveLength(1);
     const entry = result[0]!;
@@ -228,8 +228,42 @@ describe('deterministicProjects', () => {
       'Wrote deployment scripts for the staging environment',
       'Documented onboarding steps for new engineers',
     ]);
-    expect(entry.description.split(/\s+/)).toHaveLength(40);
-    expect(entry.description).toBe(Array.from({ length: 40 }, (_, i) => `word${i}`).join(' '));
+    // Task 2: description is the stampProjectDescription output, not the old
+    // ad hoc 40-word trim -- a 45-word run-on pitch is under the 80-word cap
+    // and ships whole.
+    expect(entry.description).toBe(longPitch);
     expect(entry.github).toBe('github.com/o/networker');
+  });
+
+  it('description is the pitch STAMP (reconciler refuse-empty fallback path): first paragraph only, sentence-capped at 80 words', () => {
+    const sentence = (n: number): string => `Sentence number ${n} has exactly ten words in it total.`;
+    const longParagraph = Array.from({ length: 10 }, (_, i) => sentence(i)).join(' '); // 100 words
+    const stampPool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'MultiPara',
+        pitch: `First paragraph pitch for humans.\n\nSecond paragraph internal note that must never ship.`,
+        repoUrls: ['github.com/o/multipara'],
+        curated: [{ id: 'p0.b0', text: 'A curated bullet' }],
+        repoCurrent: [],
+      },
+      {
+        index: 1,
+        name: 'LongPitch',
+        pitch: longParagraph,
+        repoUrls: ['github.com/o/longpitch'],
+        curated: [{ id: 'p1.b0', text: 'Another curated bullet' }],
+        repoCurrent: [],
+      },
+    ];
+
+    const result = deterministicProjects(stampPool, []);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.description).toBe('First paragraph pitch for humans.');
+    expect(result[0]!.description).not.toContain('Second paragraph');
+    const capped = result[1]!.description;
+    expect(capped.trim().split(/\s+/).length).toBeLessThanOrEqual(80);
+    expect(capped.endsWith('.')).toBe(true); // whole sentences only, never mid-sentence
+    expect(longParagraph.startsWith(capped)).toBe(true);
   });
 });

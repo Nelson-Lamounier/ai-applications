@@ -2,11 +2,11 @@
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { scoreSummaryCoverage, type SummaryCoverage } from '../../ats/gate/summary-coverage.js';
 import type { ProjectPoolEntry } from '../evidence/project-agent-inputs.js';
+import { stampProjectDescription } from './projects-description.js';
 import { assembleProjects, validateProjectsProvenance } from './projects-provenance.js';
 import { isCurated, type ProjectsAgentOutput } from './projects-schema.js';
 
 const MAX_BULLETS = 6;
-const MAX_DESCRIPTION_WORDS = 40;
 
 /** Per-run projects-ATS diagnostics. Logged (Loki) and persisted alongside the
  *  summary/experience-ATS diagnostics (pipeline_runs.metadata.analysis.projectsAgent).
@@ -81,7 +81,10 @@ function decideKeepProjects(
 
 /** Per-pool-entry deterministic fallback: rank curated bullets by ATS-target
  *  coverage (stable on ties, i.e. original order), take at most MAX_BULLETS.
- *  Description is the pitch's first MAX_DESCRIPTION_WORDS words; github is the
+ *  Description is the deterministic pitch stamp (`stampProjectDescription`,
+ *  projects-description.ts) -- the SAME function the agent-success path uses
+ *  in run-pipeline.ts, so no path can ship a differently-shaped description
+ *  (this replaced an older ad hoc 40-word raw pitch trim); github is the
  *  project's first known repo URL. Projects with no curated bullets are skipped
  *  entirely (there is nothing safe to say about them without the model). */
 function rankProjectEntry(
@@ -93,8 +96,7 @@ function rankProjectEntry(
     .sort((a, b) => b.covered - a.covered || a.idx - b.idx);
   const highlights = ranked.slice(0, MAX_BULLETS).map((r) => r.bullet.text);
 
-  const pitchWords = entry.pitch.trim().split(/\s+/).filter((w) => w.length > 0);
-  const description = pitchWords.slice(0, MAX_DESCRIPTION_WORDS).join(' ');
+  const description = stampProjectDescription(entry.pitch);
 
   const github = entry.repoUrls[0];
   return { name: entry.name, description, ...(github !== undefined ? { github } : {}), highlights };

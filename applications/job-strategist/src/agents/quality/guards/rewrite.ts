@@ -26,11 +26,6 @@ const CTX: BasePipelineContext = {
     cumulativeCostUsd: 0,
 };
 
-/** One-line pitch roster for the repair prompt (extracted: no nested template literals). */
-function formatPitches(pitches: ReadonlyArray<{ name: string; pitch: string }>): string {
-    return pitches.map((p) => '"' + p.name + ': ' + p.pitch.slice(0, 200) + '"').join(' | ');
-}
-
 /** One-line employer-facts roster for the repair prompt. */
 export function formatEmployerFacts(employers: ReadonlyArray<VerifiedEmployer>): string {
     return employers.map((e) => '[' + e.name + ': ' + e.facts.slice(0, 220) + ']').join(' ');
@@ -54,9 +49,14 @@ export async function rewriteResume(
         `Make the summary's FIRST sentence lead with this identity differentiator: "${ctx.leadIdentity}" — never an infrastructure-first opener; never name or concede any experience gap.`,
         'For summary_opens_with_employer: keep the differentiator\'s CONTENT but rephrase the opening so it does not START with an employer\'s name — a summary opening "AWS … engineer" written by someone employed at AWS reads as a title held there. Name the platform mid-sentence instead ("Cloud engineer … on AWS" / "inside AWS production operations").',
         'For experience_bullet_jd_echo: rewrite the flagged bullet using ONLY that employer\'s verified facts (rephrasing and emphasis are fine); JD vocabulary may appear only where those facts support it - never invent deeds or a new domain to fit the JD.',
-        ctx.projectPitches?.length
-            ? `For project_restates_bullets and project_pitch_missing: rewrite each flagged project description in three beats — (1) open with its documented pitch: ${formatPitches(ctx.projectPitches)}; (2) ONE JD-relevant differentiator not already an experience bullet; (3) one metric not used elsewhere. No stack enumerations.`
-            : 'For project_restates_bullets: rewrite the flagged project description as pitch (what it is, who it is for, the problem it solves) + one JD-relevant differentiator + one fresh metric. Remove numbers duplicated from experience bullets and all stack enumerations.',
+        // project_restates_bullets / project_pitch_missing: NO repair recipe here (Task 2
+        // description contract). `projects[].description` is now a deterministic stamp of
+        // the stored project pitch (stampProjectDescription, projects-description.ts) --
+        // the SOLE source of description truth, locked against every downstream rewrite
+        // (withProjectsDescriptionLock, run-pipeline.ts). These two codes stay DETECTED
+        // and recorded (advisory only); a rewrite attempted here would be reverted by the
+        // lock the moment this pass returns, so instructing one would waste the repair
+        // budget on a change that can never ship.
         ctx.companyProblem ? `For summary_restates_bullets: rewrite the summary at ALTITUDE — S1 identity anchor + capability ("<Role-family> engineer who builds…"), S2 ONE sentence bridging to this problem (paraphrased): "${ctx.companyProblem.slice(0, 400)}", S3 the concrete paid-experience anchor, S4 qualitative rigor close ("every change gated by automated tests and policy-as-code"). Remove EVERY number that also appears in an experience bullet — counts belong to bullets.` : 'For summary_restates_bullets: rewrite the summary at altitude — identity anchor, problem bridge, concrete paid-experience anchor, qualitative rigor close; remove every number that also appears in an experience bullet.',
         'For headline_is_title: rewrite profile.title as a DESCRIPTIVE domain/capability headline with NO job-title noun (Engineer, Associate, Analyst, Manager, Developer, Specialist, Lead, Architect, Consultant…) — e.g. "Cloud & AI Operations · Python Automation & Incident Response". Never claim a role the candidate does not hold.',
         'For selected_work_misplaced: MOVE the "Selected work"/GitHub links highlight OUT of the support/customer/QA role and into the most senior builder/engineering role\'s highlights (e.g. Freelance / Cloud & DevOps). If no builder/engineering role exists, DROP that highlight. Never leave it under a support/customer-facing role.',

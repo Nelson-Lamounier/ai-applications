@@ -46,7 +46,8 @@ import { guardCoverLetter } from './agents/quality/cover-letter-guard.js';
 import type { CoverLetterNarrativeOpts } from './agents/quality/cover-letter-guard.js';
 import { guardResume, revalidateResumeContent, preserveExperienceRoster } from './agents/quality/resume-guard.js';
 import type { ResumeGuardCtx, ResumeViolation } from './agents/quality/resume-guard.js';
-import { withExperienceLock } from './agents/writer/experience-lock.js';
+import { withExperienceLock, withProjectsDescriptionLock } from './agents/writer/experience-lock.js';
+import { stampProjectDescription } from './agents/writer/projects-description.js';
 import type { ViolationLog } from './lib/observability/violation-log.js';
 import type { ProjectResumeBulletSet } from './agents/evidence/project-evidence-block.js';
 import type { JdPriorityContext } from './ats/length/length-budget.js';
@@ -96,7 +97,7 @@ import {
     type RosterEntry, type IndexedCareerLine,
 } from './agents/writer/experience-provenance.js';
 import type { ExperienceAgentOutput } from './agents/writer/experience-schema.js';
-import { loadProjectAgentInputs, type ProjectAgentInputs } from './agents/evidence/project-agent-inputs.js';
+import { loadProjectAgentInputs, type ProjectAgentInputs, type ProjectPoolEntry } from './agents/evidence/project-agent-inputs.js';
 import { executeProjectsAgent } from './agents/writer/projects-agent.js';
 import { resolveProjectsAts, deterministicProjects, type ProjectsAgentDiagnostics } from './agents/writer/projects-ats-flow.js';
 import { assembleProjects, validateProjectsProvenance, ProjectsProvenanceError } from './agents/writer/projects-provenance.js';
@@ -345,6 +346,29 @@ async function fillResumeExperience(
  * returned diagnostics by the caller (recordProjectsAgentObservability),
  * same shape as fillResumeExperience.
  */
+/**
+ * Stamp every entry's `description` from its matching pool entry's stored
+ * `pitch` (Task 2 description contract) -- applied to the projects-agent
+ * SUCCESS path's assembled output. The deterministic fallback does not come
+ * through here: `deterministicProjects` (projects-ats-flow.ts) already calls
+ * the SAME `stampProjectDescription` inside `rankProjectEntry`, which also
+ * covers the reconciler's refuse-empty `fallbacks.projects` path -- one
+ * function produces the field everywhere. Matched by `name` (pool entries
+ * and resume entries share the same project name).
+ * `stampProjectDescription` returning `''` (empty/missing pitch) leaves the
+ * entry's existing description untouched -- fail-open, never blanks it.
+ */
+function stampProjectDescriptions<T extends { name: string; description: string }>(
+    entries: readonly T[],
+    pool: readonly ProjectPoolEntry[],
+): T[] {
+    const pitchByName = new Map(pool.map((p) => [p.name, p.pitch]));
+    return entries.map((entry) => {
+        const stamped = stampProjectDescription(pitchByName.get(entry.name) ?? '');
+        return stamped ? { ...entry, description: stamped } : entry;
+    });
+}
+
 async function fillResumeProjects(
     ctx: StrategistPipelineContext,
     tailoredResumeData: StructuredResumeData | null,
@@ -382,9 +406,10 @@ async function fillResumeProjects(
                 return rw.data;
             },
         });
-        (tailoredResumeData as { projects: unknown }).projects = assembleProjects(output, pool);
+        (tailoredResumeData as { projects: unknown }).projects = stampProjectDescriptions(assembleProjects(output, pool), pool);
         return { ...diag, unresolvedRepos, normalisedExtras: firstNormalisedExtras + rewriteNormalisedExtras };
     } catch (err) {
+        // deterministicProjects stamps descriptions itself (rankProjectEntry).
         (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets);
         onFallback(err);
         return {
@@ -625,6 +650,48 @@ function trackNetFired(
     if (beforeProj !== afterProj) {
         sectionNetFiredMetric.inc({ section: 'projects', pass, outcome: 'changed' });
     }
+}
+
+/**
+ * Compose `withProjectsDescriptionLock` with the existing `withExperienceLock`
+ * at a call site (Task 2) -- both must apply to every resume-mutating pass
+ * that could still touch `projects[].description` post-stamp (guard repair,
+ * reframe, length x2, metric weave, revalidate x2, surface_keywords -- ALL 8
+ * sites `withExperienceLock` already wrapped; the migration reframe is
+ * included because its proseSurfaces (migration-reframe.ts) explicitly scans
+ * and rewrites projects[].description alongside experience bullets).
+ *
+ * NESTING ORDER (documented, not load-bearing): `withExperienceLock` stays
+ * OUTERMOST -- its call shape and `onRestored` callback are unchanged from
+ * before this task. `withProjectsDescriptionLock` wraps directly around
+ * `fn`, innermost, so its before/after snapshot is taken from exactly the
+ * resume `fn` receives and returns. The two locks can never observe or
+ * clobber each other's field: the experience lock's restore only ever
+ * touches `resume.experience` (`restoreExperienceAfter`), the description
+ * lock's restore only ever touches `projects[].description` -- so this
+ * ordering is a readability choice, not a correctness requirement.
+ *
+ * `onRestored` fires the SAME shape for both locks -- `sectionNetFiredMetric`
+ * with the pass's own name and `outcome: 'restored'`, plus one
+ * `violationLog.record(violationStage, <lock's restored code>)` entry --
+ * mirroring every existing `withExperienceLock` call site's inline callback.
+ */
+function withSectionLocks(
+    resume: StructuredResumeData,
+    passName: string,
+    violationStage: string,
+    fn: (r: StructuredResumeData) => Promise<StructuredResumeData>,
+    violationLog: ViolationLog,
+): Promise<StructuredResumeData> {
+    return withExperienceLock(resume, passName, (r) =>
+        withProjectsDescriptionLock(r, passName, fn, () => {
+            sectionNetFiredMetric.inc({ section: 'projects_description', pass: passName, outcome: 'restored' });
+            violationLog.record(violationStage, 'projects_description_lock_restored');
+        }),
+    (pass) => {
+        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
+        violationLog.record(violationStage, 'experience_lock_restored');
+    });
 }
 
 /**
@@ -880,11 +947,16 @@ const experienceAgentCoverageMetric = new Histogram({
 // reverted that divergence, turning the tripwire into enforcement --
 // section='experience' should now show 'changed' at effectively zero (every
 // divergence is caught and restored before it reaches the next stage) while
-// 'restored' becomes the signal to watch. section='projects' has no lock, so
-// it only ever emits 'changed'.
+// 'restored' becomes the signal to watch. section='projects' (the WHOLE
+// section) has no lock, so it only ever emits 'changed'. Task 2 adds a THIRD
+// section value, 'projects_description' -- the single `description` field
+// within each projects[] entry, locked by `withProjectsDescriptionLock`
+// (experience-lock.ts) via the `withSectionLocks` composition helper above.
+// Like 'experience', 'projects_description' only ever emits 'restored' (the
+// lock enforces immutability, it does not merely detect drift).
 const sectionNetFiredMetric = new Counter({
     name:       'job_strategist_section_net_fired_total',
-    help:       'Downstream passes (guard/length/surface_keywords/reframe/metric_weave/revalidate) that changed an agent-owned section (experience/projects) after its fill pass ran, by outcome (changed vs restored by the experience lock).',
+    help:       'Downstream passes (guard/length/surface_keywords/reframe/metric_weave/revalidate) that changed an agent-owned section (experience/projects/projects_description) after its fill pass ran, by outcome (changed vs restored by the section lock).',
     labelNames: ['section', 'pass', 'outcome'] as const,
     registers:  [obs.registry],
 });
@@ -1349,14 +1421,11 @@ async function runGuardsStage(args: {
     const relocated = relocateProjectExperience(resume, resumeGuardCtx.verifiedEmployers ?? [], projectResumeBullets);
     const beforeGuardProj = projSnapshot(relocated);
     let guardViolations: ResumeViolation[] = [];
-    const guardedResume = await withExperienceLock(relocated, 'guard', async (r) => {
+    const guardedResume = await withSectionLocks(relocated, 'guard', 'resume_guard', async (r) => {
         const guarded = await guardResume(r, resumeGuardCtx);
         guardViolations = guarded.violations;
         return guarded.resume;
-    }, (pass) => {
-        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-        violationLog.record('resume_guard', 'experience_lock_restored');
-    });
+    }, violationLog);
     trackNetFired('guard', expSnapshot(relocated), expSnapshot(guardedResume), beforeGuardProj, projSnapshot(guardedResume));
     violationLog.recordAll('resume_guard', guardViolations);
 
@@ -1538,12 +1607,11 @@ async function runLengthStage(args: {
             migrations: staleMigrations.map((m) => ({ predecessor: m.predecessor, successors: m.successors })),
         }, 'migration_reframe_fired');
         const preReframe = current;
-        current = await withExperienceLock(preReframe, 'reframe', async (r) =>
+        // The reframe's proseSurfaces (migration-reframe.ts) scans and can
+        // rewrite projects[].description too -- both section locks apply.
+        current = await withSectionLocks(preReframe, 'reframe', 'migration_reframe', async (r) =>
             preserveExperienceRoster(r, await reframeStaleMigrations(r, staleMigrations).catch(() => r)),
-        (pass) => {
-            sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-            violationLog.record('migration_reframe', 'experience_lock_restored');
-        });
+        violationLog);
     }
 
     // ── Length budget (measure → condense → hard trim; fail-open) ──
@@ -1554,12 +1622,9 @@ async function runLengthStage(args: {
     const preBudget = current;
     const allowedNumbers = extractNumbers([JSON.stringify(preBudget), budgetGroundingFacts].join(' '));
     const beforeLengthProj = projSnapshot(preBudget);
-    const budgeted = await withExperienceLock(preBudget, 'length', (r) =>
+    const budgeted = await withSectionLocks(preBudget, 'length', 'length_budget', (r) =>
         applyLengthBudget(r, jdPriority, (v) => violationLog.record('length_budget', v.code), { groundingFacts: budgetGroundingFacts }).catch(() => r),
-    (pass) => {
-        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-        violationLog.record('length_budget', 'experience_lock_restored');
-    });
+    violationLog);
     trackNetFired('length', expSnapshot(preBudget), expSnapshot(budgeted), beforeLengthProj, projSnapshot(budgeted));
     // Expansion may only add grounded numbers; strip anything else.
     const preMetrics = stripUngroundedNumbers(budgeted, allowedNumbers);
@@ -1569,31 +1634,26 @@ async function runLengthStage(args: {
     // number strip re-runs on its output.
     const jdContextLine = `${targetRole}: ${requiredSkills.join(', ')}`;
     // Experience is agent-owned (fillResumeExperience already produced a
-    // provenance-guarded final section) -- the weave may still legitimately
-    // rewrite project descriptions, so scope it OUT of experience via the
-    // shared lock (experience-lock.ts) rather than a bespoke snapshot.
-    const numberSafe = await withExperienceLock(preMetrics, 'metric_weave', (r) =>
+    // provenance-guarded final section) -- scope it OUT of experience via
+    // the shared lock (experience-lock.ts). The weave may still legitimately
+    // rewrite project HIGHLIGHTS, but `description` is locked too (Task 2 --
+    // it is the deterministic pitch stamp now, never a weave rewrite target).
+    const numberSafe = await withSectionLocks(preMetrics, 'metric_weave', 'metric_weave', (r) =>
         weaveGroundedMetrics(r, groundedMetricsBlock, budgetGroundingFacts, allowedNumbers, jdContextLine, (code) => {
             violationLog.record('metric_weave', code);
             log.warn({ pipelineRunId, code }, 'grounded_metric_weave');
         }),
-    (pass) => {
-        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-        violationLog.record('metric_weave', 'experience_lock_restored');
-    });
+    violationLog);
     // FINAL content re-validation: reframe/condense/expand can
     // reintroduce violations the early guard already repaired (the
     // A/B run regained 5 bullet-shared project numbers and a flat
     // "Terraform" claim). One bounded repair, then report residuals.
     let revalidateViolations: ResumeViolation[] = [];
-    const revalidatedResume = await withExperienceLock(numberSafe, 'revalidate', async (r) => {
+    const revalidatedResume = await withSectionLocks(numberSafe, 'revalidate', 'revalidate', async (r) => {
         const revalidated = await revalidateResumeContent(r, resumeGuardCtx).catch(() => ({ resume: r, violations: [] as ResumeViolation[] }));
         revalidateViolations = revalidated.violations;
         return revalidated.resume;
-    }, (pass) => {
-        sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-        violationLog.record('revalidate', 'experience_lock_restored');
-    });
+    }, violationLog);
     violationLog.recordAll('revalidate', revalidateViolations);
     let finalResume = await applyResumeIntegrity(revalidatedResume, baseline, allowedNumbers, (code) => violationLog.record('resume_integrity', code));
     // Restore any projects[].highlights the Haiku re-emit passes dropped
@@ -1687,13 +1747,10 @@ async function runAtsGateStage(args: AtsGateArgs): Promise<{ finalResume: Struct
         // rewrite introduces outside this set is stripped deterministically.
         const allowed = extractNumbers([JSON.stringify(baseResume), groundingFacts].join(' '));
         const beforeSurfaceProj = projSnapshot(baseResume);
-        let surfaced = await withExperienceLock(baseResume, 'surface_keywords', async (r) => {
+        let surfaced = await withSectionLocks(baseResume, 'surface_keywords', 'surface_keywords', async (r) => {
             const refined = preserveExperienceRoster(r, await surfaceKeywords(r, split.attainableMissing, { redFlags, groundingFacts }).catch(() => r));
             return refined === r ? r : stripUngroundedNumbers(refined, allowed);
-        }, (pass) => {
-            sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-            violationLog.record('surface_keywords', 'experience_lock_restored');
-        });
+        }, violationLog);
         trackNetFired('surface_keywords', expSnapshot(baseResume), expSnapshot(surfaced), beforeSurfaceProj, projSnapshot(surfaced));
         if (surfaced !== baseResume) {
             // The keyword rewrite is the last stage that can GROW the
@@ -1712,23 +1769,17 @@ async function runAtsGateStage(args: AtsGateArgs): Promise<{ finalResume: Struct
             // scrub, without opting back into the expand direction.
             const beforePostKeywordsExp = expSnapshot(surfaced);
             const beforePostKeywordsLengthProj = projSnapshot(surfaced);
-            surfaced = await withExperienceLock(surfaced, 'length', (r) =>
+            surfaced = await withSectionLocks(surfaced, 'length', 'length_budget_post_keywords', (r) =>
                 applyLengthBudget(r, jdPriority, (v) => violationLog.record('length_budget_post_keywords', v.code), { scrubEvidenceText: groundingFacts }).catch(() => r),
-            (pass) => {
-                sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-                violationLog.record('length_budget_post_keywords', 'experience_lock_restored');
-            });
+            violationLog);
             trackNetFired('length', beforePostKeywordsExp, expSnapshot(surfaced), beforePostKeywordsLengthProj, projSnapshot(surfaced));
             surfaced = stripUngroundedNumbers(surfaced, allowed);
             let revalPostKeywordsViolations: ResumeViolation[] = [];
-            surfaced = await withExperienceLock(surfaced, 'revalidate', async (r) => {
+            surfaced = await withSectionLocks(surfaced, 'revalidate', 'revalidate_post_keywords', async (r) => {
                 const reval = await revalidateResumeContent(r, resumeGuardCtx).catch(() => ({ resume: r, violations: [] as ResumeViolation[] }));
                 revalPostKeywordsViolations = reval.violations;
                 return reval.resume;
-            }, (pass) => {
-                sectionNetFiredMetric.inc({ section: 'experience', pass, outcome: 'restored' });
-                violationLog.record('revalidate_post_keywords', 'experience_lock_restored');
-            });
+            }, violationLog);
             violationLog.recordAll('revalidate_post_keywords', revalPostKeywordsViolations);
             surfaced = await applyResumeIntegrity(surfaced, baseline, allowed, (code) => violationLog.record('resume_integrity_post_keywords', code));
             // close the silent-blanking path: the keyword-loop re-emit can drop projects[].highlights
