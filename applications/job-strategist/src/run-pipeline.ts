@@ -28,6 +28,7 @@ import type { SkillsMessageInput } from './agents/writer/skills-message.js';
 import { executeCoverLetterAgent } from './agents/writer/cover-letter-agent.js';
 import type { CoverLetterMessageInput } from './agents/writer/cover-letter-message.js';
 import { buildSkeletonResume } from './lib/resume/resume-skeleton.js';
+import { stampCanonicalSectionOrder } from './lib/resume/section-order.js';
 import { reconcileResume, type ReconcileInputs } from './lib/resume/resume-reconciler.js';
 import { stageSeconds } from './lib/observability/stage-timing.js';
 import { framingDirective } from './agents/writer/framing.js';
@@ -2717,6 +2718,11 @@ export async function main(): Promise<void> {
             violationLog,
             pipelineRunId: env.pipelineRunId,
         }));
+
+        // Section order is a system decision: overwrite whatever any LLM lane
+        // echoed so the persisted resume (and the UI that honours it) always
+        // carries the canonical order — skills after certifications.
+        finalResume = stampCanonicalSectionOrder(finalResume);
 
         // Resume-builder persist (Option A): persist the guarded resume to PG.
         const persisted = await stageSeconds(pipelineStageSeconds, 'persist', () => persistTailoredResume(pool, {
