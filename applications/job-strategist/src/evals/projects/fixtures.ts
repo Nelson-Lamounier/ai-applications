@@ -14,7 +14,8 @@
  * The adversarial variants each break exactly one grader's invariant (except
  * the composed-cap one, which breaks two BY DESIGN -- see the comment on it).
  */
-import type { ProjectPoolEntry } from '../../agents/evidence/project-agent-inputs.js';
+import type { ProjectAgentMeta, ProjectPoolEntry, RepoLookupRow } from '../../agents/evidence/project-agent-inputs.js';
+import type { RetrievedPassage } from '../../agents/evidence/operations-evidence.js';
 import { assembleProjects } from '../../agents/writer/projects-provenance.js';
 import type { ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
@@ -390,4 +391,83 @@ export const ALL_COMPOSED_UNCAPPED: ProjectsEvalInput = {
     pool: POOL,
     assembled: assembleProjects(ALL_COMPOSED_OUTPUT, POOL),
     atsTargets: COMPOSED_ONLY_TARGETS,
+};
+
+// ---------------------------------------------------------------------------
+// Task 3 (Component 4 evals (a)-(e)): operations-evidence -- fixtures for
+// docs/superpowers/specs/2026-07-16-projects-operations-evidence-design.md's
+// Component 4 eval cases, exercised end to end through the REAL runtime
+// primitives (activateThemes, gatherOperationsEvidence, buildProjectPool,
+// validateProjectsProvenance) in operations-evidence-graders.ts -- never a
+// reimplementation of their rules.
+// ---------------------------------------------------------------------------
+
+/** (a) MongoDB TSE JD: the flattened hardRequirements[].skill + preferredSkills
+ *  + concepts shape `jdStringsForThemes` (operations-wiring.ts) hands to
+ *  `activateThemes` -- must activate database-operations + backup-recovery
+ *  (+ one more, capped at 3). */
+export const MONGODB_TSE_JD_STRINGS: readonly string[] = [
+    'production database systems',
+    'MongoDB administration',
+    'PostgreSQL replication',
+    'backup and recovery',
+    'disaster recovery planning',
+    'performance tuning',
+    'Kubernetes',
+];
+
+/** (a) A frontend-only JD -- must activate ZERO operations themes. */
+export const FRONTEND_JD_STRINGS: readonly string[] = ['React', 'CSS', 'web vitals', 'accessibility', 'responsive design'];
+
+/** (b)/(c)/(d) A single-repo infra project -- 'o/infra-platform' is a member
+ *  of database-operations' target kinds ([backend, infra]). */
+export const OPS_PROJECT_META: ProjectAgentMeta = {
+    projectId: 'proj-infra',
+    name: 'Infra Platform',
+    pitch: 'Owns the production RDS and pgbouncer connection layer.',
+    tagline: '',
+    repositoryIds: ['repo-infra'],
+    repoFullNames: ['o/infra-platform'],
+    repoKinds: new Map([['o/infra-platform', 'infra']]),
+};
+
+export const OPS_REPO_LOOKUP: ReadonlyMap<string, RepoLookupRow> = new Map([
+    ['o/infra-platform', { id: 'repo-infra', githubRepoId: 100 }],
+]);
+
+/** (b) A pgbouncer/RDS-style docs chunk from the infra repo -- exactly the
+ *  shape `gatherOperationsEvidence`'s `retrieve()` contract expects. */
+export const PGBOUNCER_DOCS_CHUNK: RetrievedPassage = {
+    file: 'o/infra-platform/docs/database-operations.md',
+    text: 'Runbook: pgbouncer runs in transaction pooling mode in front of the '
+        + 'production RDS PostgreSQL cluster, with automated snapshot backups.',
+};
+
+/** (d) A file path resolving to a repo the Infra Platform project does NOT
+ *  own -- proves fail-closed attribution reuse at `buildProjectPool`, the
+ *  same load-bearing gate every other `VerifiedMatch` goes through. */
+export const OUTSIDE_PROJECT_CHUNK_FILE = 'o/someone-elses-repo/docs/db.md';
+
+/** (e) A project owning BOTH an infra repo (qualifies for database-operations)
+ *  and an ml repo (does not) -- proves the ml-repo chunk is rejected by
+ *  `gatherOperationsEvidence`'s POST-retrieval repo-membership filter, not
+ *  merely by the pre-retrieval kind gate never firing. */
+export const MIXED_KIND_PROJECT_META: ProjectAgentMeta = {
+    ...OPS_PROJECT_META,
+    projectId: 'proj-mixed',
+    name: 'Mixed Platform',
+    repositoryIds: ['repo-infra', 'repo-ml'],
+    repoFullNames: ['o/infra-platform', 'o/ml-platform'],
+    repoKinds: new Map([
+        ['o/infra-platform', 'infra'],
+        ['o/ml-platform', 'ml'],
+    ]),
+};
+
+/** (e) A chunk from the ml repo, textually on-topic for database-operations
+ *  ("connection pooling") -- must still be rejected, since 'ml' is not in
+ *  database-operations' `kinds: [backend, infra]`. */
+export const ML_ONLY_CHUNK: RetrievedPassage = {
+    file: 'o/ml-platform/docs/database-notes.md',
+    text: 'Notes on database connection pooling from the ml training pipeline perspective.',
 };

@@ -84,7 +84,7 @@ import {
     logExperienceAgentEvents, experienceAgentOutcome, logExperienceCoverageFinal, logExperienceVerbAlignment,
 } from './agents/writer/experience-agent-diagnostics.js';
 import { checkVerbAlignment, type VerbAlignmentFinding } from './agents/writer/verb-alignment.js';
-import { logProjectsAgentEvents, logProjectsThemeEvidence, projectsAgentOutcome } from './agents/writer/projects-agent-diagnostics.js';
+import { logProjectsAgentEvents, projectsAgentOutcome } from './agents/writer/projects-agent-diagnostics.js';
 import {
     logSectionAgentEvents, skillsAgentOutcome, skillsAgentEvents,
     coverLetterAgentOutcome, coverLetterAgentEvents,
@@ -98,7 +98,7 @@ import {
 } from './agents/writer/experience-provenance.js';
 import type { ExperienceAgentOutput } from './agents/writer/experience-schema.js';
 import {
-    loadProjectAgentMeta, buildProjectPool,
+    loadProjectAgentMeta,
     type ProjectAgentInputs, type ProjectPoolEntry, type VerifiedMatch,
 } from './agents/evidence/project-agent-inputs.js';
 import { executeProjectsAgent } from './agents/writer/projects-agent.js';
@@ -106,8 +106,8 @@ import {
     resolveProjectsAts, deterministicProjects, sumProjectsNormalisedExtras,
     EMPTY_OPERATIONS_THEMES_DIAG, type ProjectsAgentDiagnostics,
 } from './agents/writer/projects-ats-flow.js';
-import { activateThemes } from './agents/evidence/operations-themes.js';
-import { gatherOperationsEvidence, type RetrievedPassage } from './agents/evidence/operations-evidence.js';
+import type { RetrievedPassage } from './agents/evidence/operations-evidence.js';
+import { buildProjectAgentInputsFromMeta } from './agents/evidence/operations-wiring.js';
 import { assembleProjects, validateProjectsProvenance, ProjectsProvenanceError } from './agents/writer/projects-provenance.js';
 import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
@@ -842,14 +842,6 @@ function buildOperationsRetrieve(
     };
 }
 
-/** JD strings `activateThemes` matches against: the flattened hard-requirement
- *  skills + preferred skills + concepts (operations-themes.ts's documented
- *  flattening contract -- kept here since `JdSignal` is jd-extractor's type,
- *  not operations-themes.ts's business). */
-function jdStringsForThemes(jd: JdSignal): string[] {
-    return [...jd.hardRequirements.map((r) => r.skill), ...jd.preferredSkills, ...jd.concepts];
-}
-
 /**
  * Build the projects pool, enriched with kind-scoped operations-angle
  * evidence when the JD activates any `OPERATIONS_THEMES` entry. Ordering is
@@ -857,16 +849,26 @@ function jdStringsForThemes(jd: JdSignal): string[] {
  * `gatherOperationsEvidence` needs BEFORE that gather runs, and its matches
  * are appended to `verifiedMatches` BEFORE `buildProjectPool` -- which stays
  * byte-identical either way, so the SAME fail-closed repo-id attribution
- * governs operations facts as every other verified match.
+ * governs operations facts as every other verified match. (Both properties
+ * are encoded in `buildProjectAgentInputsFromMeta`, operations-wiring.ts --
+ * split into its own module, not left inline here, specifically so it stays
+ * unit-testable: importing run-pipeline.ts itself from Jest pulls in
+ * pdf-parse -> @napi-rs/canvas's native binding and its open-GC-handle
+ * problem, see that module's header comment. This function is now a thin
+ * I/O wrapper: load meta (real DB), delegate the pure ordering/append logic,
+ * with `RdsVectorStore.fromEnvironment()` deferred into the `buildRetrieve`
+ * factory so its own construction failure is caught by the SAME inner
+ * fail-open catch as a retrieval-call failure, not this function's outer one.
  *
- * Two independent fail-open layers: the OUTER catch (same log event,
+ * Two independent fail-open layers: the OUTER catch here (same log event,
  * `project_agent_inputs_load_failed_fail_open`, as the pre-Task-2
  * `loadProjectAgentInputs` call it replaces) degrades to the empty skeleton
- * pool on any meta-load failure; the INNER catch scopes ONLY the operations-
- * evidence gather (`operations_evidence_failed_open`), so a retrieval-side
- * failure there still ships the ordinary pool + the rest of this function's
- * work. Zero activated themes skips the gather entirely -- no retrieval
- * calls, no log noise, pool identical to today's.
+ * pool on any meta-load failure; the INNER catch (inside
+ * `buildProjectAgentInputsFromMeta`) scopes ONLY the operations-evidence
+ * gather (`operations_evidence_failed_open`), so a retrieval-side failure
+ * there still ships the ordinary pool + the rest of this function's work.
+ * Zero activated themes skips the gather entirely -- no retrieval calls, no
+ * log noise, pool identical to today's.
  */
 async function buildProjectAgentInputsWithOperationsEvidence(args: {
     pool: Pool;
@@ -879,41 +881,15 @@ async function buildProjectAgentInputsWithOperationsEvidence(args: {
 }): Promise<{ projectAgentInputs: ProjectAgentInputs; themesDiag: ProjectsAgentDiagnostics['themes'] }> {
     try {
         const { bulletSets, projectMeta, repoLookup } = await loadProjectAgentMeta(args.pool, args.userId);
-        const activated = activateThemes(jdStringsForThemes(args.jd));
-        if (activated.length === 0) {
-            return {
-                projectAgentInputs: buildProjectPool(bulletSets, projectMeta, repoLookup, args.verifiedMatches),
-                themesDiag: EMPTY_OPERATIONS_THEMES_DIAG,
-            };
-        }
-
-        let opsMatches: VerifiedMatch[] = [];
-        let factCounts: Record<string, number> = {};
-        try {
-            const store = RdsVectorStore.fromEnvironment();
-            const gathered = await gatherOperationsEvidence({
-                themes: activated,
-                projects: projectMeta,
-                retrieve: buildOperationsRetrieve(args.userId, store, args.retrievalPrefilter),
-            });
-            opsMatches = gathered.matches;
-            factCounts = gathered.factCounts;
-            logProjectsThemeEvidence(
-                log,
-                { pipelineRunId: args.pipelineRunId, applicationId: args.applicationId, traceId: null },
-                opsMatches,
-            );
-        } catch (err) {
-            log.warn(
-                { pipelineRunId: args.pipelineRunId, err: err instanceof Error ? err.message : String(err) },
-                'operations_evidence_failed_open',
-            );
-        }
-
-        return {
-            projectAgentInputs: buildProjectPool(bulletSets, projectMeta, repoLookup, [...args.verifiedMatches, ...opsMatches]),
-            themesDiag: { activated: activated.map((t) => t.key), factCounts },
-        };
+        return await buildProjectAgentInputsFromMeta({
+            bulletSets, projectMeta, repoLookup,
+            verifiedMatches: args.verifiedMatches,
+            jd: args.jd,
+            pipelineRunId: args.pipelineRunId,
+            applicationId: args.applicationId,
+            log,
+            buildRetrieve: () => buildOperationsRetrieve(args.userId, RdsVectorStore.fromEnvironment(), args.retrievalPrefilter),
+        });
     } catch (err) {
         log.warn(
             { pipelineRunId: args.pipelineRunId, err: err instanceof Error ? err.message : String(err) },
