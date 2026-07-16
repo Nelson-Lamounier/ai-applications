@@ -16,6 +16,7 @@
  */
 import type { ProjectAgentMeta, ProjectPoolEntry, RepoLookupRow } from '../../agents/evidence/project-agent-inputs.js';
 import type { RetrievedPassage } from '../../agents/evidence/operations-evidence.js';
+import type { TieredJdString } from '../../agents/evidence/operations-themes.js';
 import { assembleProjects } from '../../agents/writer/projects-provenance.js';
 import type { ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
@@ -400,24 +401,56 @@ export const ALL_COMPOSED_UNCAPPED: ProjectsEvalInput = {
 // primitives (activateThemes, gatherOperationsEvidence, buildProjectPool,
 // validateProjectsProvenance) in operations-evidence-graders.ts -- never a
 // reimplementation of their rules.
+//
+// Task 1 (docs/superpowers/specs/2026-07-16-projects-narrative-quality-
+// design.md, Component 1) made `activateThemes` tier-weighted (disqualifying
+// = 3, required = 2, preferred = 1) and raised the cap 3 -> 4; the strings
+// below are tier-tagged `TieredJdString[]` accordingly, mirroring the
+// `jdStringsForThemes` (operations-wiring.ts) mapping: hardRequirements[].skill
+// with disqualifying=true -> 'disqualifying', other hardRequirements ->
+// 'required', preferredSkills + concepts -> 'preferred'.
 // ---------------------------------------------------------------------------
 
-/** (a) MongoDB TSE JD: the flattened hardRequirements[].skill + preferredSkills
- *  + concepts shape `jdStringsForThemes` (operations-wiring.ts) hands to
- *  `activateThemes` -- must activate database-operations + backup-recovery
- *  (+ one more, capped at 3). */
-export const MONGODB_TSE_JD_STRINGS: readonly string[] = [
-    'production database systems',
-    'MongoDB administration',
-    'PostgreSQL replication',
-    'backup and recovery',
-    'disaster recovery planning',
-    'performance tuning',
-    'Kubernetes',
+/** (a) MongoDB TSE JD, tier-tagged -- regression fixture for live run
+ *  fe421faf: under the OLD raw-hit-count ranking + cap 3, networking-protocols
+ *  (a single required-tier hit) lost the top-3 cut to themes accumulated from
+ *  preferred-tier concept strings alone. Must now activate database-operations
+ *  (disqualifying) + backup-recovery (required) + networking-protocols
+ *  (required) + one more, capped at 4. */
+export const MONGODB_TSE_JD_STRINGS: readonly TieredJdString[] = [
+    { text: 'MongoDB administration', tier: 'disqualifying' },
+    { text: 'backup and recovery', tier: 'required' },
+    { text: 'networking (DNS, TCP/IP, SSL/TLS)', tier: 'required' },
+    { text: 'PostgreSQL replication', tier: 'preferred' },
+    { text: 'disaster recovery planning', tier: 'preferred' },
+    { text: 'performance tuning', tier: 'preferred' },
+    { text: 'Kubernetes', tier: 'preferred' },
 ];
 
-/** (a) A frontend-only JD -- must activate ZERO operations themes. */
-export const FRONTEND_JD_STRINGS: readonly string[] = ['React', 'CSS', 'web vitals', 'accessibility', 'responsive design'];
+/** (a) A frontend-only JD -- must activate ZERO operations themes regardless
+ *  of tier (no operations-angle matchTerms anywhere in the vocabulary). */
+export const FRONTEND_JD_STRINGS: readonly TieredJdString[] = [
+    { text: 'React', tier: 'required' },
+    { text: 'CSS', tier: 'required' },
+    { text: 'web vitals', tier: 'preferred' },
+    { text: 'accessibility', tier: 'preferred' },
+    { text: 'responsive design', tier: 'preferred' },
+];
+
+/** (b) GENERALITY: a data-engineering JD -- proves tier weighting is generic,
+ *  not MongoDB-coupled. `storage` (required, ONE hit) must outrank
+ *  `cluster-orchestration` (preferred, TWO hits) despite fewer raw hits --
+ *  the same "tier beats raw concept-accumulation" property as (a), on
+ *  entirely different vocabulary. `database-operations` (disqualifying, ONE
+ *  hit) still tops the ranking outright. */
+export const DATA_ENGINEERING_JD_STRINGS: readonly TieredJdString[] = [
+    { text: 'ETL pipelines and database administration', tier: 'disqualifying' }, // -> database-operations
+    { text: 'storage systems administration', tier: 'required' },                 // -> storage
+    { text: 'cluster orchestration workflows', tier: 'preferred' },               // -> cluster-orchestration (hit 1)
+    { text: 'kubernetes operators', tier: 'preferred' },                          // -> cluster-orchestration (hit 2)
+    { text: 'query performance tuning', tier: 'preferred' },                      // -> performance-tuning
+    { text: 'network protocols', tier: 'preferred' },                            // -> networking-protocols
+];
 
 /** (b)/(c)/(d) A single-repo infra project -- 'o/infra-platform' is a member
  *  of database-operations' target kinds ([backend, infra]). */

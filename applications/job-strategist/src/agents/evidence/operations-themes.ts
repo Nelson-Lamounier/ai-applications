@@ -7,12 +7,17 @@
  * what was built with it, closing the gap operations-flavoured JDs (e.g. a
  * MongoDB TSE role) expose in the case-study-angled projects pool.
  *
- * `activateThemes` is the sole entry point: it takes the JD's flattened
- * requirement/preferred/concept strings and returns the themes whose
- * `matchTerms` are demonstrated in that vocabulary, via the SHARED
- * `experienceTermMatch` predicate (no new matching logic here). Zero
- * activations is the expected, common case -- the caller must treat that as
- * a complete no-op, fail-closed to today's behaviour.
+ * `activateThemes` is the sole entry point: it takes the JD's flattened,
+ * TIER-TAGGED requirement/preferred/concept strings and returns the themes
+ * whose `matchTerms` are demonstrated in that vocabulary, via the SHARED
+ * `experienceTermMatch` predicate (no new matching logic here). Tiering
+ * (docs/superpowers/specs/2026-07-16-projects-narrative-quality-design.md,
+ * Component 1) makes a REQUIRED or DISQUALIFYING JD box decisive over
+ * concept-accumulated themes: live run fe421faf ranked activation by raw hit
+ * count alone and a required box (networking-protocols) lost the top-3 cut to
+ * themes hit by several merely-preferred JD strings. Zero activations is
+ * still the expected, common case -- the caller must treat that as a
+ * complete no-op, fail-closed to today's behaviour.
  */
 import { experienceTermMatch } from '../../ats/gate/experience-coverage.js';
 
@@ -24,7 +29,28 @@ export interface OperationsTheme {
 	readonly kinds: readonly string[];
 }
 
-const MAX_ACTIVATED_THEMES = 3;
+/**
+ * One flattened JD string plus the JD-signal tier it came from. The caller
+ * (`jdStringsForThemes`, operations-wiring.ts) is the sole place that maps
+ * `JdSignal` fields onto tiers -- kept out of this module so the ontology and
+ * scoring stay generic over ANY tier source.
+ */
+export interface TieredJdString {
+	readonly text: string;
+	readonly tier: 'disqualifying' | 'required' | 'preferred';
+}
+
+/** Per-hit scoring weight for each tier -- a disqualifying-tier hit outweighs
+ *  a required-tier hit, which outweighs a preferred-tier hit. Sum-based (not
+ *  max-based) so a theme repeatedly demonstrated in JD text still outranks a
+ *  theme hit exactly once, at the same tier. */
+const TIER_WEIGHT: Record<TieredJdString['tier'], number> = {
+	disqualifying: 3,
+	required: 2,
+	preferred: 1,
+};
+
+const MAX_ACTIVATED_THEMES = 4;
 
 /**
  * Seven entries, spec order preserved (docs/superpowers/specs/2026-07-16-
@@ -83,29 +109,33 @@ export const OPERATIONS_THEMES: readonly OperationsTheme[] = [
 	},
 ];
 
-/** Number of distinct `jdStrings` entries that demonstrate at least one of
- *  `theme.matchTerms` -- a theme's activation weight. */
-function countDistinctHits(theme: OperationsTheme, jdStrings: readonly string[]): number {
-	return jdStrings.filter((jdString) =>
-		theme.matchTerms.some((matchTerm) => experienceTermMatch(matchTerm, jdString)),
-	).length;
+/** Sum of `TIER_WEIGHT[tier]` over DISTINCT `jdStrings` entries that
+ *  demonstrate at least one of `theme.matchTerms` -- a theme's activation
+ *  score. A jd string that matches more than one of the theme's `matchTerms`
+ *  (e.g. "performance tuning" hits both `performance` and `tuning`) still
+ *  counts once, at its own tier's weight. */
+function scoreTheme(theme: OperationsTheme, jdStrings: readonly TieredJdString[]): number {
+	return jdStrings
+		.filter((jdString) => theme.matchTerms.some((matchTerm) => experienceTermMatch(matchTerm, jdString.text)))
+		.reduce((sum, jdString) => sum + TIER_WEIGHT[jdString.tier], 0);
 }
 
 /**
- * `jdStrings` = the caller's flattened `hardRequirements[].skill` + preferred
- * + concepts from `JdSignal` (kept pure here -- flattening is the caller's
- * job). A theme activates when ANY of its `matchTerms` `experienceTermMatch`
- * -es ANY jd string. Sorted by number of distinct jd strings hit, descending;
+ * `jdStrings` = the caller's flattened, tier-tagged `hardRequirements[].skill`
+ * + preferred + concepts from `JdSignal` (kept pure here -- flattening and
+ * tier-mapping are the caller's job, `jdStringsForThemes` in
+ * operations-wiring.ts). A theme activates when ANY of its `matchTerms`
+ * `experienceTermMatch`-es ANY jd string. Sorted by `scoreTheme`, descending;
  * ties keep `OPERATIONS_THEMES` order (stable sort over an already-ordered
- * list). Capped at 3 -- the projects agent has no use for a longer angle set
- * in one run.
+ * list). Capped at `MAX_ACTIVATED_THEMES` -- the projects agent has no use
+ * for a longer angle set in one run.
  */
-export function activateThemes(jdStrings: readonly string[]): OperationsTheme[] {
+export function activateThemes(jdStrings: readonly TieredJdString[]): OperationsTheme[] {
 	const scored = OPERATIONS_THEMES
-		.map((theme) => ({ theme, hits: countDistinctHits(theme, jdStrings) }))
-		.filter((scored) => scored.hits > 0);
+		.map((theme) => ({ theme, score: scoreTheme(theme, jdStrings) }))
+		.filter((scored) => scored.score > 0);
 
-	scored.sort((a, b) => b.hits - a.hits);
+	scored.sort((a, b) => b.score - a.score);
 
 	return scored.slice(0, MAX_ACTIVATED_THEMES).map((scored) => scored.theme);
 }

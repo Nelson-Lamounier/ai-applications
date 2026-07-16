@@ -1,5 +1,16 @@
 /** @format */
-import { OPERATIONS_THEMES, activateThemes } from '../operations-themes.js';
+import { OPERATIONS_THEMES, activateThemes, type TieredJdString } from '../operations-themes.js';
+
+/** All-'preferred' fixtures below don't care about tiering -- weight is
+ *  uniform, so relative ranking still reduces to distinct-hit counting,
+ *  preserving the pre-tiering semantics those tests assert on. */
+function preferred(text: string): TieredJdString {
+	return { text, tier: 'preferred' };
+}
+
+function required(text: string): TieredJdString {
+	return { text, tier: 'required' };
+}
 
 describe('OPERATIONS_THEMES', () => {
 	it('has exactly the seven ontology entries, keys in spec order', () => {
@@ -37,43 +48,59 @@ describe('OPERATIONS_THEMES', () => {
 	});
 });
 
-describe('activateThemes', () => {
-	it('activates database-operations + backup-recovery + one more for a MongoDB-TSE-shaped JD, ordered by hit count, capped at 3', () => {
-		const jdStrings = [
-			'production database systems',
-			'MongoDB administration',
-			'PostgreSQL replication',
-			'backup and recovery',
-			'disaster recovery planning',
-			'performance tuning',
-			'Kubernetes',
-			'networking (DNS, TCP/IP, SSL/TLS)',
+describe('activateThemes -- tier-weighted scoring', () => {
+	it('a required box (networking-protocols) activates within the cap-4 top set alongside a disqualifying + required-heavy JD, ordered by weighted score', () => {
+		// Regression fixture for live run fe421faf: under the OLD raw-hit-count
+		// ranking + cap 3, networking-protocols (a single required-tier hit)
+		// lost the top-3 cut to themes accumulated purely from preferred-tier
+		// concept strings. Tier weighting (disqualifying=3, required=2,
+		// preferred=1) plus cap 4 must let it through.
+		const jdStrings: TieredJdString[] = [
+			{ text: 'MongoDB administration', tier: 'disqualifying' }, // -> database-operations
+			{ text: 'backup and recovery', tier: 'required' },         // -> backup-recovery
+			{ text: 'networking (DNS, TCP/IP, SSL/TLS)', tier: 'required' }, // -> networking-protocols
+			{ text: 'PostgreSQL replication', tier: 'preferred' },     // -> database-operations (2nd hit)
+			{ text: 'disaster recovery planning', tier: 'preferred' }, // -> backup-recovery (2nd hit)
+			{ text: 'performance tuning', tier: 'preferred' },         // -> performance-tuning
+			{ text: 'Kubernetes', tier: 'preferred' },                 // -> cluster-orchestration
 		];
+
 		const activated = activateThemes(jdStrings);
 
-		expect(activated).toHaveLength(3);
+		expect(activated).toHaveLength(4);
 		expect(activated.map((t) => t.key)).toEqual([
-			'database-operations',
-			'backup-recovery',
-			'performance-tuning',
+			'database-operations', // disqualifying(3) + preferred(1) = 4
+			'backup-recovery',     // required(2) + preferred(1) = 3
+			'networking-protocols', // required(2) = 2
+			'performance-tuning',  // preferred(1); ties cluster-orchestration(1), wins ontology-order tie-break
 		]);
 	});
 
+	it('a higher tier wins a tied raw-hit-count against an earlier-ontology-order preferred theme', () => {
+		// storage (idx 2) and networking-protocols (idx 3) each get exactly one
+		// distinct hit. Under raw-count-only ranking the ontology-order
+		// tie-break would put storage first regardless of tier; tier weighting
+		// must put the required-tier hit ahead instead.
+		const jdStrings: TieredJdString[] = [preferred('storage volumes'), required('networking protocols')];
+		const activated = activateThemes(jdStrings);
+		expect(activated.map((t) => t.key)).toEqual(['networking-protocols', 'storage']);
+	});
+
 	it('activates ZERO themes for a frontend-only JD', () => {
-		const jdStrings = ['React', 'CSS', 'web vitals', 'accessibility', 'responsive design'];
+		const jdStrings = ['React', 'CSS', 'web vitals', 'accessibility', 'responsive design'].map(preferred);
 		expect(activateThemes(jdStrings)).toEqual([]);
 	});
 
 	it('matches through experienceTermMatch -- a single "PostgreSQL" jd string activates database-operations', () => {
-		const activated = activateThemes(['PostgreSQL']);
+		const activated = activateThemes([preferred('PostgreSQL')]);
 		expect(activated.map((t) => t.key)).toEqual(['database-operations']);
 	});
 
-	it('breaks ties by ontology order when hit counts are equal', () => {
+	it('breaks ties by ontology order when weighted scores are equal (same tier, one hit each)', () => {
 		// storage (pos 3) and security-hardening (pos 5) each hit exactly one
-		// distinct jd string here -- storage must sort first (earlier in
-		// OPERATIONS_THEMES) despite matchTerms being iterated independently.
-		const jdStrings = ['storage volumes', 'security authentication'];
+		// distinct jd string, at the same tier -- storage must sort first
+		// (earlier in OPERATIONS_THEMES).
+		const jdStrings = ['storage volumes', 'security authentication'].map(preferred);
 		const activated = activateThemes(jdStrings);
 		expect(activated.map((t) => t.key)).toEqual(['storage', 'security-hardening']);
 	});
@@ -82,8 +109,9 @@ describe('activateThemes', () => {
 		// "performance tuning" hits both the "performance" and "tuning"
 		// matchTerms of performance-tuning, but that is only ONE distinct jd
 		// string -- it must not outrank backup-recovery, which is hit by two
-		// separate jd strings below.
-		const jdStrings = ['performance tuning', 'backup and recovery', 'disaster recovery'];
+		// separate jd strings below (same tier throughout, so this isolates
+		// distinct-counting from tier weighting).
+		const jdStrings = ['performance tuning', 'backup and recovery', 'disaster recovery'].map(required);
 		const activated = activateThemes(jdStrings);
 		expect(activated.map((t) => t.key)).toEqual(['backup-recovery', 'performance-tuning']);
 	});
