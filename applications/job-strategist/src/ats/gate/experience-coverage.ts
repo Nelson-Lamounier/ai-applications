@@ -166,16 +166,28 @@ function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
 // lines that demonstrate the skill in synonym vocabulary (partnered,
 // coordinated, end-to-end resolution) without ever using the JD's token.
 //
-// Fail-closed by construction, two conditions both required:
-//  - EVERY emphasis-stripped, stemmed target token must sit inside the
-//    group's `vocab` -- the target has to BE the soft skill, so a tech
-//    phrase that merely contains a soft-skill token ("collaboration tools
-//    (Jira, Confluence)") never rides the group;
+// Fail-closed by construction, three conditions all required:
+//  - at least ONE target token must be in the group's `anchors` -- the
+//    concept word itself (collaboration/teamwork; full/stack/end), so a
+//    generic satellite token alone ("teams", "troubleshooting") never
+//    rides the group and stays with passes 1-4;
+//  - EVERY target token must sit inside the group's `vocab` -- the target
+//    has to BE the soft skill, so a tech phrase that merely contains a
+//    soft-skill token ("collaboration tools (Jira, Confluence)") never
+//    rides the group;
 //  - EVERY regex in `evidence` must match `text` -- "full-stack
 //    troubleshooting" needs BOTH a span signal (end-to-end / full-stack /
 //    across the stack) AND a troubleshooting/resolution signal, so a line
 //    about shipping a feature end-to-end does not credit it.
+//
+// Tokens are RAW `tokenize` output (stemmed), deliberately NOT
+// `emphasisStrippedTokens`: that helper strips management/analysis/
+// engineering, which for THIS pass are part of the requirement's meaning --
+// "team management" must never collapse to a bare {team} that rides the
+// collaboration group (review-found over-credit; a false credit cascades
+// through anchorsFor into a quoted grounding line).
 interface SoftSkillSynonymGroup {
+  readonly anchors: ReadonlySet<string>;
   readonly vocab: ReadonlySet<string>;
   readonly evidence: readonly RegExp[];
 }
@@ -183,20 +195,23 @@ interface SoftSkillSynonymGroup {
 const SOFT_SKILL_SYNONYM_GROUPS: readonly SoftSkillSynonymGroup[] = [
   {
     // Stemmed forms (lightStem strips -ing: collaborating -> collaborat).
+    anchors: new Set(['collaboration', 'collaborate', 'collaborated', 'collaborat', 'collaborative', 'teamwork']),
     vocab: new Set([
       'collaboration', 'collaborate', 'collaborated', 'collaborat', 'collaborative',
       'teamwork', 'team', 'teams', 'cross', 'functional', 'stakeholder', 'stakeholders',
     ]),
-    // Prefix-stem alternation (partner -> partnered/partnering/partnership)
-    // keeps the pattern simple; the \b prefix anchor is the guard that matters.
+    // Verb forms only -- noun uses ("AWS partners programme", "user
+    // engagement metrics") must not read as collaboration evidence.
     evidence: [
-      /\b(partner|coordinat|collaborat|liais|engag)\w*|\bcross[- ](functional|team)\b/i,
+      /\b(partner|engag)(ed|ing)\b|\b(coordinat|collaborat|liais)\w*|\bcross[- ]functional\b/i,
     ],
   },
   {
+    anchors: new Set(['full', 'stack', 'fullstack', 'end']),
+    // Stemmed forms: troubleshooting -> troubleshoot, debugging -> debugg.
     vocab: new Set([
-      'full', 'stack', 'fullstack', 'end', 'troubleshoot', 'troubleshooting', 'troubleshot',
-      'debugging', 'debug', 'diagnosis', 'diagnostics',
+      'full', 'stack', 'fullstack', 'end', 'to', 'troubleshoot', 'troubleshot',
+      'debugg', 'debug', 'diagnosis', 'diagnostics',
     ]),
     evidence: [
       /\b(end[- ]to[- ]end|full[- ]stack|across the stack)\b/i,
@@ -206,9 +221,10 @@ const SOFT_SKILL_SYNONYM_GROUPS: readonly SoftSkillSynonymGroup[] = [
 ];
 
 function softSkillSynonymMatch(targetSkill: string, text: string): boolean {
-  const stemmedTokens = emphasisStrippedTokens(targetSkill).map(lightStem);
+  const stemmedTokens = tokenize(targetSkill).map(lightStem);
   return SOFT_SKILL_SYNONYM_GROUPS.some((group) =>
-    stemmedTokens.every((token) => group.vocab.has(token))
+    stemmedTokens.some((token) => group.anchors.has(token))
+    && stemmedTokens.every((token) => group.vocab.has(token))
     && group.evidence.every((re) => re.test(text)));
 }
 

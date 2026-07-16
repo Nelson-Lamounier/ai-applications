@@ -222,6 +222,23 @@ describe('experienceTermMatch', () => {
       const text = 'Maintained Terraform modules for the shared VPC baseline.';
       expect(experienceTermMatch('collaboration', text)).toBe(false);
     });
+
+    it('REVIEW GUARD: "team management" never collapses to a bare {team} that rides the group -- '
+      + 'stays false against a noun-only "engagement" line', () => {
+      const text = 'Analysed user engagement metrics to prioritise the roadmap.';
+      expect(experienceTermMatch('team management', text)).toBe(false);
+    });
+
+    it('REVIEW GUARD: "stakeholder management" stays false against a partner-as-noun line', () => {
+      const text = 'Integrated with AWS Partner Central APIs and synced partner programme data feeds.';
+      expect(experienceTermMatch('stakeholder management', text)).toBe(false);
+    });
+
+    it('REVIEW GUARD: a bare satellite token ("teams", "troubleshooting") never rides a group '
+      + 'without its anchor concept word', () => {
+      expect(experienceTermMatch('teams', 'Partnered with the platform group on rollouts.')).toBe(false);
+      expect(experienceTermMatch('troubleshooting', 'Owned end-to-end technical resolution of cases.')).toBe(false);
+    });
   });
 });
 
