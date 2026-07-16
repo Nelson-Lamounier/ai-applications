@@ -7,9 +7,16 @@
  * grouped ATS targets, the fixed composition rules, and -- on a re-write
  * pass -- the previous draft plus the targets it missed.
  */
-import type { ProjectPoolEntry } from '../evidence/project-agent-inputs.js';
+import type { ProjectPoolEntry, RepoCurrentFact } from '../evidence/project-agent-inputs.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { PROJECTS_MAX_BULLETS_PER_ENTRY } from './projects-provenance.js';
+import { OPERATIONS_THEMES } from '../evidence/operations-themes.js';
+
+/** Theme labels (operations-themes.ts) -- a repo-current fact whose `skill`
+ *  is one of these came from `gatherOperationsEvidence`, not the JD-wide
+ *  matcher, and renders under its own "Operations evidence" sub-heading so
+ *  the agent sees the operations angle distinctly (Component 3). */
+const OPERATIONS_THEME_LABELS = new Set(OPERATIONS_THEMES.map((t) => t.label));
 
 export interface ProjectsMessageInput {
   readonly pool: readonly ProjectPoolEntry[];
@@ -19,12 +26,21 @@ export interface ProjectsMessageInput {
   readonly rewriteMissing?: readonly string[];
 }
 
+/** True when a repo-current fact's `skill` is an operations-theme label --
+ *  i.e. it came from `gatherOperationsEvidence`, not the JD-wide matcher. */
+function isOperationsFact(f: RepoCurrentFact): boolean {
+  return OPERATIONS_THEME_LABELS.has(f.skill);
+}
+
 /** One project's two-lane block: curated bullets (quote-only) and
  *  repo-current facts (composable, chosen purely by JD relevance up to the
  *  SAME per-entry bullet cap as curated bullets, PROJECTS_MAX_BULLETS_PER_ENTRY
  *  -- Task 3 lifted the old separate "capped at 2 per project" composed-only
  *  allowance so curated and composed bullets compete for slots on equal
- *  footing rather than composed evidence losing to a stale curated bullet). */
+ *  footing rather than composed evidence losing to a stale curated bullet).
+ *  Repo-current facts whose skill is an operations-theme label render under
+ *  a separate "Operations evidence" sub-heading -- both lanes are still
+ *  citable ids in the SAME repo-current pool the model may compose from. */
 function projectBlock(p: ProjectPoolEntry): string[] {
   const out = [
     '',
@@ -33,8 +49,14 @@ function projectBlock(p: ProjectPoolEntry): string[] {
     'Curated bullets (quote-only, select by id):',
   ];
   for (const b of p.curated) out.push(`[${b.id}] ${b.text}`);
+  const opsFacts = p.repoCurrent.filter(isOperationsFact);
+  const otherFacts = p.repoCurrent.filter((f) => !isOperationsFact(f));
   out.push('Repo-current evidence (compose ONLY when a fact beats every curated bullet for JD relevance, cite ids):');
-  for (const f of p.repoCurrent) out.push(`[${f.id}] ${f.skill} -- ${f.sourceCitation}`);
+  for (const f of otherFacts) out.push(`[${f.id}] ${f.skill} -- ${f.sourceCitation}`);
+  if (opsFacts.length > 0) {
+    out.push('Operations evidence (how this system is OPERATED -- compose from these when the JD targets are operations-flavoured, cite ids):');
+    for (const f of opsFacts) out.push(`[${f.id}] ${f.skill} -- ${f.sourceCitation}`);
+  }
   return out;
 }
 

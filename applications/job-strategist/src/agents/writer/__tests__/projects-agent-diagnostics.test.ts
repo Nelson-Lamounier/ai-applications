@@ -1,7 +1,8 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
-import { logProjectsAgentEvents, projectsAgentOutcome, type ProjectsAgentLogKeys } from '../projects-agent-diagnostics.js';
-import type { ProjectsAgentDiagnostics } from '../projects-ats-flow.js';
+import { logProjectsAgentEvents, logProjectsThemeEvidence, projectsAgentOutcome, type ProjectsAgentLogKeys } from '../projects-agent-diagnostics.js';
+import { EMPTY_OPERATIONS_THEMES_DIAG, type ProjectsAgentDiagnostics } from '../projects-ats-flow.js';
+import type { VerifiedMatch } from '../../evidence/project-agent-inputs.js';
 
 const keys: ProjectsAgentLogKeys = { pipelineRunId: 'pr1', applicationId: 'app1', traceId: 'tr1' };
 
@@ -13,6 +14,7 @@ const rewrittenDiag: ProjectsAgentDiagnostics = {
   provenance: { firstViolations: [], rewriteViolations: ['line-3-not-cited'], composedCount: 2 },
   unresolvedRepos: [],
   normalisedExtras: 0,
+  themes: EMPTY_OPERATIONS_THEMES_DIAG,
 };
 
 describe('logProjectsAgentEvents', () => {
@@ -66,6 +68,7 @@ describe('logProjectsAgentEvents', () => {
       provenance: { firstViolations: [], rewriteViolations: [], composedCount: 0 },
       unresolvedRepos: [],
       normalisedExtras: 0,
+      themes: EMPTY_OPERATIONS_THEMES_DIAG,
     };
     logProjectsAgentEvents({ info } as never, keys, fbDiag);
     const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
@@ -121,5 +124,32 @@ describe('projectsAgentOutcome', () => {
       provenance: { firstViolations: [], rewriteViolations: [], composedCount: 0 },
     };
     expect(projectsAgentOutcome(fb)).toEqual({ outcome: 'fallback', reason: 'agent-error' });
+  });
+});
+
+describe('logProjectsThemeEvidence', () => {
+  const matches: VerifiedMatch[] = [
+    { skill: 'database operations', sourceCitation: 'pgbouncer transaction pooling', evidenceFiles: ['o/tucaken-app/docs/db.md'] },
+    { skill: 'database operations', sourceCitation: 'schema migration ledger', evidenceFiles: ['o/tucaken-app/docs/migrations.md'] },
+    { skill: 'cluster orchestration', sourceCitation: 'EKS node autoscaling', evidenceFiles: ['o/tucaken-infra/docs/eks.md'] },
+  ];
+
+  it('emits projects_theme_evidence nested theme key -> repo -> count when matches is non-empty', () => {
+    const info = jest.fn();
+    logProjectsThemeEvidence({ info } as never, keys, matches);
+    expect(info).toHaveBeenCalledTimes(1);
+    const [payload] = info.mock.calls[0] as [Record<string, unknown>];
+    expect(payload['event']).toBe('projects_theme_evidence');
+    expect(payload['pipeline_run_id']).toBe('pr1');
+    expect(payload['themes']).toEqual({
+      'database-operations': { 'o/tucaken-app': 2 },
+      'cluster-orchestration': { 'o/tucaken-infra': 1 },
+    });
+  });
+
+  it('emits nothing when matches is empty', () => {
+    const info = jest.fn();
+    logProjectsThemeEvidence({ info } as never, keys, []);
+    expect(info).not.toHaveBeenCalled();
   });
 });

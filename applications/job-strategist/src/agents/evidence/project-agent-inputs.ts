@@ -61,6 +61,11 @@ export interface ProjectAgentMeta {
     readonly tagline: string;
     readonly repositoryIds: readonly string[];
     readonly repoFullNames: readonly string[];
+    /** Repo full name -> `project_components.kind` ('backend' | 'ml' | 'infra')
+     *  for every repo in `repoFullNames`. Feeds the operations-evidence kind
+     *  scoping (operations-evidence.ts) -- a repo missing from this map (or
+     *  with an unrecognised kind) simply matches no theme's `kinds`. */
+    readonly repoKinds: ReadonlyMap<string, string>;
 }
 
 export interface RepoLookupRow {
@@ -150,21 +155,34 @@ interface ProjectRepositoryRow {
     readonly repository_id: string;
     readonly full_name: string;
     readonly github_repo_id: number | null;
+    /** `project_components.kind` ('backend' | 'ml' | 'infra'); undefined on
+     *  fixtures/mocks predating the kind join -- treated as unknown ('',
+     *  matches no theme). */
+    readonly kind?: string;
+}
+
+export interface ProjectAgentLoadResult {
+    readonly bulletSets: readonly ProjectAgentBulletSet[];
+    readonly projectMeta: readonly ProjectAgentMeta[];
+    readonly repoLookup: ReadonlyMap<string, RepoLookupRow>;
 }
 
 /**
- * Load the two-lane pool for the Projects agent: documented projects +
- * their owned repository IDs (for fail-closed attribution) + the curated
- * resume bullets already written for each. Runs inside `withUserRls` -- the
- * same pgbouncer-transaction-pooling discipline as `project-evidence-block.ts`
- * (see its header comment): the `app.current_user_id` GUC must be set in the
- * SAME transaction as the SELECTs or per-user RLS silently returns 0 rows.
+ * Load-only half of the two-lane pool build: documented projects, their
+ * owned repository IDs/kinds, and the curated resume bullets already
+ * written for each -- everything `gatherOperationsEvidence` (operations-
+ * evidence.ts) needs from `projectMeta` BEFORE the pool's `verifiedMatches`
+ * set is final (it must append its own matches first). Split out of
+ * `loadProjectAgentInputs` for exactly that ordering: the run-pipeline
+ * caller loads meta here, gathers operations evidence against it, then
+ * calls `buildProjectPool` itself with the combined match list --
+ * `buildProjectPool` stays untouched either way. Runs inside `withUserRls`
+ * -- the same pgbouncer-transaction-pooling discipline as
+ * `project-evidence-block.ts` (see its header comment): the
+ * `app.current_user_id` GUC must be set in the SAME transaction as the
+ * SELECTs or per-user RLS silently returns 0 rows.
  */
-export async function loadProjectAgentInputs(
-    pool: Pool,
-    userId: string,
-    verifiedMatches: readonly VerifiedMatch[],
-): Promise<ProjectAgentInputs> {
+export async function loadProjectAgentMeta(pool: Pool, userId: string): Promise<ProjectAgentLoadResult> {
     const { projects, projectRepositories } = await withUserRls(pool, userId, async (client) => {
         const projectsResult = await client.query<ProjectRow>(
             `SELECT p.id, p.name, COALESCE(p.pitch, '') AS pitch, COALESCE(p.tagline, '') AS tagline
@@ -173,7 +191,7 @@ export async function loadProjectAgentInputs(
             [userId],
         );
         const projectRepositoriesResult = await client.query<ProjectRepositoryRow>(
-            `SELECT pc.project_id, pr.repository_id, r.full_name, r.github_repo_id
+            `SELECT pc.project_id, pr.repository_id, r.full_name, r.github_repo_id, pc.kind
                FROM project_repositories pr
                JOIN project_components pc ON pc.id = pr.project_component_id
                JOIN repositories r ON r.id = pr.repository_id
@@ -188,6 +206,7 @@ export async function loadProjectAgentInputs(
     const repoLookup = new Map<string, RepoLookupRow>();
     const repositoryIdsByProject = new Map<string, string[]>();
     const repoFullNamesByProject = new Map<string, string[]>();
+    const repoKindsByProject = new Map<string, Map<string, string>>();
     for (const row of projectRepositories) {
         repoLookup.set(row.full_name, { id: row.repository_id, githubRepoId: row.github_repo_id });
         const ids = repositoryIdsByProject.get(row.project_id) ?? [];
@@ -196,6 +215,9 @@ export async function loadProjectAgentInputs(
         const names = repoFullNamesByProject.get(row.project_id) ?? [];
         names.push(row.full_name);
         repoFullNamesByProject.set(row.project_id, names);
+        const kinds = repoKindsByProject.get(row.project_id) ?? new Map<string, string>();
+        kinds.set(row.full_name, row.kind ?? '');
+        repoKindsByProject.set(row.project_id, kinds);
     }
 
     const projectMeta: ProjectAgentMeta[] = projects.map((p) => ({
@@ -205,7 +227,24 @@ export async function loadProjectAgentInputs(
         tagline: p.tagline,
         repositoryIds: repositoryIdsByProject.get(p.id) ?? [],
         repoFullNames: repoFullNamesByProject.get(p.id) ?? [],
+        repoKinds: repoKindsByProject.get(p.id) ?? new Map<string, string>(),
     }));
 
+    return { bulletSets, projectMeta, repoLookup };
+}
+
+/**
+ * Load the two-lane pool for the Projects agent -- `loadProjectAgentMeta`
+ * followed by `buildProjectPool`. Kept as the simple, single-call entry
+ * point for callers that do not need to gather operations evidence between
+ * the two (e.g. tests); run-pipeline.ts calls the split functions directly
+ * instead (see `loadProjectAgentMeta`'s doc comment).
+ */
+export async function loadProjectAgentInputs(
+    pool: Pool,
+    userId: string,
+    verifiedMatches: readonly VerifiedMatch[],
+): Promise<ProjectAgentInputs> {
+    const { bulletSets, projectMeta, repoLookup } = await loadProjectAgentMeta(pool, userId);
     return buildProjectPool(bulletSets, projectMeta, repoLookup, verifiedMatches);
 }
