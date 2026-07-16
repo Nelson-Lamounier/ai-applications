@@ -1,5 +1,5 @@
 /** @format */
-import { matchTier1 } from '../matching/keyword-match.js';
+import { matchTier1, normalizeTerm, padded } from '../matching/keyword-match.js';
 import type { ExperienceAtsTarget } from './experience-ats-targets.js';
 import type { SummaryCoverage } from './summary-coverage.js';
 
@@ -53,29 +53,131 @@ function stemText(text: string): string {
   return text.replace(/[A-Za-z]+/g, (word) => lightStem(word));
 }
 
-/**
- * Experience-lane term match: does `text` demonstrate `targetSkill` in the
- * JD's vocabulary, without demanding its exact wording? Delegates entirely
- * to `matchTier1` (literal/normalized substring, in-sentence proximity,
- * language-category credit) after two experience-lane-only transforms:
- *
- *  1. Drop `EXPERIENCE_EMPHASIS_TOKENS` from the target's tokens -- if that
- *     strips every token (an all-emphasis target like "mission critical"),
- *     fall back to the unstripped set so the requirement is never empty.
- *  2. `lightStem` the remaining target tokens AND every token of `text`, so
- *     "rapid technical learning" bridges a bullet mentioning "learn" and
- *     "scripting" bridges one mentioning "script".
- *
- * Single source of matching truth for the experience lane -- also used by
- * `anchorsFor` in experience-ats-targets.ts, so "a career line term-matches
- * a target" means exactly one thing in both places.
- */
-export function experienceTermMatch(targetSkill: string, text: string): boolean {
+/** Drop `EXPERIENCE_EMPHASIS_TOKENS` from `targetSkill`'s tokens -- if that
+ *  strips every token (an all-emphasis target like "mission critical"), fall
+ *  back to the unstripped set so the requirement is never empty. Shared by
+ *  both the unstemmed and stemmed passes below so they strip identically. */
+function emphasisStrippedTokens(targetSkill: string): string[] {
   const tokens = tokenize(targetSkill);
   const significant = tokens.filter((t) => !EXPERIENCE_EMPHASIS_TOKENS.has(t));
-  const kept = significant.length > 0 ? significant : tokens;
-  const strippedTargetJoined = kept.map(lightStem).join(' ');
-  return matchTier1(strippedTargetJoined, stemText(text));
+  return significant.length > 0 ? significant : tokens;
+}
+
+/**
+ * Pass 1 (G2, run 976403b3): `matchTier1` on the emphasis-stripped target
+ * WITHOUT lightStem, against the RAW (unstemmed) text. Restores two things
+ * the stemmed pass below defeats: exact-phrase substring matching (a stemmed
+ * word is rarely a real word any more), and matchTier1's own built-in
+ * language-category cue -- which tests the RAW target string for a literal
+ * "languages"/"scripting"/"programming"/"coding" word and credits it when the
+ * RAW text names a real language exemplar. Stemming "scripting" -> "script"
+ * silently broke that cue's `\bscripting\b` match before this pass existed.
+ */
+function unstemmedMatch(targetSkill: string, text: string): boolean {
+  const joined = emphasisStrippedTokens(targetSkill).join(' ');
+  return matchTier1(joined, text);
+}
+
+/** Pass 2: the pre-existing behaviour -- `lightStem` the remaining target
+ *  tokens AND every token of `text`, so "rapid technical learning" bridges a
+ *  bullet mentioning "learn" and "scripting" bridges one mentioning "script". */
+function stemmedMatch(targetSkill: string, text: string): boolean {
+  const joined = emphasisStrippedTokens(targetSkill).map(lightStem).join(' ');
+  return matchTier1(joined, stemText(text));
+}
+
+/** Passes 1-2 combined -- the "does the core (non-enumeration) phrase match"
+ *  check, reused both for the full target and for an enumeration's base
+ *  phrase (pass 3 below). */
+function matchesCoreTerm(targetSkill: string, text: string): boolean {
+  return unstemmedMatch(targetSkill, text) || stemmedMatch(targetSkill, text);
+}
+
+// Pass 3: a target shaped `base (m1, m2, ... [, etc.])` -- e.g. "scripting
+// (Python, Java, JavaScript, Go, etc.)". Flattening every member into one
+// co-occurrence check (the pre-G2 behaviour) demanded ALL of them appear in
+// ONE bullet, which is not what an enumeration means: the JD is naming
+// examples of the base requirement, not asking for every example at once.
+//
+// Plain string ops rather than a single `base (...)` regex -- a `.*?` before
+// a `(...)` group is backtracking-prone on adversarial input; indexOf/slice
+// is both linear and clearer for this exact shape.
+function splitEnumeration(targetSkill: string): { base: string; membersRaw: string } | null {
+  const trimmed = targetSkill.trim();
+  if (!trimmed.endsWith(')')) return null;
+  const openIdx = trimmed.indexOf('(');
+  if (openIdx === -1) return null;
+  return { base: trimmed.slice(0, openIdx).trim(), membersRaw: trimmed.slice(openIdx + 1, -1) };
+}
+
+/**
+ * Split an enumeration-shaped target into its base phrase and member tokens;
+ * covered when the BASE matches via passes 1-2 above, OR any ONE member
+ * token appears whole-word (normalized) in `text`. `normalizeTerm` already
+ * drops "etc"/"etc." (a QUALIFIERS entry), so the trailing "etc." in the
+ * source pattern needs no special-casing here. Returns `false` for a
+ * non-enumeration target (no parenthetical suffix).
+ */
+function enumerationMatch(targetSkill: string, text: string): boolean {
+  const split = splitEnumeration(targetSkill);
+  if (!split) return false;
+
+  if (split.base.length > 0 && matchesCoreTerm(split.base, text)) return true;
+
+  const paddedText = padded(text);
+  const members = split.membersRaw.split(',').map((member) => normalizeTerm(member)).filter((m) => m.length > 0);
+  return members.some((member) => paddedText.includes(` ${member} `));
+}
+
+// Pass 4 (lane-local cue extension): a raw target in the code
+// reading/comprehension class ("code reading", "code review(s)", "code
+// comprehension", "reading code") is treated as language-cue class --
+// covered when the text names a real language exemplar. Deliberately
+// NARROW: a bare `\bcode\b` over-credits ("code of conduct" plus any
+// Python mention anywhere would score as covered), so the cue only fires
+// on the reading/comprehension phrases above. `keyword-match.ts`'s own
+// LANG_CATEGORY_CUE/LANGUAGE_EXEMPLARS (source of this list) only test for
+// "languages?/scripting/programming/coding", never "code", and are not
+// exported, so the exemplar list is re-declared here, lane-local, kept
+// identical to keyword-match.ts's own copy.
+const LANE_CODE_CUE = /\bcode (reading|review(s)?|comprehension)\b|\breading code\b/i;
+const LANE_LANGUAGE_EXEMPLARS = [
+  ' python ', ' bash ', ' shell ', ' powershell ', ' sql ', ' javascript ', ' typescript ',
+  ' golang ', ' java ', ' ruby ', ' rust ', ' kotlin ', ' scala ', ' perl ',
+];
+
+function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
+  if (!LANE_CODE_CUE.test(targetSkill)) return false;
+  const paddedText = padded(text);
+  return LANE_LANGUAGE_EXEMPLARS.some((exemplar) => paddedText.includes(exemplar));
+}
+
+/**
+ * Experience-lane term match: does `text` demonstrate `targetSkill` in the
+ * JD's vocabulary, without demanding its exact wording? A four-way OR, still
+ * pure and deterministic:
+ *
+ *  1. `unstemmedMatch` -- exact-phrase + matchTier1's own raw language cue.
+ *  2. `stemmedMatch` -- the original morphology-bridging pass (rapidly->rapid).
+ *  3. `enumerationMatch` -- a `base (m1, m2, ...)` target covered by its base
+ *     OR any one member token named in `text`.
+ *  4. `laneLanguageCueMatch` -- a target in the code reading/comprehension
+ *     class ("code reading"/"code review(s)"/"code comprehension"/"reading
+ *     code" -- NOT a bare "code" token) covered when `text` names a real
+ *     language.
+ *
+ * Single source of matching truth for the experience lane -- also used by
+ * `anchorsFor` in experience-ats-targets.ts and the projects lane (via
+ * `scoreProjectsCoverage`/deterministic fallback ranking), so "a bullet
+ * term-matches a target" means exactly one thing everywhere it is asked.
+ * Fail-closed intent preserved: a target outside the narrowed cue class,
+ * with no enumeration members and no term match across every check, stays
+ * missing -- "code of conduct" never rides the language cue.
+ */
+export function experienceTermMatch(targetSkill: string, text: string): boolean {
+  return matchesCoreTerm(targetSkill, text)
+    || enumerationMatch(targetSkill, text)
+    || laneLanguageCueMatch(targetSkill, text);
 }
 
 export interface ScorableBullet {

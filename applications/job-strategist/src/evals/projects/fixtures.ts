@@ -100,6 +100,18 @@ export const GOLDEN_TWO_LANE: ProjectsEvalInput = {
     atsTargets: INFRA_TARGETS,
 };
 
+// ---------------------------------------------------------------------------
+// G1 (run 976403b3): the projects agent emitted `entries` as a stringified
+// JSON array (constrained-decoding slip) -> zod invalid_type -> a fourth
+// consecutive fallback. This is the live failure shape verbatim: a
+// well-formed `GOLDEN_OUTPUT.entries` array, but stringified rather than a
+// real array -- `normaliseProjectsAgentOutput` must parse-and-substitute it
+// so the paid-for generation is kept.
+// ---------------------------------------------------------------------------
+export const STRINGIFIED_ENTRIES_RAW_PAYLOAD: { entries: string } = {
+    entries: JSON.stringify(GOLDEN_OUTPUT.entries),
+};
+
 /**
  * Adversarial: Tucaken's lead highlight cites Portfolio's curated bullet
  * (p1.b0) instead of its own (p0.b1) -- trips ONLY `provenanceGrader`

@@ -86,4 +86,45 @@ describe('normaliseProjectsAgentOutput', () => {
     expect(normaliseProjectsAgentOutput('nope')).toEqual({ output: 'nope', normalisedExtras: 0 });
     expect(normaliseProjectsAgentOutput({ entries: 'nope' })).toEqual({ output: { entries: 'nope' }, normalisedExtras: 0 });
   });
+
+  // G1 (run 976403b3): the projects agent emitted `entries` as a stringified
+  // JSON array (constrained-decoding slip) -> zod invalid_type -> a fourth
+  // consecutive fallback. Parse-and-substitute keeps the paid-for output;
+  // anything non-parsable/non-array stays passthrough so zod still hard-rejects.
+  describe('G1: stringified entries tolerance', () => {
+    it('parses a stringified JSON array of valid entries, substitutes it, and normalises per-item -- extras counts the parse (+1) plus any per-item strips', () => {
+      const validEntries = [
+        { name: 'X', github: '', description: 'a model-authored pitch', highlights: [{ bulletId: 'p0.b0' }] },
+      ];
+      const raw = { entries: JSON.stringify(validEntries) };
+
+      const { output, normalisedExtras } = normaliseProjectsAgentOutput(raw);
+
+      // +1 for the string->array parse-substitute, +1 for the discarded description.
+      expect(normalisedExtras).toBe(2);
+      const parsed = ProjectsAgentOutputSchema.parse(output);
+      expect(parsed.entries[0]!.description).toBe('');
+      expect(parsed.entries[0]!.highlights).toEqual([{ bulletId: 'p0.b0' }]);
+    });
+
+    it('passes a non-JSON string through unchanged -- the schema still rejects it', () => {
+      const raw = { entries: 'not json at all {{{' };
+
+      const { output, normalisedExtras } = normaliseProjectsAgentOutput(raw);
+
+      expect(normalisedExtras).toBe(0);
+      expect(output).toEqual(raw);
+      expect(() => ProjectsAgentOutputSchema.parse(output)).toThrow();
+    });
+
+    it('passes a stringified NON-array (valid JSON, wrong shape) through unchanged -- the schema still rejects it', () => {
+      const raw = { entries: JSON.stringify({ name: 'not an array' }) };
+
+      const { output, normalisedExtras } = normaliseProjectsAgentOutput(raw);
+
+      expect(normalisedExtras).toBe(0);
+      expect(output).toEqual(raw);
+      expect(() => ProjectsAgentOutputSchema.parse(output)).toThrow();
+    });
+  });
 });

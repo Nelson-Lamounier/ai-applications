@@ -95,6 +95,85 @@ describe('experienceTermMatch', () => {
       + 'maintained an internal database of vendor contacts for procurement.';
     expect(experienceTermMatch('production database', text)).toBe(false);
   });
+
+  // G2 (run 976403b3): the target was stemmed before matchTier1 saw it, so
+  // matchTier1's own LANG_CATEGORY_CUE (raw "scripting"/"languages"/
+  // "programming"/"coding" + a real language named in the text) never fired,
+  // and an enumeration target like "scripting (Python, Java, JavaScript, Go,
+  // etc.)" was scored as requiring every language token in ONE bullet.
+  describe('G2: enumeration + language-cue coverage', () => {
+    const jsToolingText = 'Read legacy JavaScript code and wrote scripting utilities for the build pipeline.';
+
+    it('an enumeration target is covered when the text names just ONE member language', () => {
+      expect(experienceTermMatch('scripting (Python, Java, JavaScript, Go, etc.)', jsToolingText)).toBe(true);
+    });
+
+    it('ENUMERATION ISOLATE: the member path alone credits "database systems (Oracle, MongoDB)" against '
+      + 'a bullet naming only MongoDB -- the base phrase does NOT match this text on its own', () => {
+      const text = 'Migrated the user store to MongoDB with zero downtime.';
+      // Prove isolation: the bare base fails against this text, so only the
+      // member path can be crediting the enumeration form below.
+      expect(experienceTermMatch('database systems', text)).toBe(false);
+      expect(experienceTermMatch('database systems (Oracle, MongoDB)', text)).toBe(true);
+    });
+
+    it('ENUMERATION NEGATIVE: the same target stays false against a bullet naming neither member '
+      + 'and lacking the base terms', () => {
+      const text = 'Coordinated the quarterly release calendar for the team.';
+      expect(experienceTermMatch('database systems (Oracle, MongoDB)', text)).toBe(false);
+    });
+
+    // NOTE: this case is actually covered by the STEMMED proximity path
+    // (pass 2: "reading"->"read" bridges the bullet's leading "Read", and
+    // {code, read} co-occur in one sentence) -- NOT by the pass-4 cue. The
+    // pass-4 isolate is the "code review" case below.
+    it('"code reading" is covered against the same bullet (via stemmed proximity, see note)', () => {
+      expect(experienceTermMatch('code reading', jsToolingText)).toBe(true);
+    });
+
+    it('PASS-4 ISOLATE: "code review" is covered by a bullet with NO code/review tokens at all, '
+      + 'purely via the narrowed cue + a named language exemplar', () => {
+      const text = 'Prototyped internal JavaScript diagnostic tooling.';
+      expect(experienceTermMatch('code review', text)).toBe(true);
+    });
+
+    it('CUE NEGATIVE: "code of conduct" never rides the language cue -- stays false against a '
+      + 'Python bullet (the narrowed cue requires the reading/review/comprehension class, not a '
+      + 'bare "code" token)', () => {
+      const text = 'Automated deployment workflows with Python across every environment.';
+      expect(experienceTermMatch('code of conduct', text)).toBe(false);
+    });
+
+    it('the unstemmed pass restores raw cue-word matching -- "scripting experience" is covered by a bullet '
+      + 'naming a real language even with no exact phrase overlap', () => {
+      const text = 'Wrote Python automation to provision new environments end to end.';
+      expect(experienceTermMatch('scripting experience', text)).toBe(true);
+    });
+
+    it('a memberless, cueless enumeration-shaped target with absent terms stays false', () => {
+      const text = 'Coordinated cross-team logistics for the quarterly offsite.';
+      expect(experienceTermMatch('reporting (Excel, Tableau, PowerBI, etc.)', text)).toBe(false);
+    });
+
+    it('REGRESSION: "rapid technical learning" still stays false against the self-training line', () => {
+      const text = 'Regularly worked through self-guided coursework and personal projects to stay '
+        + 'current with new tools.';
+      expect(experienceTermMatch('rapid technical learning', text)).toBe(false);
+    });
+
+    it('REGRESSION: "Linux systems engineering" still covers the real live Amazon Linux bullet', () => {
+      const text = 'Guided customers through Amazon Linux (AL2 and AL2023) system setup and configuration on EC2, '
+        + 'covering instance provisioning, SSH access and key management, package and systemd service configuration, '
+        + 'and OS-level troubleshooting of boot, storage, and network connectivity issues.';
+      expect(experienceTermMatch('Linux systems engineering', text)).toBe(true);
+    });
+
+    it('REGRESSION: proximity is still enforced across unrelated sentences', () => {
+      const text = 'Managed a production deployment pipeline for the platform team. Separately, '
+        + 'maintained an internal database of vendor contacts for procurement.';
+      expect(experienceTermMatch('production database', text)).toBe(false);
+    });
+  });
 });
 
 describe('scoreExperienceCoverage', () => {

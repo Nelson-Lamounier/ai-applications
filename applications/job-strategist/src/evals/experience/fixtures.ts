@@ -368,6 +368,34 @@ export const CODE_SCRIPTING: ExperienceEvalInput = {
     allowedNumbers: [],
 };
 
+const ENUMERATION_SCRIPTING_TARGET: ExperienceAtsTarget = {
+    skill: 'scripting (Python, Java, JavaScript, Go, etc.)',
+    source: 'hard',
+    verdict: 'verified',
+    requirement: 'scripting (Python, Java, JavaScript, Go, etc.)',
+    anchors: [], // deliberately empty -- proves the enumeration rule alone covers this
+};
+
+/** Covered via the G2 enumeration rule: the bullet names JavaScript, one
+ *  member of the parenthetical list, so `experienceTermMatch` credits the
+ *  base requirement ("scripting") without demanding every listed language
+ *  appear in the same bullet -- reuses the CODE_SCRIPTING career line above. */
+export const ENUMERATION_SCRIPTING: ExperienceEvalInput = {
+    output: {
+        roles: [{
+            company: 'AWS',
+            title: 'Support Engineer',
+            period: '2023-2025',
+            highlights: [{ text: CODE_SCRIPTING_TEXT, sources: [CODE_SCRIPTING_LINES[0]!.id], atsTargets: ['scripting (Python, Java, JavaScript, Go, etc.)'] }],
+        }],
+        accounting: { dropped: [] },
+    },
+    roster: CODE_SCRIPTING_ROSTER,
+    careerLines: CODE_SCRIPTING_LINES,
+    atsTargets: [ENUMERATION_SCRIPTING_TARGET],
+    allowedNumbers: [],
+};
+
 const RAPID_LEARNING_TEXT = 'Regularly worked through self-guided coursework and personal projects to stay '
     + 'current with new tools.';
 const RAPID_LEARNING_CAREER_ENTRIES: CareerEntry[] = [
