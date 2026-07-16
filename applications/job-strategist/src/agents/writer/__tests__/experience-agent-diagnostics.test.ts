@@ -1,7 +1,11 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
-import { logExperienceAgentEvents, experienceAgentOutcome, logExperienceCoverageFinal, type ExperienceAgentLogKeys } from '../experience-agent-diagnostics.js';
+import {
+  logExperienceAgentEvents, experienceAgentOutcome, logExperienceCoverageFinal, logExperienceVerbAlignment,
+  type ExperienceAgentLogKeys,
+} from '../experience-agent-diagnostics.js';
 import type { ExperienceAgentDiagnostics } from '../experience-ats-flow.js';
+import type { VerbAlignmentFinding } from '../verb-alignment.js';
 
 const keys: ExperienceAgentLogKeys = { pipelineRunId: 'pr1', applicationId: 'app1', traceId: 'tr1' };
 
@@ -115,5 +119,28 @@ describe('logExperienceCoverageFinal', () => {
     expect(payload['pipeline_run_id']).toBe('pr1');
     expect(payload['application_id']).toBe('app1');
     expect(payload['trace_id']).toBe('tr1');
+  });
+});
+
+describe('logExperienceVerbAlignment', () => {
+  const findings: VerbAlignmentFinding[] = [{ role: 0, bullet: 1, verb: 'own', tier: 3, ceiling: 1 }];
+
+  it('emits experience_verb_alignment with bounded findings (indices + lexicon verbs + small ints)', () => {
+    const info = jest.fn();
+    logExperienceVerbAlignment({ info } as never, keys, findings);
+    expect(info).toHaveBeenCalledTimes(1);
+    const [payload, msg] = info.mock.calls[0] as [Record<string, unknown>, string];
+    expect(msg).toBe('experience_verb_alignment');
+    expect(payload['event']).toBe('experience_verb_alignment');
+    expect(payload['findings']).toEqual([{ role: 0, bullet: 1, verb: 'own', tier: 3, ceiling: 1 }]);
+    expect(payload['pipeline_run_id']).toBe('pr1');
+    expect(payload['application_id']).toBe('app1');
+    expect(payload['trace_id']).toBe('tr1');
+  });
+
+  it('does not emit when findings is empty', () => {
+    const info = jest.fn();
+    logExperienceVerbAlignment({ info } as never, keys, []);
+    expect(info).not.toHaveBeenCalled();
   });
 });

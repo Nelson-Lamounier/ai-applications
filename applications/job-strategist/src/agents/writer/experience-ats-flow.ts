@@ -8,6 +8,7 @@ import {
   type IndexedCareerLine, type RosterEntry,
 } from './experience-provenance.js';
 import type { ExperienceAgentOutput } from './experience-schema.js';
+import type { VerbAlignmentFinding } from './verb-alignment.js';
 
 /** A single unused career line the experience agent declared instead of citing.
  *  Bounded before it reaches Loki/DB -- see boundDropped. */
@@ -221,40 +222,45 @@ export function experienceMutatedDownstream(
   return JSON.stringify(finalExperience) !== JSON.stringify(assembleExperience(kept));
 }
 
-export interface JdEchoRouteResult {
+export interface ExperienceRepairRouteResult {
   readonly output: ExperienceAgentOutput;
   readonly rewritten: boolean;
 }
 
 /**
- * Route advisory `experience_bullet_jd_echo` guard violations to ONE
- * provenance-guarded re-write (Task 4, G2 tail). `guardResume`'s own
+ * Route advisory experience-lane repairs -- `experience_bullet_jd_echo`
+ * guard violations (Task 4, G2 tail) AND `checkVerbAlignment` findings
+ * (Task 2) -- to ONE provenance-guarded re-write. `guardResume`'s own
  * rule-based repair on Experience is undone by the Task-2 lock (Experience is
- * agent-owned) -- this is the only path that can actually FIX an echoing
- * bullet post-fill, rather than just report it.
+ * agent-owned) -- this is the only path that can actually FIX an echoing or
+ * verb-overstating bullet post-fill, rather than just report it.
  *
- * Fires at most once: `echoDetails.length === 0` short-circuits with no call.
- * `rewrite` receives the RAW flagged-detail strings -- the caller renders
- * them into the prompt via `ExperienceMessageInput.echoCleanup` (a
- * purpose-built message block, review-fixed: this used to stuff a composed
- * instruction string into the unrelated ATS `rewriteDraft`/`rewriteMissing`
- * fields, which rendered under the wrong heading). The re-write is validated
- * exactly like the ATS re-write (`validateExperienceProvenance`); an invalid
- * or throwing re-write is discarded and the ORIGINAL `kept` output stands --
- * the flagged violations stay advisory, never block the run.
+ * Generalised from the Task-4 `routeJdEchoRewrite` (echo-only): fires at most
+ * once, ONLY when at least one of `echoDetails`/`verbFindings` is non-empty --
+ * both empty short-circuits with no call. `rewrite` receives BOTH raw
+ * inputs -- the caller renders them into the prompt via
+ * `ExperienceMessageInput.echoCleanup`/`verbAlignment` (purpose-built message
+ * blocks under their own headings). The re-write is validated exactly like
+ * the ATS re-write (`validateExperienceProvenance`); an invalid or throwing
+ * re-write is discarded and the ORIGINAL `kept` output stands -- the flagged
+ * violations stay advisory, never block the run.
  */
-export async function routeJdEchoRewrite(params: {
+export async function routeExperienceRepairs(params: {
   readonly kept: ExperienceAgentOutput;
   readonly roster: readonly RosterEntry[];
   readonly careerLines: readonly IndexedCareerLine[];
   readonly echoDetails: readonly string[];
-  readonly rewrite: (flaggedDetails: readonly string[]) => Promise<ExperienceAgentOutput>;
-}): Promise<JdEchoRouteResult> {
-  const { kept, roster, careerLines, echoDetails, rewrite } = params;
-  if (echoDetails.length === 0) return { output: kept, rewritten: false };
+  readonly verbFindings: readonly VerbAlignmentFinding[];
+  readonly rewrite: (repairs: {
+    readonly echoDetails: readonly string[];
+    readonly verbFindings: readonly VerbAlignmentFinding[];
+  }) => Promise<ExperienceAgentOutput>;
+}): Promise<ExperienceRepairRouteResult> {
+  const { kept, roster, careerLines, echoDetails, verbFindings, rewrite } = params;
+  if (echoDetails.length === 0 && verbFindings.length === 0) return { output: kept, rewritten: false };
   let rewriteOut: ExperienceAgentOutput;
   try {
-    rewriteOut = await rewrite(echoDetails);
+    rewriteOut = await rewrite({ echoDetails, verbFindings });
   } catch {
     return { output: kept, rewritten: false };
   }

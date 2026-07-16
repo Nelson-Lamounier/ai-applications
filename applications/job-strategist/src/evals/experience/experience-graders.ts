@@ -19,6 +19,7 @@ import {
     type RosterEntry,
 } from '../../agents/writer/experience-provenance.js';
 import type { ExperienceAgentOutput } from '../../agents/writer/experience-schema.js';
+import { checkVerbAlignment } from '../../agents/writer/verb-alignment.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { scoreExperienceCoverage } from '../../ats/gate/experience-coverage.js';
 import { mkResult, type GraderResult } from '../graders.js';
@@ -117,6 +118,20 @@ export function reorderGrader(i: ExperienceEvalInput): GraderResult {
     return mkResult('reorder', failures);
 }
 
+/**
+ * Verb alignment (Task 2): reuses the runtime `checkVerbAlignment` guard
+ * unchanged -- any lead-verb finding against the fixture's own career lines
+ * fails this grader. Mirrors `provenanceGrader`'s pattern of delegating
+ * entirely to the runtime predicate rather than re-deriving it.
+ */
+export function verbAlignmentGrader(i: ExperienceEvalInput): GraderResult {
+    const findings = checkVerbAlignment(i.output, i.careerLines);
+    return mkResult(
+        'verbAlignment',
+        findings.map((f) => `role ${f.role} bullet ${f.bullet}: lead verb "${f.verb}" (tier ${f.tier}) exceeds cited-line ceiling ${f.ceiling}`),
+    );
+}
+
 /** All structural graders, in display order. */
 export const EXPERIENCE_GRADERS = [
     provenanceGrader,
@@ -124,6 +139,7 @@ export const EXPERIENCE_GRADERS = [
     atsCoverageGrader,
     voiceGrader,
     reorderGrader,
+    verbAlignmentGrader,
 ] as const;
 
 /** Run every grader; overall pass = all pass. */

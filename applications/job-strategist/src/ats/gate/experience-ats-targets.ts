@@ -1,8 +1,8 @@
 /** @format */
 import type { SkillEvidenceEntry } from '@bedrock/shared';
-import { matchTier1, padded } from '../matching/keyword-match.js';
+import { matchTier1 } from '../matching/keyword-match.js';
 import type { IndexedCareerLine } from '../../agents/writer/experience-provenance.js';
-import { matchesAllTerms, requiredTerms } from './experience-coverage.js';
+import { experienceTermMatch } from './experience-coverage.js';
 import type { SummaryAtsTarget } from './summary-ats-targets.js';
 
 export interface ExperienceAtsTarget extends SummaryAtsTarget {
@@ -11,9 +11,9 @@ export interface ExperienceAtsTarget extends SummaryAtsTarget {
    *  attainable members. */
   readonly requirement: string;
   /** Career-line ids (`c{i}.h{j}`) whose text term-matches this target by the
-   *  same `requiredTerms`/`matchesAllTerms` rule the coverage scorer uses --
-   *  the evidence a bullet may cite instead of reproducing the target's exact
-   *  wording (see experience-coverage.ts's scoreExperienceCoverage). */
+   *  same `experienceTermMatch` rule the coverage scorer uses -- the evidence
+   *  a bullet may cite instead of reproducing the target's exact wording (see
+   *  experience-coverage.ts's scoreExperienceCoverage). */
   readonly anchors: string[];
 }
 
@@ -26,8 +26,7 @@ interface JdLike {
  *  to credit a bullet, so "this target is genuinely supported" means one
  *  thing at selection time and at scoring time. */
 function anchorsFor(skill: string, careerLines: readonly IndexedCareerLine[]): string[] {
-  const terms = requiredTerms(skill);
-  return careerLines.filter((l) => matchesAllTerms(padded(l.text), terms)).map((l) => l.id);
+  return careerLines.filter((l) => experienceTermMatch(skill, l.text)).map((l) => l.id);
 }
 
 /** Top-N attainable (verified/transferable, never gap) JD must-have targets for

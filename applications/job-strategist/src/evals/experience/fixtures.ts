@@ -207,9 +207,9 @@ export const LINUX_ANCHORED_LIVE: ExperienceEvalInput = {
  * Spec case 2 -- term-tolerant: the target has ZERO anchors (the selection
  * step found no career line that already names it), yet the rewritten bullet
  * honestly demonstrates the skill in the JD's vocabulary without the exact
- * phrase -- `scoreExperienceCoverage`'s term-tolerant path (`requiredTerms`/
- * `matchesAllTerms`) credits it on discriminating terms {aws, database}
- * alone, deliberately WITHOUT relying on an anchor citation.
+ * phrase -- `scoreExperienceCoverage`'s term-tolerant path (`experienceTermMatch`)
+ * credits it on discriminating terms {aws, database} alone, deliberately
+ * WITHOUT relying on an anchor citation.
  */
 const AWS_DB_CAREER_ENTRIES: CareerEntry[] = [
     {
@@ -292,11 +292,122 @@ export const NO_EVIDENCE_MISSING: ExperienceEvalInput = {
 };
 
 /**
+ * Task 3 term-rule v2 promotions -- the same three LIVE/REGRESSION cases
+ * `experienceTermMatch` exercises at the raw-predicate level in
+ * ats/gate/__tests__/experience-coverage.test.ts, carried verbatim into full
+ * grader-level ExperienceEvalInput fixtures (same pattern as
+ * `LINUX_ANCHORED_LIVE` above). Each is a single-role, single-line, zero-anchor
+ * career/output pair so provenance is trivially satisfied and only the
+ * term-tolerant coverage path is exercised.
+ */
+const MISSION_CRITICAL_DB_TEXT = 'Owned production database performance, tuning PostgreSQL and Aurora RDS '
+    + 'clusters that processed over 10 million transactions daily.';
+const MISSION_CRITICAL_DB_CAREER_ENTRIES: CareerEntry[] = [
+    { title: 'Support Engineer', company: 'AWS', period: '2023-2025', highlights: [MISSION_CRITICAL_DB_TEXT] },
+];
+const MISSION_CRITICAL_DB_LINES = indexCareerLines(MISSION_CRITICAL_DB_CAREER_ENTRIES);
+const MISSION_CRITICAL_DB_ROSTER = rosterFromCareer(MISSION_CRITICAL_DB_CAREER_ENTRIES);
+const MISSION_CRITICAL_DB_TARGET: ExperienceAtsTarget = {
+    skill: 'mission-critical production database systems',
+    source: 'hard',
+    verdict: 'verified',
+    requirement: 'mission-critical production database systems',
+    anchors: [], // deliberately empty -- proves emphasis-token stripping alone covers this
+};
+
+/** Covered: emphasis tokens {mission, critical} strip out of the target, leaving
+ *  {production, database}, which the bullet demonstrates without ever saying
+ *  "mission" or "critical". */
+export const MISSION_CRITICAL_DB: ExperienceEvalInput = {
+    output: {
+        roles: [{
+            company: 'AWS',
+            title: 'Support Engineer',
+            period: '2023-2025',
+            highlights: [{ text: MISSION_CRITICAL_DB_TEXT, sources: [MISSION_CRITICAL_DB_LINES[0]!.id], atsTargets: ['mission-critical production database systems'] }],
+        }],
+        accounting: { dropped: [] },
+    },
+    roster: MISSION_CRITICAL_DB_ROSTER,
+    careerLines: MISSION_CRITICAL_DB_LINES,
+    atsTargets: [MISSION_CRITICAL_DB_TARGET],
+    allowedNumbers: [],
+};
+
+const CODE_SCRIPTING_TEXT = 'Read legacy JavaScript code and wrote scripting utilities for the build pipeline.';
+const CODE_SCRIPTING_CAREER_ENTRIES: CareerEntry[] = [
+    { title: 'Support Engineer', company: 'AWS', period: '2023-2025', highlights: [CODE_SCRIPTING_TEXT] },
+];
+const CODE_SCRIPTING_LINES = indexCareerLines(CODE_SCRIPTING_CAREER_ENTRIES);
+const CODE_SCRIPTING_ROSTER = rosterFromCareer(CODE_SCRIPTING_CAREER_ENTRIES);
+const CODE_SCRIPTING_TARGET: ExperienceAtsTarget = {
+    skill: 'code reading and scripting',
+    source: 'hard',
+    verdict: 'verified',
+    requirement: 'code reading and scripting',
+    anchors: [],
+};
+
+/** Covered via the language cue: the bullet names a real language (JavaScript)
+ *  and demonstrates reading/scripting work, so `lightStem` bridging
+ *  "reading"->"read" and "scripting"->"script" plus `matchTier1` proximity over
+ *  {code, read, script} covers the target honestly. */
+export const CODE_SCRIPTING: ExperienceEvalInput = {
+    output: {
+        roles: [{
+            company: 'AWS',
+            title: 'Support Engineer',
+            period: '2023-2025',
+            highlights: [{ text: CODE_SCRIPTING_TEXT, sources: [CODE_SCRIPTING_LINES[0]!.id], atsTargets: ['code reading and scripting'] }],
+        }],
+        accounting: { dropped: [] },
+    },
+    roster: CODE_SCRIPTING_ROSTER,
+    careerLines: CODE_SCRIPTING_LINES,
+    atsTargets: [CODE_SCRIPTING_TARGET],
+    allowedNumbers: [],
+};
+
+const RAPID_LEARNING_TEXT = 'Regularly worked through self-guided coursework and personal projects to stay '
+    + 'current with new tools.';
+const RAPID_LEARNING_CAREER_ENTRIES: CareerEntry[] = [
+    { title: 'Support Engineer', company: 'AWS', period: '2023-2025', highlights: [RAPID_LEARNING_TEXT] },
+];
+const RAPID_LEARNING_LINES = indexCareerLines(RAPID_LEARNING_CAREER_ENTRIES);
+const RAPID_LEARNING_ROSTER = rosterFromCareer(RAPID_LEARNING_CAREER_ENTRIES);
+const RAPID_LEARNING_TARGET: ExperienceAtsTarget = {
+    skill: 'rapid technical learning',
+    source: 'hard',
+    verdict: 'verified',
+    requirement: 'rapid technical learning',
+    anchors: [],
+};
+
+/** Stays missing -- honest synonym gap: "rapid" strips as emphasis, but the
+ *  self-training bullet never names "technical" or "learn(ing)", so the
+ *  term-tolerant path correctly declines to credit it. */
+export const RAPID_LEARNING: ExperienceEvalInput = {
+    output: {
+        roles: [{
+            company: 'AWS',
+            title: 'Support Engineer',
+            period: '2023-2025',
+            highlights: [{ text: RAPID_LEARNING_TEXT, sources: [RAPID_LEARNING_LINES[0]!.id], atsTargets: [] }],
+        }],
+        accounting: { dropped: [] },
+    },
+    roster: RAPID_LEARNING_ROSTER,
+    careerLines: RAPID_LEARNING_LINES,
+    atsTargets: [RAPID_LEARNING_TARGET],
+    allowedNumbers: [],
+};
+
+/**
  * Echo-cleanup eval case (review finding B, T4 tail): the jd-echo routed
  * re-write must rephrase a flagged bullet using ONLY the career lines
  * already cited for it -- these fixtures share one career/roster/atsTargets
  * context and vary only the bullet the routed re-write produced.
- * `ECHO_CLEANUP_FLAGGED_DETAIL` is the advisory string `routeJdEchoRewrite`
+ * `ECHO_CLEANUP_FLAGGED_DETAIL` is the advisory string `routeExperienceRepairs`
  * hands to `ExperienceMessageInput.echoCleanup.flaggedDetails`.
  */
 const ECHO_CAREER_ENTRIES: CareerEntry[] = [
@@ -355,4 +466,91 @@ export const ECHO_CLEANUP_INVALID: ExperienceEvalInput = {
         }],
         accounting: { dropped: [] },
     },
+};
+
+/**
+ * Verb-alignment eval cases (Task 2's `checkVerbAlignment`, promoted to
+ * grader-level ExperienceEvalInput). `VERB_UPGRADE` is the guard's core case
+ * (assisted-only citation, no cited line supports the stronger lead verb);
+ * `VERB_LEGITIMISED` is the live run 1eda06eb shape carried over from
+ * verb-alignment.test.ts's "is compliant when ANY cited line supports the lead
+ * verb" case -- both career lines are cited by the same bullet and the SECOND
+ * one genuinely supports "Owned".
+ */
+const VERB_UPGRADE_CAREER_ENTRIES: CareerEntry[] = [
+    // "handling" deliberately avoids every VERB_TIERS lexicon hit -- "triage"
+    // here would coincidentally raise the ceiling to tier 2 and dilute the
+    // zero-support scenario this fixture exists to prove.
+    { title: 'Support Engineer', company: 'AWS', period: '2023-2025', highlights: ['Assisted senior engineers with Sev-2 escalation handling'] },
+];
+const VERB_UPGRADE_LINES = indexCareerLines(VERB_UPGRADE_CAREER_ENTRIES);
+const VERB_UPGRADE_ROSTER = rosterFromCareer(VERB_UPGRADE_CAREER_ENTRIES);
+
+/** Assisted-only citation: the lead verb "Owned" (tier 3) cites ONLY a
+ *  tier-1 "Assisted" line whose text names no other lexicon verb, so the
+ *  computed ceiling is exactly 1 -- `checkVerbAlignment` finds it (tier 3 >
+ *  ceiling 1) and `verbAlignmentGrader` rejects the output. Provenance,
+ *  fabrication, coverage and reorder are all otherwise clean, so this fixture
+ *  fails ONLY on verb alignment. */
+export const VERB_UPGRADE: ExperienceEvalInput = {
+    output: {
+        roles: [{
+            company: 'AWS',
+            title: 'Support Engineer',
+            period: '2023-2025',
+            highlights: [{ text: 'Owned end-to-end resolution of complex customer escalations', sources: [VERB_UPGRADE_LINES[0]!.id], atsTargets: [] }],
+        }],
+        accounting: { dropped: [] },
+    },
+    roster: VERB_UPGRADE_ROSTER,
+    careerLines: VERB_UPGRADE_LINES,
+    atsTargets: [],
+    allowedNumbers: [],
+};
+
+const VERB_LEGITIMISED_CAREER_ENTRIES: CareerEntry[] = [
+    {
+        title: 'Support Engineer',
+        company: 'AWS',
+        period: '2023-2025',
+        highlights: [
+            'Assisted senior engineers with Sev-2 escalations',
+            'Took ownership of customer cases -- own cases end-to-end from triage to resolution',
+        ],
+    },
+];
+const VERB_LEGITIMISED_LINES = indexCareerLines(VERB_LEGITIMISED_CAREER_ENTRIES);
+const VERB_LEGITIMISED_ROSTER = rosterFromCareer(VERB_LEGITIMISED_CAREER_ENTRIES);
+
+/** Live two-citation case: the lead bullet cites BOTH lines -- the first is
+ *  only tier 1, but the second ("own cases end-to-end") genuinely supports
+ *  tier 3, so the any-cited-line ceiling is compliant. A second, low-tier
+ *  bullet citing the "Assisted" line satisfies the role's min-2-bullet
+ *  provenance rule without introducing a verb finding of its own -- the whole
+ *  fixture is clean end to end. */
+export const VERB_LEGITIMISED: ExperienceEvalInput = {
+    output: {
+        roles: [{
+            company: 'AWS',
+            title: 'Support Engineer',
+            period: '2023-2025',
+            highlights: [
+                {
+                    text: 'Owned end-to-end technical resolution of complex customer issues',
+                    sources: [VERB_LEGITIMISED_LINES[0]!.id, VERB_LEGITIMISED_LINES[1]!.id],
+                    atsTargets: [],
+                },
+                {
+                    text: 'Assisted senior engineers with recurring Sev-2 escalation triage',
+                    sources: [VERB_LEGITIMISED_LINES[0]!.id],
+                    atsTargets: [],
+                },
+            ],
+        }],
+        accounting: { dropped: [] },
+    },
+    roster: VERB_LEGITIMISED_ROSTER,
+    careerLines: VERB_LEGITIMISED_LINES,
+    atsTargets: [],
+    allowedNumbers: [],
 };
