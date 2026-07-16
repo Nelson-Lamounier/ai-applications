@@ -118,7 +118,7 @@ export interface CertificationEntry {
     readonly date: string;
 }
 
-interface CertificationRow { raw_data: { name?: string; issuer?: string; date?: string; period?: string } | null }
+interface CertificationRow { raw_data: { name?: string; issuer?: string; date?: string; period?: string; year?: string } | null }
 
 /**
  * Load the user's certifications from user_career_history (entry_type='certification').
@@ -137,7 +137,11 @@ export async function loadCertifications(pool: Pool, userId: string, limit = 12)
     return r.rows.map(row => ({
         name:   row.raw_data?.name ?? '',
         issuer: row.raw_data?.issuer ?? '',
-        date:   row.raw_data?.date ?? row.raw_data?.period ?? '',
+        // The resume importer persists the field as `year`; older/manual rows may
+        // use `date` or `period`. An empty result here previously cascaded into a
+        // certifications[].year of '' that the persist gate (min 1 char) rejected,
+        // silently skipping the resumes upsert the UI reads.
+        date:   row.raw_data?.date ?? row.raw_data?.period ?? row.raw_data?.year ?? '',
     })).filter(e => e.name);
 }
 

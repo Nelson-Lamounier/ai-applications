@@ -252,6 +252,23 @@ async function fillResumeSummary(
  * empty after fillResumeExperience has already run its own fallback -- see
  * resume-reconciler.ts).
  */
+/**
+ * Surface a rejected resume persist as a violation. A null result means the
+ * persist gate's schema REJECTED the resume and the resumes-table row (the
+ * UI's source of truth) silently kept its stale content -- a live
+ * certifications[].year='' regression hid for two days behind the previous
+ * bare console.warn. Extracted so main() gains no branch.
+ */
+function recordPersistOutcome(
+    persisted: { resumeId: string } | null,
+    violationLog: { record: (stage: string, code: string) => void },
+    pipelineRunId: string,
+): void {
+    if (persisted !== null) return;
+    violationLog.record('resume_integrity', 'resume_persist_schema_rejected');
+    log.warn({ pipelineRunId }, 'resume_persist_schema_rejected');
+}
+
 function verbatimExperienceFallback(careerEntries: readonly CareerEntry[]): StructuredResumeData['experience'] {
     return careerEntries.map((e) => ({
         company: e.company, title: e.title, period: e.period, highlights: e.highlights.slice(0, 5),
@@ -2710,6 +2727,7 @@ export async function main(): Promise<void> {
             archetype,
             tailoredResume: finalResume,
         }));
+        recordPersistOutcome(persisted, violationLog, env.pipelineRunId);
 
         // ── ATS render + parse-back QA (fail-open pipeline, fail-closed claim) ─
         // Renders the AI-authored resume to a text-selectable PDF, proves it
