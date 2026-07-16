@@ -16,7 +16,7 @@
  * deliberately retyped copy to prove `quoteFidelityGrader` actually reads it.
  */
 import type { RepoCurrentFact, ProjectPoolEntry } from '../../agents/evidence/project-agent-inputs.js';
-import { scoreProjectsCoverage } from '../../agents/writer/projects-ats-flow.js';
+import { projectsStyleDiagnostics, scoreProjectsCoverage } from '../../agents/writer/projects-ats-flow.js';
 import { stampProjectDescription } from '../../agents/writer/projects-description.js';
 import { assembleProjects, PROJECTS_MAX_BULLETS_PER_ENTRY, validateProjectsProvenance } from '../../agents/writer/projects-provenance.js';
 import { isCurated, type ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
@@ -162,6 +162,22 @@ export function descriptionGrader(i: ProjectsEvalInput): GraderResult {
     return mkResult('description', failures);
 }
 
+/**
+ * Composed-bullet narrative style guard (Component 3/4, `projects-style.ts`):
+ * a well-composed projects section carries ZERO style findings on its
+ * COMPOSED (model-authored) bullets. Curated (quote-only) bullets are NEVER
+ * graded here -- they are byte-fidelity and never repaired at resume time,
+ * so a curated finding is advisory-only (visibility for the future multi-
+ * angle case-study loop; see `projectsStyleDiagnostics`'s own doc comment),
+ * never a correctness gate. Delegates entirely to `projectsStyleDiagnostics`
+ * (projects-ats-flow.ts), which itself delegates to `checkComposedBulletStyle`
+ * (projects-style.ts) -- no parallel pattern logic in this grader.
+ */
+export function styleGrader(i: ProjectsEvalInput): GraderResult {
+    const { composedFindings } = projectsStyleDiagnostics(i.output, i.pool);
+    return mkResult('style', composedFindings > 0 ? [`composed_style_findings:${composedFindings}`] : []);
+}
+
 /** All structural graders, in display order. */
 export const PROJECTS_GRADERS = [
     provenanceGrader,
@@ -169,6 +185,7 @@ export const PROJECTS_GRADERS = [
     compositionGrader,
     atsCoverageGrader,
     descriptionGrader,
+    styleGrader,
 ] as const;
 
 /** Run every grader; overall pass = all pass. */

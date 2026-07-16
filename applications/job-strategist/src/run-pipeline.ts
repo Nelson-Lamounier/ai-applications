@@ -104,7 +104,7 @@ import {
 import { executeProjectsAgent } from './agents/writer/projects-agent.js';
 import {
     resolveProjectsAts, deterministicProjects, sumProjectsNormalisedExtras,
-    EMPTY_OPERATIONS_THEMES_DIAG, type ProjectsAgentDiagnostics,
+    EMPTY_OPERATIONS_THEMES_DIAG, EMPTY_PROJECTS_STYLE_DIAG, type ProjectsAgentDiagnostics,
 } from './agents/writer/projects-ats-flow.js';
 import type { RetrievedPassage } from './agents/evidence/operations-evidence.js';
 import { buildProjectAgentInputsFromMeta } from './agents/evidence/operations-wiring.js';
@@ -409,10 +409,14 @@ async function fillResumeProjects(
         if (firstViolations.length > 0) throw new ProjectsProvenanceError(firstViolations);
         const { output, diag } = await resolveProjectsAts({
             first: first.data, pool, targets: atsTargets,
-            rewrite: async (draftText, missing) => {
+            // styleFindings (Component 3): composed-bullet style findings on the
+            // FIRST draft, handed in by resolveProjectsAts ONLY when this re-write
+            // is already firing for coverage -- never a separate style-only
+            // trigger (see that function's own doc comment).
+            rewrite: async (draftText, missing, styleFindings) => {
                 const rw = await executeProjectsAgent(
                     ctx,
-                    { ...baseInput, rewriteDraft: draftText, rewriteMissing: missing },
+                    { ...baseInput, rewriteDraft: draftText, rewriteMissing: missing, styleFindings },
                     { agentName: 'strategist-projects-rewrite' },
                 );
                 rewriteNormalisedExtras = rw.normalisedExtras;
@@ -441,6 +445,9 @@ async function fillResumeProjects(
             unresolvedRepos,
             normalisedExtras: firstNormalisedExtras,
             themes: themesDiag,
+            // deterministicProjects never composes and does not re-lint the
+            // curated bullets it selects -- see EMPTY_PROJECTS_STYLE_DIAG's doc.
+            style: EMPTY_PROJECTS_STYLE_DIAG,
         };
     }
 }
@@ -494,6 +501,23 @@ async function fillResumeSkills(
 }
 
 /**
+ * Composed-bullet style advisory violations (Component 3/4) -- records ONE
+ * `projects_style`/`composed_style_violation` entry per style finding on
+ * whichever output shipped (`diag.style.composedFindings +
+ * diag.style.curatedAdvisories`, both bounded ints -- see
+ * `ProjectsStyleDiagnostics`'s doc comment). A single violation CODE
+ * regardless of finding kind (`internal_identifier` / `bare_plus_numeric` /
+ * `code_call`) -- the per-kind breakdown is Loki-only (`projects_style_findings`,
+ * `diag.style.kinds`), never a violation-code dimension. Mirrors the
+ * experience lane's `experience_verb_upgrade` recording (one record call per
+ * finding, same bounded-code pattern) -- always advisory, never a gate.
+ */
+function recordProjectsStyleViolations(diag: ProjectsAgentDiagnostics, violationLog: ViolationLog): void {
+    const total = diag.style.composedFindings + diag.style.curatedAdvisories;
+    for (let i = 0; i < total; i += 1) violationLog.record('projects_style', 'composed_style_violation');
+}
+
+/**
  * Projects-agent observability: Loki event stream + bounded Prometheus
  * outcome/coverage metrics + the repo-unresolved counter, all derived from
  * fillResumeProjects's returned diagnostics. Extracted to a helper (rather
@@ -506,9 +530,11 @@ async function fillResumeSkills(
 function recordProjectsAgentObservability(
     diag: ProjectsAgentDiagnostics | null,
     keys: { pipelineRunId: string; applicationId: string | null },
+    violationLog: ViolationLog,
 ): void {
     if (!diag) return;
     logProjectsAgentEvents(log, { pipelineRunId: keys.pipelineRunId, applicationId: keys.applicationId, traceId: null }, diag);
+    recordProjectsStyleViolations(diag, violationLog);
     const { outcome, reason } = projectsAgentOutcome(diag);
     projectsOutcomeMetric.inc({ outcome, reason });
     if (diag.targets.length > 0 && !diag.fallback.fired) {
@@ -1310,6 +1336,7 @@ async function runBatch1Agents(args: {
 function recordBatch1Observability(
     batch1: Batch1Result,
     keys: { pipelineRunId: string; applicationId: string | null },
+    violationLog: ViolationLog,
 ): void {
     const { experience, projectsAgentDiag, skillsAgentDiag, analysis } = batch1;
     const experienceAgentDiag = experience.diag;
@@ -1321,7 +1348,7 @@ function recordBatch1Observability(
             experienceAgentCoverageMetric.observe(experienceAgentDiag.coverageBefore.covered);
         }
     }
-    recordProjectsAgentObservability(projectsAgentDiag, keys);
+    recordProjectsAgentObservability(projectsAgentDiag, keys, violationLog);
     recordSkillsAgentObservability(skillsAgentDiag, keys);
     recordAnalysisAgentObservability(analysis.data, keys);
 }
@@ -2470,7 +2497,7 @@ export async function main(): Promise<void> {
             skillEvidenceLedger, jdExtraction, pipelineRunId: env.pipelineRunId, themesDiag,
         }));
         const { analysis, experience, projectsAgentDiag, skillsAgentDiag } = batch1;
-        recordBatch1Observability(batch1, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });
+        recordBatch1Observability(batch1, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId }, violationLog);
 
         await updatePipelineRun(pool, env.pipelineRunId, 'persisting');
 

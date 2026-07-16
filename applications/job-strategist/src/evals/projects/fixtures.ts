@@ -102,6 +102,66 @@ export const GOLDEN_TWO_LANE: ProjectsEvalInput = {
     atsTargets: INFRA_TARGETS,
 };
 
+/**
+ * Component 4 (c): a COMPOSED bullet leaking an internal identifier
+ * (`(RETRIEVAL_PREFILTER)`, the run fe421faf leak this whole feature is
+ * driven by) -- trips ONLY `styleGrader`, nothing else (provenance/quote-
+ * fidelity/composition/coverage/description are all otherwise identical to
+ * GOLDEN_OUTPUT).
+ */
+const STYLE_DIRTY_COMPOSED_OUTPUT: ProjectsAgentOutput = {
+    entries: [
+        {
+            ...GOLDEN_OUTPUT.entries[0]!,
+            highlights: [
+                { bulletId: 'p0.b1' },
+                { bulletId: 'p0.b2' },
+                { text: 'Reduced DNS resolution latency by tuning the (RETRIEVAL_PREFILTER) stage', sources: ['p0.r0'] },
+            ],
+        },
+        GOLDEN_OUTPUT.entries[1]!,
+    ],
+};
+
+export const STYLE_DIRTY_COMPOSED: ProjectsEvalInput = {
+    output: STYLE_DIRTY_COMPOSED_OUTPUT,
+    pool: POOL,
+    assembled: assembleProjects(STYLE_DIRTY_COMPOSED_OUTPUT, POOL),
+    atsTargets: INFRA_TARGETS,
+};
+
+/**
+ * Component 4 (c): the SAME internal-identifier pattern, but on a CURATED
+ * (quote-only) bullet -- byte-fidelity means it is NEVER repaired, so
+ * `styleGrader` treats it as advisory-only and does NOT fail (curated
+ * findings surface only via `projectsStyleDiagnostics.curatedAdvisories`,
+ * never a grader failure). Proves the curated/composed exemption boundary,
+ * not just that the lint itself fires.
+ */
+const STYLE_DIRTY_CURATED_POOL: ProjectPoolEntry[] = [
+    {
+        ...POOL[0]!,
+        curated: [
+            ...POOL[0]!.curated,
+            { id: 'p0.b3', text: 'Wired the (RETRIEVAL_PREFILTER) stage into every query path' },
+        ],
+    },
+    POOL[1]!,
+];
+const STYLE_DIRTY_CURATED_OUTPUT: ProjectsAgentOutput = {
+    entries: [
+        { ...GOLDEN_OUTPUT.entries[0]!, highlights: [...GOLDEN_OUTPUT.entries[0]!.highlights, { bulletId: 'p0.b3' }] },
+        GOLDEN_OUTPUT.entries[1]!,
+    ],
+};
+
+export const STYLE_DIRTY_CURATED: ProjectsEvalInput = {
+    output: STYLE_DIRTY_CURATED_OUTPUT,
+    pool: STYLE_DIRTY_CURATED_POOL,
+    assembled: assembleProjects(STYLE_DIRTY_CURATED_OUTPUT, STYLE_DIRTY_CURATED_POOL),
+    atsTargets: INFRA_TARGETS,
+};
+
 // ---------------------------------------------------------------------------
 // G1 (run 976403b3): the projects agent emitted `entries` as a stringified
 // JSON array (constrained-decoding slip) -> zod invalid_type -> a fourth

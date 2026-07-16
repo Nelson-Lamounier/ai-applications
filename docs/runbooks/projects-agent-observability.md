@@ -103,7 +103,7 @@ increase(job_strategist_projects_repo_unresolved_total[$__range])
 Datasource UID `loki`. Events: `projects_agent_targets`, `projects_agent_scored`,
 `projects_agent_normalised`, `projects_agent_rewrite`,
 `projects_agent_provenance_reject`, `projects_agent_fallback`,
-`projects_repo_unresolved`.
+`projects_repo_unresolved`, `projects_style_findings` (see Surface 6 below).
 
 `projects_agent_normalised` (fields: `extras`, a bounded int) fires once per
 run, ONLY when `extras > 0` -- the count of items/fields the normalise-then-
@@ -187,7 +187,9 @@ FROM pipeline_runs WHERE id = '<PIPELINE_RUN_ID>';
 Shape: `{ targets:[{skill,source,verdict,requirement}],
 coverageBefore:{targets,covered,missing}, rewrite:{fired,reason,coverageAfter,
 kept,keptReason}, fallback:{fired,reason}, provenance:{firstViolations,
-rewriteViolations,composedCount}, unresolvedRepos:string[], normalisedExtras:number }`.
+rewriteViolations,composedCount}, unresolvedRepos:string[], normalisedExtras:number,
+themes:{activated,factCounts}, style:{composedFindings,curatedAdvisories,kinds} }`
+(`themes` is Surface 5, `style` is Surface 6, both below).
 `normalisedExtras` here is the SAME number the `projects_agent_normalised`
 Loki event carries (Surface 2) -- persisted so a fleet-wide SQL query can
 trend it without replaying Loki.
@@ -313,6 +315,96 @@ seven-way enum for marginal value; the bounded outcome/coverage/repo-unresolved
 metrics in Surface 1 are unaffected -- operations facts are indistinguishable
 from any other repo-current fact once they reach the agent).
 
+## Surface 6 -- composed-bullet narrative style guard (Component 3/4)
+
+Deterministic, GENERIC pattern lint (`checkComposedBulletStyle`,
+`agents/writer/projects-style.ts`) for the composed-bullet four-beat
+narrative contract (persona + `projects-message.ts`: WHAT you did -> the
+CONCEPT in public JD vocabulary -> WHY it mattered -> the RESULT/VALUE).
+Driven by run fe421faf, which leaked an environment-variable name,
+`(RETRIEVAL_PREFILTER)`, and a bare acronym into a resume bullet. Three
+patterns, all structural (SHAPE, never a specific identifier -- see
+`projects-style.ts`'s module doc for the generality argument and why
+unintroduced-acronym detection is deliberately OUT OF SCOPE, persona-only):
+`internal_identifier` (SNAKE_CASE constants), `bare_plus_numeric` ("100+",
+"12k+"), `code_call` ("sanitizeMdx()").
+
+**Curated-vs-composed exemption (the load-bearing design decision).** Curated
+(quote-only) bullets are BYTE-FIDELITY -- verbatim quotes from already-written
+case studies, cited by id, never retyped (`projects-provenance.ts`). The
+guard therefore NEVER repairs curated text; a curated bullet carrying the
+same pattern is counted as an ADVISORY only (`style.curatedAdvisories`),
+visibility for a future multi-angle case-study loop to act on, not a resume-
+generation-time fix. Only COMPOSED (model-authored) bullets are eligible for
+repair (`style.composedFindings`).
+
+**Repair routing -- no new LLM-call trigger.** Findings on the FIRST draft's
+composed bullets are computed by `resolveProjectsAts`
+(`agents/writer/projects-ats-flow.ts`) and handed to the SAME ATS re-write
+call as additional context ONLY when that re-write is already firing for its
+own reason (coverage below targets) -- see that function's own doc comment.
+A style finding alone, with coverage already met, NEVER triggers a re-write;
+it just stays advisory. This mirrors the experience lane's jd-echo repair
+pattern but is deliberately simpler: no second, style-only rewrite trigger
+exists for projects.
+
+**Diagnostics block.** `ProjectsAgentDiagnostics.style`
+(`projects-ats-flow.ts`) -- `{ composedFindings: number, curatedAdvisories:
+number, kinds: Record<string, number> }` -- the two counts are computed
+against whichever output SHIPPED (the first draft, or the kept re-write);
+`kinds` is a kind -> count tally across both lanes (bounded to at most three
+keys -- `StyleFindingKind` is a fixed three-member union), carried purely so
+the Loki event below can report "kinds + counts" without re-linting already-
+assembled text. `EMPTY_PROJECTS_STYLE_DIAG` (`{ composedFindings: 0,
+curatedAdvisories: 0, kinds: {} }`) is the value on the deterministic (no-LLM)
+fallback path -- it never composes and does not re-lint the curated bullets
+it selects. Persisted into the SAME `pipeline_runs.metadata.analysis.projectsAgent`
+blob as Surface 3:
+
+```sql
+SELECT id,
+       metadata->'analysis'->'projectsAgent'->'style'->>'composedFindings' AS composed_findings,
+       metadata->'analysis'->'projectsAgent'->'style'->>'curatedAdvisories' AS curated_advisories,
+       metadata->'analysis'->'projectsAgent'->'style'->'kinds' AS style_kinds
+FROM pipeline_runs
+WHERE pipeline_type = 'strategist'
+  AND (metadata->'analysis'->'projectsAgent'->'style'->>'composedFindings')::int > 0
+ORDER BY created_at DESC LIMIT 50;
+```
+
+**Loki event: `projects_style_findings`.** Emitted by `logProjectsAgentEvents`
+(`agents/writer/projects-agent-diagnostics.ts`) ONLY when either counter is
+positive -- fields `composed`, `curated` (the same two bounded ints as the
+diagnostics block) and `kinds` (the bounded per-kind tally). Deliberately
+"kinds + counts only" -- never the flagged bullet TEXT or TOKEN itself, to
+keep the log line small and avoid echoing user codebase identifiers into
+Loki beyond what the kind name already reveals:
+
+```logql
+{namespace="job-strategist"} | json | event="projects_style_findings"
+  | line_format "{{.pipeline_run_id}} composed={{.composed}} curated={{.curated}} kinds={{.kinds}}"
+```
+
+**Violation log.** Every style finding on the shipped output (composed +
+curated, summed) records ONE `projects_style`/`composed_style_violation`
+entry to the run's `ViolationLog` (`lib/observability/violation-log.ts`,
+persisted at `pipeline_runs.metadata.guard`) -- a SINGLE violation code
+regardless of finding kind (the per-kind breakdown is Loki-only, never a
+violation-code or Prometheus-label dimension, same unbounded-cardinality
+reasoning as `unresolvedRepos`). Always advisory: it never blocks or
+re-triggers anything by itself.
+
+```sql
+SELECT jsonb_pretty(metadata->'guard') AS guard
+FROM pipeline_runs WHERE id = '<PIPELINE_RUN_ID>'
+  AND metadata->'guard'->'violations' @> '[{"stage":"projects_style"}]';
+```
+
+**No dedicated Prometheus metric.** Same reasoning as Surface 5's theme
+activation -- Loki + SQL + the violation log above are the surfaces; a
+per-kind Counter label would either be unbounded or need its own fixed
+three-way enum for marginal value over reading `kinds` in Loki/SQL.
+
 ## Ordering and the highlights length budget (deterministic, no LLM)
 
 These two behaviours are NOT agent output -- they run unconditionally after
@@ -413,3 +505,15 @@ persona) is the intended lever for that shape, not a stricter hard trim.
   operations coverage looks thin) for a project you KNOW has relevant infra
   docs, check that project's `project_components.kind` rows before
   suspecting the retrieval or the ontology.
+- `style.composedFindings` trending to zero = the persona's four-beat
+  narrative contract is holding without needing a rewrite to catch it; a
+  sustained non-zero reading (check `kinds` for which pattern) is a
+  persona-tuning signal on the FIRST draft, not a guard bug -- style repair
+  is best-effort inside the existing coverage-driven re-write, never a
+  second gate, so a persistently dirty first draft means the model keeps
+  reaching for internal vocabulary before any repair has a chance to fire
+  (coverage already met, so no re-write triggers at all). A rising
+  `style.curatedAdvisories` is a case-study debt signal, not a resume-
+  generation bug -- see "STALENESS" above: regenerate the affected case
+  study's curated bullets rather than expecting resume generation to fix
+  them (curated text is byte-fidelity and is never rewritten here).

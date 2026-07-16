@@ -11,6 +11,7 @@ import type { ProjectPoolEntry, RepoCurrentFact } from '../evidence/project-agen
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { PROJECTS_MAX_BULLETS_PER_ENTRY } from './projects-provenance.js';
 import { OPERATIONS_THEMES } from '../evidence/operations-themes.js';
+import type { StyleFinding } from './projects-style.js';
 
 /** Theme labels (operations-themes.ts) -- a repo-current fact whose `skill`
  *  is one of these came from `gatherOperationsEvidence`, not the JD-wide
@@ -24,6 +25,12 @@ export interface ProjectsMessageInput {
   readonly targetRole: string;
   readonly rewriteDraft?: string;
   readonly rewriteMissing?: readonly string[];
+  /** Composed-bullet style-repair context (Component 3, `resolveProjectsAts`
+   *  in projects-ats-flow.ts) -- the first draft's `checkComposedBulletStyle`
+   *  findings, handed to the SAME re-write call whenever the ATS re-write
+   *  above already fires (never a separate trigger). Empty/absent when there
+   *  is nothing to repair. */
+  readonly styleFindings?: readonly StyleFinding[];
 }
 
 /** True when a repo-current fact's `skill` is an operations-theme label --
@@ -102,6 +109,30 @@ function compositionRulesSection(): string[] {
   ];
 }
 
+/** Composed-bullet narrative contract -- always present, independent of
+ *  pool/target contents (Component 2, docs/superpowers/specs/2026-07-16-
+ *  projects-narrative-quality-design.md). Restates the persona's four-beat
+ *  contract + hard style rules compactly in the runtime message: curated
+ *  (quote-only) bullets are untouched by this section (byte-fidelity), it
+ *  governs COMPOSED bullets only. */
+function narrativeContractSection(): string[] {
+  return [
+    '',
+    '## Composed-bullet narrative contract (applies to every COMPOSED bullet, never curated quotes)',
+    '- Four beats in order: WHAT you did (open with a specific action verb) -> the CONCEPT in public, '
+      + 'JD-recognisable vocabulary (the term a hiring engineer or ATS knows, never a project-internal name) '
+      + '-> WHY it mattered (the problem or constraint it addressed) -> the RESULT/VALUE (outcome, '
+      + 'qualitative or measured).',
+    '- Never write an internal identifier (an environment-variable name, code constant, or repo-internal '
+      + 'feature name) -- write the public concept it implements instead.',
+    '- Introduce an acronym WITH its concept on first use (e.g. "HNSW approximate-nearest-neighbour '
+      + 'indexing"), never bare.',
+    '- Numbers are exact figures or "more than N" -- never a bare "N+" or "Nk+".',
+    '- Prefer composing the clean version of a fact over selecting a curated quote that carries internal '
+      + 'jargon when the pool evidence honestly supports the same fact either way.',
+  ];
+}
+
 /** Re-write pass block -- only emitted when there is a previous draft AND
  *  targets it missed. */
 function rewriteSection(m: ProjectsMessageInput): string[] {
@@ -116,15 +147,35 @@ function rewriteSection(m: ProjectsMessageInput): string[] {
   ];
 }
 
+/** Style-repair block -- only emitted when the caller flagged composed-bullet
+ *  style findings (`resolveProjectsAts`'s style routing, projects-ats-flow.ts).
+ *  Lists the flagged tokens by kind; the model still sees the full previous
+ *  draft via `rewriteSection` above, so it can locate and rephrase each one
+ *  in place -- curated (quote-only) bullets are never in scope here. */
+function styleRepairSection(m: ProjectsMessageInput): string[] {
+  const findings = m.styleFindings ?? [];
+  if (findings.length === 0) return [];
+  return [
+    '',
+    '## Style repair (rewrite ONLY composed bullets carrying these flagged patterns; never touch curated quotes)',
+    'The previous draft above leaked the following patterns -- restate each underlying fact using the '
+      + 'four-beat narrative contract, in public JD-recognisable vocabulary:',
+    ...findings.map((f) => `- ${f.kind}: "${f.token}"`),
+  ];
+}
+
 /** Focused user message for the projects agent -- two-lane pool,
- *  requirement-grouped ATS targets, fixed composition rules, and the
- *  re-write pass block when applicable. */
+ *  requirement-grouped ATS targets, fixed composition rules, the composed-
+ *  bullet narrative contract, and -- on a re-write pass -- the previous draft
+ *  plus any missed targets and flagged style findings. */
 export function buildProjectsMessage(m: ProjectsMessageInput): string {
   return [
     `Target role: ${m.targetRole}`,
     ...poolSection(m.pool),
     ...targetsSection(m.atsTargets),
     ...compositionRulesSection(),
+    ...narrativeContractSection(),
     ...rewriteSection(m),
+    ...styleRepairSection(m),
   ].join('\n');
 }
