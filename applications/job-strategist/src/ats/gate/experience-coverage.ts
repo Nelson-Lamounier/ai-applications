@@ -203,9 +203,11 @@ const SOFT_SKILL_SYNONYM_GROUPS: readonly SoftSkillSynonymGroup[] = [
     // Inflected verb / action-noun forms only -- bare stems and adjectives
     // are domain vocabulary, not teamwork evidence: "AWS partners programme",
     // "user engagement metrics", "collaborative filtering", "coordinate
-    // system" must all stay inert.
+    // system" must all stay inert. Engage forms additionally need a "with"
+    // object cue (one optional adverb allowed: "engaging directly with") so
+    // the UX adjective ("engaging user interfaces") stays inert too.
     evidence: [
-      /\b(partner|engag)(ed|ing)\b|\b(coordinat|collaborat)(ed|ing|ion)\b|\bliais(ed|ing|on)\b|\bcross[- ]functional\b/i,
+      /\bpartner(ed|ing)\b|\b(coordinat|collaborat)(ed|ing|ion)\b|\bliais(ed|ing|on)\b|\bengag(ed|ing)\s(\w+\s)?with\b|\bcross[- ]functional\b/i,
     ],
   },
   {

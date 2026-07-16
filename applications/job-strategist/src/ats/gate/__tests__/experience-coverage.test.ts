@@ -247,6 +247,13 @@ describe('experienceTermMatch', () => {
       expect(experienceTermMatch('collaboration',
         'Mapped coordinate system transforms for the robotics perception stack.')).toBe(false);
     });
+
+    it('REVIEW GUARD: the UX adjective "engaging" is not teamwork evidence, but engage-with is', () => {
+      expect(experienceTermMatch('collaboration',
+        'Designed engaging user interfaces for the checkout flow, increasing conversion by 12%.')).toBe(false);
+      expect(experienceTermMatch('collaboration',
+        'Engaged with enterprise customers to gather requirements ahead of each release.')).toBe(true);
+    });
   });
 });
 
