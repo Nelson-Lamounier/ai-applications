@@ -141,6 +141,25 @@ describe('resolveExperienceAts', () => {
     expect(r.output).toBe(first);
   });
 
+  it('propagates bounded accounting.dropped from params.first on the rewrite-threw branch', async () => {
+    // Owed micro-test (Task 2): the rewrite-error catch block has no rewrite
+    // output to read accounting from, so diag.provenance.dropped must come
+    // from params.first -- same source as the no-rewrite path, but reached
+    // via the throw catch rather than the early return.
+    const firstWithDropped: ExperienceAgentOutput = {
+      ...first,
+      accounting: { dropped: [{ line: 'c1.h1', reason: 'no ATS-relevant claim survives without fabricating scope' }] },
+    };
+    const r = await resolveExperienceAts({
+      first: firstWithDropped, roster, careerLines: lines, targets,
+      rewrite: async () => { throw new Error('bedrock 500'); },
+    });
+    expect(r.diag.rewrite.reason).toBe('rewrite-error');
+    expect(r.output).toBe(firstWithDropped);
+    expect(r.diag.provenance.dropped).toEqual([{ line: 'c1.h1', reason: 'no ATS-relevant claim survives without fabricating scope' }]);
+    expect(r.diag.provenance.droppedLines).toBe(1);
+  });
+
   it('keeps first when the re-write is provenance-invalid (cites another role\'s line)', async () => {
     const rewriteBad: ExperienceAgentOutput = {
       roles: [

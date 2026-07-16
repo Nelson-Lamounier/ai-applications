@@ -33,6 +33,12 @@ export interface ProjectPoolEntry {
     readonly index: number;
     readonly name: string;
     readonly pitch: string;
+    /** G3 empty-pitch edge: threaded through so `stampProjectDescription`
+     *  callers (`rankProjectEntry`, run-pipeline.ts's `stampProjectDescriptions`)
+     *  can fall back to it when `pitch` is empty. Optional -- pool fixtures
+     *  predating G3 need not supply it, and the fallback default lives inside
+     *  `stampProjectDescription` itself. */
+    readonly tagline?: string;
     readonly repoUrls: string[];
     readonly curated: CuratedBullet[];
     readonly repoCurrent: RepoCurrentFact[];
@@ -52,6 +58,7 @@ export interface ProjectAgentMeta {
     readonly projectId: string;
     readonly name: string;
     readonly pitch: string;
+    readonly tagline: string;
     readonly repositoryIds: readonly string[];
     readonly repoFullNames: readonly string[];
 }
@@ -121,6 +128,7 @@ export function buildProjectPool(
             index: i,
             name: meta.name,
             pitch: meta.pitch,
+            tagline: meta.tagline,
             repoUrls: meta.repoFullNames.map((f) => `github.com/${f}`),
             curated: bullets.map((text, j) => ({ id: `p${i}.b${j}`, text })),
             repoCurrent,
@@ -134,6 +142,7 @@ interface ProjectRow {
     readonly id: string;
     readonly name: string;
     readonly pitch: string;
+    readonly tagline: string;
 }
 
 interface ProjectRepositoryRow {
@@ -158,7 +167,7 @@ export async function loadProjectAgentInputs(
 ): Promise<ProjectAgentInputs> {
     const { projects, projectRepositories } = await withUserRls(pool, userId, async (client) => {
         const projectsResult = await client.query<ProjectRow>(
-            `SELECT p.id, p.name, COALESCE(p.pitch, '') AS pitch
+            `SELECT p.id, p.name, COALESCE(p.pitch, '') AS pitch, COALESCE(p.tagline, '') AS tagline
                FROM projects p
               WHERE p.user_id = $1 AND p.status <> 'archived'`,
             [userId],
@@ -193,6 +202,7 @@ export async function loadProjectAgentInputs(
         projectId: p.id,
         name: p.name,
         pitch: p.pitch,
+        tagline: p.tagline,
         repositoryIds: repositoryIdsByProject.get(p.id) ?? [],
         repoFullNames: repoFullNamesByProject.get(p.id) ?? [],
     }));

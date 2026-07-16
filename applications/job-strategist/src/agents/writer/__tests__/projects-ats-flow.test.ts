@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { resolveProjectsAts, deterministicProjects, scoreProjectsCoverage } from '../projects-ats-flow.js';
+import { resolveProjectsAts, deterministicProjects, scoreProjectsCoverage, sumProjectsNormalisedExtras } from '../projects-ats-flow.js';
 import type { ProjectsAgentOutput } from '../projects-schema.js';
 import type { ProjectPoolEntry } from '../../evidence/project-agent-inputs.js';
 import type { ExperienceAtsTarget } from '../../../ats/gate/experience-ats-targets.js';
@@ -284,6 +284,38 @@ describe('deterministicProjects', () => {
     expect(capped.endsWith('.')).toBe(true); // whole sentences only, never mid-sentence
     expect(longParagraph.startsWith(capped)).toBe(true);
   });
+
+  // G3 empty-pitch edge: a project with no pitch falls back to its tagline.
+  it('description falls back to the pool entry\'s tagline when pitch is empty', () => {
+    const taglinePool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'NoPitch',
+        pitch: '',
+        tagline: 'A one-line project summary.',
+        repoUrls: ['github.com/o/no-pitch'],
+        curated: [{ id: 'p0.b0', text: 'A curated bullet' }],
+        repoCurrent: [],
+      },
+    ];
+    const result = deterministicProjects(taglinePool, []);
+    expect(result[0]!.description).toBe('A one-line project summary.');
+  });
+
+  it('description stays empty when both pitch and tagline are empty/absent', () => {
+    const emptyBothPool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'NoPitchNoTagline',
+        pitch: '',
+        repoUrls: ['github.com/o/nothing'],
+        curated: [{ id: 'p0.b0', text: 'A curated bullet' }],
+        repoCurrent: [],
+      },
+    ];
+    const result = deterministicProjects(emptyBothPool, []);
+    expect(result[0]!.description).toBe('');
+  });
 });
 
 // Task 3: term-rule v2 -- coverage scoring and fallback ranking both move
@@ -400,5 +432,24 @@ describe('deterministicProjects entry ordering (Task 3: JD-ranked lane mix)', ()
   it('keeps the pool order when there are no targets at all', () => {
     const result = deterministicProjects(mixedPool, []);
     expect(result.map((r) => r.name)).toEqual(['FrontendPortfolio', 'Platform']);
+  });
+});
+
+// Owed micro-test (Task 2): fillResumeProjects (run-pipeline.ts) sums the
+// first draft's and any re-write's normalisedExtras into the persisted
+// ProjectsAgentDiagnostics -- fillResumeProjects itself is not directly
+// unit-testable (async agent calls through a DB-backed pipeline context), so
+// the extracted pure helper it calls is tested directly here.
+describe('sumProjectsNormalisedExtras (fillResumeProjects extras-summation glue)', () => {
+  it('sums the first draft and re-write counts', () => {
+    expect(sumProjectsNormalisedExtras(2, 3)).toBe(5);
+  });
+
+  it('a zero re-write count (no re-write fired) keeps the first draft count', () => {
+    expect(sumProjectsNormalisedExtras(4, 0)).toBe(4);
+  });
+
+  it('both zero -> zero', () => {
+    expect(sumProjectsNormalisedExtras(0, 0)).toBe(0);
   });
 });

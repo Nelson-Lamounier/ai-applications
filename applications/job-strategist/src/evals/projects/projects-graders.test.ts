@@ -100,7 +100,7 @@ function sentenceOf(words: number, seed: number): string {
 }
 
 // Stamp-contract boundary cases for descriptionGrader -- the grader is the
-// idempotency check `stampProjectDescription(description, 80) ===
+// idempotency check `stampProjectDescription(description, '', 80) ===
 // description.trim()` (plus non-empty), so these prove the 80-word boundary
 // and the mid-sentence-truncation rejection with the runtime primitive
 // itself, not a re-derived word count.

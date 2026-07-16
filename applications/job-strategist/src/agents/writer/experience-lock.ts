@@ -50,19 +50,25 @@ export async function withExperienceLock(
  * `description` -- so a pass may still freely rewrite `highlights` or add
  * `github`; only a changed description gets reverted, entry by entry.
  *
- * Entries are matched `before` -> `after` primarily by `name` (a rewrite
- * pass returns the full resume JSON and could plausibly reorder the array
- * without renaming anything); an entry whose name is not found in the
- * `before` snapshot falls back to matching by array index. An `after` entry
- * with no match at either (a genuinely new entry some pass added) is left
- * alone -- there is no snapshot to restore it from.
+ * Entries are matched `before` -> `after` by `name` ONLY -- name is identity.
+ * There is no positional/index fallback: the #493 reviews proved that
+ * falling back to array-index matching CROSS-ASSIGNS descriptions in one
+ * pass whenever a rewrite pass renames an entry (the renamed entry has no
+ * `before` match by name, so index matching silently borrows whatever entry
+ * used to sit at that position) or inserts/reorders an entry ahead of others
+ * (every later entry shifts index and gets compared against the WRONG
+ * `before` entry). An `after` entry whose `name` is absent from the `before`
+ * snapshot -- renamed, newly inserted, or shuffled around one of those -- is
+ * left exactly as the pass produced it: there is no reliable `before` value
+ * to restore it from, and index matching was proven unsafe, so the pass's
+ * own text stands.
  *
  * `onRestored(passName)` fires at most once per call, only when at least one
- * entry's description was actually reverted -- callers use it to record the
- * metric increment + violation-log entry for that pass, mirroring
- * `withExperienceLock`. `fn` is NOT caught here -- a throwing `fn` rejects
- * `withProjectsDescriptionLock` too; callers keep their own fail-open
- * `.catch`.
+ * NAME-matched entry's description was actually reverted -- callers use it
+ * to record the metric increment + violation-log entry for that pass,
+ * mirroring `withExperienceLock`. `fn` is NOT caught here -- a throwing `fn`
+ * rejects `withProjectsDescriptionLock` too; callers keep their own
+ * fail-open `.catch`.
  */
 export async function withProjectsDescriptionLock(
     resume: StructuredResumeData,
@@ -76,8 +82,8 @@ export async function withProjectsDescriptionLock(
     const after = out.projects ?? [];
 
     let restored = false;
-    const projects = after.map((entry, idx) => {
-        const beforeDescription = beforeByName.has(entry.name) ? beforeByName.get(entry.name) : before[idx]?.description;
+    const projects = after.map((entry) => {
+        const beforeDescription = beforeByName.get(entry.name);
         if (beforeDescription === undefined || beforeDescription === entry.description) return entry;
         restored = true;
         return { ...entry, description: beforeDescription };
