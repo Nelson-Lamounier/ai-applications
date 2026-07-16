@@ -37,6 +37,17 @@ export interface ProjectsAgentDiagnostics {
   readonly unresolvedRepos: string[];
 }
 
+/** Sum `normalisedExtras` across the first draft and any re-write call --
+ *  the glue `fillResumeProjects` (run-pipeline.ts) uses to fill in the
+ *  `normalisedExtras` this module always sets to `0` (see the doc comment
+ *  above). Extracted as a pure, exported helper because `fillResumeProjects`
+ *  itself is not directly unit-testable in isolation (it drives async agent
+ *  calls through a DB-backed `StrategistPipelineContext`) -- this is the
+ *  tested seam for the "first + rewrite" summation it depends on. */
+export function sumProjectsNormalisedExtras(first: number, rewrite: number): number {
+  return first + rewrite;
+}
+
 /** Draft text handed to the re-write fn: per-project `name` line, then
  *  `- bullet` lines, projects separated by a blank line. */
 function buildDraftText(out: ProjectsAgentOutput, pool: readonly ProjectPoolEntry[]): string {
@@ -130,7 +141,8 @@ function countTermMatches(texts: readonly string[], targets: readonly Experience
  *  old exact-adjacent-phrase `scoreSummaryCoverage`), stable on ties (i.e.
  *  original order), take at most `PROJECTS_MAX_BULLETS_PER_ENTRY`.
  *  Description is the deterministic pitch stamp (`stampProjectDescription`,
- *  projects-description.ts) -- the SAME function the agent-success path uses
+ *  projects-description.ts, given both `pitch` and `tagline` -- the G3
+ *  empty-pitch fallback) -- the SAME function the agent-success path uses
  *  in run-pipeline.ts, so no path can ship a differently-shaped description
  *  (this replaced an older ad hoc 40-word raw pitch trim); github is the
  *  project's first known repo URL. Projects with no curated bullets are skipped
@@ -148,7 +160,7 @@ function rankProjectEntry(
   const highlights = ranked.slice(0, PROJECTS_MAX_BULLETS_PER_ENTRY).map((r) => r.bullet.text);
   const coveredTargets = countTermMatches(highlights, targets);
 
-  const description = stampProjectDescription(entry.pitch);
+  const description = stampProjectDescription(entry.pitch, entry.tagline);
 
   const github = entry.repoUrls[0];
   return { name: entry.name, description, ...(github !== undefined ? { github } : {}), highlights, coveredTargets };

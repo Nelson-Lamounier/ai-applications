@@ -16,7 +16,7 @@ import {
     GOLDEN_NETWORKING, ADVERSARIAL_CROSS_ROLE, ADVERSARIAL_FABRICATION, ADVERSARIAL_REORDER,
     LINUX_ANCHORED_LIVE, TERM_TOLERANT_AWS_DB, NO_EVIDENCE_MISSING,
     ECHO_CLEANUP_VALID, ECHO_CLEANUP_INVALID,
-    MISSION_CRITICAL_DB, CODE_SCRIPTING, RAPID_LEARNING,
+    MISSION_CRITICAL_DB, CODE_SCRIPTING, ENUMERATION_SCRIPTING, RAPID_LEARNING,
     VERB_UPGRADE, VERB_LEGITIMISED,
 } from './fixtures.js';
 
@@ -145,6 +145,14 @@ describe('term-rule v2 promotions (Task 3): experienceTermMatch LIVE/REGRESSION 
         const coverage = scoreExperienceCoverage(bulletsOf(CODE_SCRIPTING.output), CODE_SCRIPTING.atsTargets);
         expect(coverage).toEqual({ targets: 1, covered: 1, missing: [] });
         const r = runExperienceGraders(CODE_SCRIPTING);
+        expect(r.results.filter((x) => !x.pass)).toEqual([]);
+        expect(r.pass).toBe(true);
+    });
+
+    it('ENUMERATION_SCRIPTING is covered -- the enumeration rule credits the base off a single named member language', () => {
+        const coverage = scoreExperienceCoverage(bulletsOf(ENUMERATION_SCRIPTING.output), ENUMERATION_SCRIPTING.atsTargets);
+        expect(coverage).toEqual({ targets: 1, covered: 1, missing: [] });
+        const r = runExperienceGraders(ENUMERATION_SCRIPTING);
         expect(r.results.filter((x) => !x.pass)).toEqual([]);
         expect(r.pass).toBe(true);
     });

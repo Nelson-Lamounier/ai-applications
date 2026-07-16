@@ -15,6 +15,7 @@ import {
     K8S_ORDERING_TARGETS, K8S_ORDERING_POOL,
     LANE_MIX_TARGETS, LANE_MIX_CURATED_WINS, LANE_MIX_COMPOSED_WINS,
     ALL_COMPOSED_UNCAPPED,
+    STRINGIFIED_ENTRIES_RAW_PAYLOAD,
 } from './fixtures.js';
 import { normaliseProjectsAgentOutput, ProjectsAgentOutputSchema, isCurated } from '../../agents/writer/projects-schema.js';
 import { assembleProjects } from '../../agents/writer/projects-provenance.js';
@@ -99,7 +100,7 @@ function sentenceOf(words: number, seed: number): string {
 }
 
 // Stamp-contract boundary cases for descriptionGrader -- the grader is the
-// idempotency check `stampProjectDescription(description, 80) ===
+// idempotency check `stampProjectDescription(description, '', 80) ===
 // description.trim()` (plus non-empty), so these prove the 80-word boundary
 // and the mid-sentence-truncation rejection with the runtime primitive
 // itself, not a re-derived word count.
@@ -287,6 +288,30 @@ describe('Task 5 (f): lane-mix -- JD-relevant curated beats off-JD composed, and
         const coverage = scoreProjectsCoverage(LANE_MIX_COMPOSED_WINS.output, LANE_MIX_COMPOSED_WINS.pool, LANE_MIX_TARGETS);
         expect(coverage.covered).toBe(1);
         expect(coverage.missing).toEqual([]);
+    });
+});
+
+// G1 (run 976403b3): the projects agent emitted `entries` as a stringified
+// JSON array of the well-formed GOLDEN_OUTPUT entries -- normalise-then-
+// validate must parse it, substitute the real array, and continue into the
+// normal per-item normalisation (the entry's model-authored description is
+// still discarded per the C4 decision), landing on an output that parses
+// cleanly and assembles byte-identical to the pool.
+describe('G1: stringified-entries live failure (run 976403b3) is accepted end to end', () => {
+    it('parses the stringified array, normalises per-item, and assembles cleanly', () => {
+        const { output, normalisedExtras } = normaliseProjectsAgentOutput(STRINGIFIED_ENTRIES_RAW_PAYLOAD);
+
+        // +1 for the string->array parse-substitute, +1 per entry for its
+        // agent-authored description (both GOLDEN_OUTPUT entries carry one,
+        // discarded per the C4 decision) -- 3 total; highlights are already
+        // clean shapes so no further per-item extras are stripped.
+        expect(normalisedExtras).toBe(3);
+
+        const parsed = ProjectsAgentOutputSchema.parse(output);
+        const assembled = assembleProjects(parsed, GOLDEN_TWO_LANE.pool);
+        expect(assembled[0]!.highlights[0]).toBe('Wrote the RLS policies for multi-tenant Kubernetes clusters');
+        expect(assembled[0]!.highlights[1]).toBe('Instrumented PostgreSQL row-level security across every write path');
+        expect(assembled[1]!.highlights[0]).toBe('Automated CI checks across every workspace');
     });
 });
 

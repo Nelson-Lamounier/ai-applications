@@ -99,7 +99,7 @@ import {
 import type { ExperienceAgentOutput } from './agents/writer/experience-schema.js';
 import { loadProjectAgentInputs, type ProjectAgentInputs, type ProjectPoolEntry } from './agents/evidence/project-agent-inputs.js';
 import { executeProjectsAgent } from './agents/writer/projects-agent.js';
-import { resolveProjectsAts, deterministicProjects, type ProjectsAgentDiagnostics } from './agents/writer/projects-ats-flow.js';
+import { resolveProjectsAts, deterministicProjects, sumProjectsNormalisedExtras, type ProjectsAgentDiagnostics } from './agents/writer/projects-ats-flow.js';
 import { assembleProjects, validateProjectsProvenance, ProjectsProvenanceError } from './agents/writer/projects-provenance.js';
 import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
@@ -348,23 +348,27 @@ async function fillResumeExperience(
  */
 /**
  * Stamp every entry's `description` from its matching pool entry's stored
- * `pitch` (Task 2 description contract) -- applied to the projects-agent
- * SUCCESS path's assembled output. The deterministic fallback does not come
- * through here: `deterministicProjects` (projects-ats-flow.ts) already calls
- * the SAME `stampProjectDescription` inside `rankProjectEntry`, which also
- * covers the reconciler's refuse-empty `fallbacks.projects` path -- one
- * function produces the field everywhere. Matched by `name` (pool entries
- * and resume entries share the same project name).
- * `stampProjectDescription` returning `''` (empty/missing pitch) leaves the
- * entry's existing description untouched -- fail-open, never blanks it.
+ * `pitch`, falling back to `tagline` when `pitch` is empty (Task 2 description
+ * contract + G3 empty-pitch edge) -- applied to the projects-agent SUCCESS
+ * path's assembled output. The deterministic fallback does not come through
+ * here: `deterministicProjects` (projects-ats-flow.ts) already calls the SAME
+ * `stampProjectDescription` inside `rankProjectEntry` with the same
+ * pitch/tagline pair, which also covers the reconciler's refuse-empty
+ * `fallbacks.projects` path -- one function, one fallback order, produces the
+ * field everywhere. Matched by `name` (pool entries and resume entries share
+ * the same project name).
+ * `stampProjectDescription` returning `''` (both pitch and tagline empty)
+ * leaves the entry's existing description untouched -- fail-open, never
+ * blanks it.
  */
 function stampProjectDescriptions<T extends { name: string; description: string }>(
     entries: readonly T[],
     pool: readonly ProjectPoolEntry[],
 ): T[] {
-    const pitchByName = new Map(pool.map((p) => [p.name, p.pitch]));
+    const poolByName = new Map(pool.map((p) => [p.name, p]));
     return entries.map((entry) => {
-        const stamped = stampProjectDescription(pitchByName.get(entry.name) ?? '');
+        const poolEntry = poolByName.get(entry.name);
+        const stamped = stampProjectDescription(poolEntry?.pitch ?? '', poolEntry?.tagline);
         return stamped ? { ...entry, description: stamped } : entry;
     });
 }
@@ -407,7 +411,7 @@ async function fillResumeProjects(
             },
         });
         (tailoredResumeData as { projects: unknown }).projects = stampProjectDescriptions(assembleProjects(output, pool), pool);
-        return { ...diag, unresolvedRepos, normalisedExtras: firstNormalisedExtras + rewriteNormalisedExtras };
+        return { ...diag, unresolvedRepos, normalisedExtras: sumProjectsNormalisedExtras(firstNormalisedExtras, rewriteNormalisedExtras) };
     } catch (err) {
         // deterministicProjects stamps descriptions itself (rankProjectEntry).
         (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets);

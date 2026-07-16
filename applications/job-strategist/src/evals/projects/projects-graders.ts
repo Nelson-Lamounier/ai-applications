@@ -140,7 +140,7 @@ export function atsCoverageGrader(i: ProjectsEvalInput): GraderResult {
  * description producer on every path) rather than a parallel restatement of
  * its rules: a valid description must be non-empty and a FIXED POINT of the
  * stamp at its 80-word default cap -- `stampProjectDescription(description,
- * 80) === description.trim()`. Every genuine stamp output is idempotent
+ * '', 80) === description.trim()`. Every genuine stamp output is idempotent
  * (single paragraph, whole sentences within the cap, an over-cap single
  * sentence word-sliced and re-terminated with '.'), so any description the
  * stamp would ALTER -- over-budget, multi-paragraph, or a mid-sentence
@@ -156,7 +156,7 @@ export function descriptionGrader(i: ProjectsEvalInput): GraderResult {
         if (!poolNames.has(entry.name)) return []; // unknown-project is provenanceGrader's job
         const trimmed = entry.description.trim();
         if (trimmed.length === 0) return [`description_empty:${entry.name}`];
-        if (stampProjectDescription(entry.description, 80) !== trimmed) return [`description_not_stamp_shaped:${entry.name}`];
+        if (stampProjectDescription(entry.description, '', 80) !== trimmed) return [`description_not_stamp_shaped:${entry.name}`];
         return [];
     });
     return mkResult('description', failures);

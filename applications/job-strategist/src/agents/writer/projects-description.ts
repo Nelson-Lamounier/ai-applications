@@ -18,6 +18,17 @@
  * explicitly scans projects[].description -- length, metric weave,
  * revalidate, surface_keywords) are all reverted by
  * withProjectsDescriptionLock (experience-lock.ts).
+ *
+ * Empty-pitch edge (G3): a project with no `pitch` at all previously shipped
+ * an empty description even when the project had a short `tagline`. The
+ * source now falls back `pitch -> tagline -> ''` -- pitch wins whenever it is
+ * non-empty (it is the richer, human-authored text); `tagline` (a much
+ * shorter one-liner) is used only when pitch is empty/whitespace-only; both
+ * empty stays `''`, unchanged from before. Both callers (`stampProjectDescriptions`
+ * in run-pipeline.ts, `rankProjectEntry` in projects-ats-flow.ts) now pass
+ * the pool entry's `tagline` alongside `pitch` -- the fallback lives HERE,
+ * inside the stamp, so there is one source of the fallback order rather than
+ * each caller re-deriving it.
  */
 
 /** Word count, whitespace-split, empty-safe. */
@@ -50,17 +61,20 @@ function trimSentences(text: string, capWords: number): string {
 
 /**
  * Stamp a resume project entry's `description` from the stored project
- * `pitch`: the first PARAGRAPH only (split on a blank line -- a pitch with
- * multiple paragraphs may keep internal notes or alternate framings after
- * the first), then sentence-trimmed to `capWords` (never mid-sentence).
+ * `pitch`, falling back to `tagline` when `pitch` is empty/whitespace-only
+ * (G3 empty-pitch edge -- see the file header comment): whichever source
+ * wins, only its first PARAGRAPH is used (split on a blank line -- a pitch
+ * with multiple paragraphs may keep internal notes or alternate framings
+ * after the first), then sentence-trimmed to `capWords` (never mid-sentence).
  *
- * Empty or missing pitch returns `''` -- fail-open, the caller must leave
- * the entry's EXISTING description untouched rather than blank it.
+ * Both empty returns `''` -- fail-open, the caller must leave the entry's
+ * EXISTING description untouched rather than blank it.
  */
-export function stampProjectDescription(pitch: string, capWords = 80): string {
+export function stampProjectDescription(pitch: string, tagline = '', capWords = 80): string {
     const trimmedPitch = pitch.trim();
-    if (trimmedPitch.length === 0) return '';
-    const firstParagraph = trimmedPitch.split(/\n\s*\n/)[0]?.trim() ?? '';
+    const source = trimmedPitch.length > 0 ? trimmedPitch : tagline.trim();
+    if (source.length === 0) return '';
+    const firstParagraph = source.split(/\n\s*\n/)[0]?.trim() ?? '';
     if (firstParagraph.length === 0) return '';
     return trimSentences(firstParagraph, capWords);
 }

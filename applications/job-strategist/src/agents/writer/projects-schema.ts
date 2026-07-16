@@ -91,6 +91,20 @@ function normaliseEntry(entry: unknown): { value: unknown; extras: number } {
   return { value: nextEntry, extras };
 }
 
+/** JSON.parse `value`; return the parsed array, or `null` on parse failure or
+ *  a non-array result (run 976403b3: the projects agent emitted `entries` as
+ *  a stringified JSON array -- a constrained-decoding slip, not a genuine
+ *  shape violation). */
+function tryParseJsonArray(value: string): unknown[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  return Array.isArray(parsed) ? parsed : null;
+}
+
 /**
  * Normalise-then-validate schema tolerance for the projects agent's forced-tool
  * output, run immediately before ProjectsAgentOutputSchema.parse. The wire
@@ -103,16 +117,34 @@ function normaliseEntry(entry: unknown): { value: unknown; extras: number } {
  * function tolerates that specific, known-safe over-emission while leaving
  * every other malformed shape a hard failure (zod still rejects it downstream).
  *
- * Malformed or non-object `raw` (or a missing/non-array `entries`) is returned
- * unchanged with `normalisedExtras: 0` -- there is nothing safe to normalise.
+ * G1 (run 976403b3): `entries` is also tolerated as a STRINGIFIED JSON array --
+ * another observed constrained-decoding slip. A successful parse into an array
+ * substitutes it (counted as one extra) and continues into the normal per-item
+ * normalisation below; a parse failure or non-array result leaves `raw`
+ * untouched so zod still hard-rejects it.
+ *
+ * Malformed or non-object `raw` (or a missing/non-array/non-parsable-array
+ * `entries`) is returned unchanged with `normalisedExtras: 0` -- there is
+ * nothing safe to normalise.
  */
 export function normaliseProjectsAgentOutput(raw: unknown): NormalisedProjectsOutput {
   if (!isRecord(raw)) return { output: raw, normalisedExtras: 0 };
   const entriesRaw = raw['entries'];
-  if (!Array.isArray(entriesRaw)) return { output: raw, normalisedExtras: 0 };
 
   let normalisedExtras = 0;
-  const entries = entriesRaw.map((entry: unknown) => {
+  let entriesArray: unknown[];
+  if (Array.isArray(entriesRaw)) {
+    entriesArray = entriesRaw;
+  } else if (typeof entriesRaw === 'string') {
+    const parsedArray = tryParseJsonArray(entriesRaw);
+    if (parsedArray === null) return { output: raw, normalisedExtras: 0 };
+    entriesArray = parsedArray;
+    normalisedExtras += 1;
+  } else {
+    return { output: raw, normalisedExtras: 0 };
+  }
+
+  const entries = entriesArray.map((entry: unknown) => {
     const normalised = normaliseEntry(entry);
     normalisedExtras += normalised.extras;
     return normalised.value;

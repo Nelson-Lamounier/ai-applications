@@ -180,7 +180,9 @@ describe('withProjectsDescriptionLock', () => {
         expect(restoredPasses).toEqual(['reframe']);
     });
 
-    it('falls back to index matching when a pass renames an entry', async () => {
+    it('name is identity -- a renamed entry has no before-match, so its description is NOT cross-assigned '
+        + "from whatever entry used to sit at that index (the #493 index-fallback bug); the pass's own "
+        + 'text survives untouched', async () => {
         const resume = withProjects();
         const renamed: StructuredResumeData = {
             ...resume,
@@ -193,8 +195,35 @@ describe('withProjectsDescriptionLock', () => {
         const out = await withProjectsDescriptionLock(resume, 'metric_weave', async () => renamed, (pass) => restoredPasses.push(pass));
 
         expect(out.projects[0]!.name).toBe('Renamed Project');
-        expect(out.projects[0]!.description).toBe(resume.projects[0]!.description);
-        expect(restoredPasses).toEqual(['metric_weave']);
+        // NOT restored to resume.projects[0]'s original description (that would be
+        // the cross-assign bug) -- the renamed entry keeps the pass's own text.
+        expect(out.projects[0]!.description).toBe('Renamed and rewritten description.');
+        expect(out.projects[1]).toEqual(resume.projects[1]);
+        expect(restoredPasses).toEqual([]);
+    });
+
+    it('an entry INSERTED ahead of existing entries does not cross-assign the shifted-index entries\' '
+        + 'descriptions either way -- the new entry keeps its own text and the shifted originals still '
+        + 'match by name', async () => {
+        const resume = withProjects();
+        const withInsertion: StructuredResumeData = {
+            ...resume,
+            projects: [
+                { name: 'New Inserted', description: 'A pass added this mid-list.', highlights: [] },
+                resume.projects[0]!,
+                resume.projects[1]!,
+            ],
+        };
+        const restoredPasses: string[] = [];
+        const out = await withProjectsDescriptionLock(resume, 'guard', async () => withInsertion, (pass) => restoredPasses.push(pass));
+
+        // With the old index fallback, 'New Inserted' (index 0) would have been
+        // matched against before[0] (Tucaken) and its description WRONGLY
+        // restored to Tucaken's. Name-only matching leaves it exactly as produced.
+        expect(out.projects[0]).toEqual({ name: 'New Inserted', description: 'A pass added this mid-list.', highlights: [] });
+        expect(out.projects[1]).toEqual(resume.projects[0]);
+        expect(out.projects[2]).toEqual(resume.projects[1]);
+        expect(restoredPasses).toEqual([]);
     });
 
     it('a genuinely new entry (no before match at name or index) is left as the pass produced it', async () => {

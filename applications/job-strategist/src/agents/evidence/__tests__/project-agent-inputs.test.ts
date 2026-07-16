@@ -5,7 +5,7 @@ import { buildProjectPool, loadProjectAgentInputs } from '../project-agent-input
 
 const bulletSets = [{ name: 'Tucaken', bullets: ['Built an event-driven API on SQS/SNS', 'Cut sync time 40%'] }];
 const projectMeta = [{
-    projectId: 'proj-1', name: 'Tucaken', pitch: 'A job platform for candidates.',
+    projectId: 'proj-1', name: 'Tucaken', pitch: 'A job platform for candidates.', tagline: 'Land your next job faster.',
     repositoryIds: ['repo-uuid-1'], repoFullNames: ['o/tucaken-app'],
 }];
 const repoLookup = new Map([
@@ -44,16 +44,23 @@ describe('buildProjectPool', () => {
     });
 
     it('a repo owned by two projects contributes its matches to both', () => {
-        const meta2 = [...projectMeta, { projectId: 'proj-2', name: 'Infra', pitch: 'Infra for Tucaken.', repositoryIds: ['repo-uuid-1'], repoFullNames: ['o/tucaken-app'] }];
+        const meta2 = [...projectMeta, { projectId: 'proj-2', name: 'Infra', pitch: 'Infra for Tucaken.', tagline: '', repositoryIds: ['repo-uuid-1'], repoFullNames: ['o/tucaken-app'] }];
         const r = buildProjectPool([...bulletSets, { name: 'Infra', bullets: ['Provisioned EKS'] }], meta2, repoLookup, matches.slice(0, 1));
         expect(r.pool[0]!.repoCurrent).toHaveLength(1);
         expect(r.pool[1]!.repoCurrent).toHaveLength(1);
+    });
+
+    // G3: tagline threads from ProjectAgentMeta into the pool entry so
+    // stampProjectDescription callers can fall back to it when pitch is empty.
+    it('threads tagline from project meta into the pool entry', () => {
+        const r = buildProjectPool(bulletSets, projectMeta, repoLookup, matches);
+        expect(r.pool[0]!.tagline).toBe('Land your next job faster.');
     });
 });
 
 /** Mock pool: connect() returns a client whose query() resolves rows keyed on table-name substring. */
 function mockPool(rowsByTable: {
-    projects: Array<{ id: string; name: string; pitch: string }>;
+    projects: Array<{ id: string; name: string; pitch: string; tagline?: string }>;
     projectRepositories: Array<{ project_id: string; repository_id: string; full_name: string; github_repo_id: number | null }>;
     projectResumeBullets: Array<{ name: string; angle: string; bullets: unknown }>;
 }) {
@@ -79,7 +86,7 @@ describe('loadProjectAgentInputs -- RLS-scoped two-lane read', () => {
     it('assembles the pool from projects + project_repositories + resume bullets, filtered by userId', async () => {
         const userId = '1d4c645a-447e-4b5b-924d-19a3c75a84db';
         const { pool, query } = mockPool({
-            projects: [{ id: 'proj-1', name: 'Tucaken', pitch: 'A job platform for candidates.' }],
+            projects: [{ id: 'proj-1', name: 'Tucaken', pitch: 'A job platform for candidates.', tagline: 'Land your next job faster.' }],
             projectRepositories: [
                 { project_id: 'proj-1', repository_id: 'repo-uuid-1', full_name: 'o/tucaken-app', github_repo_id: 42 },
             ],
@@ -99,7 +106,7 @@ describe('loadProjectAgentInputs -- RLS-scoped two-lane read', () => {
         expect(p.curated.map((b) => b.text)).toEqual(['Built an event-driven API on SQS/SNS']);
         expect(p.repoCurrent).toHaveLength(1);
         expect(p.repoCurrent[0]).toMatchObject({ skill: 'DNS', repositoryId: 'repo-uuid-1', fullName: 'o/tucaken-app' });
-
+        expect(p.tagline).toBe('Land your next job faster.');
         // Every query issued must parameterise on userId ($1).
         for (const call of query.mock.calls) {
             const sql = call[0] as string;
