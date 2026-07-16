@@ -15,15 +15,21 @@ interface EventLogger { info(obj: object, msg: string): void; }
  * Emit the projects-agent event stream to Loki (via the pipeline's structured
  * logger). Stable schema; every line carries pipeline_run_id / application_id /
  * trace_id. Mirrors experience-agent-diagnostics.ts's logExperienceAgentEvents,
- * plus one projects-only event: projects_repo_unresolved, fired once (with the
+ * plus two projects-only events: projects_repo_unresolved, fired once (with the
  * unresolved repo name list) when ProjectAgentInputs.unresolvedRepos is
  * non-empty -- citations that failed fail-closed attribution to a known
- * repository during pool construction (see project-agent-inputs.ts).
+ * repository during pool construction (see project-agent-inputs.ts) -- and
+ * projects_agent_normalised, fired once (with the bounded int count) when the
+ * normalise-then-validate pass (normaliseProjectsAgentOutput) stripped at
+ * least one item/field from the agent's raw response before it could parse.
  */
 export function logProjectsAgentEvents(log: EventLogger, keys: ProjectsAgentLogKeys, diag: ProjectsAgentDiagnostics): void {
   const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
   log.info({ ...base, event: 'projects_agent_targets', targets: diag.targets.map((t) => ({ skill: t.skill, source: t.source, verdict: t.verdict })) }, 'projects_agent_targets');
   log.info({ ...base, event: 'projects_agent_scored', covered: diag.coverageBefore.covered, of: diag.coverageBefore.targets, missing: diag.coverageBefore.missing }, 'projects_agent_scored');
+  if (diag.normalisedExtras > 0) {
+    log.info({ ...base, event: 'projects_agent_normalised', extras: diag.normalisedExtras }, 'projects_agent_normalised');
+  }
   if (diag.rewrite.fired) {
     log.info({ ...base, event: 'projects_agent_rewrite', reason: diag.rewrite.reason, coverage_after: diag.rewrite.coverageAfter?.covered ?? null, kept: diag.rewrite.kept, kept_reason: diag.rewrite.keptReason }, 'projects_agent_rewrite');
   }

@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { resolveProjectsAts, joinProjectsText, deterministicProjects } from '../projects-ats-flow.js';
+import { resolveProjectsAts, deterministicProjects, scoreProjectsCoverage } from '../projects-ats-flow.js';
 import type { ProjectsAgentOutput } from '../projects-schema.js';
 import type { ProjectPoolEntry } from '../../evidence/project-agent-inputs.js';
 import type { ExperienceAtsTarget } from '../../../ats/gate/experience-ats-targets.js';
@@ -175,19 +175,6 @@ describe('resolveProjectsAts', () => {
   });
 });
 
-describe('joinProjectsText', () => {
-  it('joins descriptions and assembled highlights with ". "', () => {
-    const text = joinProjectsText(first, pool);
-    expect(text).toBe(
-      [
-        'Tucaken is a career platform helping engineers land jobs faster with grounded evidence coaching.',
-        'Built the onboarding flow end to end',
-        'Wrote the RLS policies for multi-tenant Kubernetes clusters',
-      ].join('. '),
-    );
-  });
-});
-
 describe('deterministicProjects', () => {
   const dnsTarget: ExperienceAtsTarget[] = [
     { skill: 'DNS', source: 'hard', verdict: 'verified', requirement: 'Networking', anchors: [] },
@@ -217,7 +204,7 @@ describe('deterministicProjects', () => {
     },
   ];
 
-  it('ranks the DNS-target bullet to the lead position, trims the pitch to 40 words, and skips empty-curated projects', () => {
+  it('ranks the DNS-target bullet to the lead position, stamps the description from the pitch, and skips empty-curated projects', () => {
     const result = deterministicProjects(detPool, dnsTarget);
     expect(result).toHaveLength(1);
     const entry = result[0]!;
@@ -228,8 +215,190 @@ describe('deterministicProjects', () => {
       'Wrote deployment scripts for the staging environment',
       'Documented onboarding steps for new engineers',
     ]);
-    expect(entry.description.split(/\s+/)).toHaveLength(40);
-    expect(entry.description).toBe(Array.from({ length: 40 }, (_, i) => `word${i}`).join(' '));
+    // Task 2: description is the stampProjectDescription output, not the old
+    // ad hoc 40-word trim -- a 45-word run-on pitch is under the 80-word cap
+    // and ships whole.
+    expect(entry.description).toBe(longPitch);
     expect(entry.github).toBe('github.com/o/networker');
+  });
+
+  it('Task 3: ranks a bullet to the lead position via TERM-MATCH, not exact phrase -- a bullet that '
+    + 'never says "Linux systems engineering" verbatim still outranks unrelated bullets because it '
+    + "demonstrates the target's distinctive core {linux} (experienceTermMatch semantics)", () => {
+    const linuxTarget: ExperienceAtsTarget[] = [
+      { skill: 'Linux systems engineering', source: 'hard', verdict: 'verified', requirement: 'Systems', anchors: [] },
+    ];
+    const linuxPool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'Support',
+        pitch: 'internal support tooling for platform engineers',
+        repoUrls: ['github.com/o/support'],
+        curated: [
+          { id: 'p0.b0', text: 'Wrote onboarding documentation for new hires' },
+          {
+            id: 'p0.b1',
+            text: 'Guided customers through Amazon Linux system setup and configuration on EC2, covering '
+              + 'instance provisioning and OS-level troubleshooting',
+          },
+          { id: 'p0.b2', text: 'Triaged customer support tickets across every product line' },
+        ],
+        repoCurrent: [],
+      },
+    ];
+    const result = deterministicProjects(linuxPool, linuxTarget);
+    expect(result[0]!.highlights[0]).toBe(
+      'Guided customers through Amazon Linux system setup and configuration on EC2, covering '
+        + 'instance provisioning and OS-level troubleshooting',
+    );
+  });
+
+  it('description is the pitch STAMP (reconciler refuse-empty fallback path): first paragraph only, sentence-capped at 80 words', () => {
+    const sentence = (n: number): string => `Sentence number ${n} has exactly ten words in it total.`;
+    const longParagraph = Array.from({ length: 10 }, (_, i) => sentence(i)).join(' '); // 100 words
+    const stampPool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'MultiPara',
+        pitch: `First paragraph pitch for humans.\n\nSecond paragraph internal note that must never ship.`,
+        repoUrls: ['github.com/o/multipara'],
+        curated: [{ id: 'p0.b0', text: 'A curated bullet' }],
+        repoCurrent: [],
+      },
+      {
+        index: 1,
+        name: 'LongPitch',
+        pitch: longParagraph,
+        repoUrls: ['github.com/o/longpitch'],
+        curated: [{ id: 'p1.b0', text: 'Another curated bullet' }],
+        repoCurrent: [],
+      },
+    ];
+
+    const result = deterministicProjects(stampPool, []);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.description).toBe('First paragraph pitch for humans.');
+    expect(result[0]!.description).not.toContain('Second paragraph');
+    const capped = result[1]!.description;
+    expect(capped.trim().split(/\s+/).length).toBeLessThanOrEqual(80);
+    expect(capped.endsWith('.')).toBe(true); // whole sentences only, never mid-sentence
+    expect(longParagraph.startsWith(capped)).toBe(true);
+  });
+});
+
+// Task 3: term-rule v2 -- coverage scoring and fallback ranking both move
+// from the strict exact-adjacent-phrase `scoreSummaryCoverage` to
+// `experienceTermMatch` semantics (via `scoreExperienceCoverage`).
+describe('scoreProjectsCoverage (Task 3 term-rule v2 -- experienceTermMatch parity)', () => {
+  it('credits a target via term-match semantics without the exact phrase -- parity with the experience '
+    + "lane's REGRESSION fixture (\"Linux systems engineering\" / the real Amazon Linux bullet); the OLD "
+    + 'exact-adjacent-phrase scorer would have missed this (the bullet never says the literal phrase) -- '
+    + 'this is the MongoDB TSE live-run bug (0/6 coverage despite relevant bullets)', () => {
+    const linuxPool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'Support',
+        pitch: 'internal support tooling for platform engineers',
+        repoUrls: ['github.com/o/support'],
+        curated: [{
+          id: 'p0.b0',
+          text: 'Guided customers through Amazon Linux (AL2 and AL2023) system setup and configuration on EC2, '
+            + 'covering instance provisioning, SSH access and key management, package and systemd service '
+            + 'configuration, and OS-level troubleshooting of boot, storage, and network connectivity issues.',
+        }],
+        repoCurrent: [],
+      },
+    ];
+    const linuxTargets: ExperienceAtsTarget[] = [
+      { skill: 'Linux systems engineering', source: 'hard', verdict: 'verified', requirement: 'Systems', anchors: [] },
+    ];
+    const out: ProjectsAgentOutput = {
+      entries: [{
+        name: 'Support',
+        github: 'github.com/o/support',
+        description: 'Support is internal support tooling for platform engineers.',
+        highlights: [{ bulletId: 'p0.b0' }],
+      }],
+    };
+    const result = scoreProjectsCoverage(out, linuxPool, linuxTargets);
+    expect(result.covered).toBe(1);
+    expect(result.missing).toEqual([]);
+  });
+
+  it('never scores the description -- Task 2 locked it to the pitch stamp, so a description mentioning '
+    + 'a target must NOT count as coverage on its own', () => {
+    const pitchOnlyPool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'Support',
+        pitch: 'a Kubernetes-based internal support platform',
+        repoUrls: ['github.com/o/support'],
+        curated: [{ id: 'p0.b0', text: 'Wrote onboarding documentation for new hires' }],
+        repoCurrent: [],
+      },
+    ];
+    const out: ProjectsAgentOutput = {
+      entries: [{
+        name: 'Support',
+        github: 'github.com/o/support',
+        description: 'Support is a Kubernetes-based internal support platform.',
+        highlights: [{ bulletId: 'p0.b0' }],
+      }],
+    };
+    const targets: ExperienceAtsTarget[] = [
+      { skill: 'Kubernetes', source: 'hard', verdict: 'verified', requirement: 'Infra', anchors: [] },
+    ];
+    expect(scoreProjectsCoverage(out, pitchOnlyPool, targets).covered).toBe(0);
+  });
+});
+
+describe('deterministicProjects entry ordering (Task 3: JD-ranked lane mix)', () => {
+  const k8sTargets: ExperienceAtsTarget[] = [
+    { skill: 'Kubernetes', source: 'hard', verdict: 'verified', requirement: 'Infra', anchors: [] },
+  ];
+
+  // Pool order deliberately puts the near-zero-signal project FIRST -- proves
+  // reordering happens rather than an accidental pool-order pass-through.
+  const mixedPool: ProjectPoolEntry[] = [
+    {
+      index: 0,
+      name: 'FrontendPortfolio',
+      pitch: 'a personal portfolio site built with React and CSS animations',
+      repoUrls: ['github.com/o/frontend-portfolio'],
+      curated: [
+        { id: 'p0.b0', text: 'Styled responsive layouts with CSS grid and flexbox' },
+        { id: 'p0.b1', text: 'Animated page transitions using a JavaScript animation library' },
+      ],
+      repoCurrent: [],
+    },
+    {
+      index: 1,
+      name: 'Platform',
+      pitch: 'the internal platform team\'s infrastructure services',
+      repoUrls: ['github.com/o/platform'],
+      curated: [
+        { id: 'p1.b0', text: 'Ran production workloads on Kubernetes clusters across every environment' },
+      ],
+      repoCurrent: [],
+    },
+  ];
+
+  it('ranks the Kubernetes-flavoured Platform entry above the near-zero-signal FrontendPortfolio entry '
+    + '-- the MongoDB TSE live-run regression (frontend bullets shipped while Kubernetes evidence sat unused)', () => {
+    const result = deterministicProjects(mixedPool, k8sTargets);
+    expect(result.map((r) => r.name)).toEqual(['Platform', 'FrontendPortfolio']);
+  });
+
+  it('keeps the pool order on a tie (neither entry term-matches the target)', () => {
+    const noSignalTargets: ExperienceAtsTarget[] = [
+      { skill: 'Rust', source: 'hard', verdict: 'verified', requirement: 'Systems', anchors: [] },
+    ];
+    const result = deterministicProjects(mixedPool, noSignalTargets);
+    expect(result.map((r) => r.name)).toEqual(['FrontendPortfolio', 'Platform']);
+  });
+
+  it('keeps the pool order when there are no targets at all', () => {
+    const result = deterministicProjects(mixedPool, []);
+    expect(result.map((r) => r.name)).toEqual(['FrontendPortfolio', 'Platform']);
   });
 });

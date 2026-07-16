@@ -1,12 +1,15 @@
 /**
  * @format
- * restoreExperienceAfter: the metric-weave (surfaceMetrics) rewrites BOTH
- * experience and project descriptions, but experience is agent-owned
- * (fillResumeExperience already produced the provenance-guarded final
- * section) -- the weave must never touch it. Scope the weave's write surface
- * to projects (and everything else) by snapshotting experience before the
- * weave and restoring it after, without disturbing any other field the
- * weave legitimately changed.
+ * restoreExperienceAfter: the metric-weave (surfaceMetrics) rewrites the
+ * whole resume, but experience is agent-owned (fillResumeExperience already
+ * produced the provenance-guarded final section) -- the weave must never
+ * touch it. Scope the weave's write surface to everything else by
+ * snapshotting experience before the weave and restoring it after, without
+ * disturbing any other field the weave legitimately changed. (Task 2:
+ * `projects[].description` is now ALSO locked downstream, via the sibling
+ * `withProjectsDescriptionLock`, experience-lock.ts -- but that is a
+ * SEPARATE, field-scoped lock; this test exercises only the
+ * `restoreExperienceAfter` mechanics `withExperienceLock` uses.)
  *
  * Imported from agents/quality/resume-guard.js (its real home, alongside the
  * sibling preserveExperienceRoster invariant) rather than run-pipeline.js:

@@ -2,18 +2,24 @@
 import type { ProjectPoolEntry } from '../evidence/project-agent-inputs.js';
 import { isCurated, type ProjectsAgentEntry, type ProjectsAgentOutput } from './projects-schema.js';
 
-const MAX_BULLETS = 6;
-const MAX_COMPOSED = 2;
-const MAX_DESCRIPTION_WORDS = 40;
-const MIN_PITCH_OVERLAP = 0.3;
-
-/** Lowercase alnum tokens, length > 3 -- same bar as checkProjectPitchAlignment's
- *  token approach, restated locally so this validator has no cross-module coupling. */
-function distinctiveTokens(text: string): Set<string> {
-  return new Set(
-    text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter((t) => t.length > 3),
-  );
-}
+/** Per-entry highlight cap for the projects lane -- SINGLE SOURCE OF TRUTH,
+ *  re-exported so every other module that needs the same number (the
+ *  deterministic fallback's `rankProjectEntry` slice in projects-ats-flow.ts,
+ *  the lane-mix composition rules in projects-message.ts and the persona
+ *  content/strategist/projects-agent.md) never drifts from this file's own
+ *  `bullet_count` gate. Matches the live agent-message/persona bullet cap
+ *  ("3-6 bullets per project") that shipped before Task 3.
+ *
+ *  Task 3 (JD-ranked lane mix): this used to also bound `bullet_count`
+ *  (6) while a SEPARATE, stricter `MAX_COMPOSED = 2` capped composed
+ *  highlights -- forcing curated bullets to win slots even when repo-current
+ *  evidence was the more JD-relevant lane (the MongoDB TSE live run: near-
+ *  zero-signal frontend-portfolio bullets shipped while Kubernetes repo-
+ *  current evidence sat unused in the platform project's own pool). The
+ *  composed cap is now the SAME constant as the per-entry bullet cap --
+ *  lane mix is chosen purely by JD relevance, so a project's slots may be
+ *  any mix of curated and composed, up to the one per-entry limit. */
+export const PROJECTS_MAX_BULLETS_PER_ENTRY = 6;
 
 /** id -> owning project name, across every pool entry's curated bullets and
  *  repo-current facts -- the single source of truth for cross-project citation. */
@@ -73,17 +79,19 @@ function validateHighlights(
   return composedCount;
 }
 
-function pitchOverlapViolation(entry: ProjectsAgentEntry, poolEntry: ProjectPoolEntry): string[] {
-  const pitchTokens = distinctiveTokens(poolEntry.pitch);
-  if (pitchTokens.size === 0) return [];
-  const descTokens = distinctiveTokens(entry.description);
-  let hit = 0;
-  for (const t of pitchTokens) if (descTokens.has(t)) hit++;
-  if (hit / pitchTokens.size < MIN_PITCH_OVERLAP) return [`pitch_overlap:${entry.name}`];
-  return [];
-}
-
-/** Full validation for one output entry against its matching pool entry. */
+/** Full validation for one output entry against its matching pool entry.
+ *
+ *  Deliberately NO validation of `entry.description`: the field is
+ *  system-authored, not model-authored. `normaliseProjectsAgentOutput`
+ *  (projects-schema.ts) blanks any agent-emitted description to `''` BEFORE
+ *  the schema parse, and the pipeline stamps the final value from the stored
+ *  project pitch AFTER validation (`stampProjectDescriptions` on the agent
+ *  success path, `rankProjectEntry` on the deterministic fallback -- both
+ *  via `stampProjectDescription`, projects-description.ts, then locked by
+ *  `withProjectsDescriptionLock`). Validating the blanked echo here would be
+ *  meaningless at best; the retired `pitch_overlap` rule was actively
+ *  harmful -- it fired on every blanked entry, failing every run into the
+ *  fallback. */
 function validateEntry(
   entry: ProjectsAgentEntry,
   poolEntry: ProjectPoolEntry,
@@ -94,17 +102,13 @@ function validateEntry(
 
   const poolSize = poolEntry.curated.length + poolEntry.repoCurrent.length;
   const min = Math.min(3, poolSize);
-  if (entry.highlights.length < min || entry.highlights.length > MAX_BULLETS) {
+  if (entry.highlights.length < min || entry.highlights.length > PROJECTS_MAX_BULLETS_PER_ENTRY) {
     violations.push(`bullet_count:${entry.name}:${entry.highlights.length}`);
   }
-  if (composedCount > MAX_COMPOSED) violations.push(`composed_cap:${entry.name}:${composedCount}`);
+  if (composedCount > PROJECTS_MAX_BULLETS_PER_ENTRY) violations.push(`composed_cap:${entry.name}:${composedCount}`);
   if (entry.github !== '' && !poolEntry.repoUrls.includes(entry.github)) {
     violations.push(`github_mismatch:${entry.name}`);
   }
-  const words = entry.description.trim().split(/\s+/).filter((w) => w.length > 0);
-  if (words.length > MAX_DESCRIPTION_WORDS) violations.push(`description_words:${entry.name}:${words.length}`);
-  violations.push(...pitchOverlapViolation(entry, poolEntry));
-
   return violations;
 }
 
@@ -112,9 +116,11 @@ function validateEntry(
  * Deterministic provenance rules for the Projects agent: every curated id and
  * composed source must resolve, via the global id index, to its OWN project's
  * pool (never another project's); documented projects with a non-empty curated
- * pool must appear in the output; bullet counts, github, description length and
- * pitch-opening overlap are all re-checked against the pool, never trusted from
- * the model's own emission. Returns machine-readable violation tokens; empty
+ * pool must appear in the output; bullet counts and github are re-checked
+ * against the pool, never trusted from the model's own emission. Descriptions
+ * are deliberately NOT validated -- see `validateEntry`'s doc comment (the
+ * field is system-stamped after validation, and the normaliser blanks any
+ * agent emission before it). Returns machine-readable violation tokens; empty
  * array = valid.
  */
 export function validateProjectsProvenance(

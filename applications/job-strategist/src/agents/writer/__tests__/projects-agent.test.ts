@@ -94,4 +94,49 @@ describe('projects agent', () => {
 
         await expect(executeProjectsAgent(baseCtx, baseInput())).rejects.toThrow();
     });
+
+    it('normalises a live-shaped bulletId+sources response and surfaces normalisedExtras on the result', async () => {
+        mockRun.mockImplementation(async (opts: { parseResponse: (text: string) => unknown }) => ({
+            data: opts.parseResponse(JSON.stringify({
+                entries: [{
+                    name: 'Tucaken',
+                    github: 'github.com/o/tucaken-app',
+                    description: '',
+                    highlights: [{ bulletId: 'p0.b0', sources: ['p0.r0'] }],
+                }],
+            })),
+        }));
+
+        const res = await executeProjectsAgent(baseCtx, baseInput());
+
+        expect(res.data.entries[0]!.highlights).toEqual([{ bulletId: 'p0.b0' }]);
+        expect(res.normalisedExtras).toBe(1);
+    });
+
+    it('surfaces normalisedExtras 0 for an already-clean response', async () => {
+        mockRun.mockImplementation(async (opts: { parseResponse: (text: string) => unknown }) => ({
+            data: opts.parseResponse(JSON.stringify({
+                entries: [{
+                    name: 'Tucaken',
+                    github: 'github.com/o/tucaken-app',
+                    description: '',
+                    highlights: [{ bulletId: 'p0.b0' }],
+                }],
+            })),
+        }));
+
+        const res = await executeProjectsAgent(baseCtx, baseInput());
+
+        expect(res.normalisedExtras).toBe(0);
+    });
+
+    it('counts an agent-emitted description as an extra even alongside a clean bulletId-only highlight', async () => {
+        mockRun.mockImplementation(async (opts: { parseResponse: (text: string) => unknown }) => ({
+            data: opts.parseResponse(JSON.stringify(validOutput())),
+        }));
+
+        const res = await executeProjectsAgent(baseCtx, baseInput());
+
+        expect(res.normalisedExtras).toBe(1);
+    });
 });

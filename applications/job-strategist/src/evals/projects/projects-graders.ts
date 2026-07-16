@@ -3,9 +3,10 @@
  * Projects-agent per-phase eval - offline structural graders.
  *
  * These reuse the exact predicates the runtime projects lane applies
- * (`validateProjectsProvenance`, `assembleProjects`, `scoreSummaryCoverage`) so
- * "eval says good" and "guard accepts" can never drift. No Bedrock call - pure,
- * deterministic checks against a fixed ProjectsEvalInput.
+ * (`validateProjectsProvenance`, `assembleProjects`, `scoreProjectsCoverage`,
+ * `scoreSummaryCoverage`, `stampProjectDescription`) so "eval says good" and
+ * "guard accepts" can never drift. No Bedrock call - pure, deterministic
+ * checks against a fixed ProjectsEvalInput.
  *
  * `assembled` is the RENDERED final section handed to the fixture separately
  * from `output`/`pool` -- in the real pipeline this is what `assembleProjects`
@@ -15,15 +16,13 @@
  * deliberately retyped copy to prove `quoteFidelityGrader` actually reads it.
  */
 import type { RepoCurrentFact, ProjectPoolEntry } from '../../agents/evidence/project-agent-inputs.js';
-import { assembleProjects, validateProjectsProvenance } from '../../agents/writer/projects-provenance.js';
+import { scoreProjectsCoverage } from '../../agents/writer/projects-ats-flow.js';
+import { stampProjectDescription } from '../../agents/writer/projects-description.js';
+import { assembleProjects, PROJECTS_MAX_BULLETS_PER_ENTRY, validateProjectsProvenance } from '../../agents/writer/projects-provenance.js';
 import { isCurated, type ProjectsAgentOutput } from '../../agents/writer/projects-schema.js';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { scoreSummaryCoverage } from '../../ats/gate/summary-coverage.js';
 import { mkResult, type GraderResult } from '../graders.js';
-
-const MAX_COMPOSED = 2;
-const MAX_DESCRIPTION_WORDS = 40;
-const MIN_PITCH_OVERLAP = 0.3;
 
 /** The exact input the projects phase produces + the rendered artefact + the
  *  context it was graded against. */
@@ -64,17 +63,21 @@ export function quoteFidelityGrader(i: ProjectsEvalInput): GraderResult {
 }
 
 /**
- * Composition quality: composed bullets stay <=2/project, every cited source
- * belongs to the SAME project's pool, and -- the staleness-appropriateness
- * check -- each composed bullet's cited repo-current fact's skill must NOT
- * already be answerable by any of the project's curated bullets (per-bullet
- * `scoreSummaryCoverage` of that single skill against each curated text).
- * A composed bullet answering an already-curated skill means the model
- * manufactured a redundant fact instead of using the two-lane pool correctly.
+ * Composition quality: composed bullets stay <= the per-entry bullet cap
+ * (Task 3: raised from a separate `<=2/project` allowance to
+ * `PROJECTS_MAX_BULLETS_PER_ENTRY` -- the SAME cap `bullet_count` enforces,
+ * imported from `projects-provenance.ts` so eval and runtime can never
+ * drift), every cited source belongs to the SAME project's pool, and -- the
+ * staleness-appropriateness check -- each composed bullet's cited
+ * repo-current fact's skill must NOT already be answerable by any of the
+ * project's curated bullets (per-bullet `scoreSummaryCoverage` of that
+ * single skill against each curated text). A composed bullet answering an
+ * already-curated skill means the model manufactured a redundant fact
+ * instead of using the two-lane pool correctly.
  *
- * The `<=2/project` cap is ALSO enforced by `validateProjectsProvenance`
- * (defence in depth, not a coincidence): a fixture that violates the cap
- * legitimately fails BOTH `provenanceGrader` and `compositionGrader`.
+ * The cap is ALSO enforced by `validateProjectsProvenance` (defence in
+ * depth, not a coincidence): a fixture that violates the cap legitimately
+ * fails BOTH `provenanceGrader` and `compositionGrader`.
  */
 export function compositionGrader(i: ProjectsEvalInput): GraderResult {
     const failures: string[] = [];
@@ -86,7 +89,7 @@ export function compositionGrader(i: ProjectsEvalInput): GraderResult {
         const repoCurrentById = new Map<string, RepoCurrentFact>(poolEntry.repoCurrent.map((r) => [r.id, r]));
         const composed = entry.highlights.filter((h): h is { text: string; sources: string[] } => !isCurated(h));
 
-        if (composed.length > MAX_COMPOSED) failures.push(`composed_cap:${entry.name}:${composed.length}`);
+        if (composed.length > PROJECTS_MAX_BULLETS_PER_ENTRY) failures.push(`composed_cap:${entry.name}:${composed.length}`);
 
         composed.forEach((h, idx) => {
             for (const s of h.sources) {
@@ -107,14 +110,23 @@ export function compositionGrader(i: ProjectsEvalInput): GraderResult {
 
 /**
  * ATS coverage: a well-composed projects section should surface at least
- * min(2, N) of its attainable targets across the RENDERED (assembled) text.
- * Vacuously passes when a fixture set no targets.
+ * min(2, N) of its attainable targets. Delegates to `scoreProjectsCoverage`
+ * (projects-ats-flow.ts) -- the SAME term-tolerant `experienceTermMatch`
+ * primitive the runtime resolver scores coverage with, over HIGHLIGHTS ONLY
+ * (`output`/`pool`, not `assembled`). This grader previously scored the
+ * RENDERED text (description + highlights) via the summary lane's strict
+ * adjacent-phrase `scoreSummaryCoverage` -- a different predicate than the
+ * runtime ever applies to projects, so "eval says good" could drift from
+ * "guard accepts" in either direction (a description-only keyword mention
+ * passing here while the runtime, which never scores descriptions, saw no
+ * coverage at all; or a genuinely on-topic but non-adjacent highlight failing
+ * here while the runtime's term-match credited it). Vacuously passes when a
+ * fixture set no targets.
  */
 export function atsCoverageGrader(i: ProjectsEvalInput): GraderResult {
     const targets = i.atsTargets;
     if (targets.length === 0) return mkResult('atsCoverage', []);
-    const joined = i.assembled.flatMap((p) => [p.description, ...p.highlights]).join('. ');
-    const { covered } = scoreSummaryCoverage(joined, targets);
+    const { covered } = scoreProjectsCoverage(i.output, i.pool, targets);
     const need = Math.min(2, targets.length);
     return mkResult(
         'atsCoverage',
@@ -122,36 +134,31 @@ export function atsCoverageGrader(i: ProjectsEvalInput): GraderResult {
     );
 }
 
-/** Lowercase alnum tokens, length > 3 -- the exact formula `pitchOverlapViolation`
- *  in projects-provenance.ts uses, restated locally so this grader has no
- *  cross-module coupling to the validator's internals. */
-function distinctiveTokens(text: string): Set<string> {
-    return new Set(text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter((t) => t.length > 3));
-}
-
 /**
- * Description quality: <=40 words, and >=30% of the pool pitch's distinctive
- * tokens must reappear in the description -- the same formula the runtime
- * validator applies. Re-checking it here as its own grader gives the eval
- * report a dedicated, readable failure line even though `validateProjectsProvenance`
- * enforces the identical rule.
+ * Description quality, checked WITH the runtime primitive itself
+ * (`stampProjectDescription`, projects-description.ts -- Task 2's SOLE
+ * description producer on every path) rather than a parallel restatement of
+ * its rules: a valid description must be non-empty and a FIXED POINT of the
+ * stamp at its 80-word default cap -- `stampProjectDescription(description,
+ * 80) === description.trim()`. Every genuine stamp output is idempotent
+ * (single paragraph, whole sentences within the cap, an over-cap single
+ * sentence word-sliced and re-terminated with '.'), so any description the
+ * stamp would ALTER -- over-budget, multi-paragraph, or a mid-sentence
+ * truncation the stamp would re-trim -- cannot have been produced by it and
+ * fails. The runtime validator deliberately has NO description rules (the
+ * field is system-stamped post-validation -- see `validateEntry`,
+ * projects-provenance.ts); this grader checks the STAMPED artefact the
+ * fixture carries, a surface the runtime guard never re-reads.
  */
 export function descriptionGrader(i: ProjectsEvalInput): GraderResult {
-    const failures: string[] = [];
-    const poolByName = new Map(i.pool.map((p) => [p.name, p]));
-    for (const entry of i.output.entries) {
-        const poolEntry = poolByName.get(entry.name);
-        if (!poolEntry) continue;
-        const words = entry.description.trim().split(/\s+/).filter((w) => w.length > 0);
-        if (words.length > MAX_DESCRIPTION_WORDS) failures.push(`description_words:${entry.name}:${words.length}`);
-
-        const pitchTokens = distinctiveTokens(poolEntry.pitch);
-        if (pitchTokens.size === 0) continue;
-        const descTokens = distinctiveTokens(entry.description);
-        let hit = 0;
-        for (const t of pitchTokens) if (descTokens.has(t)) hit++;
-        if (hit / pitchTokens.size < MIN_PITCH_OVERLAP) failures.push(`pitch_overlap:${entry.name}`);
-    }
+    const poolNames = new Set(i.pool.map((p) => p.name));
+    const failures = i.output.entries.flatMap((entry) => {
+        if (!poolNames.has(entry.name)) return []; // unknown-project is provenanceGrader's job
+        const trimmed = entry.description.trim();
+        if (trimmed.length === 0) return [`description_empty:${entry.name}`];
+        if (stampProjectDescription(entry.description, 80) !== trimmed) return [`description_not_stamp_shaped:${entry.name}`];
+        return [];
+    });
     return mkResult('description', failures);
 }
 

@@ -1,7 +1,9 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { validateProjectsProvenance, assembleProjects, ProjectsProvenanceError } from '../projects-provenance.js';
-import type { ProjectsAgentOutput } from '../projects-schema.js';
+import {
+  validateProjectsProvenance, assembleProjects, ProjectsProvenanceError, PROJECTS_MAX_BULLETS_PER_ENTRY,
+} from '../projects-provenance.js';
+import { normaliseProjectsAgentOutput, ProjectsAgentOutputSchema, type ProjectsAgentOutput } from '../projects-schema.js';
 import type { ProjectPoolEntry } from '../../evidence/project-agent-inputs.js';
 
 const pool: ProjectPoolEntry[] = [
@@ -96,15 +98,6 @@ describe('validateProjectsProvenance', () => {
     expect(validateProjectsProvenance(bad, pool)).toContain('cross_project_citation:Tucaken:p1.b0');
   });
 
-  it('rejects more than two composed highlights for one project', () => {
-    const bad = structuredClone(good);
-    bad.entries[0]!.highlights.push(
-      { text: 'Hardened cluster networking policies', sources: ['p0.r1'] },
-      { text: 'Instrumented CI type-checking across every package', sources: ['p0.r2'] },
-    );
-    expect(validateProjectsProvenance(bad, pool)).toContain('composed_cap:Tucaken:3');
-  });
-
   it('rejects a composed highlight whose sources all fail to resolve', () => {
     const bad = structuredClone(good);
     bad.entries[0]!.highlights[2] = { text: 'Instrumented Postgres row-level security checks across every write path', sources: ['p0.zzz'] };
@@ -123,16 +116,71 @@ describe('validateProjectsProvenance', () => {
     expect(validateProjectsProvenance(bad, pool)).toContain('github_mismatch:Tucaken');
   });
 
-  it('rejects a description over 40 words', () => {
-    const bad = structuredClone(good);
-    bad.entries[0]!.description = `${bad.entries[0]!.description} ${Array.from({ length: 40 }, () => 'filler').join(' ')}`;
-    expect(validateProjectsProvenance(bad, pool)).toContain('description_words:Tucaken:57');
+  // REGRESSION (cross-task seam, T1 x this validator): the normaliser blanks
+  // every agent-emitted description to '' BEFORE this validator runs
+  // (run-pipeline validates the parsed output, then stamps descriptions).
+  // The retired pitch_overlap rule fired on that blanked echo for EVERY
+  // entry on EVERY run, so the agent lane could never pass validation and
+  // always fell back. Descriptions are system-authored (stamped from the
+  // stored pitch after validation) -- a blanked description with valid
+  // highlights MUST validate clean.
+  it('accepts a normalised output (all descriptions blanked to "") when highlights are valid', () => {
+    const raw = {
+      entries: good.entries.map((e) => ({ ...e, description: 'a model-authored pitch the normaliser discards' })),
+    };
+    const { output, normalisedExtras } = normaliseProjectsAgentOutput(raw);
+    expect(normalisedExtras).toBe(2);
+    const parsed = ProjectsAgentOutputSchema.parse(output);
+    expect(parsed.entries.every((e) => e.description === '')).toBe(true);
+    expect(validateProjectsProvenance(parsed, pool)).toEqual([]);
+  });
+});
+
+// Task 3: the composed cap is lifted to PROJECTS_MAX_BULLETS_PER_ENTRY (the SAME
+// cap as bullet_count) -- curated and composed bullets now compete for slots
+// purely on JD relevance, not a separate low composed-only allowance.
+describe('composed cap lifted to the per-entry bullet cap (Task 3)', () => {
+  const description = 'Tucaken is a career platform helping engineers land jobs faster with grounded evidence coaching.';
+  const capPool: ProjectPoolEntry[] = [
+    {
+      index: 0,
+      name: 'Tucaken',
+      pitch: 'career platform helping engineers land jobs faster through evidence grounded coaching',
+      repoUrls: ['github.com/o/tucaken-app'],
+      curated: [],
+      repoCurrent: Array.from({ length: PROJECTS_MAX_BULLETS_PER_ENTRY + 1 }, (_, i) => ({
+        id: `p0.r${i}`, skill: `Skill${i}`, sourceCitation: `src/file${i}.ts`,
+        repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app',
+      })),
+    },
+  ];
+
+  it(`validates an entry with exactly ${PROJECTS_MAX_BULLETS_PER_ENTRY} composed highlights, all sourced to the same project's own facts`, () => {
+    const out: ProjectsAgentOutput = {
+      entries: [{
+        name: 'Tucaken', github: 'github.com/o/tucaken-app', description,
+        highlights: Array.from({ length: PROJECTS_MAX_BULLETS_PER_ENTRY }, (_, i) => (
+          { text: `Composed bullet number ${i} grounded in repo-current evidence`, sources: [`p0.r${i}`] }
+        )),
+      }],
+    };
+    expect(validateProjectsProvenance(out, capPool)).toEqual([]);
   });
 
-  it('rejects a description with under 30% distinctive-token overlap with the pitch', () => {
-    const bad = structuredClone(good);
-    bad.entries[0]!.description = 'Wrote generic prose unrelated to any earlier concept described previously somewhere else.';
-    expect(validateProjectsProvenance(bad, pool)).toContain('pitch_overlap:Tucaken');
+  it(`rejects an entry one bullet over the cap (${PROJECTS_MAX_BULLETS_PER_ENTRY + 1}) via BOTH bullet_count and the `
+    + 'now-equal composed_cap guard -- composedCount can never exceed highlights.length, so the two always co-fire '
+    + 'once the caps match', () => {
+    const out: ProjectsAgentOutput = {
+      entries: [{
+        name: 'Tucaken', github: 'github.com/o/tucaken-app', description,
+        highlights: Array.from({ length: PROJECTS_MAX_BULLETS_PER_ENTRY + 1 }, (_, i) => (
+          { text: `Composed bullet number ${i} grounded in repo-current evidence`, sources: [`p0.r${i}`] }
+        )),
+      }],
+    };
+    const violations = validateProjectsProvenance(out, capPool);
+    expect(violations).toContain(`bullet_count:Tucaken:${PROJECTS_MAX_BULLETS_PER_ENTRY + 1}`);
+    expect(violations).toContain(`composed_cap:Tucaken:${PROJECTS_MAX_BULLETS_PER_ENTRY + 1}`);
   });
 });
 
