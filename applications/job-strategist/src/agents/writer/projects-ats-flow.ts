@@ -20,7 +20,14 @@ import { isCurated, type ProjectsAgentOutput } from './projects-schema.js';
  *  it to `0`. It is injected by the run-pipeline caller (fillResumeProjects) from
  *  executeProjectsAgent's returned `normalisedExtras` (summed across the first
  *  draft and any re-write call) -- the schema-tolerance strip count from
- *  normaliseProjectsAgentOutput, a fact this function has no visibility into. */
+ *  normaliseProjectsAgentOutput, a fact this function has no visibility into.
+ *
+ *  `themes` is likewise NOT populated by this module -- it always sets it to
+ *  the empty default (`{ activated: [], factCounts: {} }`). It is injected by
+ *  the run-pipeline caller from the operations-evidence gather step's result
+ *  (activateThemes's theme keys + gatherOperationsEvidence's factCounts),
+ *  which runs well before this module (during pool construction, not during
+ *  agent resolution) -- same injection pattern as unresolvedRepos. */
 export interface ProjectsAgentDiagnostics {
   readonly targets: ExperienceAtsTarget[];
   readonly coverageBefore: SummaryCoverage;
@@ -35,7 +42,14 @@ export interface ProjectsAgentDiagnostics {
   readonly provenance: { readonly firstViolations: string[]; readonly rewriteViolations: string[]; readonly composedCount: number };
   readonly normalisedExtras: number;
   readonly unresolvedRepos: string[];
+  readonly themes: { readonly activated: readonly string[]; readonly factCounts: Record<string, number> };
 }
+
+/** Empty-gather default for `ProjectsAgentDiagnostics.themes` -- see that
+ *  field's doc comment. Exported so both this module's placeholder diag
+ *  constructions and the run-pipeline caller's fallback path share one
+ *  literal. */
+export const EMPTY_OPERATIONS_THEMES_DIAG: ProjectsAgentDiagnostics['themes'] = { activated: [], factCounts: {} };
 
 /** Sum `normalisedExtras` across the first draft and any re-write call --
  *  the glue `fillResumeProjects` (run-pipeline.ts) uses to fill in the
@@ -231,6 +245,7 @@ export async function resolveProjectsAts(params: {
       provenance: { firstViolations: [], rewriteViolations: [], composedCount: countComposed(params.first) },
       unresolvedRepos: [],
       normalisedExtras: 0,
+      themes: EMPTY_OPERATIONS_THEMES_DIAG,
     },
   });
 
@@ -251,6 +266,7 @@ export async function resolveProjectsAts(params: {
         provenance: { firstViolations: [], rewriteViolations: [], composedCount: countComposed(params.first) },
         unresolvedRepos: [],
         normalisedExtras: 0,
+        themes: EMPTY_OPERATIONS_THEMES_DIAG,
       },
     };
   }
@@ -270,6 +286,7 @@ export async function resolveProjectsAts(params: {
       provenance: { firstViolations: [], rewriteViolations, composedCount: countComposed(output) },
       unresolvedRepos: [],
       normalisedExtras: 0,
+      themes: EMPTY_OPERATIONS_THEMES_DIAG,
     },
   };
 }

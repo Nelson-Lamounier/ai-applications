@@ -97,9 +97,17 @@ import {
     type RosterEntry, type IndexedCareerLine,
 } from './agents/writer/experience-provenance.js';
 import type { ExperienceAgentOutput } from './agents/writer/experience-schema.js';
-import { loadProjectAgentInputs, type ProjectAgentInputs, type ProjectPoolEntry } from './agents/evidence/project-agent-inputs.js';
+import {
+    loadProjectAgentMeta,
+    type ProjectAgentInputs, type ProjectPoolEntry, type VerifiedMatch,
+} from './agents/evidence/project-agent-inputs.js';
 import { executeProjectsAgent } from './agents/writer/projects-agent.js';
-import { resolveProjectsAts, deterministicProjects, sumProjectsNormalisedExtras, type ProjectsAgentDiagnostics } from './agents/writer/projects-ats-flow.js';
+import {
+    resolveProjectsAts, deterministicProjects, sumProjectsNormalisedExtras,
+    EMPTY_OPERATIONS_THEMES_DIAG, type ProjectsAgentDiagnostics,
+} from './agents/writer/projects-ats-flow.js';
+import type { RetrievedPassage } from './agents/evidence/operations-evidence.js';
+import { buildProjectAgentInputsFromMeta } from './agents/evidence/operations-wiring.js';
 import { assembleProjects, validateProjectsProvenance, ProjectsProvenanceError } from './agents/writer/projects-provenance.js';
 import { namesGap } from './agents/quality/guards/summary-rules.js';
 import { buildSkillEvidenceLedger } from './ats/grounding/skill-evidence-ledger.js';
@@ -379,6 +387,7 @@ async function fillResumeProjects(
     projectAgentInputs: ProjectAgentInputs,
     atsTargets: readonly ExperienceAtsTarget[],
     targetRole: string,
+    themesDiag: ProjectsAgentDiagnostics['themes'],
     onFallback: (err: unknown) => void,
 ): Promise<ProjectsAgentDiagnostics | null> {
     if (!tailoredResumeData) return null;
@@ -411,7 +420,10 @@ async function fillResumeProjects(
             },
         });
         (tailoredResumeData as { projects: unknown }).projects = stampProjectDescriptions(assembleProjects(output, pool), pool);
-        return { ...diag, unresolvedRepos, normalisedExtras: sumProjectsNormalisedExtras(firstNormalisedExtras, rewriteNormalisedExtras) };
+        return {
+            ...diag, unresolvedRepos, themes: themesDiag,
+            normalisedExtras: sumProjectsNormalisedExtras(firstNormalisedExtras, rewriteNormalisedExtras),
+        };
     } catch (err) {
         // deterministicProjects stamps descriptions itself (rankProjectEntry).
         (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets);
@@ -428,6 +440,7 @@ async function fillResumeProjects(
             },
             unresolvedRepos,
             normalisedExtras: firstNormalisedExtras,
+            themes: themesDiag,
         };
     }
 }
@@ -791,6 +804,98 @@ async function runCorrectiveRetrievalPass<T extends { gaps: SkillGap[]; partialM
     } catch (err) {
         log.warn({ pipelineRunId: args.pipelineRunId, err: String(err) }, 'corrective_retrieval_failed_open');
         return { matching: args.matching, stats: null };
+    }
+}
+
+// -----------------------------------------------------------------------
+// Operations-angle evidence gather (kind-scoped, theme-driven, retrieval-
+// only -- no new LLM call). See docs/superpowers/specs/2026-07-16-projects-
+// operations-evidence-design.md.
+// -----------------------------------------------------------------------
+
+/** `querySingleRds`'s annotated-passage header, mirrored from lib/grounding/
+ *  evidence-provenance.ts's HEADER_COSINE (same format; parsed independently
+ *  here since this wiring owns its own retrieval adapter, not that module's). */
+const OPERATIONS_PASSAGE_HEADER_RE = /^\[Source:\s*([^,\]]+),\s*Cosine:\s*[0-9.]+,\s*Rerank:\s*[0-9.]+\]\n?/;
+
+/** Adapts one `querySingleRds` annotated string into operations-evidence.ts's
+ *  `{file, text}` retrieve() contract. A string with no recognisable header
+ *  (should not happen -- querySingleRds always annotates) is dropped rather
+ *  than passed through with a garbage file path. */
+function parseOperationsPassage(raw: string): RetrievedPassage | null {
+    const m = OPERATIONS_PASSAGE_HEADER_RE.exec(raw);
+    if (!m) return null;
+    return { file: m[1]!, text: raw.slice(m[0].length) };
+}
+
+/** `gatherOperationsEvidence`'s injected `retrieve` -- same construction
+ *  template as `runCorrectiveRetrievalPass` above (`RdsVectorStore.fromEnvironment()`
+ *  + `querySingleRds`), adapted to `{file, text}` via `parseOperationsPassage`. */
+function buildOperationsRetrieve(
+    userId: string,
+    store: RdsVectorStore,
+    prefilter: RetrievalPrefilter | undefined,
+): (query: string, k: number) => Promise<ReadonlyArray<RetrievedPassage>> {
+    return async (query, k) => {
+        const raw = await querySingleRds(query, userId, store, k, prefilter);
+        return raw.map(parseOperationsPassage).filter((p): p is RetrievedPassage => p !== null);
+    };
+}
+
+/**
+ * Build the projects pool, enriched with kind-scoped operations-angle
+ * evidence when the JD activates any `OPERATIONS_THEMES` entry. Ordering is
+ * load-bearing: `loadProjectAgentMeta` resolves the per-repo component kinds
+ * `gatherOperationsEvidence` needs BEFORE that gather runs, and its matches
+ * are appended to `verifiedMatches` BEFORE `buildProjectPool` -- which stays
+ * byte-identical either way, so the SAME fail-closed repo-id attribution
+ * governs operations facts as every other verified match. (Both properties
+ * are encoded in `buildProjectAgentInputsFromMeta`, operations-wiring.ts --
+ * split into its own module, not left inline here, specifically so it stays
+ * unit-testable: importing run-pipeline.ts itself from Jest pulls in
+ * pdf-parse -> @napi-rs/canvas's native binding and its open-GC-handle
+ * problem, see that module's header comment. This function is now a thin
+ * I/O wrapper: load meta (real DB), delegate the pure ordering/append logic,
+ * with `RdsVectorStore.fromEnvironment()` deferred into the `buildRetrieve`
+ * factory so its own construction failure is caught by the SAME inner
+ * fail-open catch as a retrieval-call failure, not this function's outer one.
+ *
+ * Two independent fail-open layers: the OUTER catch here (same log event,
+ * `project_agent_inputs_load_failed_fail_open`, as the pre-Task-2
+ * `loadProjectAgentInputs` call it replaces) degrades to the empty skeleton
+ * pool on any meta-load failure; the INNER catch (inside
+ * `buildProjectAgentInputsFromMeta`) scopes ONLY the operations-evidence
+ * gather (`operations_evidence_failed_open`), so a retrieval-side failure
+ * there still ships the ordinary pool + the rest of this function's work.
+ * Zero activated themes skips the gather entirely -- no retrieval calls, no
+ * log noise, pool identical to today's.
+ */
+async function buildProjectAgentInputsWithOperationsEvidence(args: {
+    pool: Pool;
+    userId: string;
+    verifiedMatches: readonly VerifiedMatch[];
+    jd: JdSignal;
+    pipelineRunId: string;
+    applicationId: string;
+    retrievalPrefilter: RetrievalPrefilter | undefined;
+}): Promise<{ projectAgentInputs: ProjectAgentInputs; themesDiag: ProjectsAgentDiagnostics['themes'] }> {
+    try {
+        const { bulletSets, projectMeta, repoLookup } = await loadProjectAgentMeta(args.pool, args.userId);
+        return await buildProjectAgentInputsFromMeta({
+            bulletSets, projectMeta, repoLookup,
+            verifiedMatches: args.verifiedMatches,
+            jd: args.jd,
+            pipelineRunId: args.pipelineRunId,
+            applicationId: args.applicationId,
+            log,
+            buildRetrieve: () => buildOperationsRetrieve(args.userId, RdsVectorStore.fromEnvironment(), args.retrievalPrefilter),
+        });
+    } catch (err) {
+        log.warn(
+            { pipelineRunId: args.pipelineRunId, err: err instanceof Error ? err.message : String(err) },
+            'project_agent_inputs_load_failed_fail_open',
+        );
+        return { projectAgentInputs: { pool: [], unresolvedRepos: [] }, themesDiag: EMPTY_OPERATIONS_THEMES_DIAG };
     }
 }
 
@@ -1170,11 +1275,12 @@ async function runBatch1Agents(args: {
     skillEvidenceLedger: readonly SkillEvidenceEntry[];
     jdExtraction: JdSignal;
     pipelineRunId: string;
+    themesDiag: ProjectsAgentDiagnostics['themes'];
 }): Promise<Batch1Result> {
     const {
         ctx, skeleton, analysisInput, researchData, careerEntries, experienceAtsTargets,
         groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
-        skillEvidenceLedger, jdExtraction, pipelineRunId,
+        skillEvidenceLedger, jdExtraction, pipelineRunId, themesDiag,
     } = args;
     const [analysis, experience, projectsAgentDiag, skillsAgentDiag] = await Promise.all([
         executeAnalysisAgent(ctx, analysisInput),
@@ -1183,7 +1289,7 @@ async function runBatch1Agents(args: {
             (err) => log.warn({ pipelineRunId, agent: 'strategist-experience', err: err instanceof Error ? err.message : String(err) }, 'experience_agent_failed_verbatim_fallback_used'),
         ),
         fillResumeProjects(
-            ctx, skeleton, projectAgentInputs, experienceAtsTargets, researchData.targetRole,
+            ctx, skeleton, projectAgentInputs, experienceAtsTargets, researchData.targetRole, themesDiag,
             (err) => log.warn({ pipelineRunId, agent: 'strategist-projects', err: err instanceof Error ? err.message : String(err) }, 'projects_agent_failed_deterministic_fallback_used'),
         ),
         fillResumeSkills(
@@ -2330,18 +2436,20 @@ export async function main(): Promise<void> {
         // ready before it starts. Pure/fail-open reads of data already in
         // scope (ledger, jdExtraction), except projectAgentInputs, which is
         // one more fail-open DB read (a transient error degrades to an empty
-        // pool -> projects[] skeleton, never fails the run). indexCareerLines
-        // is pure/deterministic and re-run inside fillResumeExperience for
-        // provenance validation -- both computations agree on the same ids.
+        // pool -> projects[] skeleton, never fails the run) PLUS the kind-
+        // scoped operations-evidence gather (buildProjectAgentInputsWithOperationsEvidence,
+        // its own doc comment above) -- retrieval-only, fails open independently.
+        // indexCareerLines is pure/deterministic and re-run inside
+        // fillResumeExperience for provenance validation -- both computations
+        // agree on the same ids.
         const experienceAtsTargets = selectExperienceAtsTargets(
             skillEvidenceLedger, jdExtraction, indexCareerLines(careerEntries), 6,
         );
         const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
-        const projectAgentInputs = await loadProjectAgentInputs(pool, env.userId, researchData.verifiedMatches)
-            .catch((err: unknown) => {
-                log.warn({ pipelineRunId: env.pipelineRunId, err: err instanceof Error ? err.message : String(err) }, 'project_agent_inputs_load_failed_fail_open');
-                return { pool: [], unresolvedRepos: [] };
-            });
+        const { projectAgentInputs, themesDiag } = await buildProjectAgentInputsWithOperationsEvidence({
+            pool, userId: env.userId, verifiedMatches: researchData.verifiedMatches, jd: jdExtraction,
+            pipelineRunId: env.pipelineRunId, applicationId: env.applicationId, retrievalPrefilter,
+        });
 
         // -- BATCH 1: analysis + experience + projects + skills, concurrent --
         // (see runBatch1Agents's doc comment for the concurrency-safety proof)
@@ -2359,7 +2467,7 @@ export async function main(): Promise<void> {
         const batch1 = await stageSeconds(pipelineStageSeconds, 'batch1', () => runBatch1Agents({
             ctx, skeleton: tailoredResumeData, analysisInput, researchData, careerEntries,
             experienceAtsTargets, groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
-            skillEvidenceLedger, jdExtraction, pipelineRunId: env.pipelineRunId,
+            skillEvidenceLedger, jdExtraction, pipelineRunId: env.pipelineRunId, themesDiag,
         }));
         const { analysis, experience, projectsAgentDiag, skillsAgentDiag } = batch1;
         recordBatch1Observability(batch1, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId });

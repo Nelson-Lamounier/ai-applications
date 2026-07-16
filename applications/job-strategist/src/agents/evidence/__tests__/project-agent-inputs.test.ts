@@ -1,12 +1,13 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
 import type { Pool } from 'pg';
-import { buildProjectPool, loadProjectAgentInputs } from '../project-agent-inputs.js';
+import { buildProjectPool, loadProjectAgentInputs, loadProjectAgentMeta } from '../project-agent-inputs.js';
 
 const bulletSets = [{ name: 'Tucaken', bullets: ['Built an event-driven API on SQS/SNS', 'Cut sync time 40%'] }];
 const projectMeta = [{
     projectId: 'proj-1', name: 'Tucaken', pitch: 'A job platform for candidates.', tagline: 'Land your next job faster.',
     repositoryIds: ['repo-uuid-1'], repoFullNames: ['o/tucaken-app'],
+    repoKinds: new Map([['o/tucaken-app', 'backend']]),
 }];
 const repoLookup = new Map([
     ['o/tucaken-app', { id: 'repo-uuid-1', githubRepoId: 42 }],
@@ -44,7 +45,11 @@ describe('buildProjectPool', () => {
     });
 
     it('a repo owned by two projects contributes its matches to both', () => {
-        const meta2 = [...projectMeta, { projectId: 'proj-2', name: 'Infra', pitch: 'Infra for Tucaken.', tagline: '', repositoryIds: ['repo-uuid-1'], repoFullNames: ['o/tucaken-app'] }];
+        const meta2 = [...projectMeta, {
+            projectId: 'proj-2', name: 'Infra', pitch: 'Infra for Tucaken.', tagline: '',
+            repositoryIds: ['repo-uuid-1'], repoFullNames: ['o/tucaken-app'],
+            repoKinds: new Map([['o/tucaken-app', 'backend']]),
+        }];
         const r = buildProjectPool([...bulletSets, { name: 'Infra', bullets: ['Provisioned EKS'] }], meta2, repoLookup, matches.slice(0, 1));
         expect(r.pool[0]!.repoCurrent).toHaveLength(1);
         expect(r.pool[1]!.repoCurrent).toHaveLength(1);
@@ -56,12 +61,50 @@ describe('buildProjectPool', () => {
         const r = buildProjectPool(bulletSets, projectMeta, repoLookup, matches);
         expect(r.pool[0]!.tagline).toBe('Land your next job faster.');
     });
+
+    // Integration-shaped: operations-evidence.ts's gatherOperationsEvidence
+    // output threaded through the REAL buildProjectPool, proving reuse of its
+    // fail-closed repository-ID attribution (not a duplicate check) -- a
+    // theme fact whose file resolves to a repo outside the OWNING project
+    // attributes nowhere, exactly like any other VerifiedMatch.
+    it('operations-evidence facts flow through buildProjectPool with the SAME fail-closed cross-project attribution as any other verified match', async () => {
+        const { gatherOperationsEvidence } = await import('../operations-evidence.js');
+        const dbTheme = {
+            key: 'database-operations', label: 'database operations',
+            queryTerms: 'database operations connection pooling migrations schema backup production',
+            matchTerms: ['database'], kinds: ['backend', 'infra'],
+        };
+        const metaA = {
+            projectId: 'proj-a', name: 'A', pitch: '', tagline: '',
+            repositoryIds: ['repo-a'], repoFullNames: ['o/app-a'],
+            repoKinds: new Map([['o/app-a', 'backend']]),
+        };
+        const metaB = {
+            projectId: 'proj-b', name: 'B', pitch: '', tagline: '',
+            repositoryIds: ['repo-b'], repoFullNames: ['o/app-b'],
+            repoKinds: new Map([['o/app-b', 'backend']]),
+        };
+        const retrieve = async (): Promise<Array<{ file: string; text: string }>> => [
+            { file: 'o/app-a/docs/db.md', text: 'Production Postgres runs pgbouncer transaction pooling.' },
+        ];
+        const gathered = await gatherOperationsEvidence({ themes: [dbTheme], projects: [metaA, metaB], retrieve });
+
+        const opsRepoLookup = new Map([
+            ['o/app-a', { id: 'repo-a', githubRepoId: 1 }],
+            ['o/app-b', { id: 'repo-b', githubRepoId: 2 }],
+        ]);
+        const built = buildProjectPool([], [metaA, metaB], opsRepoLookup, gathered.matches);
+
+        expect(built.pool[0]!.repoCurrent).toHaveLength(1);
+        expect(built.pool[0]!.repoCurrent[0]).toMatchObject({ skill: 'database operations', fullName: 'o/app-a' });
+        expect(built.pool[1]!.repoCurrent).toHaveLength(0);
+    });
 });
 
 /** Mock pool: connect() returns a client whose query() resolves rows keyed on table-name substring. */
 function mockPool(rowsByTable: {
     projects: Array<{ id: string; name: string; pitch: string; tagline?: string }>;
-    projectRepositories: Array<{ project_id: string; repository_id: string; full_name: string; github_repo_id: number | null }>;
+    projectRepositories: Array<{ project_id: string; repository_id: string; full_name: string; github_repo_id: number | null; kind?: string }>;
     projectResumeBullets: Array<{ name: string; angle: string; bullets: unknown }>;
 }) {
     const release = jest.fn();
@@ -132,5 +175,62 @@ describe('loadProjectAgentInputs -- RLS-scoped two-lane read', () => {
 
         expect(result.unresolvedRepos).toEqual(['o/renamed-repo']);
         expect(result.pool[0]!.repoCurrent).toHaveLength(0);
+    });
+});
+
+describe('loadProjectAgentMeta -- kind threading (operations-evidence prerequisite)', () => {
+    it('threads project_components.kind per repo into ProjectAgentMeta.repoKinds', async () => {
+        const userId = 'user-3';
+        const { pool } = mockPool({
+            projects: [{ id: 'proj-1', name: 'Tucaken', pitch: '' }],
+            projectRepositories: [
+                { project_id: 'proj-1', repository_id: 'repo-uuid-1', full_name: 'o/tucaken-app', github_repo_id: 42, kind: 'backend' },
+                { project_id: 'proj-1', repository_id: 'repo-uuid-2', full_name: 'o/tucaken-ml', github_repo_id: 43, kind: 'ml' },
+            ],
+            projectResumeBullets: [],
+        });
+
+        const { projectMeta } = await loadProjectAgentMeta(pool, userId);
+
+        expect(projectMeta).toHaveLength(1);
+        const meta = projectMeta[0]!;
+        expect(meta.repoFullNames).toEqual(['o/tucaken-app', 'o/tucaken-ml']);
+        expect(meta.repoKinds.get('o/tucaken-app')).toBe('backend');
+        expect(meta.repoKinds.get('o/tucaken-ml')).toBe('ml');
+    });
+
+    it('falls back to an empty-string kind when the row carries none (predates the kind join)', async () => {
+        const userId = 'user-4';
+        const { pool } = mockPool({
+            projects: [{ id: 'proj-1', name: 'Tucaken', pitch: '' }],
+            projectRepositories: [
+                { project_id: 'proj-1', repository_id: 'repo-uuid-1', full_name: 'o/tucaken-app', github_repo_id: 42 },
+            ],
+            projectResumeBullets: [],
+        });
+
+        const { projectMeta } = await loadProjectAgentMeta(pool, userId);
+        expect(projectMeta[0]!.repoKinds.get('o/tucaken-app')).toBe('');
+    });
+
+    it('returns bulletSets and repoLookup alongside projectMeta, matching buildProjectPool through the same wiring loadProjectAgentInputs uses', async () => {
+        const userId = 'user-5';
+        const { pool } = mockPool({
+            projects: [{ id: 'proj-1', name: 'Tucaken', pitch: 'A job platform.', tagline: '' }],
+            projectRepositories: [
+                { project_id: 'proj-1', repository_id: 'repo-uuid-1', full_name: 'o/tucaken-app', github_repo_id: 42, kind: 'backend' },
+            ],
+            projectResumeBullets: [
+                { name: 'Tucaken', angle: 'infrastructure', bullets: ['Built an event-driven API on SQS/SNS'] },
+            ],
+        });
+
+        const { bulletSets, projectMeta, repoLookup } = await loadProjectAgentMeta(pool, userId);
+        const built = buildProjectPool(bulletSets, projectMeta, repoLookup, [
+            { skill: 'DNS', sourceCitation: 'o/tucaken-app/infra/dns.ts', evidenceFiles: ['o/tucaken-app/infra/dns.ts'] },
+        ]);
+
+        expect(built.pool[0]!.curated.map((b) => b.text)).toEqual(['Built an event-driven API on SQS/SNS']);
+        expect(built.pool[0]!.repoCurrent).toHaveLength(1);
     });
 });

@@ -44,8 +44,8 @@
         "sha256": "98ee223f1c7204eb5c5a04c81a23e9d392b448ec1053901f85e6212128d8d667"
     },
     "strategist/projects-agent": {
-        "version": "2",
-        "sha256": "24f715b6ceded140f52a3eb7813c0ae7ff3ee1cc250d9c1b2b4848f3af7cb882"
+        "version": "3",
+        "sha256": "12bfec270b83979a04855e8744638d145f4baff88364c61aaa6ac16f3a873d28"
     },
     "strategist/skills-agent": {
         "version": "1",

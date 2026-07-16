@@ -22,4 +22,9 @@ describe('strategist-projects-persona -- two-lane quote-only contract', () => {
     it('instructs the model to emit only via the emit_projects tool', () => {
         expect(joined).toContain('emit_projects');
     });
+
+    it('prefers composing from Operations evidence when present and the JD targets are operations-flavoured, citing fact ids', () => {
+        expect(joined).toContain('Operations evidence');
+        expect(joined.toUpperCase()).toContain('OPERATED');
+    });
 });

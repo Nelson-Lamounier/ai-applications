@@ -48,6 +48,32 @@ describe('buildProjectsMessage', () => {
     expect(msg).toContain('ordered most-JD-relevant project first');
   });
 
+  it('groups repo-current facts whose skill is an operations-theme label under an "Operations evidence" sub-heading, leaving other facts under the plain heading', () => {
+    const opsPool = [
+      {
+        ...pool[0]!,
+        repoCurrent: [
+          { id: 'p0.r0', skill: 'DNS', sourceCitation: 'o/tucaken-app/infra/dns.ts', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
+          { id: 'p0.r1', skill: 'database operations', sourceCitation: 'o/tucaken-app/docs/db.md', repositoryId: 'r1', githubRepoId: 1, fullName: 'o/tucaken-app' },
+        ],
+      },
+    ];
+    const msg = buildProjectsMessage({ ...base, pool: opsPool });
+    expect(msg).toContain('Operations evidence (how this system is OPERATED');
+    expect(msg).toContain('[p0.r1] database operations -- o/tucaken-app/docs/db.md');
+    // the non-operations fact stays under the plain repo-current heading only.
+    const plainIdx = msg.indexOf('Repo-current evidence (compose ONLY');
+    const opsIdx = msg.indexOf('Operations evidence (how this system is OPERATED');
+    const dnsIdx = msg.indexOf('[p0.r0] DNS -- o/tucaken-app/infra/dns.ts');
+    expect(dnsIdx).toBeGreaterThan(plainIdx);
+    expect(dnsIdx).toBeLessThan(opsIdx);
+  });
+
+  it('omits the "Operations evidence" sub-heading entirely when no repo-current fact is theme-labelled', () => {
+    const msg = buildProjectsMessage(base);
+    expect(msg).not.toContain('Operations evidence');
+  });
+
   it('adds the re-write block only on the re-write pass', () => {
     expect(buildProjectsMessage(base)).not.toContain('## Re-write pass');
     const rw = buildProjectsMessage({ ...base, rewriteDraft: 'Tucaken -- prior draft', rewriteMissing: ['TCP/IP'] });

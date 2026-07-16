@@ -223,6 +223,96 @@ WHERE application_id = '<APPLICATION_ID>'
 ORDER BY invoked_at;
 ```
 
+## Surface 5 -- operations-angle theme evidence (Task 3)
+
+Kind-scoped, theme-driven, retrieval-only evidence gather (NO new LLM call --
+see docs/superpowers/specs/2026-07-16-projects-operations-evidence-design.md)
+that runs BEFORE the Projects agent, inside `buildProjectAgentInputsWithOperationsEvidence`
+(`run-pipeline.ts`) / its extracted pure core `buildProjectAgentInputsFromMeta`
+(`agents/evidence/operations-wiring.ts`). When the JD's flattened hard-requirement
+skills + preferred skills + concepts match any of the seven `OPERATIONS_THEMES`
+entries (`agents/evidence/operations-themes.ts` -- database operations,
+performance tuning, storage, networking protocols, security hardening, backup
+recovery, cluster orchestration), up to 3 activated themes each retrieve up to
+2 kind-scoped facts per project (capped at 6 facts per project overall) and
+APPEND them to the research agent's `verifiedMatches` before the two-lane pool
+is built -- so operations facts flow through the exact same fail-closed
+repository-ID attribution as every other verified match (see "What good looks
+like" below on `project_components.kind`). A JD with zero theme hits is a
+complete no-op: no retrieval calls, no events, pool identical to before this
+feature shipped.
+
+**Diagnostics block.** `ProjectsAgentDiagnostics.themes` (`projects-ats-flow.ts`)
+-- `{ activated: string[], factCounts: Record<themeKey, number> }` -- `activated`
+is the ordered list of theme KEYS the JD hit (bounded: one of the seven ontology
+keys, never free text); `factCounts` is theme key -> fact count gathered across
+every project. `EMPTY_OPERATIONS_THEMES_DIAG` (`{ activated: [], factCounts: {} }`)
+is the value on every no-op path (zero themes, meta-load failure, or a
+gather-time throw that never produced a fact). Persisted into the SAME
+`pipeline_runs.metadata.analysis.projectsAgent` blob as Surface 3 above:
+
+```sql
+SELECT id,
+       metadata->'analysis'->'projectsAgent'->'themes'->'activated'   AS themes_activated,
+       metadata->'analysis'->'projectsAgent'->'themes'->'factCounts'  AS theme_fact_counts
+FROM pipeline_runs
+WHERE pipeline_type = 'strategist'
+  AND metadata->'analysis'->'projectsAgent'->'themes'->'activated' <> '[]'::jsonb
+ORDER BY created_at DESC LIMIT 50;
+```
+
+**Loki event: `projects_theme_evidence`.** Emitted by `logProjectsThemeEvidence`
+(`agents/writer/projects-agent-diagnostics.ts`), called from the wiring right
+after the gather completes -- independent of, and well before,
+`projects_agent_*` (those fire only once the Projects agent itself resolves).
+Fires ONLY when at least one fact was gathered (a themeless or evidence-less
+run produces no event, no log noise). Payload: `themes`, a nested
+`{ themeKey: { repoFullName: count } }` cross-tab built from the raw
+`VerifiedMatch[]` the gather returned (theme label mapped back to its bounded
+ontology key), NOT from the flat `factCounts`/`byRepo` summaries -- this is
+the only surface that answers "which repo grounded which theme":
+
+```logql
+{namespace="job-strategist"} | json | event="projects_theme_evidence"
+  | line_format "{{.pipeline_run_id}} {{.themes}}"
+```
+
+Which-repo-grounded-which-theme, for one run (the same query, scoped):
+
+```logql
+{namespace="job-strategist"} | json | event="projects_theme_evidence"
+  | pipeline_run_id="<PIPELINE_RUN_ID>"
+  | line_format "{{.themes}}"
+```
+
+**Fail-open failure investigation.** A retrieval-side failure (bad store
+construction, a rejected `retrieve()` call, or `gatherOperationsEvidence`
+itself throwing) logs a WARN `operations_evidence_failed_open` with the raw
+error message -- the run still ships the ordinary pool (research-agent
+`verifiedMatches` only), just with zero theme facts:
+
+```logql
+{namespace="job-strategist"} | json | event="operations_evidence_failed_open"
+```
+
+A meta-load failure (the projects/repositories SELECT itself, e.g. RLS/DB
+outage) is the OUTER, pre-existing fail-open path and logs
+`project_agent_inputs_load_failed_fail_open` -- same event as before this
+feature shipped, degrading all the way to the empty skeleton pool (no
+curated bullets, no repo-current facts, no theme facts):
+
+```logql
+{namespace="job-strategist"} | json | event="project_agent_inputs_load_failed_fail_open"
+```
+
+**No dedicated Prometheus metric.** Theme activation/fact counts are
+Loki + SQL only (Surfaces above) -- deliberately no new Counter/Histogram
+label (`activated`/`factCounts` are open-ended enough across the seven-theme
+ontology that a metric label would either be unbounded or need its own
+seven-way enum for marginal value; the bounded outcome/coverage/repo-unresolved
+metrics in Surface 1 are unaffected -- operations facts are indistinguishable
+from any other repo-current fact once they reach the agent).
+
 ## Ordering and the highlights length budget (deterministic, no LLM)
 
 These two behaviours are NOT agent output -- they run unconditionally after
@@ -303,3 +393,23 @@ persona) is the intended lever for that shape, not a stricter hard trim.
   what the repository sync already knows -- regenerate the case studies so
   the curated lane catches back up, rather than letting the agent keep
   composing fresh bullets every run to cover the same drifted gap.
+- `job_strategist_projects_agent_outcome_total{outcome="aware"|"rewritten"}`
+  on an operations-flavoured JD (a run with a non-empty
+  `themes.activated` in Surface 5) with a healthy `factCounts` and STILL a
+  low/zero coverage on operations-shaped ATS targets is a persona-tuning
+  signal, not a retrieval bug: the facts reached the pool, the agent chose
+  not to compose from them -- check the persona rule that prefers operations
+  evidence for operations-flavoured JDs before touching the gather.
+- `project_components.kind` is now LOAD-BEARING for resume generation, not
+  descriptive-only metadata: `agents/evidence/operations-evidence.ts`'s
+  kind-scoped retrieval gate (Surface 5) reads it per member repo, and a
+  repo whose `kind` is missing, misclassified, or stale (e.g. an infra repo
+  still tagged `ml` from an earlier case-study run) simply never qualifies
+  for ANY operations theme -- it is silently excluded from every
+  `gatherOperationsEvidence` retrieval call for that project, with no
+  warning and no failed event (this is normal kind-scoping, not a fail-open
+  path). If an operations-flavoured JD run shows `themes.activated`
+  non-empty but `factCounts` stays at 0 (or a specific project's own
+  operations coverage looks thin) for a project you KNOW has relevant infra
+  docs, check that project's `project_components.kind` rows before
+  suspecting the retrieval or the ontology.

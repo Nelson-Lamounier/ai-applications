@@ -1,5 +1,13 @@
 /** @format */
 import type { ProjectsAgentDiagnostics } from './projects-ats-flow.js';
+import type { VerifiedMatch } from '../evidence/project-agent-inputs.js';
+import { OPERATIONS_THEMES } from '../evidence/operations-themes.js';
+import { repoOfFile } from '../../ats/grounding/evidence-lane.js';
+
+/** Theme label -> theme key, for turning an operations-evidence VerifiedMatch's
+ *  `skill` (the theme's human label) back into its bounded ontology key for
+ *  the Loki event below. */
+const THEME_KEY_BY_LABEL = new Map(OPERATIONS_THEMES.map((t) => [t.label, t.key]));
 
 /** Correlation keys stamped on every projects-agent Loki event. */
 export interface ProjectsAgentLogKeys {
@@ -45,6 +53,37 @@ export function logProjectsAgentEvents(log: EventLogger, keys: ProjectsAgentLogK
   if (diag.unresolvedRepos.length > 0) {
     log.info({ ...base, event: 'projects_repo_unresolved', repos: diag.unresolvedRepos }, 'projects_repo_unresolved');
   }
+}
+
+/**
+ * Emit the `projects_theme_evidence` Loki event -- the operations-evidence
+ * gather step's yield, nested `theme key -> { repo full name -> count }`
+ * (docs/superpowers/specs/2026-07-16-projects-operations-evidence-design.md
+ * Component 4). Built from the raw `VerifiedMatch[]` `gatherOperationsEvidence`
+ * returned (skill = theme label, evidenceFiles = [file]) rather than from the
+ * flat `factCounts`/`byRepo` counters on its result, which are bounded
+ * summaries, not the theme x repo cross-tab this event needs. Emitted only
+ * when at least one fact was gathered -- a themeless or evidence-less run
+ * produces no event, no log noise. Called by run-pipeline.ts right after the
+ * gather (independent of, and well before, `logProjectsAgentEvents`, which
+ * fires only after the projects agent itself resolves).
+ */
+export function logProjectsThemeEvidence(
+  log: EventLogger,
+  keys: ProjectsAgentLogKeys,
+  matches: readonly VerifiedMatch[],
+): void {
+  if (matches.length === 0) return;
+  const byThemeRepo: Record<string, Record<string, number>> = {};
+  for (const m of matches) {
+    const themeKey = THEME_KEY_BY_LABEL.get(m.skill) ?? m.skill;
+    const repo = repoOfFile(m.evidenceFiles[0] ?? '') ?? 'unknown';
+    const forTheme = byThemeRepo[themeKey] ?? {};
+    forTheme[repo] = (forTheme[repo] ?? 0) + 1;
+    byThemeRepo[themeKey] = forTheme;
+  }
+  const base = { pipeline_run_id: keys.pipelineRunId, application_id: keys.applicationId, trace_id: keys.traceId };
+  log.info({ ...base, event: 'projects_theme_evidence', themes: byThemeRepo }, 'projects_theme_evidence');
 }
 
 export type ProjectsAgentOutcome = 'aware' | 'rewritten' | 'kept_first' | 'fallback';
