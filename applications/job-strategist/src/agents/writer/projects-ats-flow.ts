@@ -15,7 +15,13 @@ const MAX_DESCRIPTION_WORDS = 40;
  *  sets it to `[]`. It is injected by the run-pipeline caller from
  *  `ProjectAgentInputs.unresolvedRepos` (Task 8), which knows about citations that
  *  failed to resolve to a known repository during pool construction -- a fact this
- *  function has no visibility into. */
+ *  function has no visibility into.
+ *
+ *  `normalisedExtras` is likewise NOT populated by this module -- it always sets
+ *  it to `0`. It is injected by the run-pipeline caller (fillResumeProjects) from
+ *  executeProjectsAgent's returned `normalisedExtras` (summed across the first
+ *  draft and any re-write call) -- the schema-tolerance strip count from
+ *  normaliseProjectsAgentOutput, a fact this function has no visibility into. */
 export interface ProjectsAgentDiagnostics {
   readonly targets: ExperienceAtsTarget[];
   readonly coverageBefore: SummaryCoverage;
@@ -28,6 +34,7 @@ export interface ProjectsAgentDiagnostics {
   };
   readonly fallback: { readonly fired: boolean; readonly reason: string | null };
   readonly provenance: { readonly firstViolations: string[]; readonly rewriteViolations: string[]; readonly composedCount: number };
+  readonly normalisedExtras: number;
   readonly unresolvedRepos: string[];
 }
 
@@ -142,6 +149,7 @@ export async function resolveProjectsAts(params: {
       fallback: { fired: false, reason: null },
       provenance: { firstViolations: [], rewriteViolations: [], composedCount: countComposed(params.first) },
       unresolvedRepos: [],
+      normalisedExtras: 0,
     },
   });
 
@@ -161,6 +169,7 @@ export async function resolveProjectsAts(params: {
         fallback: { fired: false, reason: null },
         provenance: { firstViolations: [], rewriteViolations: [], composedCount: countComposed(params.first) },
         unresolvedRepos: [],
+        normalisedExtras: 0,
       },
     };
   }
@@ -179,6 +188,7 @@ export async function resolveProjectsAts(params: {
       fallback: { fired: false, reason: null },
       provenance: { firstViolations: [], rewriteViolations, composedCount: countComposed(output) },
       unresolvedRepos: [],
+      normalisedExtras: 0,
     },
   };
 }

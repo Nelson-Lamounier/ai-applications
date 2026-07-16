@@ -358,8 +358,16 @@ async function fillResumeProjects(
     if (pool.every((p) => p.curated.length === 0)) return null;
 
     const baseInput = { pool, atsTargets, targetRole };
+    // Sums the first draft's and any re-write's normalisedExtras (both go
+    // through the same normalise-then-validate parse path in
+    // executeProjectsAgent) -- captured here because resolveProjectsAts's
+    // ProjectsAgentDiagnostics always sets it to 0 (see that type's doc
+    // comment); this caller owns the real count, same pattern as unresolvedRepos.
+    let firstNormalisedExtras = 0;
+    let rewriteNormalisedExtras = 0;
     try {
         const first = await executeProjectsAgent(ctx, baseInput);
+        firstNormalisedExtras = first.normalisedExtras;
         const firstViolations = validateProjectsProvenance(first.data, pool);
         if (firstViolations.length > 0) throw new ProjectsProvenanceError(firstViolations);
         const { output, diag } = await resolveProjectsAts({
@@ -370,11 +378,12 @@ async function fillResumeProjects(
                     { ...baseInput, rewriteDraft: draftText, rewriteMissing: missing },
                     { agentName: 'strategist-projects-rewrite' },
                 );
+                rewriteNormalisedExtras = rw.normalisedExtras;
                 return rw.data;
             },
         });
         (tailoredResumeData as { projects: unknown }).projects = assembleProjects(output, pool);
-        return { ...diag, unresolvedRepos };
+        return { ...diag, unresolvedRepos, normalisedExtras: firstNormalisedExtras + rewriteNormalisedExtras };
     } catch (err) {
         (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets);
         onFallback(err);
@@ -389,6 +398,7 @@ async function fillResumeProjects(
                 composedCount: 0,
             },
             unresolvedRepos,
+            normalisedExtras: firstNormalisedExtras,
         };
     }
 }

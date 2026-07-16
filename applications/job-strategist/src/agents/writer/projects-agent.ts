@@ -17,7 +17,7 @@ import {
     type StrategistPipelineContext,
 } from '@bedrock/shared';
 import { STRATEGIST_PROJECTS_META, STRATEGIST_PROJECTS_SYSTEM_PROMPT } from '../../prompts/strategist-projects.js';
-import { ProjectsAgentOutputSchema, PROJECTS_EMIT_INPUT_SCHEMA, type ProjectsAgentOutput } from './projects-schema.js';
+import { ProjectsAgentOutputSchema, PROJECTS_EMIT_INPUT_SCHEMA, normaliseProjectsAgentOutput, type ProjectsAgentOutput } from './projects-schema.js';
 import { buildProjectsMessage, type ProjectsMessageInput } from './projects-message.js';
 
 /** Sonnet by default -- nuanced multi-section structured output; never Haiku. */
@@ -56,18 +56,33 @@ const PROJECTS_CONFIG: AgentConfig = {
  *                re-write pass -- the previous draft)
  * @param opts  - Optional agent-name override (the ATS re-write pass books
  *                under 'strategist-projects-rewrite' for cost isolation)
- * @returns The tailored project entries
+ * @returns The tailored project entries, plus `normalisedExtras` -- the count
+ *          of schema-tolerance strips this call's response needed (see
+ *          normaliseProjectsAgentOutput; 0 on a clean response).
  */
 export async function executeProjectsAgent(
     ctx: StrategistPipelineContext,
     input: ProjectsMessageInput,
     opts?: { agentName?: AgentName },
-): Promise<AgentResult<ProjectsAgentOutput>> {
+): Promise<AgentResult<ProjectsAgentOutput> & { readonly normalisedExtras: number }> {
     const config = opts?.agentName ? { ...PROJECTS_CONFIG, agentName: opts.agentName } : PROJECTS_CONFIG;
-    return runAgent<ProjectsAgentOutput>({
+    // normalise-then-validate: run BEFORE ProjectsAgentOutputSchema.parse so
+    // the known-safe bulletId+echoed-sources over-emission (the wire schema
+    // allows it; the strict runtime union does not) never zod-rejects a
+    // paid-for generation. `normalisedExtras` is captured via this closure
+    // because parseResponse runs synchronously inside runAgent, before it
+    // resolves -- both the first-draft and the rewrite call share this same
+    // parse path (opts.agentName only changes which agent books the spend).
+    let normalisedExtras = 0;
+    const result = await runAgent<ProjectsAgentOutput>({
         config,
         userMessage: buildProjectsMessage(input),
-        parseResponse: (text) => ProjectsAgentOutputSchema.parse(parseJsonResponse<unknown>(text, 'strategist-projects')),
+        parseResponse: (text) => {
+            const raw = parseJsonResponse<unknown>(text, 'strategist-projects');
+            const normalised = normaliseProjectsAgentOutput(raw);
+            normalisedExtras = normalised.normalisedExtras;
+            return ProjectsAgentOutputSchema.parse(normalised.output);
+        },
         pipelineContext: {
             pipelineId: ctx.pipelineId,
             environment: ctx.environment,
@@ -75,4 +90,5 @@ export async function executeProjectsAgent(
             cumulativeCostUsd: ctx.cumulativeCostUsd,
         },
     });
+    return { ...result, normalisedExtras };
 }

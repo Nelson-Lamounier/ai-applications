@@ -12,6 +12,7 @@ const rewrittenDiag: ProjectsAgentDiagnostics = {
   fallback: { fired: false, reason: null },
   provenance: { firstViolations: [], rewriteViolations: ['line-3-not-cited'], composedCount: 2 },
   unresolvedRepos: [],
+  normalisedExtras: 0,
 };
 
 describe('logProjectsAgentEvents', () => {
@@ -31,6 +32,23 @@ describe('logProjectsAgentEvents', () => {
     expect(rejectEvent['tokens']).toEqual(['line-3-not-cited']);
   });
 
+  it('emits projects_agent_normalised with the count only when normalisedExtras is positive', () => {
+    const info = jest.fn();
+    const normalisedDiag: ProjectsAgentDiagnostics = { ...rewrittenDiag, normalisedExtras: 12 };
+    logProjectsAgentEvents({ info } as never, keys, normalisedDiag);
+    const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
+    expect(events).toContain('projects_agent_normalised');
+    const normalisedEvent = info.mock.calls.find((c) => (c[0] as { event: string }).event === 'projects_agent_normalised')?.[0] as Record<string, unknown>;
+    expect(normalisedEvent['extras']).toBe(12);
+  });
+
+  it('does not emit projects_agent_normalised when normalisedExtras is 0', () => {
+    const info = jest.fn();
+    logProjectsAgentEvents({ info } as never, keys, rewrittenDiag);
+    const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
+    expect(events).not.toContain('projects_agent_normalised');
+  });
+
   it('does not emit provenance_reject when both violation lists are empty', () => {
     const info = jest.fn();
     const cleanDiag: ProjectsAgentDiagnostics = { ...rewrittenDiag, provenance: { firstViolations: [], rewriteViolations: [], composedCount: 2 } };
@@ -47,6 +65,7 @@ describe('logProjectsAgentEvents', () => {
       fallback: { fired: true, reason: 'schema parse failed' },
       provenance: { firstViolations: [], rewriteViolations: [], composedCount: 0 },
       unresolvedRepos: [],
+      normalisedExtras: 0,
     };
     logProjectsAgentEvents({ info } as never, keys, fbDiag);
     const events = info.mock.calls.map((c) => (c[0] as { event: string }).event);
