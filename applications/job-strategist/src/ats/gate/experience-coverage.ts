@@ -200,10 +200,12 @@ const SOFT_SKILL_SYNONYM_GROUPS: readonly SoftSkillSynonymGroup[] = [
       'collaboration', 'collaborate', 'collaborated', 'collaborat', 'collaborative',
       'teamwork', 'team', 'teams', 'cross', 'functional', 'stakeholder', 'stakeholders',
     ]),
-    // Verb forms only -- noun uses ("AWS partners programme", "user
-    // engagement metrics") must not read as collaboration evidence.
+    // Inflected verb / action-noun forms only -- bare stems and adjectives
+    // are domain vocabulary, not teamwork evidence: "AWS partners programme",
+    // "user engagement metrics", "collaborative filtering", "coordinate
+    // system" must all stay inert.
     evidence: [
-      /\b(partner|engag)(ed|ing)\b|\b(coordinat|collaborat|liais)\w*|\bcross[- ]functional\b/i,
+      /\b(partner|engag)(ed|ing)\b|\b(coordinat|collaborat)(ed|ing|ion)\b|\bliais(ed|ing|on)\b|\bcross[- ]functional\b/i,
     ],
   },
   {

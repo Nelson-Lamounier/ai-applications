@@ -239,6 +239,14 @@ describe('experienceTermMatch', () => {
       expect(experienceTermMatch('teams', 'Partnered with the platform group on rollouts.')).toBe(false);
       expect(experienceTermMatch('troubleshooting', 'Owned end-to-end technical resolution of cases.')).toBe(false);
     });
+
+    it('REVIEW GUARD: domain vocabulary sharing a stem is not teamwork evidence -- '
+      + '"collaborative filtering" and "coordinate system" stay inert', () => {
+      expect(experienceTermMatch('collaboration',
+        'Built a collaborative filtering recommendation engine for the product catalogue.')).toBe(false);
+      expect(experienceTermMatch('collaboration',
+        'Mapped coordinate system transforms for the robotics perception stack.')).toBe(false);
+    });
   });
 });
 
