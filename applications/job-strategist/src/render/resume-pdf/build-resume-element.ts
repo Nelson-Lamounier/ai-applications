@@ -59,9 +59,6 @@ export function buildResumeElement(rp: ReactPdfPrimitives, data: StructuredResum
         );
     });
 
-    children.push(sectionHeader('Skills'));
-    data.skills.forEach((c, i) => children.push(text(s.bullet, `${c.category}: ${c.skills.join(', ')}`, `sk-${i}`)));
-
     if (data.projects.length) {
         children.push(sectionHeader('Projects'));
         data.projects.forEach((pr, i) => {
@@ -92,6 +89,13 @@ export function buildResumeElement(rp: ReactPdfPrimitives, data: StructuredResum
             children.push(text(s.bullet, `${ct.name} — ${ct.issuer} (${ct.year})`, `ct-${i}`)),
         );
     }
+
+    // Skills close the document (user decision, 2026-07-16): recruiters read
+    // narrative sections (Experience, Projects) first; the keyword inventory
+    // supports rather than leads. parse-back's section detection is
+    // presence-based, so ATS extraction is unaffected by the order.
+    children.push(sectionHeader('Skills'));
+    data.skills.forEach((c, i) => children.push(text(s.bullet, `${c.category}: ${c.skills.join(', ')}`, `sk-${i}`)));
 
     return h(Document, null, h(Page, { size: 'A4', style: s.page }, children));
 }
