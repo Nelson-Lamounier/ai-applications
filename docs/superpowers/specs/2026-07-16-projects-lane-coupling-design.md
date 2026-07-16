@@ -103,21 +103,55 @@ Files: `ats/length/length-budget.ts` (+ tests).
 - The condense prompt's projects target line includes the highlights
   budget so the LLM direction and the deterministic backstop agree.
 
-## Component 4 -- JD-aware ordering + pitch dedupe (generation contract)
+## Component 4 -- Description/highlights contract (AMENDED 2026-07-16)
 
-Files: `prompts/content/strategist/projects-agent.md` (version bump +
-manifest regeneration via the prompt-content-integrity suite),
-`agents/writer/projects-message.ts`, fallback ordering site.
+User-defined contract, superseding the earlier "JD-custom description"
+framing: the DESCRIPTION is the human view of the project (what it is,
+what it does, why it was created, what problem it solves -- low jargon),
+sourced from the user's stored Pitch; the HIGHLIGHTS are the sole
+JD-customisation surface. Live run 1eda06eb proved the violation: the
+shipped description was the pitch opening PLUS guard-repair-injected
+differentiator/metric sentences duplicating highlights 4-5 (the
+rewrite.ts three-beat recipe), re-flagged by revalidate without
+converging.
 
-- Agent message + persona gain two rules: (1) order entries most-JD-
-  relevant first; (2) the description must NOT restate the entry's own
-  highlights (pitch = what it is / who it serves / the problem, plus ONE
-  JD-relevant differentiator; facts used in bullets stay in bullets) --
-  moving the `project_restates_bullets` class into the generation
-  contract instead of post-hoc repair.
-- The deterministic fallback mirrors the ordering: entries sorted by their
-  curated bullets' aggregate `experienceTermMatch` coverage of the ATS
-  targets (Component 2's matcher), so even fallback output is JD-ordered.
+Files: `agents/writer/projects-agent.ts` / assembly site,
+`agents/quality/guards/rewrite.ts` (retire the project three-beat
+rewrite), `run-pipeline.ts` (description lock),
+`prompts/content/strategist/projects-agent.md` (version bump + manifest
+regeneration via the prompt-content-integrity suite),
+`agents/writer/projects-message.ts`, `agents/writer/projects-schema.ts`,
+fallback ordering site.
+
+- **Description = deterministic pitch stamp.** The system sets each
+  entry's `description` from the plain-language OPENING of
+  `projects.pitch` (first paragraph, sentence-trimmed to the per-entry
+  cap, ~80 words). The agent NO LONGER authors descriptions: the field is
+  dropped from the agent's required output (schema keeps it optional for
+  wire compatibility; any agent-emitted value is discarded by the
+  normaliser, counted in `normalisedExtras`). The fallback stamps the
+  same way.
+- **Description lock.** Project descriptions are excluded from every
+  post-agent LLM mutation: the guard-repair three-beat project rewrite
+  (rewrite.ts project_restates_bullets / project_pitch_missing recipe)
+  is retired for descriptions (violations record as advisory only), and
+  the condense/expand + revalidate passes get a snapshot-restore lock on
+  `projects[].description` (same discipline as the experience lock;
+  highlights remain governed by Component 3's deterministic trims).
+- **Highlights = JD-ranked mix, lane-2 uncapped.** The agent selects and
+  composes highlights from BOTH pool lanes ranked purely by JD relevance:
+  the composed-bullet limit rises from 2 to the per-entry bullet cap
+  itself, so repo-current evidence (e.g. kubernetes-bootstrap facts
+  inside the AI Platform entry) can fill an entire entry when the JD
+  demands it, while a genuinely JD-relevant curated bullet (the
+  migration-ledger case on the MongoDB run) still competes for its slot.
+  Provenance rules unchanged per bullet: curated by id only; composed
+  cite the entry's OWN pool facts; cross_project_citation rejects.
+- **JD-aware ordering.** Agent message + persona: order entries
+  most-JD-relevant first. The deterministic fallback mirrors it: entries
+  sorted by their curated bullets' aggregate `experienceTermMatch`
+  coverage of the ATS targets (Component 2's matcher), so even fallback
+  output is JD-ordered.
 
 ## Explicit invariants (restated, not new work)
 
@@ -147,8 +181,11 @@ order when coverage ties.
 - Evals (house rule -- prompt + scorer changes ship with evals): the run
   1eda06eb curated+sources case; a K8s-flavoured target set must rank the
   platform project's bullets above frontend-portfolio's in the fallback;
-  description-restates-bullets rejection case; JD-custom description
-  grounded (no invention) case.
+  description = pitch-opening stamp (byte-derived from projects.pitch,
+  never agent text, survives guard/condense untouched); lane-mix case (a
+  JD-relevant curated bullet beats an off-JD composed one and vice
+  versa); composed-uncapped case (an entry may be all-composed when the
+  JD demands it, every bullet provenance-valid).
 - Gates: full suite green (growth only from 152/1297), tsc, ROOT eslint,
   ASCII, UK English, prompt manifest regenerated for the persona bump.
 - Live validation: next JD A/B expects `fallback.fired: false` for the
