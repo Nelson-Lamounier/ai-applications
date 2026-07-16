@@ -34,6 +34,12 @@ export const LENGTH_BUDGET = {
     experienceWords:          370,
     skillsWords:              150,
     projectsWords:            160,
+    /** Run 1eda06eb: a 12-bullet/~330-word Projects section shipped INVISIBLE
+     *  to this whole module -- measureResume only ever counted description
+     *  words, so neither the condense LLM nor hardTrim ever saw the overflow.
+     *  Highlight bullets get their own budget, tracked and trimmed separately
+     *  from `projectsWords` (description). */
+    projectsHighlightWords:   180,
     perBulletWords:           32,
     perProjectWords:          80,
     perSkillItemWords:        6,
@@ -48,6 +54,9 @@ export interface ResumeMeasure {
     readonly experience: number;
     readonly skills: number;
     readonly projects: number;
+    /** Project highlight-bullet words, counted SEPARATELY from `projects`
+     *  (description words) -- see `projectsHighlightWords` above. */
+    readonly projectsHighlights: number;
     readonly total: number;
     /** Section names over their budget (empty = within budget). */
     readonly overBudget: string[];
@@ -67,21 +76,25 @@ export function measureResume(resume: StructuredResumeData): ResumeMeasure {
         .reduce((n, s) => n + words(s), 0);
     const projects = (resume.projects ?? [])
         .reduce((n, p) => n + words(p.description ?? ''), 0);
-    const total = summary + experience + skills + projects;
+    const projectsHighlights = (resume.projects ?? [])
+        .flatMap((p) => p.highlights ?? [])
+        .reduce((n, h) => n + words(h), 0);
+    const total = summary + experience + skills + projects + projectsHighlights;
     return {
-        summary, experience, skills, projects, total,
-        overBudget: overBudgetSections({ summary, experience, skills, projects, total }),
+        summary, experience, skills, projects, projectsHighlights, total,
+        overBudget: overBudgetSections({ summary, experience, skills, projects, projectsHighlights, total }),
         underFilled: total < LENGTH_BUDGET.minTotalWords,
         thinRoles: thinRolesOf(resume),
     };
 }
 
-function overBudgetSections(m: { summary: number; experience: number; skills: number; projects: number; total: number }): string[] {
+function overBudgetSections(m: { summary: number; experience: number; skills: number; projects: number; projectsHighlights: number; total: number }): string[] {
     const over: string[] = [];
     if (m.summary > LENGTH_BUDGET.summaryWords) over.push('summary');
     if (m.experience > LENGTH_BUDGET.experienceWords) over.push('experience');
     if (m.skills > LENGTH_BUDGET.skillsWords) over.push('skills');
     if (m.projects > LENGTH_BUDGET.projectsWords) over.push('projects');
+    if (m.projectsHighlights > LENGTH_BUDGET.projectsHighlightWords) over.push('projects_highlights');
     if (m.total > LENGTH_BUDGET.totalWords) over.push('total');
     return over;
 }
@@ -132,6 +145,11 @@ function hardTrimSkills(resume: StructuredResumeData): StructuredResumeData {
     return { ...resume, skills };
 }
 
+/** Description sentence-trim ONLY -- runs solely when the 'projects'
+ *  (description-words) budget fires, never on a highlights-only overflow.
+ *  A description within its section budget is never re-run through
+ *  `trimSentences` (which would normalise its whitespace as a side effect);
+ *  the gating in `hardTrim` below makes that structural, not incidental. */
 function hardTrimProjects(resume: StructuredResumeData): StructuredResumeData {
     const projects = (resume.projects ?? []).map((p) => ({
         ...p,
@@ -139,6 +157,42 @@ function hardTrimProjects(resume: StructuredResumeData): StructuredResumeData {
             ? trimSentences(p.description, LENGTH_BUDGET.perProjectWords)
             : p.description,
     }));
+    return { ...resume, projects };
+}
+
+/**
+ * Whole-bullet only, round-robin from the LAST entry's LAST bullet. Entries
+ * are already JD-ordered upstream (most relevant first, Task 3), so the last
+ * entry is the least JD-relevant one -- dropping from there first, then
+ * working backward through earlier entries one bullet at a time (wrapping
+ * around), spreads the cut across entries. Highlight bullets may be curated
+ * verbatim quotes (byte-fidelity contract, Task 1/2) -- never reworded or
+ * truncated mid-bullet, only ever dropped whole.
+ *
+ * FLOOR (review decision): an entry NEVER loses its last remaining bullet --
+ * a floor of 1 bullet per entry, mirroring `minBulletsPerRole`'s spirit (a
+ * stripped-bare entry reads as filler). If every entry is already down to 1
+ * bullet and the section is still over `projectsHighlightWords`, trimming
+ * STOPS and the section ships over budget (fail-open) -- the condense
+ * prompt's highlights line remains the lever for that shape.
+ */
+function trimProjectHighlights(resume: StructuredResumeData): StructuredResumeData {
+    const projects = (resume.projects ?? []).map((p) => ({
+        ...p,
+        highlights: p.highlights ? [...p.highlights] : p.highlights,
+    }));
+    const highlightWords = () => projects.reduce((n, p) => n + (p.highlights ?? []).reduce((s, h) => s + words(h), 0), 0);
+    // Bullets droppable without breaching the 1-per-entry floor.
+    let droppable = projects.reduce((n, p) => n + Math.max(0, (p.highlights?.length ?? 0) - 1), 0);
+    let idx = projects.length - 1;
+    while (droppable > 0 && highlightWords() > LENGTH_BUDGET.projectsHighlightWords) {
+        const entry = projects[idx];
+        if (entry?.highlights && entry.highlights.length > 1) {
+            entry.highlights = entry.highlights.slice(0, -1);
+            droppable -= 1;
+        }
+        idx = idx === 0 ? projects.length - 1 : idx - 1;
+    }
     return { ...resume, projects };
 }
 
@@ -177,7 +231,12 @@ export function hardTrim(resume: StructuredResumeData): StructuredResumeData {
     const m = measureResume(resume);
     let out = resume;
     if (m.overBudget.includes('skills')) out = hardTrimSkills(out);
+    // Structural gating: the description sentence-trim runs ONLY on a
+    // description ('projects') overflow; the highlight round-robin runs on
+    // either projects signal. A highlights-only overflow must never re-run
+    // trimSentences over within-budget descriptions.
     if (m.overBudget.includes('projects')) out = hardTrimProjects(out);
+    if (m.overBudget.includes('projects') || m.overBudget.includes('projects_highlights')) out = trimProjectHighlights(out);
     if (m.overBudget.includes('experience') || m.overBudget.includes('total')) out = hardTrimExperience(out);
     if (m.overBudget.includes('summary')) out = hardTrimSummary(out);
     return out;
@@ -236,6 +295,7 @@ export async function condenseResume(
         `- skills total <= ${LENGTH_BUDGET.skillsWords} (currently ${measure.skills}); a skill is a NAME (<= ${LENGTH_BUDGET.perSkillItemWords} words), never a sentence; max ${LENGTH_BUDGET.maxSkillItemsPerCategory} items per category; keep JD-required skills first, cut the rest.`,
         `- projects total <= ${LENGTH_BUDGET.projectsWords} (currently ${measure.projects}); each description <= ${LENGTH_BUDGET.perProjectWords} words — what it is, the JD-relevant proof, one metric. No stack dumps.`,
         '- PROJECT PITCH OPENINGS ARE PROTECTED: each project description KEEPS its opening sentence stating what the project is and who it serves (it rarely contains JD keywords — that does NOT make it cuttable). Cut stack enumerations and secondary clauses first, never the opening pitch.',
+        `- projects highlights total <= ${LENGTH_BUDGET.projectsHighlightWords} words; drop the least JD-relevant bullets first, never reword a quoted bullet.`,
         `- grand total <= ${LENGTH_BUDGET.totalWords} (currently ${measure.total}).`,
         'Style: industry-standard, terse, no adjectives without evidence, no repeated technology lists across sections.',
         CLAIM_STRENGTH_RULE,
