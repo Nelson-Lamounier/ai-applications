@@ -186,6 +186,43 @@ describe('experienceTermMatch', () => {
       expect(experienceTermMatch('production database', text)).toBe(false);
     });
   });
+
+  describe('G3: soft-skill synonym groups (run d3d9ab76 misses)', () => {
+    // The live career lines demonstrate collaboration in synonym vocabulary
+    // (partnered, coordinated, engaging) without ever using the JD's token.
+    const collaborationLine = 'Partnered with internal engineering teams and coordinated '
+      + 'cross-team escalations, engaging directly with customers throughout resolution.';
+
+    it('LIVE MISS 1: "collaboration" is covered by a partnered/coordinated career line', () => {
+      expect(experienceTermMatch('collaboration', collaborationLine)).toBe(true);
+    });
+
+    it('a modified collaboration target ("cross-functional collaboration") still rides the group', () => {
+      expect(experienceTermMatch('cross-functional collaboration', collaborationLine)).toBe(true);
+    });
+
+    it('GUARD: a tech-phrase target containing a collaboration token never rides the group -- '
+      + '"collaboration tools (Jira, Confluence)" stays false against the same line', () => {
+      expect(experienceTermMatch('collaboration tools (Jira, Confluence)', collaborationLine)).toBe(false);
+    });
+
+    it('LIVE MISS 2: "full-stack troubleshooting" is covered by an end-to-end resolution line', () => {
+      const text = 'Owned end-to-end technical resolution of customer cases across compute, '
+        + 'storage, and networking services.';
+      expect(experienceTermMatch('full-stack troubleshooting', text)).toBe(true);
+    });
+
+    it('GUARD: "full-stack troubleshooting" stays false when the line shows end-to-end work '
+      + 'with no troubleshooting or resolution signal', () => {
+      const text = 'Delivered the onboarding flow end-to-end, from design hand-off to launch.';
+      expect(experienceTermMatch('full-stack troubleshooting', text)).toBe(false);
+    });
+
+    it('GUARD: a collaboration target with zero synonym evidence stays missing (fail-closed)', () => {
+      const text = 'Maintained Terraform modules for the shared VPC baseline.';
+      expect(experienceTermMatch('collaboration', text)).toBe(false);
+    });
+  });
 });
 
 describe('scoreExperienceCoverage', () => {

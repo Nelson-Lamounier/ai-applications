@@ -161,9 +161,60 @@ function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
   return LANE_LANGUAGE_EXEMPLARS.some((exemplar) => paddedText.includes(exemplar));
 }
 
+// Pass 5 (G3, run d3d9ab76): soft-skill synonym groups. JD soft-skill targets
+// ("collaboration", "full-stack troubleshooting") legitimately miss career
+// lines that demonstrate the skill in synonym vocabulary (partnered,
+// coordinated, end-to-end resolution) without ever using the JD's token.
+//
+// Fail-closed by construction, two conditions both required:
+//  - EVERY emphasis-stripped, stemmed target token must sit inside the
+//    group's `vocab` -- the target has to BE the soft skill, so a tech
+//    phrase that merely contains a soft-skill token ("collaboration tools
+//    (Jira, Confluence)") never rides the group;
+//  - EVERY regex in `evidence` must match `text` -- "full-stack
+//    troubleshooting" needs BOTH a span signal (end-to-end / full-stack /
+//    across the stack) AND a troubleshooting/resolution signal, so a line
+//    about shipping a feature end-to-end does not credit it.
+interface SoftSkillSynonymGroup {
+  readonly vocab: ReadonlySet<string>;
+  readonly evidence: readonly RegExp[];
+}
+
+const SOFT_SKILL_SYNONYM_GROUPS: readonly SoftSkillSynonymGroup[] = [
+  {
+    // Stemmed forms (lightStem strips -ing: collaborating -> collaborat).
+    vocab: new Set([
+      'collaboration', 'collaborate', 'collaborated', 'collaborat', 'collaborative',
+      'teamwork', 'team', 'teams', 'cross', 'functional', 'stakeholder', 'stakeholders',
+    ]),
+    // Prefix-stem alternation (partner -> partnered/partnering/partnership)
+    // keeps the pattern simple; the \b prefix anchor is the guard that matters.
+    evidence: [
+      /\b(partner|coordinat|collaborat|liais|engag)\w*|\bcross[- ](functional|team)\b/i,
+    ],
+  },
+  {
+    vocab: new Set([
+      'full', 'stack', 'fullstack', 'end', 'troubleshoot', 'troubleshooting', 'troubleshot',
+      'debugging', 'debug', 'diagnosis', 'diagnostics',
+    ]),
+    evidence: [
+      /\b(end[- ]to[- ]end|full[- ]stack|across the stack)\b/i,
+      /\b(troubleshoot|troubleshot|resolut|resolv|diagnos|debug)\w*/i,
+    ],
+  },
+];
+
+function softSkillSynonymMatch(targetSkill: string, text: string): boolean {
+  const stemmedTokens = emphasisStrippedTokens(targetSkill).map(lightStem);
+  return SOFT_SKILL_SYNONYM_GROUPS.some((group) =>
+    stemmedTokens.every((token) => group.vocab.has(token))
+    && group.evidence.every((re) => re.test(text)));
+}
+
 /**
  * Experience-lane term match: does `text` demonstrate `targetSkill` in the
- * JD's vocabulary, without demanding its exact wording? A four-way OR, still
+ * JD's vocabulary, without demanding its exact wording? A five-way OR, still
  * pure and deterministic:
  *
  *  1. `unstemmedMatch` -- exact-phrase + matchTier1's own raw language cue.
@@ -174,6 +225,11 @@ function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
  *     class ("code reading"/"code review(s)"/"code comprehension"/"reading
  *     code" -- NOT a bare "code" token) covered when `text` names a real
  *     language.
+ *  5. `softSkillSynonymMatch` -- a target that IS a soft-skill concept
+ *     (every significant token inside one group's vocabulary) covered when
+ *     `text` demonstrates it in synonym vocabulary (partnered/coordinated
+ *     for collaboration; end-to-end + a troubleshooting signal for
+ *     full-stack troubleshooting).
  *
  * Single source of matching truth for the experience lane -- also used by
  * `anchorsFor` in experience-ats-targets.ts and the projects lane (via
@@ -186,7 +242,8 @@ function laneLanguageCueMatch(targetSkill: string, text: string): boolean {
 export function experienceTermMatch(targetSkill: string, text: string): boolean {
   return matchesCoreTerm(targetSkill, text)
     || enumerationMatch(targetSkill, text)
-    || laneLanguageCueMatch(targetSkill, text);
+    || laneLanguageCueMatch(targetSkill, text)
+    || softSkillSynonymMatch(targetSkill, text);
 }
 
 export interface ScorableBullet {
