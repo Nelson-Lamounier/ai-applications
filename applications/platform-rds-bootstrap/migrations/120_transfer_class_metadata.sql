@@ -75,7 +75,6 @@ FROM (VALUES
     ('hashicorp vault',       'vault'),
     ('azure key vault',       'azure_key_vault'),
     ('azure-key-vault',       'azure_key_vault'),
-    ('key vault',             'azure_key_vault'),
     ('bicep',                 'bicep'),
     ('azure bicep',           'bicep')
 ) AS a(alias, canon)

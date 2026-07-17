@@ -122,5 +122,57 @@ describe('formatTechTransferContext', () => {
             expect(result).not.toContain('full transfer:');
             expect(result).not.toContain('Treat as PARTIAL evidence only');
         });
+
+        it('appends "(partial transfer: <basis>)" to the group line for a partial tier group, ahead of the warning line', () => {
+            const result = formatTechTransferContext(['Terraform'], [iacGroupPartial], iacAliasMap);
+            expect(result).toContain('(partial transfer: Declarative infrastructure-as-code)');
+            const basisIndex = result.indexOf('(partial transfer:');
+            const warningIndex = result.indexOf('Treat as PARTIAL evidence only');
+            expect(basisIndex).toBeGreaterThan(-1);
+            expect(warningIndex).toBeGreaterThan(basisIndex);
+        });
+    });
+
+    describe('typed-vs-untyped dedup — a canonical present in both a typed group and an untyped component', () => {
+        const typedGroup: TechTransferGroup = {
+            members: ['aws_bedrock', 'anthropic_claude'],
+            transferClass: 'ai-provider',
+            transferTier: 'full',
+            transferBasis: 'LLM API usage patterns transfer directly',
+        };
+        const untypedBridgedComponent = asGroup(['aws_bedrock', 'aws_vpc', 'terraform']);
+        const bridgedAliasMap = new Map<string, string>([
+            ['aws bedrock', 'aws_bedrock'],
+            ['bedrock', 'aws_bedrock'],
+            ['anthropic claude', 'anthropic_claude'],
+            ['claude', 'anthropic_claude'],
+            ['aws vpc', 'aws_vpc'],
+            ['terraform', 'terraform'],
+        ]);
+
+        it('typed group takes precedence: the untyped component is skipped when every JD canonical it matches is already covered by the typed group', () => {
+            const result = formatTechTransferContext(
+                ['AWS Bedrock'],
+                [typedGroup, untypedBridgedComponent],
+                bridgedAliasMap,
+            );
+            const bulletLines = result.split('\n').filter((l) => l.startsWith('- '));
+            expect(bulletLines).toHaveLength(1);
+            expect(result).toContain('anthropic claude');
+            // The untyped component's own line (with aws_vpc/terraform) is skipped.
+            expect(result).not.toContain('aws vpc');
+        });
+
+        it('the untyped component IS still emitted when it surfaces a JD canonical the typed group does not cover', () => {
+            const result = formatTechTransferContext(
+                ['AWS Bedrock', 'Terraform'],
+                [typedGroup, untypedBridgedComponent],
+                bridgedAliasMap,
+            );
+            const bulletLines = result.split('\n').filter((l) => l.startsWith('- '));
+            expect(bulletLines).toHaveLength(2);
+            expect(result).toContain('anthropic claude');
+            expect(result).toContain('aws vpc');
+        });
     });
 });

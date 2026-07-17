@@ -582,6 +582,7 @@ const RESEARCH_TOOL = {
                     properties: {
                         skill:   { type: 'string', description: 'The JD skill being assessed — echo it verbatim from the provided list.' },
                         verdict: { type: 'string', enum: ['verified', 'partial', 'gap'], description: 'verified = clearly demonstrated; partial = related/transferable foundation; gap = not demonstrated.' },
+                        transferVia: { type: 'string', description: "the evidenced sibling technology this verdict leans on, ONLY when the candidate's evidence is for a transferable sibling, not the skill itself. Applies to verified/partial verdicts only — never set this alongside a gap verdict." },
                         // verified fields
                         sourceCitation: { type: 'string', description: '(verified) where it is demonstrated — project/role/repo.' },
                         depth:          { type: 'string', enum: ['surface', 'working', 'expert'], description: '(verified) depth of demonstrated expertise.' },
@@ -595,7 +596,6 @@ const RESEARCH_TOOL = {
                         gapType:                 { type: 'string', enum: ['hard', 'soft'], description: '(gap) hard = disqualifying-class requirement; soft = nice-to-have.' },
                         impactSeverity:          { type: 'string', enum: ['blocking', 'significant', 'minor'], description: '(gap) impact on viability.' },
                         disqualifyingAssessment: { type: 'string', description: '(gap) honest assessment of whether this blocks candidacy.' },
-                        transferVia: { type: 'string', description: "the evidenced sibling technology this verdict leans on, ONLY when the candidate's evidence is for a transferable sibling, not the skill itself." },
                     },
                     required: ['skill', 'verdict'],
                     additionalProperties: false,

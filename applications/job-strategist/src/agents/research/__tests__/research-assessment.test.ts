@@ -70,7 +70,7 @@ describe('assessmentsToMatching', () => {
     describe('transferVia downgrade guard', () => {
         const terraformGroup = group(['terraform', 'aws_cdk', 'cloudformation'], 'Declarative infrastructure-as-code');
 
-        it('verdict verified WITH transferVia is downgraded into partialMatches, never verifiedMatches, with matchBasis/transferVia/transferBasis set', () => {
+        it('verdict verified WITH transferVia is downgraded into partialMatches, never verifiedMatches, with matchBasis/transferVia/transferBasis set — and a non-empty transferableFoundation seeded from the sibling + sourceCitation', () => {
             const out = assessmentsToMatching(
                 [a({ skill: 'aws_cdk', verdict: 'verified', sourceCitation: 'terraform modules', transferVia: 'terraform' })],
                 ['aws_cdk'],
@@ -80,13 +80,14 @@ describe('assessmentsToMatching', () => {
             expect(out.partialMatches).toEqual([{
                 skill: 'aws_cdk',
                 gapDescription: '',
-                transferableFoundation: '',
+                transferableFoundation: 'Transferable from terraform: terraform modules',
                 framingSuggestion: '',
                 evidenceFiles: [],
                 matchBasis: 'transferable',
                 transferVia: 'terraform',
                 transferBasis: 'Declarative infrastructure-as-code',
             }]);
+            expect(out.partialMatches[0].transferableFoundation.length).toBeGreaterThan(0);
         });
 
         it('verdict partial WITH transferVia carries matchBasis/transferVia/transferBasis', () => {

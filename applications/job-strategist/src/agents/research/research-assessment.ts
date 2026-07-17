@@ -95,12 +95,25 @@ function findTransferBasis(
 /**
  * Build a transferable PartialMatch — used to downgrade a 'verified' verdict
  * that carries transferVia, and to enrich a 'partial' verdict that carries it.
+ *
+ * A downgraded 'verified' assessment never populated the partial-only fields
+ * (gapDescription/transferableFoundation/framingSuggestion are not part of the
+ * model's verified schema), so `toPartial(a)` alone would leave
+ * `transferableFoundation` empty on the resulting PartialMatch — losing the
+ * one thing a transferable match must state honestly. When that happens,
+ * seed it from what the verified assessment DID provide: the sibling name and
+ * its sourceCitation. A 'partial' verdict that already carries
+ * transferableFoundation from the model is left untouched.
  */
 function toTransferablePartial(a: SkillAssessment, transferGroups: readonly TechTransferGroup[]): PartialMatch {
     const transferVia = a.transferVia as string; // caller guarantees truthy
     const transferBasis = findTransferBasis(a.skill, transferVia, transferGroups);
+    const base = toPartial(a);
+    const transferableFoundation = base.transferableFoundation
+        || `Transferable from ${transferVia}: ${a.sourceCitation ?? ''}`.trim();
     return {
-        ...toPartial(a),
+        ...base,
+        transferableFoundation,
         matchBasis: 'transferable',
         transferVia,
         ...(transferBasis ? { transferBasis } : {}),
@@ -146,7 +159,16 @@ function classifyAssessment(a: SkillAssessment, transferGroups: readonly TechTra
     }
     if (a.verdict === 'verified') return { bucket: 'verified', value: toVerified(a) };
     if (a.verdict === 'partial') return { bucket: 'partial', value: toPartial(a) };
-    return { bucket: 'gap', value: toGap(a) }; // 'gap' or any unrecognised verdict -> honest gap
+    // 'gap' or any unrecognised verdict -> honest gap. A 'gap' verdict carrying
+    // transferVia is a model inconsistency (transfer credit only ever applies
+    // to verified/partial verdicts) — ignored by design; logged for observability
+    // so a systematic mis-emission doesn't go unnoticed.
+    if (a.transferVia && a.verdict === 'gap') {
+        console.warn(
+            `research-assessment.classifyAssessment: skill '${a.skill}' has verdict 'gap' with transferVia '${a.transferVia}' set -- ignored by design (gap verdicts never receive transfer credit)`,
+        );
+    }
+    return { bucket: 'gap', value: toGap(a) };
 }
 
 /** Bucket every assessed skill into verified/partial/gap, tracking what was covered. */

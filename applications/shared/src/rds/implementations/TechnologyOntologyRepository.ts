@@ -5,15 +5,34 @@ import type { Pool } from 'pg';
 export type TransferTier = 'full' | 'partial';
 
 /**
- * One connected component of mutually-transferable canonical tech names.
+ * One group of mutually-transferable canonical tech names.
  *
- * `transferClass`/`transferTier`/`transferBasis` are read from the
- * `technology_relationships` edges the component was built from (migration
- * 120). `loadCategoryGroups()` groups have no relationship edges backing
- * them, so all three are always `null` there. Within `loadTransferGroups()`,
- * a component with NO typed edges (legacy `related_to` rows predating 120)
- * also carries all-`null` metadata — the group is still returned, just
- * untyped.
+ * Two different construction methods feed `loadTransferGroups()`, and they
+ * are NOT the same kind of grouping:
+ *  - TYPED groups (`transferClass` non-null) are built by grouping edges
+ *    whose `transfer_class` is set (migration 120) BY CLASS — one group per
+ *    class, membership is every canonical touched by that class's edges.
+ *    Migration 120 seeds each class as a full pairwise graph, so grouping by
+ *    class and grouping by connectivity agree for typed edges alone.
+ *  - UNTYPED groups (`transferClass` null) are connected components over the
+ *    remaining untyped edges (legacy `related_to` rows predating 120, or
+ *    structural edges like `part_of` that were never meant to carry a
+ *    transfer class). Connectivity, not class, is the only signal available.
+ *
+ * Deriving typed groups from connectivity (the old behaviour) was wrong on
+ * live data: a stray untyped edge (e.g. `aws_bedrock part_of aws`) would
+ * bridge a typed class into an unrelated component and either mislabel it or
+ * absorb it wholesale. Grouping typed edges by class instead of by
+ * connectivity fixes that — see `loadTransferGroups()`.
+ *
+ * `loadCategoryGroups()` groups have no relationship edges backing them, so
+ * all three metadata fields are always `null` there too.
+ *
+ * A canonical can legitimately appear in both a typed group and an untyped
+ * group (e.g. `aws_bedrock` in the typed `ai-provider` class AND the untyped
+ * `aws`-rooted component via `part_of`) — callers that render one line per
+ * matching group must decide how to avoid a redundant echo (see
+ * `formatTechTransferContext` in job-strategist for the documented rule).
  */
 export interface TechTransferGroup {
     readonly members: string[];
@@ -70,37 +89,95 @@ function findConnectedComponents(adj: ReadonlyMap<string, Set<string>>): string[
     return components;
 }
 
-/**
- * Resolve a component's typed transfer metadata from its member edges: the
- * first non-null `transfer_class` among edges whose `from` node is in the
- * component wins. A second, DIFFERENT non-null class in the same component
- * is a data inconsistency (should not happen — 120 seeds one class per
- * pairwise family) — keep the first and warn once so it surfaces without
- * failing the read.
- */
-function resolveComponentMetadata(
-    component: readonly string[],
-    edges: readonly TransferEdge[],
-): Pick<TechTransferGroup, 'transferClass' | 'transferTier' | 'transferBasis'> {
-    const members = new Set(component);
-    let transferClass: string | null = null;
-    let transferTier: TransferTier | null = null;
-    let transferBasis: string | null = null;
-    let warned = false;
-    for (const edge of edges) {
-        if (edge.transferClass === null || !members.has(edge.from)) continue;
-        if (transferClass === null) {
-            transferClass = edge.transferClass;
-            transferTier = edge.transferTier;
-            transferBasis = edge.transferBasis;
-        } else if (edge.transferClass !== transferClass && !warned) {
-            console.warn(
-                `TechnologyOntologyRepository.loadTransferGroups: component [${component.join(', ')}] has conflicting transfer_class values ('${transferClass}' vs '${edge.transferClass}') -- keeping the first`,
-            );
-            warned = true;
+/** Per-class accumulator used by `buildTypedGroups`. */
+interface TypedClassBucket {
+    members: string[];
+    seen: Set<string>;
+    transferTier: TransferTier | null;
+    transferBasis: string | null;
+    warnedTier: boolean;
+    warnedBasis: boolean;
+}
+
+/** Record both endpoints of `edge` into `bucket.members` (first-appearance order, deduped). */
+function addBucketMembers(bucket: TypedClassBucket, edge: TransferEdge): void {
+    for (const name of [edge.from, edge.to]) {
+        if (!bucket.seen.has(name)) {
+            bucket.seen.add(name);
+            bucket.members.push(name);
         }
     }
-    return { transferClass, transferTier, transferBasis };
+}
+
+/**
+ * Take the first non-null `transfer_tier` seen for the class; warn once
+ * (per class) if a later edge in the same class disagrees.
+ */
+function recordBucketTier(bucket: TypedClassBucket, edge: TransferEdge): void {
+    if (edge.transferTier === null) return;
+    if (bucket.transferTier === null) {
+        bucket.transferTier = edge.transferTier;
+    } else if (edge.transferTier !== bucket.transferTier && !bucket.warnedTier) {
+        console.warn(
+            `TechnologyOntologyRepository.loadTransferGroups: transfer_class '${edge.transferClass}' has conflicting transfer_tier values ('${bucket.transferTier}' vs '${edge.transferTier}') -- keeping the first`,
+        );
+        bucket.warnedTier = true;
+    }
+}
+
+/**
+ * Take the first non-null `transfer_basis` seen for the class; warn once
+ * (per class) if a later edge in the same class disagrees.
+ */
+function recordBucketBasis(bucket: TypedClassBucket, edge: TransferEdge): void {
+    if (edge.transferBasis === null) return;
+    if (bucket.transferBasis === null) {
+        bucket.transferBasis = edge.transferBasis;
+    } else if (edge.transferBasis !== bucket.transferBasis && !bucket.warnedBasis) {
+        console.warn(
+            `TechnologyOntologyRepository.loadTransferGroups: transfer_class '${edge.transferClass}' has conflicting transfer_basis values -- keeping the first`,
+        );
+        bucket.warnedBasis = true;
+    }
+}
+
+/**
+ * Build one `TechTransferGroup` per distinct `transfer_class` found among
+ * TYPED edges (`transfer_class IS NOT NULL`) — the fix for the mislabelling
+ * bug: grouping by class instead of by connectivity means a stray untyped
+ * edge elsewhere in the graph can never merge two classes or pull an
+ * unrelated component into one.
+ *
+ * `members` is every canonical touched by that class's edges, lowercased,
+ * in first-appearance (insertion) order — deterministic because callers
+ * pass edges pre-sorted `ORDER BY transfer_class, from_id, to_id`.
+ *
+ * `transferTier`/`transferBasis` take the first NON-NULL value seen for the
+ * class (deterministic given the same ordering). A later edge in the same
+ * class disagreeing with that first value is a data inconsistency — 120
+ * seeds one tier/basis per class — so it is kept as the winner and a
+ * warning is logged once per class per field, surfacing the issue without
+ * failing the read.
+ */
+function buildTypedGroups(edges: readonly TransferEdge[]): TechTransferGroup[] {
+    const byClass = new Map<string, TypedClassBucket>();
+    for (const edge of edges) {
+        if (edge.transferClass === null) continue;
+        let bucket = byClass.get(edge.transferClass);
+        if (bucket === undefined) {
+            bucket = { members: [], seen: new Set(), transferTier: null, transferBasis: null, warnedTier: false, warnedBasis: false };
+            byClass.set(edge.transferClass, bucket);
+        }
+        addBucketMembers(bucket, edge);
+        recordBucketTier(bucket, edge);
+        recordBucketBasis(bucket, edge);
+    }
+    return [...byClass.entries()].map(([transferClass, bucket]) => ({
+        members: bucket.members,
+        transferClass,
+        transferTier: bucket.transferTier,
+        transferBasis: bucket.transferBasis,
+    }));
 }
 
 /**
@@ -401,18 +478,31 @@ export class TechnologyOntologyRepository {
     }
 
     /**
-     * Compute connected components over the technology_relationships graph,
-     * treating all relationship kinds as undirected edges. Returns each
-     * component of ≥2 nodes as a `TechTransferGroup` — lowercased canonical
-     * members plus the typed transfer metadata (migration 120) read off the
-     * component's edges (`resolveComponentMetadata`); a component built only
-     * from legacy untyped `related_to` edges carries all-`null` metadata.
+     * Load transfer groups from the technology_relationships graph — TWO
+     * different constructions over TWO different edge sets (see the
+     * `TechTransferGroup` doc comment for why they must not be mixed):
+     *
+     *  - TYPED edges (`transfer_class IS NOT NULL`, migration 120) are
+     *    grouped BY CLASS (`buildTypedGroups`) — one group per class,
+     *    membership is every canonical touched by that class's edges. This
+     *    is immune to a stray untyped edge merging or mislabelling a class,
+     *    because untyped edges never enter this grouping at all.
+     *  - UNTYPED edges (`transfer_class IS NULL` — legacy `related_to` rows
+     *    predating 120, or structural edges like `part_of`) are grouped by
+     *    graph CONNECTIVITY (`findConnectedComponents`), exactly as before.
+     *
+     * A canonical can end up in both a typed group and an untyped component
+     * — that is correct, not a bug (see the type doc comment).
+     *
+     * `ORDER BY transfer_class, from_id, to_id` makes both the typed
+     * class-grouping and the first-non-null tier/basis resolution
+     * deterministic across runs.
      *
      * When the table is empty (no relationships seeded yet) returns [] so
      * the caller can fall back to loadCategoryGroups().
      *
-     * Connected-components are found with a non-recursive BFS (safe for any
-     * realistic ontology size).
+     * Connected-components (untyped edges only) are found with a
+     * non-recursive BFS (safe for any realistic ontology size).
      */
     async loadTransferGroups(): Promise<TechTransferGroup[]> {
         const { rows } = await this.pool.query<{
@@ -426,7 +516,8 @@ export class TechnologyOntologyRepository {
                     r.transfer_class AS transfer_class, r.transfer_tier AS transfer_tier, r.transfer_basis AS transfer_basis
                FROM technology_relationships r
                JOIN technology_ontology f ON f.id = r.from_id
-               JOIN technology_ontology t ON t.id = r.to_id`,
+               JOIN technology_ontology t ON t.id = r.to_id
+              ORDER BY r.transfer_class, r.from_id, r.to_id`,
         );
         if (rows.length === 0) return [];
 
@@ -437,10 +528,19 @@ export class TechnologyOntologyRepository {
             transferTier: r.transfer_tier,
             transferBasis: r.transfer_basis,
         }));
-        const components = findConnectedComponents(buildAdjacency(edges));
-        return components.map((members) => ({
+
+        const typedEdges = edges.filter((e) => e.transferClass !== null);
+        const untypedEdges = edges.filter((e) => e.transferClass === null);
+
+        const typedGroups = buildTypedGroups(typedEdges);
+        const untypedComponents = findConnectedComponents(buildAdjacency(untypedEdges));
+        const untypedGroups: TechTransferGroup[] = untypedComponents.map((members) => ({
             members,
-            ...resolveComponentMetadata(members, edges),
+            transferClass: null,
+            transferTier: null,
+            transferBasis: null,
         }));
+
+        return [...typedGroups, ...untypedGroups];
     }
 }

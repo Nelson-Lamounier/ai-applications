@@ -192,11 +192,59 @@ describe('TechnologyOntologyRepository.loadTransferGroups', () => {
         expect(groups[0].transferBasis).toBeNull();
     });
 
-    it('when a component mixes disagreeing non-null transfer_class values, the FIRST wins and a warning is logged once', async () => {
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    it('two typed classes sharing a member stay two groups (typed groups are built by class, not connectivity)', async () => {
+        // a<->b is class-one, b<->c is class-two — b is shared, but connectivity
+        // must NOT merge the two classes into one group.
         const pool = fakePool([
             { from_name: 'a', to_name: 'b', transfer_class: 'class-one', transfer_tier: 'full',    transfer_basis: 'basis-one' },
             { from_name: 'b', to_name: 'c', transfer_class: 'class-two', transfer_tier: 'partial', transfer_basis: 'basis-two' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(groups).toHaveLength(2);
+        const one = groups.find((g) => g.transferClass === 'class-one');
+        const two = groups.find((g) => g.transferClass === 'class-two');
+        expect(new Set(one?.members)).toEqual(new Set(['a', 'b']));
+        expect(one?.transferTier).toBe('full');
+        expect(one?.transferBasis).toBe('basis-one');
+        expect(new Set(two?.members)).toEqual(new Set(['b', 'c']));
+        expect(two?.transferTier).toBe('partial');
+        expect(two?.transferBasis).toBe('basis-two');
+    });
+
+    it('a stray untyped edge bridging a typed class to an unrelated component does NOT leak metadata either way', async () => {
+        // aws_bedrock<->anthropic_claude is the typed 'ai-provider' class (migration 120).
+        // aws_bedrock<->aws_vpc is an untyped structural edge (e.g. legacy part_of),
+        // bridging aws_bedrock into an unrelated untyped component containing aws_vpc/terraform.
+        const pool = fakePool([
+            { from_name: 'aws_bedrock', to_name: 'anthropic_claude', transfer_class: 'ai-provider', transfer_tier: 'full', transfer_basis: 'LLM API usage patterns transfer directly' },
+            { from_name: 'anthropic_claude', to_name: 'aws_bedrock', transfer_class: 'ai-provider', transfer_tier: 'full', transfer_basis: 'LLM API usage patterns transfer directly' },
+            { from_name: 'aws_bedrock', to_name: 'aws_vpc', transfer_class: null, transfer_tier: null, transfer_basis: null },
+            { from_name: 'aws_vpc', to_name: 'terraform', transfer_class: null, transfer_tier: null, transfer_basis: null },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(groups).toHaveLength(2);
+
+        const typed = groups.find((g) => g.transferClass === 'ai-provider');
+        expect(new Set(typed?.members)).toEqual(new Set(['aws_bedrock', 'anthropic_claude']));
+        expect(typed?.transferTier).toBe('full');
+        expect(typed?.transferBasis).toBe('LLM API usage patterns transfer directly');
+
+        const untyped = groups.find((g) => g.transferClass === null);
+        // aws_bedrock legitimately appears in BOTH groups; the untyped component
+        // itself must not absorb anthropic_claude nor carry the typed metadata.
+        expect(new Set(untyped?.members)).toEqual(new Set(['aws_bedrock', 'aws_vpc', 'terraform']));
+        expect(untyped?.members).not.toContain('anthropic_claude');
+        expect(untyped?.transferTier).toBeNull();
+        expect(untyped?.transferBasis).toBeNull();
+    });
+
+    it('when a typed class has disagreeing non-null transfer_tier/transfer_basis, the FIRST wins and a warning is logged once each', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const pool = fakePool([
+            { from_name: 'a', to_name: 'b', transfer_class: 'class-one', transfer_tier: 'full',    transfer_basis: 'basis-one' },
+            { from_name: 'b', to_name: 'a', transfer_class: 'class-one', transfer_tier: 'partial', transfer_basis: 'basis-two' },
         ]);
         const repo = new TechnologyOntologyRepository(pool as never);
         const groups = await repo.loadTransferGroups();
@@ -204,8 +252,15 @@ describe('TechnologyOntologyRepository.loadTransferGroups', () => {
         expect(groups[0].transferClass).toBe('class-one');
         expect(groups[0].transferTier).toBe('full');
         expect(groups[0].transferBasis).toBe('basis-one');
-        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledTimes(2); // one for tier, one for basis
         warnSpy.mockRestore();
+    });
+
+    it('selects rows ordered by transfer_class/from_id/to_id for deterministic grouping', async () => {
+        const pool = fakePool([]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        await repo.loadTransferGroups();
+        expect(pool.calls[0].sql).toContain('ORDER BY r.transfer_class, r.from_id, r.to_id');
     });
 });
 
