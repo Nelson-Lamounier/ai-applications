@@ -3,7 +3,7 @@ import { isTestFile } from './isTestFile.js';
 
 describe('isTestFile', () => {
   it.each([
-    'applications/worker/src/extractors/DsaPatternExtractor.test.ts',
+    'applications/ingestion/src/facts/extractors/DsaPatternExtractor.test.ts',
     'a/b/foo.spec.tsx',
     'a/b/foo.test.mjs',
     'src/__tests__/x.ts',

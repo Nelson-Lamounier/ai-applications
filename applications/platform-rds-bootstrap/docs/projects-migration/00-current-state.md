@@ -126,7 +126,7 @@ Per `applications/platform-rds-bootstrap/ROLLBACK.md`:
 
 - **Provider:** `TitanEmbeddingProvider` (Bedrock, dim 1024, max 30K chars
   input). Sequential per-chunk embedding for portfolio scale (<10K
-  chunks/repo) — `applications/shared/src/rds/pipeline/IngestionPipeline.ts:108`.
+  chunks/repo) — `applications/ingestion/src/knowledge/IngestionPipeline.ts`.
 
 ### 2.4 Onboarding orchestrator
 

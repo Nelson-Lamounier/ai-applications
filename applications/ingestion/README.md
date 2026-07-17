@@ -16,10 +16,11 @@ the two images ship independently from one tree.
 
 ## Folder layout
 
-- `src/acquisition/` — GitHub fetch, chunking, tarball handling
+- `src/acquisition/` — GitHub fetch, tarball handling
 - `src/facts/` — deterministic tech-extract lanes: extractors, IaC
   parsers, manifest parsing, parity watchdog
-- `src/knowledge/` — ontology-backed enrichment
+- `src/knowledge/` — FileFilter, the chunkers (Markdown/Code/Default),
+  and IngestionPipeline
 - `src/narrative/` — narrative/profile synthesis
 - `src/activity/` — repo activity signals
 - `src/persistence/` — repository/persistence adapters

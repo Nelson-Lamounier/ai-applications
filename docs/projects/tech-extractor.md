@@ -160,8 +160,8 @@ CI/CD via
 The workflow:
 
 1. Triggers on `push` to `develop` against
-   `applications/tech-extractor/**`, `applications/shared/**`, or the
-   workflow file itself.
+   `applications/tech-extractor/**`, `applications/ingestion/**`,
+   `applications/shared/**`, or the workflow file itself.
 2. Calls the reusable `_build-push-image.yml` workflow with:
    - `app-name: tech-extractor`
    - `dockerfile: applications/tech-extractor/Dockerfile`

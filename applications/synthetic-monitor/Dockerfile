@@ -11,7 +11,6 @@ COPY applications/tsconfig.json ./applications/
 
 COPY applications/synthetic-monitor/package.json ./applications/synthetic-monitor/
 COPY applications/ontology-importer/package.json         ./applications/ontology-importer/
-COPY applications/tech-extractor/package.json            ./applications/tech-extractor/
 
 # Sibling workspace manifests for lockfile resolution
 COPY applications/shared/package.json                    ./applications/shared/
