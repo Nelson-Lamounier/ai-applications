@@ -1,180 +1,254 @@
 <!-- @format -->
 
-# JD Concept Ledger + Transfer Classes - Design
+# Unified Repo Ingestion + Fact Sheet - Design (v2)
 
-**Date:** 2026-07-17
+**Date:** 2026-07-17 (v2 - supersedes the concept-ledger-only v1; v1's
+increments survive as phases P0/P3 here)
 **Status:** Draft for review
-**Approach:** A + C from the JD-to-evidence review (deterministic concept
-ledger in tech-extractor, plus query-time expansion as its consumption layer).
-**Prerequisite:** dev migrations 117-119 applied (PR #503 unblocks the
-bootstrap image; the ArgoCD PostSync hook applies them).
+**Decision trail:** user approved approach A+C (transfer classes + concept
+ledger + query-time expansion), then widened scope: merge the two scanners
+(ingestion + tech-extractor) into ONE system, one directory, index-time
+categorisation, explicit payload contracts, minimal cost.
 
 ## Problem
 
-67 JD analyses for the pilot user show a stable four-lane demand taxonomy
-(Required / Preferred / Tools / Concepts), but the evidence supply cannot
-answer two whole classes of it:
-
-1. **Transferable tools score as gaps.** Terraform is required in 14 JDs and
-   verdicted a gap in 12, despite 2,494 iac-layer `technology_evidence` rows
-   (CDK, CloudFormation, Helm, K8s). Same shape: azure (23 gaps), gcp (24),
-   gitlab-ci, mongodb. The system has no equivalence classes, so evidence for
-   a sibling tool counts for nothing.
-2. **Concepts have no evidence store.** The top JD concepts - ci/cd (20
-   runs), incident response (19), distributed systems (13), root cause
-   analysis (9) - resolve to zero tagged chunks. Chunk `skills[]` vocabulary
-   never matched JD vocabulary, and the LLM enricher that produced it is
-   decommissioned. 5 of the top-12 JD concepts are missing from
-   `skill_ontology` entirely.
-
-Bridge tables are thin: `tech_skill_map` holds 75 mappings between 2,502
-technology canonicals and 273 skill canonicals.
+1. **Two scanners, one repo.** Every sync runs two K8s Jobs that acquire the
+   same repository twice (ingestion: Trees+Blobs API per file;
+   tech-extractor: tarball), walk the tree twice, and classify files twice.
+   The evidence stamp is a post-hoc UPDATE pass over `document_embeddings`
+   that races the tech-extractor's writes.
+2. **Late canonicalisation.** Raw strings land in the DB; agents compare
+   strings at query time. Industry practice (skills-graph systems such as
+   Lightcast/ESCO-style taxonomies, and search index-time enrichment
+   generally) resolves every mention to a canonical ID at write time and
+   keeps query time a lookup.
+3. **No materialised categorisation.** "What database does this repo use?"
+   and "is this frontend or backend?" currently require an agent to
+   re-derive the answer from 28k evidence rows and 15k chunks. The JD
+   taxonomy (Required / Preferred / Tools / Concepts) has no supply-side
+   mirror.
+4. **Relationships unused.** `technology_relationships` exists but nothing
+   consults it, so Terraform JDs verdict "gap" against 2,494 iac-layer
+   evidence rows (CDK/CloudFormation), azure/gcp verdict "gap" against deep
+   AWS evidence (measured over 67 real JD analyses).
+5. **Code scattered.** The ingestion system spans four roots:
+   `applications/ingestion`, `applications/shared/src/ingestion`,
+   `applications/shared/src/rds/pipeline`, `applications/tech-extractor`.
 
 ## Goal
 
-Categorise the user's evidence at extraction time into the same taxonomy JDs
-use, deterministically and citably, so matching becomes a lookup:
-
-- A JD tool with no direct evidence but a transfer-class sibling gets an
-  honest `transferable` verdict citing the sibling's evidence, not a gap.
-- A JD concept resolves to `concept_evidence` rows with file-level citations.
-- Query-time expansion gives retrieval and the matcher the same widened
-  vocabulary, without any LLM in the loop.
+One ingestion system, one directory, one acquisition per sync, that
+**categorises at scan time** into the same taxonomy JDs use, materialises a
+per-repo fact sheet that answers categorical questions without an agent, and
+keeps the vector store for what it is good at (prose evidence retrieval).
+LLM usage capped at one profile call per repo sync.
 
 ## Non-goals
 
-- Reviving the chunk enricher (approach B) - deferred until the enrichment
-  eval harness measures semantically instead of by exact string.
-- UI changes in tucaken-app (the panels already render lanes; better data
-  flows through unchanged).
-- Prose/readme trust changes for the verified stack (CODE_LAYERS stays as
-  is).
+- Reviving per-chunk LLM enrichment (deterministic facts replace it).
+- Changing the retrieval read side (`RdsVectorStore.querySimilar`,
+  `PgVectorRetriever`) beyond consuming expanded filters and fact metadata.
+- Multi-provider acquisition (GitHub-only stays).
+- tucaken-app UI changes.
 
-## Design
+## Use-cases and payload contracts
 
-Three increments, each independently shippable and eval-gated.
+The design is driven by four concrete query shapes. Each gets an explicit
+payload; downstream agents consume these instead of re-deriving.
 
-### Increment 1 - Transfer classes (biggest gap-rate win)
+### UC1 - categorical question ("what database does this repo use?")
 
-**Data.** Seed `technology_relationships` with `relationship =
-'transferable'` rows grouped by a `transfer_class` label. Initial classes,
-derived from the observed gap corpus:
-
-| transfer_class | members (canonical technologies) |
-| --- | --- |
-| `iac-declarative` | terraform, aws-cdk, cloudformation, pulumi, bicep |
-| `ci-pipelines` | github-actions, gitlab-ci, jenkins, circleci, azure-devops |
-| `container-orchestration` | kubernetes, ecs, nomad |
-| `cloud-platform` | aws, azure, gcp (partial tier - platform breadth transfers, service names do not) |
-| `document-store` | mongodb, documentdb, dynamodb |
-| `secrets-managers` | aws-secrets-manager, vault, azure-key-vault |
-| `observability-stacks` | grafana, datadog, new-relic, cloudwatch |
-
-Each row carries `transfer_tier: full | partial` (cloud-platform is partial;
-IaC is full) and a short `transfer_basis` sentence used verbatim in honest
-framing ("IaC evidence is CDK/CloudFormation; Terraform itself not
-evidenced").
-
-**Consumption (matcher).** In the research matcher, when a canonical JD term
-has no direct evidence, look up its transfer class; if a sibling has
-evidence, emit verdict `partial` with `matchBasis: 'transferable'`, the
-sibling named, and the sibling's citations attached. Never silently upgrade
-to `verified` - the two-tier honesty rule holds.
-
-**Consumption (retrieval, the C layer).** `buildRetrievalPrefilter` expands
-`file_tech_stack` filter terms with class siblings so chunks evidencing CDK
-surface for a Terraform JD. Expansion happens at query time from the
-relationships table; nothing is re-stamped.
-
-### Increment 2 - Concept ledger
-
-**Ontology.** Add the missing JD concepts to `skill_ontology` (with aliases:
-"ci/cd" = "ci-cd" = "continuous integration and delivery" = "ci/cd pipeline
-design"). Seed list = frequency-ranked concepts from the live JD corpus
-(observability, ci/cd, incident response, distributed systems, container
-orchestration, process automation, secrets management, root cause analysis,
-vulnerability scanning, infrastructure as code, ...), capped at ~60 to stay
-curatable.
-
-**Evidence table.** New migration: `concept_evidence` (mirrors
-`technology_evidence` ergonomics):
+One lookup, no agent, no vector search:
 
 ```sql
-concept_evidence (
-  id, user_id, repo_full_name, github_repo_id,
-  skill_id        -- FK skill_ontology
-  detector        -- which rule fired
-  source_kind     -- 'signal' | 'file' | 'aggregate'
-  file_path, line_start, line_end,   -- NULL for signal-level evidence
-  confidence, extracted_at, commit_sha
-)
-UNIQUE (user_id, repo_full_name, skill_id, detector, coalesce(file_path,''))
+SELECT facts->'databases' FROM repo_facts
+ WHERE user_id = $1 AND repo_full_name = $2;
 ```
 
-**Detector layer in tech-extractor.** A new deterministic pass alongside the
-existing extractors, consuming artefacts the run already has (file walk,
-manifests, parsed IaC, plus `archetype_signals` / `evidence_topology`):
+### UC2 - role question ("frontend or backend repository?")
 
-| concept | detector inputs (examples) |
-| --- | --- |
-| ci/cd | workflow files parsed by GithubActionsParser; deploy jobs -> higher confidence |
-| observability | monitoring config globs, Grafana dashboards/alert rules, OTel/alloy config, metrics code hits |
-| incident response | runbooks dir, alert rules with severity routes, on-call config |
-| container orchestration | k8s manifests + helm charts + argo apps (already parsed) |
-| secrets management | ESO manifests, secrets-manager SDK usage (treesitter), vault config |
-| distributed systems | multi-service compose/k8s topology + queue/broker manifests + cross-service clients |
-| infrastructure as code | any iac-layer technology evidence (aggregate) |
-| process automation | cron/schedule manifests, bot workflows, scripted ops dirs |
+`repo_facts.role` (+ `role_confidence`), computed by the existing
+`classifyComponentKind` rules at ingestion time.
 
-Every detector emits file:line where a concrete file exists, or
-`source_kind='signal'` rows citing the signal map. Detectors are pure
-functions with unit tests; no LLM.
+### UC3 - JD matching (Required / Preferred / Tools / Concepts lanes)
 
-**Consumption.** The matcher resolves JD concepts through `skill_ontology`
-aliases to `concept_evidence`; verdicts cite detector + files. Concepts with
-no detector coverage stay honest gaps (e.g. "technical support",
-"customer relationship management" - career-history territory, out of scope
-here).
+The matcher receives, per canonical JD term:
 
-### Increment 3 - Canonicalisation at the JD boundary + bridge growth
+```jsonc
+{
+  "term": "terraform",              // canonical id + display name
+  "verdict": "partial",             // verified | partial | gap
+  "matchBasis": "transferable",     // direct | transferable | concept
+  "via": "aws-cdk",                 // sibling that carries the evidence
+  "transferBasis": "declarative IaC - CDK/CloudFormation evidenced, Terraform itself not",
+  "evidence": [ { "repo": "...", "file": "infra/lib/api-stack.ts", "line": 12,
+                   "layer": "iac", "version": null } ]
+}
+```
 
-- jd-extractor output lanes are canonicalised on persist (same
-  `OntologyResolver` cascade the enricher used: alias map, embedding-nearest,
-  raw). The stored `jdExtraction` keeps raw strings for display plus
-  `canonicalIds` per lane for matching - the UI chips stay human, the matcher
-  goes canonical.
-- Unresolved JD terms feed the existing `ontology_gap_candidates` sink, so
-  the ontology grows from real demand instead of guesswork.
-- Grow `tech_skill_map` deterministically: every technology canonical maps to
-  its category-level skill (kubernetes -> container orchestration, terraform
-  -> infrastructure as code) harvested from `technology_ontology` categories.
-  75 rows -> full coverage.
+Rules: `transferable` never upgrades to `verified` (two-tier honesty);
+`concept` verdicts cite `concept_evidence` detector + files; honest gaps
+(ldap, kerberos, active directory in the pilot corpus) must remain gaps.
 
-## Evals (per phase, before scale - CLAUDE.md rule 5)
+### UC4 - narrative grounding (case study, resume, chatbot)
 
-Golden set = the 67 real JD extractions already in `pipeline_runs` (frozen
-snapshot, no new LLM calls needed).
+Unchanged consumption of `document_embeddings` (hybrid vector+BM25) and
+`technology_evidence` - but chunk metadata now carries fact-pass stamps at
+insert time (lane, `file_tech_stack`, authorship), so filter-then-rank needs
+no post-hoc backfill.
 
-- **Gap-rate eval (increment 1):** re-run matching offline over the golden
-  set; metric = required+tools lane gap rate before/after transfer classes.
-  Target: terraform/azure/gcp class gaps convert to `partial(transferable)`;
-  zero honest gaps lost (ldap, kerberos, active directory must stay gaps).
-- **Concept-coverage eval (increment 2):** fraction of JD concept mentions
-  resolving to >= 1 `concept_evidence` row with a citation. Report per
-  concept; assert no detector fires on a repo lacking the artefact (FP gate,
-  mirrors the DSA detector <= 5% FP discipline).
-- **Canonicalisation eval (increment 3):** resolution rate of JD lane terms
-  to canonicals; alias misses land in the gap sink, not silently dropped.
+### The fact sheet payload (`repo_facts`, one row per repo)
 
-## Sequencing and risk
+Mirrors `JdSignal.technologyInventory` lane-for-lane so supply and demand
+share a schema:
 
-1. Increment 1 is pure data + matcher logic - no new extraction run needed,
-   works for all users immediately. Ship first.
-2. Increment 2 needs a tech-extractor release + one re-extract per repo
-   (5 repos for the pilot user). Detectors are additive; a detector bug can
-   only over- or under-claim concepts, gated by the FP eval.
-3. Increment 3 touches the strategist persist path; keep behind a metadata
-   version field so old runs render unchanged.
+```jsonc
+{
+  "role": "backend",                       // ProjectComponentKind
+  "role_confidence": 0.9,
+  "archetype": "production_saas",
+  "classification": "project",             // trust gate
+  "quality_score": 1.0,
+  "languages":      [ { "name": "typescript", "pct": 82 } ],
+  "frameworks":     [ { "name": "react", "version": "19.1", "evidence_count": 14 } ],
+  "databases":      [ { "name": "postgresql", "version": "16", "evidence_count": 9 },
+                      { "name": "redis", "evidence_count": 4 } ],
+  "infrastructure": [ { "name": "kubernetes" }, { "name": "aws-cdk" } ],
+  "tools":          [ { "name": "github-actions" }, { "name": "jest" } ],
+  "concepts":       [ { "name": "ci/cd", "detector": "workflow-deploy", "files": 6 },
+                      { "name": "observability", "detector": "grafana-config", "files": 11 } ],
+  "fact_version": 1,
+  "computed_at": "..."
+}
+```
 
-Rollback story: every increment is a table + consumption flag; disabling the
-consumption flag restores current behaviour without data loss.
+Every `name` is a canonical ontology name; every entry is backed by
+`technology_evidence` / `concept_evidence` rows (the fact sheet stores
+counts, the evidence tables keep the file:line citations). Stored as one
+JSONB column + generated columns for the hot filters (`role`,
+`classification`).
+
+## Architecture
+
+```text
+ONE K8s Job per repo sync (namespace ingestion)
+│
+├─ 0 ACQUIRE     tarball snapshot @ HEAD (caps: compressed/extracted/per-file
+│                already implemented in tech-extractor's safeExtract) +
+│                commits/PRs/contributors via API. Watermark short-circuit:
+│                HEAD unchanged -> skip to activity delta only.
+│
+├─ 1 FACTS       single file walk, deterministic, no LLM:
+│                fileClass lanes · Syft + GitHub SBOM · TreeSitter imports ·
+│                IaC parsers (Dockerfile/K8s/Terraform/Actions/Helm/Argo) ·
+│                README + code-comment prose mining · DSA/AI pattern
+│                detectors · concept detectors · repo signals + topology.
+│                All raw mentions -> OntologyResolver AT WRITE TIME
+│                (alias -> embedding-nearest -> gap-candidate sink).
+│                Writes: technology_evidence, concept_evidence,
+│                dsa/ai_evidence, repo_sync_state, and repo_facts.
+│
+├─ 2 KNOWLEDGE   FileFilter -> chunkers (markdown/code/default) -> Titan
+│                embed (content-hash gated) -> document_embeddings upsert.
+│                Chunk metadata stamped INLINE from stage 1 (lane,
+│                file_tech_stack, evidence stamp) - the post-hoc
+│                stampUserEvidenceMetadata pass and its race are deleted.
+│
+├─ 3 NARRATIVE   one LLM call: ProfileExtractor, fed the fact sheet (no more
+│                README guessing for facts it already has) ->
+│                repository_profiles + profile embeddings. RetrievalProbe.
+│
+└─ 4 ACTIVITY    repo_commits / repo_commit_files / repo_pull_requests /
+                 repo_contributors rows + weekly commit-history chunks.
+                 Then rollup + synthesis (existing skip-gate).
+```
+
+Transfer classes (`technology_relationships`: `transferable` rows with
+`transfer_class`, `transfer_tier full|partial`, `transfer_basis` text) are
+consulted by the matcher and by `buildRetrievalPrefilter` term expansion -
+query-time reads of write-time-curated edges. Seed classes: iac-declarative
+(terraform, aws-cdk, cloudformation, pulumi, bicep), ci-pipelines,
+container-orchestration, cloud-platform (partial), document-store,
+secrets-managers, observability-stacks.
+
+Concept detectors (deterministic, FP-gated like the DSA detectors): ci/cd,
+observability, incident response, container orchestration, secrets
+management, distributed systems, infrastructure as code, and process
+automation, seeded from the 67-JD corpus frequency table; `skill_ontology` gains the
+missing concepts + aliases ("ci/cd" = "ci-cd" = "ci/cd pipeline design").
+
+## Repository consolidation (precondition, user-mandated)
+
+All ingestion-system code moves under **`applications/ingestion/`** - one
+directory, one deployable, one owner. Target layout (subfolder-per-concern,
+mirroring the projects-domain convention, tests in `__tests__/`):
+
+```text
+applications/ingestion/src/
+├── run-ingestion.ts            single entrypoint (stages 0-4)
+├── run-rollup.ts + eval runners
+├── acquisition/                GitHubAdapter, tarball fetch + safeExtract,
+│                               commit/PR/contributor fetchers
+├── facts/                      extractors (syft, github-sbom, treesitter,
+│                               iac/*, prose), dsa-ai patterns, concept
+│                               detectors, repo-signals glue, fact-sheet builder
+├── knowledge/                  FileFilter, file-classifier, chunkers,
+│                               IngestionPipeline (embed + upsert + probe glue)
+├── narrative/                  ProfileExtractor, RetrievalProbe, synthesis
+├── activity/                   CommitChunker + activity persistence glue
+├── ontology/                   write-time canonicalisation glue over the
+│                               shared OntologyResolver
+└── persistence/                sync-state, profiles, evidence, fact-sheet writers
+```
+
+Moves in: `applications/shared/src/ingestion/**` (verified sole consumer is
+this app), `applications/shared/src/rds/pipeline/IngestionPipeline.ts`
+(verified sole consumer), all of `applications/tech-extractor/src/**`.
+
+Stays in shared (multi-app consumers - verified): `RdsVectorStore` (+ read
+path used by job-strategist), `retrieval/**`, `OntologyResolver` + ontology
+repositories, `TitanEmbeddingProvider` (shared cost/lineage surface),
+domain types. `projects/evidence/{repo-signals,evidence-topology}.ts` stay
+in shared (grounding + projects consume them); the ingestion glue imports
+them as today.
+
+Mechanics follow the projects-domain reorg playbook: pure `git mv`,
+resolution-based import rewrite, barrel updated, `tsc -b` all packages +
+full jest as the gate. The tech-extractor app folder, Dockerfile, and deploy
+workflow are deleted only at P2 (after parity), not during the move.
+
+## Phases
+
+| Phase | Deliverable | Gate |
+| --- | --- | --- |
+| **C0 Consolidation** | one-directory move described above; zero behaviour change | tsc -b all packages, full jest, image builds for ingestion + tech-extractor still green |
+| **P0 Fact sheet + transfers (no pipeline surgery)** | `repo_facts` table + builder fed from EXISTING evidence tables; transfer-class seed rows; matcher + prefilter consume both | gap-rate eval over the 67-JD golden set: terraform/azure/gcp class converts to `partial(transferable)`; honest gaps preserved; UC1/UC2 answered from facts |
+| **P1 Unified job** | tarball acquisition + facts pass folded into stages behind `UNIFIED_INGESTION=1`; inline chunk stamping; old post-hoc stamp retired | `technology_parity_runs`: old vs new evidence row parity per layer; chunk metadata diff on a full resync; cost/duration per sync at or under the current two-job sum |
+| **P2 Retire + detectors** | tech-extractor Job/image/workflow deleted; concept detectors live; `concept_evidence` migration | concept-coverage eval (fraction of JD concept mentions resolving to cited evidence); detector FP gate under 5% (DSA discipline) |
+| **P3 JD boundary** | jd-extractor lanes canonicalised on persist (raw strings kept for UI chips); `tech_skill_map` grown to full canonical coverage; unresolved terms feed the ontology gap sink | canonicalisation-rate eval; UI chips byte-identical for existing runs |
+
+## Cost model
+
+- One pod per sync instead of two; one tarball download instead of tarball +
+  per-blob API fetches.
+- LLM: exactly one profile call per repo sync (Haiku-class) + existing
+  rollup synthesis (skip-gated). Zero per-chunk LLM. Concept/tech
+  categorisation is deterministic.
+- Embeddings: unchanged, content-hash gated (~$0.02/sync observed);
+  ontology-resolution embeddings cached as today.
+- Deletions repay: enricher code path, duplicate acquisition, post-hoc
+  stamp UPDATE over the whole corpus each sync.
+
+## Risks and rollback
+
+- **Parity risk (P1):** evidence extracted from the tarball walk must match
+  the API-fetch walk. Mitigation: `technology_parity_runs` side-by-side for
+  every repo before cutover; flag-gated.
+- **Consolidation risk (C0):** import-graph churn. Mitigation: pure moves,
+  no renames of exports; same playbook as the projects reorg (PR #501).
+- **Fact staleness:** `repo_facts` recomputed on every sync inside the same
+  transaction as evidence writes; `fact_version` column allows schema
+  evolution without backfill pain.
+- Rollback per phase: C0 is a revert; P0 consumers behind a flag; P1 keeps
+  the old two-job path until parity signs off; P2 deletes only after P1 has
+  run clean in dev for a full sync cycle.
