@@ -767,4 +767,32 @@ describe('IngestionPipeline — inline stamp (UNIFIED_INGESTION=on, opts.stampPr
         const upserted = store.upserts[0][0];
         expect(upserted.metadata).toMatchObject(repoStamp);
     });
+
+    it('fail-open: a rejecting stampProvider still completes embed+upsert with unstamped chunks', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const stampProvider = jest.fn(async () => { throw new Error('pg pool exhausted'); });
+
+        const report = await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)], { stampProvider });
+
+        // The sync completed: the chunk was embedded + upserted, just unstamped.
+        expect(report.embedded).toBe(1);
+        expect(store.upserts[0][0].metadata).toBeUndefined();
+        expect(sync.markCompleteCalls).toHaveLength(1);
+        expect(warnSpy.mock.calls.some(c => String(c[0]).includes('inline stamp failed'))).toBe(true);
+        warnSpy.mockRestore();
+    });
+
+    it('does not invoke the stampProvider when there is nothing to embed (tier-1 skip)', async () => {
+        // All candidates unchanged -> chunksToEmbed is empty -> zero stamp queries.
+        store.checkContentHashes = async (_u, _r, candidates) =>
+            ({ missing: [], stale: [], unchanged: candidates });
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const stampProvider = jest.fn(async () => ({ repoStamp, fileTechMap: new Map<string, string[]>() }));
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)], { stampProvider });
+
+        expect(stampProvider).not.toHaveBeenCalled();
+        expect(store.upserts).toHaveLength(0);
+    });
 });

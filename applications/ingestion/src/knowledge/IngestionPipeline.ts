@@ -295,8 +295,19 @@ export class IngestionPipeline {
                     // Inline stamp (UNIFIED_INGESTION=on only): invoked ONCE per run,
                     // here, so repo_commits persisted by the orchestrator's step 3.5
                     // are visible to the authorship query. Absent -> undefined, and
-                    // every chunk below is passed through unstamped.
-                    const stampInputs = opts?.stampProvider ? await opts.stampProvider() : undefined;
+                    // every chunk below is passed through unstamped. Skipped when
+                    // there is nothing to embed (tier-1 skip / all-unchanged runs) —
+                    // no chunk would carry the stamp, so the four queries are waste.
+                    // Fail-open, matching every sibling in this design (facts stage,
+                    // tarball fallback, the post-hoc pass): a transient failure in
+                    // the stamp queries degrades to unstamped chunks — it must NEVER
+                    // fail the sync, whose primary deliverable is the embeddings.
+                    const stampInputs = opts?.stampProvider && chunksToEmbed.length > 0
+                        ? await opts.stampProvider().catch((err: unknown) => {
+                            console.warn('[IngestionPipeline] inline stamp failed — chunks upserted unstamped (non-fatal):', err);
+                            return undefined;
+                        })
+                        : undefined;
 
                     const enrichedByKey = new Map(
                         enrichedChunks.map(c => [`${c.filePath}::${c.chunkIndex}`, c] as const),
