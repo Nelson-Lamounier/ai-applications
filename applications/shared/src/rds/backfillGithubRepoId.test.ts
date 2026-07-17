@@ -11,7 +11,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 
 import { backfillGithubRepoId } from './backfillGithubRepoId.js';
-import { RepoNotFoundError } from '../ingestion/implementations/github-errors.js';
+import { RepoNotFoundError } from '../github-errors.js';
 
 interface Call { sql: string; params: unknown[] }
 

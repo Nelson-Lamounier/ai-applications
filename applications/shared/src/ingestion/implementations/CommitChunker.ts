@@ -28,14 +28,8 @@
 
 import type { RepoCommit } from '../interfaces/IRepoAdapter.js';
 import type { RawChunk } from '../../rds/types.js';
-
-/**
- * Path prefix of every synthetic commit-history chunk. These paths are never
- * part of the repo file tree, so tree-derived prune whitelists must treat the
- * commit lane as append-only (see RdsVectorStore.pruneDeletedFiles) or every
- * commit chunk is deleted in the same run that embedded it.
- */
-export const COMMIT_HISTORY_PATH_PREFIX = '_commits/';
+import { COMMIT_HISTORY_PATH_PREFIX } from '../../repo-entities.js';
+export { COMMIT_HISTORY_PATH_PREFIX }; // preserve existing export surface
 
 // =============================================================================
 // CONFIG

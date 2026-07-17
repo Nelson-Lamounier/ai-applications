@@ -7,121 +7,18 @@
  * adapter can implement it without changing the orchestrator.
  */
 
-export interface RepoFile {
-    readonly path: string;
-    /** File size in bytes — used for pre-filtering oversized files */
-    readonly sizeBytes: number;
-    /** Git blob SHA from the tree listing — the per-file change key for incremental resync. */
-    readonly blobSha: string;
-}
-
-/**
- * A single commit on the default branch.
- *
- * Pulled from the list-commits endpoint only — affected file list and
- * additions/deletions counts are NOT included here because they require a
- * separate per-commit detail call (1 API request per commit, expensive at
- * scale). A future per-file timeline derivation may opt in to that cost.
- */
-export interface RepoCommit {
-    readonly sha:           string;
-    /** Commit author's git login on the host (may differ from `authorName`). */
-    readonly authorLogin?:  string;
-    /** Commit author's display name from the commit metadata. */
-    readonly authorName:    string;
-    /** Author date in ISO 8601 (UTC). */
-    readonly authoredAt:    string;
-    /** Full commit message (subject + body). */
-    readonly message:       string;
-}
-
-export interface ListCommitsOptions {
-    /** Hard cap on commits returned. Default 500. */
-    readonly maxCommits?: number;
-    /**
-     * Only include commits authored on or after this ISO 8601 timestamp.
-     * Used for incremental ingestion (resume from `last_synced_at`).
-     */
-    readonly since?:      string;
-}
-
-/**
- * One pull request worth of metadata. Like RepoCommit, this intentionally
- * omits diffs and file lists — those require additional API calls per PR
- * and aren't useful for the recruiter-facing case-study surface (which
- * only references PR numbers + bodies). A future per-file PR derivation
- * can opt in to that cost.
- */
-export interface RepoPullRequest {
-    readonly number:     number;
-    readonly title:      string;
-    readonly body:       string | null;
-    /** ISO 8601 timestamp the PR was opened. */
-    readonly createdAt:  string;
-    /** ISO 8601 timestamp the PR was merged; null for unmerged / closed. */
-    readonly mergedAt:   string | null;
-    readonly state:      'open' | 'closed' | 'merged';
-    /** Author's git login; may be null for ghost users. */
-    readonly authorLogin: string | null;
-    /** Public html_url; surfaced as the "evidence link" in the UI. */
-    readonly htmlUrl:    string;
-}
-
-export interface ListPullRequestsOptions {
-    /** Hard cap on PRs returned. Default 100. */
-    readonly maxPullRequests?: number;
-    /** "open" | "closed" | "all" (default 'all'). */
-    readonly state?: 'open' | 'closed' | 'all';
-    /**
-     * Only include PRs updated on or after this ISO 8601 timestamp.
-     * Used for incremental refresh and to bound case-study cost.
-     */
-    readonly since?: string;
-}
-
-/**
- * One contributor to the repository (from the contributors endpoint). Used for
- * deterministic role inference + a collaboration signal — who built it and how
- * many hands. Intentionally minimal: login + commit-contribution count.
- */
-export interface RepoContributor {
-    /** GitHub login; null only for anonymous/ghost contributors (excluded by default). */
-    readonly login:         string | null;
-    /** Number of commits GitHub attributes to this contributor on the default branch. */
-    readonly contributions: number;
-}
+export type {
+    RepoCommit, RepoPullRequest, RepoContributor, RepoFile,
+    CommitDetail, CommitFileChange, ListCommitsOptions, ListPullRequestsOptions,
+} from '../../repo-entities.js';
+import type {
+    RepoFile, RepoCommit, RepoPullRequest, RepoContributor,
+    CommitDetail, ListCommitsOptions, ListPullRequestsOptions,
+} from '../../repo-entities.js';
 
 export interface ListContributorsOptions {
     /** Hard cap on contributors returned. Default 100. */
     readonly maxContributors?: number;
-}
-
-/** One file's change within a commit (from the per-commit detail endpoint). */
-export interface CommitFileChange {
-    readonly filePath:          string;
-    /** GitHub status: added|removed|modified|renamed|copied|changed|unchanged. */
-    readonly status:            string;
-    /** Prior path when the file was renamed. */
-    readonly previousFilename?: string;
-    readonly additions:         number;
-    readonly deletions:         number;
-    readonly changes:           number;
-    /**
-     * Unified diff hunk. `null` when GitHub omitted it (binary/too large) OR
-     * when our own size cap dropped it — distinguished by `patchTruncated`.
-     */
-    readonly patch:             string | null;
-    /** True only when WE dropped a patch GitHub provided (over the size cap). */
-    readonly patchTruncated:    boolean;
-}
-
-/** Per-commit detail: aggregate stats + per-file changes. */
-export interface CommitDetail {
-    readonly sha:          string;
-    readonly additions:    number;
-    readonly deletions:    number;
-    readonly filesChanged: number;
-    readonly files:        CommitFileChange[];
 }
 
 export interface GetCommitDetailOptions {

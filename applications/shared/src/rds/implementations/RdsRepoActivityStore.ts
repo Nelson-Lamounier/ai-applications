@@ -1,6 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
-import type { RepoCommit, RepoPullRequest, RepoContributor, CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
+import type { RepoCommit, RepoPullRequest, RepoContributor, CommitDetail } from '../../repo-entities.js';
 
 /** A measured performance metric recorded at a commit SHA (never LLM-produced). */
 export interface PerfMetric {

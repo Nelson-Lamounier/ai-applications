@@ -1,7 +1,7 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
 import { RdsRepoActivityStore } from './RdsRepoActivityStore.js';
-import type { RepoCommit, RepoPullRequest, CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
+import type { RepoCommit, RepoPullRequest, CommitDetail } from '../../repo-entities.js';
 
 interface RecordedQuery {
     sql: string;
