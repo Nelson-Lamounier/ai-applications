@@ -181,6 +181,15 @@ The image URI is written to SSM at
 (in the sibling cluster repo) reads from that path so a deploy is a
 re-tag, not a manifest edit.
 
+## Unified ingestion (P1)
+
+The facts extraction pass can now run inside the ingestion Job behind
+the `UNIFIED_INGESTION` environment variable. In shadow mode, both Jobs
+run and per-layer parity is recorded to validate correctness; in active
+mode, the ingestion Job runs the facts pass alone and this tech-extractor
+Job retires. Retirement is planned for Phase 2 once parity testing
+signs off on equivalence.
+
 ## Related projects
 
 | Project | Relationship |

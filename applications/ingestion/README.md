@@ -14,6 +14,16 @@ one-shot Kubernetes Job.
 from this workspace's source (`COPY applications/ingestion/src`), so
 the two images ship independently from one tree.
 
+## UNIFIED_INGESTION flag
+
+| Mode | Behaviour |
+| :- | :- |
+| `off` (default) | Tarball and facts extractors operate as two separate Jobs. The tech-extract Job reads the tarball from GitHub, runs the facts pass, and persists results to the database. The ingestion Job ignores the UNIFIED_INGESTION environment variable and reads from the database after the tech-extract Job completes. |
+| `shadow` | Tarball is fetched once and the facts extractors are computed within the ingestion Job without persisting results. Per-layer parity records are written to `unified_parity_runs` for audit purposes. This mode validates that the facts pass produces byte-identical results when run inside the ingestion image. |
+| `on` | Tarball is the single file source. Facts pass runs inside the ingestion Job and results persist directly before chunking proceeds. Chunks are stamped inline during ingestion. The separate tech-extract Job is not invoked; post-hoc stamp reconciliation is skipped. |
+
+The tech-extract image and its dedicated Job will be retired at Phase 2 once parity testing confirms the unified approach is safe. Until then, both modes coexist with the `UNIFIED_INGESTION` environment variable controlling which execution path is taken.
+
 ## Folder layout
 
 - `src/acquisition/` — GitHub fetch, tarball handling
