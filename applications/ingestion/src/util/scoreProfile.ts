@@ -1,5 +1,5 @@
-import type { ExtractedRepoData } from '../agents/ProfileExtractor.js';
-import type { ProfileInputBundle } from '../agents/ProfileInputCollector.js';
+import type { ExtractedRepoData } from '../narrative/ProfileExtractor.js';
+import type { ProfileInputBundle } from '../narrative/ProfileInputCollector.js';
 
 export interface ScoreBreakdown {
     has_readme:    number;

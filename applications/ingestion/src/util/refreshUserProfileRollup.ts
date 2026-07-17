@@ -14,11 +14,11 @@ import type { Span } from '@opentelemetry/api';
 import { computeUserProfileRollup, computeUserDiagnostic } from '@bedrock/shared';
 import { synthesisOutcomeTotal } from '../metrics.js';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
-import type { MirrorRevealSynthesizer } from '../agents/MirrorRevealSynthesizer.js';
-import type { DirectionSynthesizer } from '../agents/DirectionSynthesizer.js';
-import type { ReconciliationSynthesizer } from '../agents/ReconciliationSynthesizer.js';
+import type { MirrorRevealSynthesizer } from '../narrative/MirrorRevealSynthesizer.js';
+import type { DirectionSynthesizer } from '../narrative/DirectionSynthesizer.js';
+import type { ReconciliationSynthesizer } from '../narrative/ReconciliationSynthesizer.js';
 import type { ICareerHistoryReadRepository } from '@bedrock/shared';
-import type { DiagnosticNarrator } from '../agents/DiagnosticNarrator.js';
+import type { DiagnosticNarrator } from '../narrative/DiagnosticNarrator.js';
 import type { IDiagnosticInputsReadRepository, DiagnosticJson } from '@bedrock/shared';
 
 const tracer = trace.getTracer('ingestion-worker');

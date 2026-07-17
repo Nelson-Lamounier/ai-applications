@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { classifyRepo } from '../classifyRepo.js';
-import type { ProfileInputBundle } from '../../agents/ProfileInputCollector.js';
+import type { ProfileInputBundle } from '../../narrative/ProfileInputCollector.js';
 
 function bundle(overrides: Partial<ProfileInputBundle>): ProfileInputBundle {
     return {

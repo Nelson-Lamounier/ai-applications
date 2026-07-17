@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import type { ExtractedRepoData } from '../agents/ProfileExtractor.js';
+import type { ExtractedRepoData } from '../narrative/ProfileExtractor.js';
 import type { ScoreBreakdown } from '../util/scoreProfile.js';
 import type { RepoClassification } from '../util/classifyRepo.js';
 
