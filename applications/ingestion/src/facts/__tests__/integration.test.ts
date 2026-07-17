@@ -1,7 +1,7 @@
 /** @format */
 import { describe, it, expect, jest } from '@jest/globals';
 import { OntologyResolver } from '@bedrock/shared';
-import { TechExtractOrchestrator } from '../orchestrator/TechExtractOrchestrator.js';
+import { TechExtractOrchestrator } from '../TechExtractOrchestrator.js';
 import { computeParity } from '../parity/ParityReporter.js';
 import { parseDockerfile } from '../extractors/iac/DockerfileParser.js';
 import type { Extractor } from '../extractors/Extractor.js';

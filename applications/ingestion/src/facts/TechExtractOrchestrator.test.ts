@@ -2,7 +2,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { TechExtractOrchestrator } from './TechExtractOrchestrator.js';
 import { OntologyResolver } from '@bedrock/shared';
-import type { Extractor } from '../extractors/Extractor.js';
+import type { Extractor } from './extractors/Extractor.js';
 
 function fakeExtractor(name: string, rows: unknown[], throws = false): Extractor {
     return {

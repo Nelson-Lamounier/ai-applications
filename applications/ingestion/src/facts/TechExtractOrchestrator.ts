@@ -4,7 +4,7 @@ import {
     type TechnologyEvidenceRow, type CandidateUpsertInput,
     type TechnologyEvidenceRepository, type TechnologyCandidateRepository,
 } from '@bedrock/shared';
-import type { Extractor } from '../extractors/Extractor.js';
+import type { Extractor } from './extractors/Extractor.js';
 
 export interface OrchestratorRunInput {
     userId:          string;

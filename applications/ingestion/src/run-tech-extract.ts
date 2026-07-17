@@ -10,30 +10,30 @@ import {
     AiTopicResolver, RdsAiEvidenceRepository, RdsAiTopicRepository,
     runStoryMining,
 } from '@bedrock/shared';
-import { DsaPatternExtractor } from './extractors/DsaPatternExtractor.js';
-import { AiPatternExtractor } from './extractors/AiPatternExtractor.js';
+import { DsaPatternExtractor } from './facts/extractors/DsaPatternExtractor.js';
+import { AiPatternExtractor } from './facts/extractors/AiPatternExtractor.js';
 import { Counter } from 'prom-client';
 
-import { parseEnv } from './env.js';
-import { reconcileTechStack } from './util/reconcileTechStack.js';
-import { fetchTarball } from './tarball/fetchTarball.js';
-import { safeExtract } from './tarball/safeExtract.js';
-import { walkTextFiles } from './util/fileWalk.js';
-import { isTestFile } from './util/isTestFile.js';
-import { SyftExtractor } from './extractors/SyftExtractor.js';
-import { GithubSbomExtractor } from './extractors/GithubSbomExtractor.js';
-import { TreeSitterExtractor } from './extractors/TreeSitterExtractor.js';
-import { parseDockerfile } from './extractors/iac/DockerfileParser.js';
-import { parseK8sManifest, parseK8sManifestValues } from './extractors/iac/K8sManifestParser.js';
-import { parseTerraform } from './extractors/iac/TerraformParser.js';
-import { parseGithubActions } from './extractors/iac/GithubActionsParser.js';
-import { parseReadme, parseReadmeProse } from './extractors/iac/ReadmeParser.js';
-import { parseArgoApplication, parseHelmChart, parseHelmValues } from './extractors/iac/ArgoHelmParser.js';
-import { extractProseRanges } from './extractors/CommentExtractor.js';
-import { scanProseRanges } from './extractors/iac/ReadmeParser.js';
-import type { Extractor, RawTechnologyEvidence } from './extractors/Extractor.js';
-import { TechExtractOrchestrator } from './orchestrator/TechExtractOrchestrator.js';
-import { collectDirectDeps } from './manifests/collectDirectDeps.js';
+import { parseEnv } from './env-tech-extract.js';
+import { reconcileTechStack } from './facts/util/reconcileTechStack.js';
+import { fetchTarball } from './acquisition/tarball/fetchTarball.js';
+import { safeExtract } from './acquisition/tarball/safeExtract.js';
+import { walkTextFiles } from './facts/util/fileWalk.js';
+import { isTestFile } from './facts/util/isTestFile.js';
+import { SyftExtractor } from './facts/extractors/SyftExtractor.js';
+import { GithubSbomExtractor } from './facts/extractors/GithubSbomExtractor.js';
+import { TreeSitterExtractor } from './facts/extractors/TreeSitterExtractor.js';
+import { parseDockerfile } from './facts/extractors/iac/DockerfileParser.js';
+import { parseK8sManifest, parseK8sManifestValues } from './facts/extractors/iac/K8sManifestParser.js';
+import { parseTerraform } from './facts/extractors/iac/TerraformParser.js';
+import { parseGithubActions } from './facts/extractors/iac/GithubActionsParser.js';
+import { parseReadme, parseReadmeProse } from './facts/extractors/iac/ReadmeParser.js';
+import { parseArgoApplication, parseHelmChart, parseHelmValues } from './facts/extractors/iac/ArgoHelmParser.js';
+import { extractProseRanges } from './facts/extractors/CommentExtractor.js';
+import { scanProseRanges } from './facts/extractors/iac/ReadmeParser.js';
+import type { Extractor, RawTechnologyEvidence } from './facts/extractors/Extractor.js';
+import { TechExtractOrchestrator } from './facts/TechExtractOrchestrator.js';
+import { collectDirectDeps } from './facts/manifests/collectDirectDeps.js';
 
 const MAX_TARBALL_BYTES = Number(process.env.MAX_TARBALL_BYTES ?? 200 * 1024 * 1024);
 
