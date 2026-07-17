@@ -750,14 +750,29 @@ async function computeUnifiedLaneGates(
     }
 }
 
-/** Legacy (persisted, two-job path) evidence keys for computeLayerParity's LHS. */
-async function loadPersistedEvidenceKeys(pool: Pool, userId: string, repoFullName: string): Promise<EvidenceKey[]> {
+/**
+ * Legacy (persisted, two-job path) evidence keys for computeLayerParity's
+ * LHS, scoped to this run's resolved commit sha. Without the sha filter this
+ * is the historical UNION of every prior sync for the repo -- stale rows for
+ * since-removed files would surface as `legacy_only_examples` and depress
+ * the parity gate. The sibling tech-extract Job's insertMany DO UPDATE (see
+ * TechnologyEvidenceRepository) stamps `commit_sha = EXCLUDED.commit_sha`
+ * onto every still-present row on each sync, so filtering on the shadow
+ * run's sha reflects only what that job found at this commit.
+ *
+ * Relies on the job DB role bypassing RLS (same pattern as the existing
+ * apply-evidence-stamp read) -- a policy-constrained role would silently
+ * return 0 rows here instead of erroring.
+ */
+export async function loadPersistedEvidenceKeys(
+    pool: Pool, userId: string, repoFullName: string, commitSha: string,
+): Promise<EvidenceKey[]> {
     const { rows } = await pool.query<{ canonical_name: string; source_layer: string; file_path: string | null }>(
         `SELECT o.canonical_name, te.source_layer, te.file_path
            FROM technology_evidence te
            JOIN technology_ontology o ON o.id = te.technology_id
-          WHERE te.user_id = $1 AND te.repo_full_name = $2`,
-        [userId, repoFullName],
+          WHERE te.user_id = $1 AND te.repo_full_name = $2 AND te.commit_sha = $3`,
+        [userId, repoFullName, commitSha],
     );
     return rows.map((r) => ({
         sourceLayer: r.source_layer,
@@ -881,7 +896,7 @@ async function stampEvidenceMetadataUnlessInline(
  * while this flag is 'shadow', so ANY failure here is caught, logged, and
  * MUST NOT fail the sync.
  */
-async function runUnifiedShadow(
+export async function runUnifiedShadow(
     pool: Pool,
     deps: {
         userId: string; repoFullName: string; githubRepoId: number | null;
@@ -911,7 +926,13 @@ async function runUnifiedShadow(
             githubToken,
         });
 
-        const legacyKeys = await loadPersistedEvidenceKeys(pool, userId, repoFullName);
+        const legacyKeys = await loadPersistedEvidenceKeys(pool, userId, repoFullName, sha);
+        if (legacyKeys.length === 0) {
+            log.warn(
+                { repoFullName, sha },
+                'unified_shadow.legacy_empty: sibling tech-extract job likely not finished for this sha - parity rows recorded but interpret with care',
+            );
+        }
         const parity = computeLayerParity(legacyKeys, result.evidenceKeys);
         await new UnifiedParityRunRepository(pool).insertMany(userId, repoFullName, sha, parity);
 
@@ -1442,12 +1463,15 @@ async function main(): Promise<void> {
     }
 }
 
-// Force a prompt exit once main settles. A one-shot Job must not linger on
-// stray keep-alive sockets (Bedrock/HTTP) or timers until its K8s deadline —
-// that turns a finished run into a DeadlineExceeded "Failed" Job.
-main()
-    .then(() => process.exit(0))
-    .catch((err) => {
-        log.error({ err }, 'failed');
-        process.exit(1);
-    });
+// Only auto-execute when run as the K8s Job entrypoint, not when imported by tests.
+if (require.main === module) {
+    // Force a prompt exit once main settles. A one-shot Job must not linger on
+    // stray keep-alive sockets (Bedrock/HTTP) or timers until its K8s deadline —
+    // that turns a finished run into a DeadlineExceeded "Failed" Job.
+    main()
+        .then(() => process.exit(0))
+        .catch((err) => {
+            log.error({ err }, 'failed');
+            process.exit(1);
+        });
+}
