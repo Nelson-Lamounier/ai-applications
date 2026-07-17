@@ -19,7 +19,7 @@
  *
  * `withUserRls` wraps the write in `BEGIN; set_config(..., is_local=true); …;
  * COMMIT` on a dedicated client, which makes the context deterministic. Mirrors
- * the pattern in shared/projects/system-tour-persistence and shared/stage-prep.
+ * the pattern in shared/projects/system-tour/system-tour-persistence and shared/stage-prep.
  */
 import type { Pool, PoolClient } from 'pg';
 

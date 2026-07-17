@@ -48,7 +48,7 @@ import {
     runNarrativeGraders,
     judgeCombinedOverview,
     bedrockCombinedOverviewJudge,
-} from '../applications/shared/src/projects/case-study-narrative-grader.js';
+} from '../applications/shared/src/projects/case-study/case-study-narrative-grader.js';
 import type {
     BasePipelineContext,
     CaseStudy,

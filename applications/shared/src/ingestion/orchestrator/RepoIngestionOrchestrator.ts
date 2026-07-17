@@ -28,8 +28,8 @@ import type { IFileFilter }   from '../interfaces/IFileFilter.js';
 import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoContributor, RepoFile, CommitDetail }  from '../interfaces/IRepoAdapter.js';
 import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
 import { CommitChunker }      from '../implementations/CommitChunker.js';
-import { deriveRepoSignals }  from '../../projects/repo-signals.js';
-import { deriveEvidenceTopology } from '../../projects/evidence-topology.js';
+import { deriveRepoSignals }  from '../../projects/evidence/repo-signals.js';
+import { deriveEvidenceTopology } from '../../projects/evidence/evidence-topology.js';
 
 /** Cap on package.json manifests fetched per repo for evidence-topology (monorepo-safe). */
 const MAX_PACKAGE_JSON_FETCHES = 25;
