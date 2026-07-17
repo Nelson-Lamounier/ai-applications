@@ -27,6 +27,27 @@ describe('TechnologyOntologyRepository.loadAliasMap', () => {
     });
 });
 
+describe('TechnologyOntologyRepository.loadIdToCanonicalMap', () => {
+    it('builds a Map from technology_id -> lowercased canonical_name', async () => {
+        const pool = fakePool([
+            { id: 'id-kube', canonical_name: 'Kubernetes' },
+            { id: 'id-react', canonical_name: 'React' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const map = await repo.loadIdToCanonicalMap();
+        expect(map.get('id-kube')).toBe('kubernetes');
+        expect(map.get('id-react')).toBe('react');
+        expect(pool.calls[0].sql).toContain('FROM technology_ontology');
+    });
+
+    it('returns an empty map when the ontology is empty', async () => {
+        const pool = fakePool([]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const map = await repo.loadIdToCanonicalMap();
+        expect(map.size).toBe(0);
+    });
+});
+
 describe('TechnologyOntologyRepository.loadProseSafeAliases', () => {
     it('returns a lowercase Set of prose-safe aliases', async () => {
         const pool = fakePool([

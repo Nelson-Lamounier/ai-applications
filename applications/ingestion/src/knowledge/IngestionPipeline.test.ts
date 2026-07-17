@@ -692,3 +692,107 @@ describe('IngestionPipeline — records enrichment mode', () => {
         expect(args[9]).toBe('anthropic.x');
     });
 });
+
+describe('IngestionPipeline — inline stamp (UNIFIED_INGESTION=on, opts.stampProvider)', () => {
+    let store: FakeVectorStore;
+    let sync:  FakeSyncState;
+    let embed: FakeEmbedder;
+
+    beforeEach(() => {
+        store = new FakeVectorStore();
+        sync  = new FakeSyncState();
+        embed = new FakeEmbedder();
+    });
+
+    const repoStamp = {
+        is_fork:             false,
+        repo_classification: 'project',
+        repo_confidence:     0.9,
+        authored:            true,
+        role_inferred:       false,
+        owner_is_user:       true,
+        repo_tech_stack:     ['node.js', 'typescript'],
+        repo_domain:         null,
+    };
+
+    it('merges repoStamp + per-file file_tech_stack into every chunk\'s metadata when a stampProvider is given', async () => {
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const fileTechMap = new Map<string, string[]>([['src/index.ts', ['typescript']]]);
+        const stampProvider = jest.fn(async () => ({ repoStamp, fileTechMap }));
+
+        await pipeline.ingestChunks('u1', 'o/r', [
+            makeChunk('src/index.ts', 0),
+            makeChunk('README.md', 0),
+        ], { stampProvider });
+
+        expect(stampProvider).toHaveBeenCalledTimes(1);
+
+        const upserted = store.upserts[0];
+        const stamped = upserted.find(c => c.filePath === 'src/index.ts')!;
+        const unstamped = upserted.find(c => c.filePath === 'README.md')!;
+
+        expect(stamped.metadata).toMatchObject({ ...repoStamp, file_tech_stack: ['typescript'] });
+        // README.md has no code-layer evidence in fileTechMap — repo-wide stamp still applies,
+        // but no file_tech_stack key is added.
+        expect(unstamped.metadata).toMatchObject(repoStamp);
+        expect((unstamped.metadata as Record<string, unknown>).file_tech_stack).toBeUndefined();
+    });
+
+    it('preserves existing chunk metadata (merge, not replace) when stamping', async () => {
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const stampProvider = jest.fn(async () => ({ repoStamp, fileTechMap: new Map<string, string[]>() }));
+        const chunk = { ...makeChunk('a.md', 0), metadata: { fileClass: 'source' } };
+
+        await pipeline.ingestChunks('u1', 'o/r', [chunk], { stampProvider });
+
+        const upserted = store.upserts[0][0];
+        expect(upserted.metadata).toMatchObject({ fileClass: 'source', ...repoStamp });
+    });
+
+    it('is byte-identical to the flag-off path when no stampProvider is given', async () => {
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)]);
+
+        const upserted = store.upserts[0][0];
+        expect(upserted.metadata).toBeUndefined();
+    });
+
+    it('forceReindex threads opts (incl. stampProvider) through to ingestChunks', async () => {
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const stampProvider = jest.fn(async () => ({ repoStamp, fileTechMap: new Map<string, string[]>() }));
+
+        await pipeline.forceReindex('u1', 'o/r', [makeChunk('a.md', 0)], { stampProvider });
+
+        expect(stampProvider).toHaveBeenCalledTimes(1);
+        const upserted = store.upserts[0][0];
+        expect(upserted.metadata).toMatchObject(repoStamp);
+    });
+
+    it('fail-open: a rejecting stampProvider still completes embed+upsert with unstamped chunks', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const stampProvider = jest.fn(async () => { throw new Error('pg pool exhausted'); });
+
+        const report = await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)], { stampProvider });
+
+        // The sync completed: the chunk was embedded + upserted, just unstamped.
+        expect(report.embedded).toBe(1);
+        expect(store.upserts[0][0].metadata).toBeUndefined();
+        expect(sync.markCompleteCalls).toHaveLength(1);
+        expect(warnSpy.mock.calls.some(c => String(c[0]).includes('inline stamp failed'))).toBe(true);
+        warnSpy.mockRestore();
+    });
+
+    it('does not invoke the stampProvider when there is nothing to embed (tier-1 skip)', async () => {
+        // All candidates unchanged -> chunksToEmbed is empty -> zero stamp queries.
+        store.checkContentHashes = async (_u, _r, candidates) =>
+            ({ missing: [], stale: [], unchanged: candidates });
+        const pipeline = new IngestionPipeline(store, sync, embed);
+        const stampProvider = jest.fn(async () => ({ repoStamp, fileTechMap: new Map<string, string[]>() }));
+
+        await pipeline.ingestChunks('u1', 'o/r', [makeChunk('a.md', 0)], { stampProvider });
+
+        expect(stampProvider).not.toHaveBeenCalled();
+        expect(store.upserts).toHaveLength(0);
+    });
+});

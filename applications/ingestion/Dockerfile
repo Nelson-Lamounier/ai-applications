@@ -57,7 +57,12 @@ RUN node -e "const f='applications/shared/package.json';const p=require('./'+f);
 # Prune to production-only deps for the runtime layer.
 RUN yarn workspaces focus @bedrock/shared @bedrock/ingestion --production
 
-# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+# ── Stage 2: Syft binary ─────────────────────────────────────────────────────
+# Official image ships a static binary that runs on alpine/musl.
+# Pinned (not :latest) for reproducible builds — bump deliberately.
+FROM anchore/syft:v1.44.0 AS syft
+
+# ── Stage 3: Runtime ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup -u 1001
@@ -70,6 +75,10 @@ COPY --from=builder --chown=appuser:appgroup /app/applications/ingestion/package
 COPY --from=builder --chown=appuser:appgroup /app/applications/shared/dist        ./applications/shared/dist
 COPY --from=builder --chown=appuser:appgroup /app/applications/shared/package.json ./applications/shared/
 COPY --from=builder --chown=appuser:appgroup /app/node_modules                    ./node_modules
+
+# Syft binary on PATH (read + execute, no write); SYFT_BIN points the extractor at it.
+COPY --from=syft --chmod=0555 /syft /usr/local/bin/syft
+ENV SYFT_BIN=/usr/local/bin/syft
 
 USER appuser
 

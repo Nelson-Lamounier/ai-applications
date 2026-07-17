@@ -215,6 +215,24 @@ export class TechnologyOntologyRepository {
     }
 
     /**
+     * Load technology_id (UUID) -> lowercased canonical_name — the reverse of
+     * `loadAliasMap`. Used by the UNIFIED_INGESTION shadow parity gate
+     * (`run-facts-stage.ts`) to translate a resolved `technologyId` UUID into
+     * the vocabulary the persisted-side parity loader compares against
+     * (`technology_evidence` joined to `technology_ontology.canonical_name`) —
+     * see that module's header comment for why canonical NAME, not UUID, is
+     * the comparable key.
+     */
+    async loadIdToCanonicalMap(): Promise<Map<string, string>> {
+        const { rows } = await this.pool.query<{ id: string; canonical_name: string }>(
+            `SELECT id, canonical_name FROM technology_ontology`,
+        );
+        const map = new Map<string, string>();
+        for (const r of rows) map.set(r.id, r.canonical_name.toLowerCase());
+        return map;
+    }
+
+    /**
      * Load the lowercase prose-safe alias set — the strings the ReadmeParser v2
      * prose scanner is allowed to match against free-form English. Caller-side
      * mitigation 1 from the 2026-05-26 ReadmeParser-v2 design: only aliases

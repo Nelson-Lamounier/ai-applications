@@ -42,6 +42,7 @@ import type {
     IRetrievalProbe,
     RetrievalBreakdown,
     DocumentChunk,
+    EvidenceStamp,
     IngestionReport,
     RawChunk,
 } from '@bedrock/shared';
@@ -136,6 +137,39 @@ export interface IngestionPipelineOptions {
     readonly enrichmentModel?: string | null;
 }
 
+/**
+ * Lazy stamp-input provider (`UNIFIED_INGESTION=on` only, P1 Task 4). Invoked
+ * ONCE, at the start of `ingestChunks`' embed+upsert phase — by which point
+ * the orchestrator has already persisted this run's `repo_commits`, so
+ * `repoStamp.authored` reflects real commit authorship rather than a stale
+ * prior sync. See `../facts/inline-stamp.ts`.
+ */
+export type StampProvider = () => Promise<{
+    readonly repoStamp: EvidenceStamp;
+    readonly fileTechMap: Map<string, string[]>;
+}>;
+
+export interface IngestChunksOpts {
+    /**
+     * The FULL set of file paths currently included in the repo tree. Pruning
+     * deletes stored chunks whose file_path is NOT in this set. Under
+     * incremental ingest, `rawChunks` carries only the CHANGED files, so
+     * deriving the prune set from `rawChunks` would wrongly delete unchanged
+     * files. When omitted, the prune set is derived from `rawChunks`
+     * (full-reindex behaviour — back-compatible).
+     */
+    readonly knownFilePaths?: string[];
+    /**
+     * When provided, its result is merged into every chunk's metadata before
+     * upsert: `{...chunk.metadata, ...repoStamp, ...(fileTechMap has this
+     * chunk's filePath ? {file_tech_stack} : {})}` — key names identical to
+     * `apply-evidence-stamp.ts`'s post-hoc pass so retrieval filters see the
+     * same shape regardless of which path stamped the chunk. Absent -> chunk
+     * metadata is untouched (byte-identical to the flag-off path).
+     */
+    readonly stampProvider?: StampProvider;
+}
+
 export class IngestionPipeline {
     private readonly vectorStore: IVectorStore;
     private readonly syncState: ISyncStateRepository;
@@ -189,7 +223,7 @@ export class IngestionPipeline {
         userId: string,
         repoFullName: string,
         rawChunks: RawChunk[],
-        opts?: { knownFilePaths?: string[] },
+        opts?: IngestChunksOpts,
     ): Promise<IngestionReport> {
         const startMs = Date.now();
         await this.syncState.markStarted(userId, repoFullName);
@@ -258,6 +292,23 @@ export class IngestionPipeline {
             // ── Phase: Embed + Upsert ────────────────────────────────────────────
             const upsertResult = await tracer.startActiveSpan('ingestion.embed_upsert', async (span) => {
                 try {
+                    // Inline stamp (UNIFIED_INGESTION=on only): invoked ONCE per run,
+                    // here, so repo_commits persisted by the orchestrator's step 3.5
+                    // are visible to the authorship query. Absent -> undefined, and
+                    // every chunk below is passed through unstamped. Skipped when
+                    // there is nothing to embed (tier-1 skip / all-unchanged runs) —
+                    // no chunk would carry the stamp, so the four queries are waste.
+                    // Fail-open, matching every sibling in this design (facts stage,
+                    // tarball fallback, the post-hoc pass): a transient failure in
+                    // the stamp queries degrades to unstamped chunks — it must NEVER
+                    // fail the sync, whose primary deliverable is the embeddings.
+                    const stampInputs = opts?.stampProvider && chunksToEmbed.length > 0
+                        ? await opts.stampProvider().catch((err: unknown) => {
+                            console.warn('[IngestionPipeline] inline stamp failed — chunks upserted unstamped (non-fatal):', err);
+                            return undefined;
+                        })
+                        : undefined;
+
                     const enrichedByKey = new Map(
                         enrichedChunks.map(c => [`${c.filePath}::${c.chunkIndex}`, c] as const),
                     );
@@ -278,7 +329,8 @@ export class IngestionPipeline {
                         const enriched  = enrichedByKey.get(`${chunk.filePath}::${chunk.chunkIndex}`) ?? chunk;
                         const embedText = this.buildEmbedText(enriched.content, repoFullName, enriched.filePath, enriched.heading);
                         const embedding = await this.embedder.embed(embedText);
-                        embeddedChunks[idx] = { ...enriched, userId, repoFullName, contentHash, embedding };
+                        const stamped   = stampInputs ? this.applyInlineStamp(enriched, stampInputs) : enriched;
+                        embeddedChunks[idx] = { ...stamped, userId, repoFullName, contentHash, embedding };
                         embedDone++;
                         if (embedDone % EMBED_PROGRESS_LOG_EVERY === 0 || embedDone === embedTotal) {
                             console.log(`[IngestionPipeline] ${repoFullName}: embedded ${embedDone}/${embedTotal} chunks`);
@@ -447,6 +499,30 @@ export class IngestionPipeline {
     }
 
     /**
+     * Merge inline evidence-stamp keys into one chunk's metadata
+     * (`UNIFIED_INGESTION=on` only). Key names are IDENTICAL to
+     * `apply-evidence-stamp.ts`'s post-hoc pass (is_fork, repo_classification,
+     * repo_confidence, authored, role_inferred, owner_is_user,
+     * repo_tech_stack, repo_domain, file_tech_stack) so retrieval filters see
+     * the same shape regardless of which path stamped the chunk. Merge, not
+     * replace — any chunker-populated metadata (e.g. fileClass) survives.
+     */
+    private applyInlineStamp(
+        chunk: RawChunk,
+        stamp: { repoStamp: EvidenceStamp; fileTechMap: Map<string, string[]> },
+    ): RawChunk {
+        const fileTech = stamp.fileTechMap.get(chunk.filePath);
+        return {
+            ...chunk,
+            metadata: {
+                ...(chunk.metadata ?? {}),
+                ...stamp.repoStamp,
+                ...(fileTech ? { file_tech_stack: fileTech } : {}),
+            },
+        };
+    }
+
+    /**
      * Build the text that is actually sent to the embedding model.
      * The preamble injects repository, file, and section metadata so the
      * resulting vector captures structural context beyond the raw prose.
@@ -476,9 +552,10 @@ export class IngestionPipeline {
         userId: string,
         repoFullName: string,
         rawChunks: RawChunk[],
+        opts?: IngestChunksOpts,
     ): Promise<IngestionReport> {
         await this.vectorStore.deleteChunksByRepo(userId, repoFullName);
-        return this.ingestChunks(userId, repoFullName, rawChunks);
+        return this.ingestChunks(userId, repoFullName, rawChunks, opts);
     }
 
     // =========================================================================
