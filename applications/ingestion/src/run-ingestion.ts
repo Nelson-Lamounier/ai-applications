@@ -73,6 +73,7 @@ import { patchDeterministicProfileFacts } from './util/patchProfileFacts.js';
 import { applyPostSyncProjectAction } from './util/applyPostSyncProjectAction.js';
 import { normalizeEnrichmentMode } from './util/enrichmentMode.js';
 import { friendlyIngestionError } from './friendly-error.js';
+import { buildRepoFacts } from './facts/build-repo-facts.js';
 import type { RepoFile } from '@bedrock/shared';
 import { RepositoryProfileRepository } from './persistence/RepositoryProfileRepository.js';
 import { RepositoryProfileEmbeddingsRepository } from './persistence/RepositoryProfileEmbeddingsRepository.js';
@@ -912,6 +913,16 @@ async function main(): Promise<void> {
         // repo_commits, overwrite the profile's commit_count (was a 30-capped
         // sentinel) + role_inferred (was LLM-guessed) from the real history.
         await applyDeterministicProfileFacts(pgPool, env.userId, env.repoFullName, repositoryId);
+
+        // Materialise the per-repo repo_facts fact sheet (migration 121) — tech
+        // lanes + signal-derived concepts + component role, read by case-study /
+        // project synthesis instead of re-querying technology_evidence each time.
+        // Reads already-persisted tech evidence + role signals; best-effort, never fatal.
+        try {
+            await buildRepoFacts(pgPool, env.userId, env.repoFullName);
+        } catch (err) {
+            console.warn(`[run-ingestion] repo_facts build skipped for ${env.repoFullName}:`, err);
+        }
 
         // Stamp evidence metadata (verified-authorship + tech) onto this repo's chunks
         // so filter-then-rank retrieval can gate fork/low-trust evidence + pre-filter by
