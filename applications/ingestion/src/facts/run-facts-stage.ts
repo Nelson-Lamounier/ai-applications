@@ -2,8 +2,11 @@
  *
  * The reusable "facts" stage extracted from `run-tech-extract.ts` (P1 unified
  * ingestion, Task 3). Given an already-extracted repo tree, this runs the
- * tech/DSA/AI/story-mining lanes in the same order and with the same
- * per-lane idempotency gates as the standalone tech-extract Job.
+ * tech/DSA/AI/story-mining lanes in the same order as the standalone
+ * tech-extract Job. The per-lane idempotency gates are computed ONCE by the
+ * caller (from its raw env commit sha) and passed in via `laneGates` — this
+ * module never recomputes them from the resolved sha (see
+ * `FactsStageInput.laneGates` for why that would break HEAD-mode re-runs).
  *
  * `writeMode`:
  *  - `'persist'`: exactly today's tech-extract behaviour — all lanes, all
@@ -62,6 +65,15 @@ import { TechExtractOrchestrator } from './TechExtractOrchestrator.js';
 import { collectDirectDeps } from './manifests/collectDirectDeps.js';
 import type { EvidenceKey } from './parity/layer-parity.js';
 
+/** Per-lane commit-SHA idempotency gates — `true` means "already scanned, skip". */
+export interface LaneGates {
+    readonly techDone: boolean;
+    readonly dsaDone:  boolean;
+    readonly aiDone:   boolean;
+}
+
+const NO_GATES: LaneGates = { techDone: false, dsaDone: false, aiDone: false };
+
 export interface FactsStageInput {
     pool:            Pool;
     userId:          string;
@@ -70,8 +82,17 @@ export interface FactsStageInput {
     commitSha:       string;
     /** Already-extracted repo tree (tarball fetch/extract is the caller's job). */
     extractDir:      string;
-    /** Bypass the tech-lane commit short-circuit (persist mode only). */
-    forceReindex:    boolean;
+    /**
+     * Per-lane idempotency gates, computed ONCE by the caller from its RAW env
+     * commit sha (pre-refactor parity: in HEAD mode — COMMIT_SHA unset — the
+     * legacy entrypoint computed all gates from `undefined`, i.e. all false, so
+     * the lanes always re-ran even when the tarball later resolved to an
+     * already-scanned sha). runFactsStage deliberately does NOT recompute gates
+     * from `commitSha` (the resolved sha) — that would silently skip lanes on a
+     * HEAD-mode re-run of an unchanged repo. Omitted -> all-false (always run).
+     * Shadow mode ignores gates entirely — parity needs fresh rows every run.
+     */
+    laneGates?:      LaneGates;
     writeMode:       'persist' | 'shadow';
     githubSbomEnabled: boolean;
     /** Only needed when githubSbomEnabled. */
@@ -298,25 +319,6 @@ async function runAiLane(
     }
 }
 
-interface LaneGates { readonly techDone: boolean; readonly dsaDone: boolean; readonly aiDone: boolean }
-
-/**
- * Per-lane commit-SHA idempotency gates (tech/DSA/AI each own their own
- * marker, so adding a lane never inherits another lane's cache gate).
- * Shadow mode always returns all-false — parity needs fresh rows every run,
- * never a cached skip.
- */
-async function computeLaneGates(
-    pool: Pool, dryRun: boolean, userId: string, repoFullName: string, commitSha: string,
-    evidenceRepo: TechnologyEvidenceRepository,
-): Promise<LaneGates> {
-    if (dryRun || !commitSha) return { techDone: false, dsaDone: false, aiDone: false };
-    const techDone = await evidenceRepo.hasEvidenceForCommit(userId, repoFullName, commitSha);
-    const dsaDone = await new RdsDsaEvidenceRepository(pool).hasDsaScanForCommit(userId, repoFullName, commitSha);
-    const aiDone = await new RdsAiEvidenceRepository(pool).hasAiScanForCommit(userId, repoFullName, commitSha);
-    return { techDone, dsaDone, aiDone };
-}
-
 /**
  * Runs the tech/DSA/AI/story-mining lanes over an already-extracted repo
  * tree. See the module header for `writeMode` semantics.
@@ -326,7 +328,7 @@ export async function runFactsStage(input: FactsStageInput): Promise<FactsStageR
     const log = jobLogger();
     const {
         pool, userId, repoFullName, githubRepoId, commitSha, extractDir,
-        forceReindex, writeMode, githubSbomEnabled, githubToken,
+        writeMode, githubSbomEnabled, githubToken,
     } = input;
     const dryRun = writeMode === 'shadow';
 
@@ -334,10 +336,9 @@ export async function runFactsStage(input: FactsStageInput): Promise<FactsStageR
     const evidenceRepo = new TechnologyEvidenceRepository(pool);
     const candidateRepo = new TechnologyCandidateRepository(pool);
 
-    const { techDone, dsaDone, aiDone } = await computeLaneGates(pool, dryRun, userId, repoFullName, commitSha, evidenceRepo);
-    if (!dryRun && forceReindex) {
-        log.info({ repo: repoFullName, sha: commitSha }, 'force re-index: bypassing commit short-circuit');
-    }
+    // Gates come from the CALLER (computed once, from the raw env commit sha —
+    // see FactsStageInput.laneGates); shadow mode always recomputes fresh rows.
+    const { techDone, dsaDone, aiDone } = dryRun ? NO_GATES : (input.laneGates ?? NO_GATES);
 
     const files = await walkTextFiles(extractDir);
     // DSA + AI "real-work" lanes must not score test fixtures (a test's `class TreeNode`

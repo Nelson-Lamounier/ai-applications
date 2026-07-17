@@ -12,7 +12,7 @@ import { Counter } from 'prom-client';
 import { parseEnv, type TechExtractEnv } from './env-tech-extract.js';
 import { fetchTarball } from './acquisition/tarball/fetchTarball.js';
 import { safeExtract } from './acquisition/tarball/safeExtract.js';
-import { runFactsStage } from './facts/run-facts-stage.js';
+import { runFactsStage, type LaneGates } from './facts/run-facts-stage.js';
 
 const MAX_TARBALL_BYTES = Number(process.env.MAX_TARBALL_BYTES ?? 200 * 1024 * 1024);
 
@@ -33,18 +33,26 @@ async function withTimeout(p: Promise<unknown>, ms: number, label: string): Prom
 
 /**
  * Per-lane idempotency: tech and DSA each own their own commit short-circuit, so
- * adding the DSA lane does not inherit tech's cache gate (and vice versa). Only
- * skip the whole job — and the tarball download — when ALL THREE are already done.
+ * adding the DSA lane does not inherit tech's cache gate (and vice versa).
+ * Computed ONCE, from the RAW env commit sha — in HEAD mode (COMMIT_SHA unset)
+ * all gates are false, so the lanes always re-run even when the tarball later
+ * resolves to an already-scanned sha (pre-refactor behaviour). These same gates
+ * are passed into runFactsStage; it never recomputes them.
  */
-async function allLanesDone(
+async function computeLaneGates(
     env: TechExtractEnv, evidenceRepo: TechnologyEvidenceRepository,
     dsaEvidenceRepo: RdsDsaEvidenceRepository, aiEvidenceRepo: RdsAiEvidenceRepository,
-): Promise<boolean> {
-    if (!env.commitSha) return false;
+): Promise<LaneGates> {
+    if (!env.commitSha) return { techDone: false, dsaDone: false, aiDone: false };
     const techDone = await evidenceRepo.hasEvidenceForCommit(env.userId, env.repoFullName, env.commitSha);
     const dsaDone = await dsaEvidenceRepo.hasDsaScanForCommit(env.userId, env.repoFullName, env.commitSha);
     const aiDone = await aiEvidenceRepo.hasAiScanForCommit(env.userId, env.repoFullName, env.commitSha);
-    return techDone && dsaDone && aiDone;
+    return { techDone, dsaDone, aiDone };
+}
+
+/** Only skip the whole job — and the tarball download — when ALL THREE lanes are done. */
+function allLanesDone(gates: LaneGates): boolean {
+    return gates.techDone && gates.dsaDone && gates.aiDone;
 }
 
 type TarballResult = { readonly tooLarge: true } | { readonly tooLarge: false; readonly resolvedSha: string | undefined };
@@ -83,7 +91,8 @@ async function main(): Promise<void> {
     const aiEvidenceRepo = new RdsAiEvidenceRepository(pool);
 
     try {
-        if (!env.forceReindex && await allLanesDone(env, evidenceRepo, dsaEvidenceRepo, aiEvidenceRepo)) {
+        const laneGates = await computeLaneGates(env, evidenceRepo, dsaEvidenceRepo, aiEvidenceRepo);
+        if (!env.forceReindex && allLanesDone(laneGates)) {
             log.info({ repo: env.repoFullName, sha }, 'short-circuit: tech + dsa + ai evidence exist');
             return;
         }
@@ -105,7 +114,7 @@ async function main(): Promise<void> {
         const result = await runFactsStage({
             pool, userId: env.userId, repoFullName: env.repoFullName,
             githubRepoId: env.githubRepoId ?? null, commitSha: sha,
-            extractDir, forceReindex: env.forceReindex,
+            extractDir, laneGates,
             writeMode: 'persist',
             githubSbomEnabled: process.env['GITHUB_SBOM_ENABLED'] === '1',
             githubToken: env.githubToken,

@@ -63,7 +63,8 @@ describe('runFactsStage', () => {
 
         const result = await runFactsStage({
             pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
-            commitSha: 'abc', extractDir, forceReindex: false, writeMode: 'persist',
+            commitSha: 'abc', extractDir, writeMode: 'persist',
+            laneGates: { techDone: false, dsaDone: false, aiDone: false },
             githubSbomEnabled: false, githubToken: 'tok',
         });
 
@@ -86,7 +87,7 @@ describe('runFactsStage', () => {
 
         const result = await runFactsStage({
             pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
-            commitSha: 'abc', extractDir, forceReindex: false, writeMode: 'shadow',
+            commitSha: 'abc', extractDir, writeMode: 'shadow',
             githubSbomEnabled: false, githubToken: 'tok',
         });
 
@@ -97,38 +98,67 @@ describe('runFactsStage', () => {
         expect(writes).toEqual([]);
     });
 
-    it('shadow ignores the commit-SHA idempotency gate -- always recomputes fresh rows', async () => {
-        const routes = [
-            ...ONTOLOGY_ROUTES,
-            // Would short-circuit the tech lane in persist mode.
-            { needle: 'FROM technology_evidence WHERE user_id', rows: [{ '?column?': 1 }] },
-        ];
-        const { pool } = fakePool(routes);
+    it('shadow ignores the caller-supplied idempotency gates -- always recomputes fresh rows', async () => {
+        const { pool } = fakePool(ONTOLOGY_ROUTES);
 
         const result = await runFactsStage({
             pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
-            commitSha: 'abc', extractDir, forceReindex: false, writeMode: 'shadow',
+            commitSha: 'abc', extractDir, writeMode: 'shadow',
+            // Would short-circuit every lane in persist mode.
+            laneGates: { techDone: true, dsaDone: true, aiDone: true },
             githubSbomEnabled: false, githubToken: 'tok',
         });
 
         expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'dockerfile', canonicalId: 'node.js', filePath: 'Dockerfile' });
     });
 
-    it('persist: tech lane already scanned for this commit -- skipped, no evidenceKeys, no tech-lane reads', async () => {
-        const routes = [
-            ...ONTOLOGY_ROUTES,
-            { needle: 'FROM technology_evidence WHERE user_id', rows: [{ '?column?': 1 }] },
-        ];
-        const { pool, calls } = fakePool(routes);
+    it('persist: caller-supplied techDone gate skips the tech lane -- no evidenceKeys, no tech-lane reads', async () => {
+        const { pool, calls } = fakePool(ONTOLOGY_ROUTES);
 
         const result = await runFactsStage({
             pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
-            commitSha: 'abc', extractDir, forceReindex: false, writeMode: 'persist',
+            commitSha: 'abc', extractDir, writeMode: 'persist',
+            laneGates: { techDone: true, dsaDone: false, aiDone: false },
             githubSbomEnabled: false, githubToken: 'tok',
         });
 
         expect(result.evidenceKeys).toEqual([]);
         expect(calls.some((c) => c.includes('FROM ontology_version'))).toBe(false);
         expect(calls.some((c) => c.includes('INSERT INTO technology_evidence'))).toBe(false);
+    });
+
+    it('persist HEAD-mode regression: gates from the UNSET env sha (all-false) mean a second run of an already-scanned resolved sha still executes the lanes', async () => {
+        // The pre-refactor entrypoint computed its gates from env.commitSha (raw,
+        // undefined in HEAD mode -> all false) BEFORE the tarball resolved a real
+        // sha, so an unchanged repo's second HEAD-mode run always re-ran the lanes.
+        // runFactsStage must NOT recompute gates from the resolved sha: even with
+        // the DB reporting evidence for 'abc', omitted laneGates (the all-false
+        // default) must still execute and write.
+        const routes = [
+            ...ONTOLOGY_ROUTES,
+            // DB state after run 1: evidence + both scan markers exist for 'abc'.
+            // A gate recomputation from the resolved sha would hit these and skip.
+            { needle: 'FROM technology_evidence WHERE user_id', rows: [{ '?column?': 1 }] },
+            { needle: 'FROM dsa_scanned_commits', rows: [{ '?column?': 1 }] },
+            { needle: 'FROM ai_scanned_commits', rows: [{ '?column?': 1 }] },
+        ];
+
+        for (let run = 1; run <= 2; run++) {
+            const { pool, calls } = fakePool(routes);
+            const result = await runFactsStage({
+                pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
+                commitSha: 'abc', extractDir, writeMode: 'persist',
+                // laneGates omitted: HEAD-mode callers computed all-false from the
+                // unset env sha; the default must behave identically.
+                githubSbomEnabled: false, githubToken: 'tok',
+            });
+
+            expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'dockerfile', canonicalId: 'node.js', filePath: 'Dockerfile' });
+            expect(calls.some((c) => c.includes('INSERT INTO technology_evidence'))).toBe(true);
+            // And no internal gate reads happened at all.
+            expect(calls.some((c) => c.includes('FROM technology_evidence WHERE user_id'))).toBe(false);
+            expect(calls.some((c) => c.includes('FROM dsa_scanned_commits'))).toBe(false);
+            expect(calls.some((c) => c.includes('FROM ai_scanned_commits'))).toBe(false);
+        }
     });
 });
