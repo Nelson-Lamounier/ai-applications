@@ -38,9 +38,9 @@ import type {
     CommitDetail,
     CommitFileChange,
     GetCommitDetailOptions,
-} from '../interfaces/IRepoAdapter.js';
+} from './IRepoAdapter.js';
 
-import { RepoNotFoundError, GitHubResponseShapeError } from './github-errors.js';
+import { RepoNotFoundError, GitHubResponseShapeError } from '@bedrock/shared';
 
 // =============================================================================
 // INTERNAL TYPES — GitHub API response shapes

@@ -10,7 +10,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 
 import { GitHubAdapter } from './GitHubAdapter.js';
-import { GitHubResponseShapeError } from './github-errors.js';
+import { GitHubResponseShapeError } from '@bedrock/shared';
 
 /**
  * Build a GitHubAdapter whose private HTTPS `get` is replaced by a route map.

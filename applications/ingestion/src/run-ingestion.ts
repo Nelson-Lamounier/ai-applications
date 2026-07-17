@@ -24,7 +24,6 @@
  */
 
 import {
-    GitHubAdapter,
     RdsVectorStore,
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
@@ -35,9 +34,6 @@ import {
     PhraseSkillResolver,
     backfillSkillEmbeddings,
     IngestionPipeline,
-    FileFilter,
-    ChunkerRegistry,
-    RepoIngestionOrchestrator,
     bootstrapK8sObservability,
     pushFinalMetrics,
     RdsUserProfileRollupRepository,
@@ -49,6 +45,10 @@ import {
     TechSkillMapRepository,
     reconcileRepoName,
 } from '@bedrock/shared';
+import { GitHubAdapter } from './acquisition/GitHubAdapter.js';
+import { FileFilter } from './knowledge/FileFilter.js';
+import { ChunkerRegistry } from './knowledge/ChunkerRegistry.js';
+import { RepoIngestionOrchestrator } from './RepoIngestionOrchestrator.js';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
 

@@ -10,8 +10,8 @@
  * true is used. Register specialised chunkers before the DefaultChunker.
  */
 
-import type { RawChunk } from '../../rds/types.js';
-import type { IChunker } from '../interfaces/IChunker.js';
+import type { RawChunk } from '@bedrock/shared';
+import type { IChunker } from './IChunker.js';
 import { CodeChunker } from './CodeChunker.js';
 import { DefaultChunker } from './DefaultChunker.js';
 import { MarkdownChunker } from './MarkdownChunker.js';

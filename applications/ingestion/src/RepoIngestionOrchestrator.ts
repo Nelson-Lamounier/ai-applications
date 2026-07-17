@@ -22,14 +22,12 @@
  *   deterministic despite concurrency.
  */
 
-import type { IngestionReport, RawChunk } from '../../rds/types.js';
-import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
-import type { IFileFilter }   from '../interfaces/IFileFilter.js';
-import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoContributor, RepoFile, CommitDetail }  from '../interfaces/IRepoAdapter.js';
-import type { ChunkerRegistry }    from '../implementations/ChunkerRegistry.js';
-import { CommitChunker }      from '../implementations/CommitChunker.js';
-import { deriveRepoSignals }  from '../../projects/evidence/repo-signals.js';
-import { deriveEvidenceTopology } from '../../projects/evidence/evidence-topology.js';
+import type { IngestionReport, RawChunk, IngestionPipeline } from '@bedrock/shared';
+import type { IFileFilter }   from './knowledge/IFileFilter.js';
+import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoContributor, RepoFile, CommitDetail }  from './acquisition/IRepoAdapter.js';
+import type { ChunkerRegistry }    from './knowledge/ChunkerRegistry.js';
+import { CommitChunker }      from './activity/CommitChunker.js';
+import { deriveRepoSignals, deriveEvidenceTopology } from '@bedrock/shared';
 
 /** Cap on package.json manifests fetched per repo for evidence-topology (monorepo-safe). */
 const MAX_PACKAGE_JSON_FETCHES = 25;

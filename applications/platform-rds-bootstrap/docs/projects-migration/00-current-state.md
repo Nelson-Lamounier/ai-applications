@@ -114,12 +114,12 @@ Per `applications/platform-rds-bootstrap/ROLLBACK.md`:
 ### 2.2 GitHub integration
 
 - **`GitHubAdapter`** at
-  `applications/shared/src/ingestion/implementations/GitHubAdapter.ts` —
+  `applications/ingestion/src/acquisition/GitHubAdapter.ts` —
   REST only, token via `GITHUB_TOKEN`, 5K req/h.
 - **No webhook handler** in the projects domain (webhooks exist for
   OAuth at `/webhooks/github` — see merged PR #19).
 - Ingestion orchestrator:
-  `applications/shared/src/ingestion/orchestrator/RepoIngestionOrchestrator.ts`.
+  `applications/ingestion/src/RepoIngestionOrchestrator.ts`.
 - Sync state journal: `RdsSyncStateRepository.ts` → `repo_sync_state`.
 
 ### 2.3 KB embedding generation

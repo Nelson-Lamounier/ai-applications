@@ -4,7 +4,7 @@
  */
 
 import { CommitChunker, isoWeek } from './CommitChunker.js';
-import type { RepoCommit } from '../interfaces/IRepoAdapter.js';
+import type { RepoCommit } from '@bedrock/shared';
 
 function commit(partial: Partial<RepoCommit> & { sha: string; authoredAt: string; message: string }): RepoCommit {
     return {

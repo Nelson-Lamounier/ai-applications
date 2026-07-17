@@ -1,9 +1,9 @@
 /**
  * @format
- * Repo entity contract — shapes shared between the ingestion pipeline and
- * consumers elsewhere in `shared` (change-impact metrics, RDS stores). Lives
- * in `shared` proper (not `shared/src/ingestion`) so that non-ingestion
- * shared modules never import across the ingestion boundary.
+ * Repo entity contract — shapes shared between the `applications/ingestion`
+ * app and consumers elsewhere in `shared` (change-impact metrics, RDS
+ * stores). Lives in `shared` (not the ingestion app) so that non-ingestion
+ * shared modules can depend on the contract without importing the app.
  */
 
 export interface RepoFile {

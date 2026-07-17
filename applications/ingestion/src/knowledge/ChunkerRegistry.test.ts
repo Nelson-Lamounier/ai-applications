@@ -8,8 +8,8 @@
 
 import { ChunkerRegistry } from './ChunkerRegistry';
 import { DefaultChunker } from './DefaultChunker';
-import type { IChunker } from '../interfaces/IChunker';
-import type { RawChunk } from '../../rds/types';
+import type { IChunker } from './IChunker';
+import type { RawChunk } from '@bedrock/shared';
 
 // =============================================================================
 // Test double — a named chunker that only handles a specific extension

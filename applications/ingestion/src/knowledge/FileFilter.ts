@@ -20,7 +20,7 @@
  * Exclude takes priority over include (matches .gitignore semantics).
  */
 
-import type { IFileFilter } from '../interfaces/IFileFilter.js';
+import type { IFileFilter } from './IFileFilter.js';
 
 // =============================================================================
 // GLOB MATCHING

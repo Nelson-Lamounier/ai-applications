@@ -32,8 +32,8 @@
  * language without touching the interface or the registry.
  */
 
-import type { RawChunk } from '../../rds/types.js';
-import type { IChunker } from '../interfaces/IChunker.js';
+import type { RawChunk } from '@bedrock/shared';
+import type { IChunker } from './IChunker.js';
 
 type Language = 'brace' | 'python';
 

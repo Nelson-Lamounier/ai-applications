@@ -19,8 +19,8 @@
  *   DefaultChunker remains the safe fallback for any file type.
  */
 
-import type { RawChunk } from '../../rds/types.js';
-import type { IChunker } from '../interfaces/IChunker.js';
+import type { RawChunk } from '@bedrock/shared';
+import type { IChunker } from './IChunker.js';
 
 export interface DefaultChunkerConfig {
     /** Lines per chunk. Default: 80 (~2000 chars for typical code line length). */

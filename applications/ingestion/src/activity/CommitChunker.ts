@@ -26,9 +26,8 @@
  *   sets explicit tags + file_type instead.
  */
 
-import type { RepoCommit } from '../interfaces/IRepoAdapter.js';
-import type { RawChunk } from '../../rds/types.js';
-import { COMMIT_HISTORY_PATH_PREFIX } from '../../repo-entities.js';
+import type { RepoCommit, RawChunk } from '@bedrock/shared';
+import { COMMIT_HISTORY_PATH_PREFIX } from '@bedrock/shared';
 export { COMMIT_HISTORY_PATH_PREFIX }; // preserve existing export surface
 
 // =============================================================================

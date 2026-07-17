@@ -9,11 +9,10 @@
 
 import { RepoIngestionOrchestrator } from './RepoIngestionOrchestrator.js';
 import type { RepoActivityStore } from './RepoIngestionOrchestrator.js';
-import type { IRepoAdapter, RepoFile, RepoCommit, RepoPullRequest, CommitDetail } from '../interfaces/IRepoAdapter.js';
-import type { IFileFilter } from '../interfaces/IFileFilter.js';
-import type { ChunkerRegistry } from '../implementations/ChunkerRegistry.js';
-import type { IngestionPipeline } from '../../rds/pipeline/IngestionPipeline.js';
-import type { RawChunk, IngestionReport } from '../../rds/types.js';
+import type { IRepoAdapter, RepoFile, RepoCommit, RepoPullRequest, CommitDetail } from './acquisition/IRepoAdapter.js';
+import type { IFileFilter } from './knowledge/IFileFilter.js';
+import type { ChunkerRegistry } from './knowledge/ChunkerRegistry.js';
+import type { IngestionPipeline, RawChunk, IngestionReport } from '@bedrock/shared';
 
 // =============================================================================
 // FAKES

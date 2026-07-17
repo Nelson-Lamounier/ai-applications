@@ -1,5 +1,6 @@
-import type { GitHubAdapter, RepoFile } from '@bedrock/shared';
+import type { RepoFile } from '@bedrock/shared';
 import { PiiScrubber, RepoNotFoundError } from '@bedrock/shared';
+import type { GitHubAdapter } from '../acquisition/GitHubAdapter.js';
 import type { FileFetchCache } from '../util/FileFetchCache.js';
 
 const piiScrubber = new PiiScrubber();

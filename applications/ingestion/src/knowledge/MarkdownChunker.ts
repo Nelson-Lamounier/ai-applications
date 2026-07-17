@@ -28,8 +28,8 @@
  *   array if present. Lowercased + trimmed + deduplicated.
  */
 
-import type { RawChunk } from '../../rds/types.js';
-import type { IChunker } from '../interfaces/IChunker.js';
+import type { RawChunk } from '@bedrock/shared';
+import type { IChunker } from './IChunker.js';
 
 // =============================================================================
 // INTERNAL TYPES

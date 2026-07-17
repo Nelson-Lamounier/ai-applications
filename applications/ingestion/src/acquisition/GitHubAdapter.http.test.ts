@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach } from '@jest/globals';
 import { EventEmitter } from 'node:events';
 
 import { GitHubAdapter } from './GitHubAdapter.js';
-import { RepoNotFoundError, GitHubResponseShapeError } from './github-errors.js';
+import { RepoNotFoundError, GitHubResponseShapeError } from '@bedrock/shared';
 
 // Each queued entry is the response for the next https.request call, in order.
 type FakeResponse = { statusCode: number; headers: Record<string, string>; body: string };

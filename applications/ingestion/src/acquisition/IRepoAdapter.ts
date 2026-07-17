@@ -10,11 +10,11 @@
 export type {
     RepoCommit, RepoPullRequest, RepoContributor, RepoFile,
     CommitDetail, CommitFileChange, ListCommitsOptions, ListPullRequestsOptions,
-} from '../../repo-entities.js';
+} from '@bedrock/shared';
 import type {
     RepoFile, RepoCommit, RepoPullRequest, RepoContributor,
     CommitDetail, ListCommitsOptions, ListPullRequestsOptions,
-} from '../../repo-entities.js';
+} from '@bedrock/shared';
 
 export interface ListContributorsOptions {
     /** Hard cap on contributors returned. Default 100. */
