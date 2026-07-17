@@ -13,12 +13,23 @@ import type { TechTransferGroup } from '@bedrock/shared';
 import { resolveCanonical } from '../matching/keyword-match.js';
 
 /**
- * Format a single tech group as a readable "interchangeable" line.
- * Members are title-cased for readability (underscores → spaces).
+ * Format a single tech group as a readable "interchangeable" line, plus an
+ * optional PARTIAL-tier warning line. Members are title-cased for readability
+ * (underscores → spaces). When `transferTier`/`transferBasis` are present,
+ * appends `(full transfer: <basis>)` to the group line; for `partial` tier
+ * ALSO appends a follow-up line warning never to claim direct experience.
+ * Groups with null metadata (no typed edges) render exactly as before.
  */
-function formatGroupLine(members: string[]): string {
-    const display = members.map((m) => m.replace(/_/g, ' '));
-    return `- Interchangeable LLM-platform skills: ${display.join(', ')} — verified work with any one is transferable to the others.`;
+function formatGroupLine(group: TechTransferGroup): string {
+    const display = group.members.map((m) => m.replaceAll('_', ' '));
+    const basisSuffix = group.transferTier === 'full' && group.transferBasis
+        ? ` (full transfer: ${group.transferBasis})`
+        : '';
+    const line = `- Interchangeable LLM-platform skills: ${display.join(', ')} — verified work with any one is transferable to the others.${basisSuffix}`;
+    if (group.transferTier === 'partial') {
+        return `${line}\n  Treat as PARTIAL evidence only - never claim direct experience.`;
+    }
+    return line;
 }
 
 /**
@@ -44,10 +55,10 @@ export function formatTechTransferContext(
     const jdCanonicals = new Set(jdTools.map((t) => resolveCanonical(t, aliasMap)));
 
     // Collect groups that intersect at least one JD canonical (dedupe by reference equality)
-    const emittedGroups = new Set<string[]>();
+    const emittedGroups = new Set<TechTransferGroup>();
     for (const group of techGroups) {
         if (group.members.some((member) => jdCanonicals.has(member))) {
-            emittedGroups.add(group.members);
+            emittedGroups.add(group);
         }
     }
 

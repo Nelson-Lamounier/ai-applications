@@ -81,4 +81,46 @@ describe('formatTechTransferContext', () => {
         expect(result).toContain('deno');
         expect(result).toContain('bun');
     });
+
+    describe('tier + basis rendering', () => {
+        const iacMembers = ['terraform', 'aws_cdk', 'cloudformation'];
+        const iacGroupFull: TechTransferGroup = {
+            members: iacMembers,
+            transferClass: 'infra-as-code',
+            transferTier: 'full',
+            transferBasis: 'Declarative infrastructure-as-code',
+        };
+        const iacGroupPartial: TechTransferGroup = {
+            members: iacMembers,
+            transferClass: 'infra-as-code',
+            transferTier: 'partial',
+            transferBasis: 'Declarative infrastructure-as-code',
+        };
+        const iacAliasMap = new Map<string, string>([
+            ['terraform', 'terraform'],
+            ['aws cdk', 'aws_cdk'],
+            ['cloudformation', 'cloudformation'],
+        ]);
+
+        it('appends "(full transfer: <basis>)" to the group line for a full tier group', () => {
+            const result = formatTechTransferContext(['Terraform'], [iacGroupFull], iacAliasMap);
+            expect(result).toContain('(full transfer: Declarative infrastructure-as-code)');
+        });
+
+        it('appends the PARTIAL-evidence warning line for a partial tier group', () => {
+            const result = formatTechTransferContext(['Terraform'], [iacGroupPartial], iacAliasMap);
+            expect(result).toContain('Treat as PARTIAL evidence only - never claim direct experience.');
+        });
+
+        it('a full tier group does NOT emit the partial-evidence warning line', () => {
+            const result = formatTechTransferContext(['Terraform'], [iacGroupFull], iacAliasMap);
+            expect(result).not.toContain('Treat as PARTIAL evidence only');
+        });
+
+        it('groups with null metadata render exactly as today (no tier/basis suffix, no warning line)', () => {
+            const result = formatTechTransferContext(['AWS Bedrock'], techGroups, aliasMap);
+            expect(result).not.toContain('full transfer:');
+            expect(result).not.toContain('Treat as PARTIAL evidence only');
+        });
+    });
 });

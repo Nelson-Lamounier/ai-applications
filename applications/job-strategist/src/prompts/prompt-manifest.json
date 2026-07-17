@@ -28,8 +28,8 @@
         "sha256": "3afc3476d2a72e41fcdd517683d5fc5113462d7fe9ff497c1ce3c125c421dd29"
     },
     "research-persona": {
-        "version": "3",
-        "sha256": "3ac4c92db2186686c741721e992bc0f94ce3ae1b8c513007a959a90cf773d5f8"
+        "version": "4",
+        "sha256": "249b357cfb381b4b871e2bcce68246685543f9104377565268a1b68c0d84747b"
     },
     "strategist/analysis-agent": {
         "version": "1",

@@ -1,7 +1,15 @@
 /** @format */
+import type { TechTransferGroup } from '@bedrock/shared';
 import { assessmentsToMatching, type SkillAssessment } from '../research-assessment.js';
 
 const a = (over: Partial<SkillAssessment> & Pick<SkillAssessment, 'skill' | 'verdict'>): SkillAssessment => ({ ...over });
+
+const group = (members: string[], transferBasis: string | null = null): TechTransferGroup => ({
+    members,
+    transferClass: transferBasis ? 'infra-as-code' : null,
+    transferTier: transferBasis ? 'full' : null,
+    transferBasis,
+});
 
 describe('assessmentsToMatching', () => {
     it('routes each verdict into the matching bucket with fields preserved', () => {
@@ -57,5 +65,87 @@ describe('assessmentsToMatching', () => {
         expect(assessmentsToMatching([])).toEqual({ verifiedMatches: [], partialMatches: [], gaps: [] });
         const out = assessmentsToMatching([a({ skill: '  ', verdict: 'verified' })], []);
         expect(out).toEqual({ verifiedMatches: [], partialMatches: [], gaps: [] });
+    });
+
+    describe('transferVia downgrade guard', () => {
+        const terraformGroup = group(['terraform', 'aws_cdk', 'cloudformation'], 'Declarative infrastructure-as-code');
+
+        it('verdict verified WITH transferVia is downgraded into partialMatches, never verifiedMatches, with matchBasis/transferVia/transferBasis set', () => {
+            const out = assessmentsToMatching(
+                [a({ skill: 'aws_cdk', verdict: 'verified', sourceCitation: 'terraform modules', transferVia: 'terraform' })],
+                ['aws_cdk'],
+                [terraformGroup],
+            );
+            expect(out.verifiedMatches).toEqual([]);
+            expect(out.partialMatches).toEqual([{
+                skill: 'aws_cdk',
+                gapDescription: '',
+                transferableFoundation: '',
+                framingSuggestion: '',
+                evidenceFiles: [],
+                matchBasis: 'transferable',
+                transferVia: 'terraform',
+                transferBasis: 'Declarative infrastructure-as-code',
+            }]);
+        });
+
+        it('verdict partial WITH transferVia carries matchBasis/transferVia/transferBasis', () => {
+            const out = assessmentsToMatching(
+                [a({
+                    skill: 'cloudformation', verdict: 'partial', transferVia: 'terraform',
+                    gapDescription: 'no direct CFN evidence', transferableFoundation: 'IaC fundamentals',
+                    framingSuggestion: 'frame as IaC-transferable', evidenceFiles: ['x.tf'],
+                })],
+                ['cloudformation'],
+                [terraformGroup],
+            );
+            expect(out.partialMatches).toEqual([{
+                skill: 'cloudformation',
+                gapDescription: 'no direct CFN evidence',
+                transferableFoundation: 'IaC fundamentals',
+                framingSuggestion: 'frame as IaC-transferable',
+                evidenceFiles: ['x.tf'],
+                matchBasis: 'transferable',
+                transferVia: 'terraform',
+                transferBasis: 'Declarative infrastructure-as-code',
+            }]);
+        });
+
+        it('resolves transferBasis case-insensitively from the group containing BOTH the skill and the via-sibling', () => {
+            const out = assessmentsToMatching(
+                [a({ skill: 'AWS_CDK', verdict: 'partial', transferVia: 'TERRAFORM' })],
+                ['AWS_CDK'],
+                [terraformGroup],
+            );
+            expect(out.partialMatches[0]).toMatchObject({ transferBasis: 'Declarative infrastructure-as-code' });
+        });
+
+        it('downgrades with transferBasis undefined when no group contains both the skill and the sibling', () => {
+            const out = assessmentsToMatching(
+                [a({ skill: 'aws_cdk', verdict: 'verified', transferVia: 'some_unrelated_tool' })],
+                ['aws_cdk'],
+                [terraformGroup],
+            );
+            expect(out.verifiedMatches).toEqual([]);
+            expect(out.partialMatches).toHaveLength(1);
+            expect(out.partialMatches[0]).toMatchObject({ matchBasis: 'transferable', transferVia: 'some_unrelated_tool' });
+            expect(out.partialMatches[0].transferBasis).toBeUndefined();
+        });
+
+        it('downgrades even when no transferGroups are supplied (default [])', () => {
+            const out = assessmentsToMatching([a({ skill: 'aws_cdk', verdict: 'verified', transferVia: 'terraform' })], ['aws_cdk']);
+            expect(out.verifiedMatches).toEqual([]);
+            expect(out.partialMatches[0]).toMatchObject({ matchBasis: 'transferable', transferVia: 'terraform' });
+        });
+
+        it('no transferVia — behaviour is byte-identical to today (no matchBasis/transferVia/transferBasis keys)', () => {
+            const out = assessmentsToMatching(
+                [a({ skill: 'Python', verdict: 'verified', sourceCitation: 'pipeline', depth: 'expert', recency: '2025', evidenceFiles: ['x.py'] })],
+                ['Python'],
+                [terraformGroup],
+            );
+            expect(out.verifiedMatches).toEqual([{ skill: 'Python', sourceCitation: 'pipeline', depth: 'expert', recency: '2025', evidenceFiles: ['x.py'] }]);
+            expect('matchBasis' in out.verifiedMatches[0]).toBe(false);
+        });
     });
 })

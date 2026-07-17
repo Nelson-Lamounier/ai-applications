@@ -2338,7 +2338,7 @@ export async function main(): Promise<void> {
         const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techTransferOrCategoryGroups, aliasToCanonical);
 
         const research = await stageSeconds(pipelineStageSeconds, 'research', () =>
-            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock));
+            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock, techTransferOrCategoryGroups));
 
         // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line.
         // Computed BEFORE the guard chain so it can deterministically constrain the matcher's

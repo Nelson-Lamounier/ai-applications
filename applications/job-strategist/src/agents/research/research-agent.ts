@@ -46,6 +46,7 @@ import type {
     SimilarityResult,
     StructuredResumeData,
     StrategistPipelineContext,
+    TechTransferGroup,
 } from '@bedrock/shared';
 import { formatResumeForPrompt } from '../../services/resume-service.js';
 import { RESEARCH_PERSONA_META, RESEARCH_PERSONA_SYSTEM_PROMPT } from '../../prompts/research-persona.js';
@@ -594,6 +595,7 @@ const RESEARCH_TOOL = {
                         gapType:                 { type: 'string', enum: ['hard', 'soft'], description: '(gap) hard = disqualifying-class requirement; soft = nice-to-have.' },
                         impactSeverity:          { type: 'string', enum: ['blocking', 'significant', 'minor'], description: '(gap) impact on viability.' },
                         disqualifyingAssessment: { type: 'string', description: '(gap) honest assessment of whether this blocks candidacy.' },
+                        transferVia: { type: 'string', description: "the evidenced sibling technology this verdict leans on, ONLY when the candidate's evidence is for a transferable sibling, not the skill itself." },
                     },
                     required: ['skill', 'verdict'],
                     additionalProperties: false,
@@ -665,6 +667,7 @@ const ResearchModelSchema = z.object({
         gapType: z.enum(['hard', 'soft']).optional(),
         impactSeverity: z.enum(['blocking', 'significant', 'minor']).optional(),
         disqualifyingAssessment: z.string().optional(),
+        transferVia: z.string().optional(),
     }).strict()).default([]),
     overallFitRating: z.enum(['STRONG FIT', 'REASONABLE FIT', 'STRETCH', 'REACH']),
     fitSummary: z.string(),
@@ -714,6 +717,9 @@ export function validateResearchResult(
         jdSkills?: string[];
         /** Verbatim KB retrieval queries this run issued (query inspection). */
         retrievalQueries?: string[];
+        /** Tech-transfer groups — resolves `transferBasis` for any assessment
+         *  carrying `transferVia` (the verified-downgrade guard). */
+        transferGroups?: TechTransferGroup[];
     },
 ): ResearchMatching {
     const validated = ResearchModelSchema.safeParse(raw);
@@ -725,7 +731,11 @@ export function validateResearchResult(
     const { assessments, ...rest } = validated.data;
     // The matcher emits one verdict per canonical JD skill; derive the legacy
     // verified/partial/gap buckets so every downstream consumer is unchanged.
-    const { verifiedMatches, partialMatches, gaps } = assessmentsToMatching(assessments, injected.jdSkills ?? []);
+    const { verifiedMatches, partialMatches, gaps } = assessmentsToMatching(
+        assessments,
+        injected.jdSkills ?? [],
+        injected.transferGroups ?? [],
+    );
     return {
         ...rest,
         verifiedMatches,
@@ -807,6 +817,7 @@ export async function executeResearchAgent(
     codeStackContext = '',
     retrievalPrefilter?: RetrievalPrefilter,
     certificationsBlock = '',
+    transferGroups: TechTransferGroup[] = [],
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -960,7 +971,7 @@ export async function executeResearchAgent(
             // unwraps it; validateResearchResult fails fast on any schema
             // deviation instead of papering over it with defaults.
             const raw = parseJsonResponse<unknown>(text, 'strategist-research');
-            return validateResearchResult(raw, { resumeData, kbContext, resumeConstraints, jdSkills, retrievalQueries });
+            return validateResearchResult(raw, { resumeData, kbContext, resumeConstraints, jdSkills, retrievalQueries, transferGroups });
         },
         pipelineContext: {
             pipelineId: ctx.pipelineId,
