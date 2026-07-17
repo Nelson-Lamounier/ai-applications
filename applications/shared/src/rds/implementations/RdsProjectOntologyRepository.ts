@@ -1,6 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
-import type { ArchetypeDef, StageOverlay, StageId } from '../../projects/archetype-types.js';
+import type { ArchetypeDef, StageOverlay, StageId } from '../../projects/archetype/archetype-types.js';
 
 interface ArchetypeRow {
     id: string; name: string; description: string;

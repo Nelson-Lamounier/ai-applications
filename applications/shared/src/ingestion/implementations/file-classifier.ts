@@ -13,8 +13,8 @@
  * role (a workflow YAML, a helm YAML, a test file) beats the generic role its
  * bare extension would otherwise imply.
  *
- * Relationship to {@link ../../projects/repo-signals} and
- * {@link ../../projects/evidence-topology} — deliberately two LEVELS, not a
+ * Relationship to {@link ../../projects/evidence/repo-signals} and
+ * {@link ../../projects/evidence/evidence-topology} — deliberately two LEVELS, not a
  * duplication to collapse:
  *   - THIS module is CHUNK-level: one role per file, stamped on every chunk so
  *     the retriever can filter/weight an individual hit (e.g. `fileClass='iac'`).
