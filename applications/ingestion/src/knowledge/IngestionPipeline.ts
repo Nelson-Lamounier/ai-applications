@@ -26,20 +26,25 @@
 import { createHash } from 'crypto';
 
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
-import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnricher.js';
-import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
-import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
-import type { IVectorStore } from '../interfaces/IVectorStore.js';
-import { assignSkillsToChunks } from '../enrichment/assignSkillsToChunks.js';
-import { groupChunksByFile } from '../enrichment/groupChunksByFile.js';
-import { packChunks } from '../enrichment/packChunks.js';
-import { computeKbQuality, type KbQualityInput } from '../quality/computeKbQuality.js';
-import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
+import {
+    assignSkillsToChunks,
+    groupChunksByFile,
+    packChunks,
+    computeKbQuality,
+} from '@bedrock/shared';
 import type {
+    IChunkEnricher,
+    ChunkEnrichment,
+    IEmbeddingProvider,
+    ISyncStateRepository,
+    IVectorStore,
+    KbQualityInput,
+    IRetrievalProbe,
+    RetrievalBreakdown,
     DocumentChunk,
     IngestionReport,
     RawChunk,
-} from '../types.js';
+} from '@bedrock/shared';
 
 const tracer = trace.getTracer('ingestion-pipeline');
 

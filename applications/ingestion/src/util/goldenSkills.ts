@@ -33,7 +33,7 @@ const GOLDEN: GoldenSet = {
         { id: '362dc58c-a544-4de2-bb48-552e6a511eca', file: 'ai-applications:migrations/025_user_profile_mirror_reveal.sql#0', skills: ['sql', 'database migrations', 'database schema design'] },
         { id: '8fdaac20-573b-456d-a4fd-abbb76f46e69', file: 'ai-applications:migrations/046_project_ontology.sql#0', skills: ['sql', 'database schema design', 'data modelling', 'database migrations'] },
         { id: '9480273b-3c7d-4613-ad9c-730f5500eaf7', file: 'ai-applications:shared/src/agent-runner.ts#0', skills: ['typescript', 'amazon bedrock', 'aws sdk', 'distributed tracing', 'metrics and monitoring'] },
-        { id: '029ba590-4038-455d-9a58-e4809d073f7d', file: 'ai-applications:shared/src/rds/pipeline/IngestionPipeline.ts#10', skills: ['typescript', 'opentelemetry', 'distributed tracing', 'error handling'] },
+        { id: '029ba590-4038-455d-9a58-e4809d073f7d', file: 'ai-applications:ingestion/src/knowledge/IngestionPipeline.ts#10', skills: ['typescript', 'opentelemetry', 'distributed tracing', 'error handling'] },
         { id: 'ca28b707-8347-48bf-a527-a3e24c53adf5', file: 'tucaken-infra:infra/.../bedrock-observability.ts#2', skills: ['typescript', 'aws cdk', 'infrastructure as code', 'aws cloudwatch', 'observability'] },
         { id: '0e8ac9b6-f15f-44a8-be82-63f8b9aa3f3d', file: 'tucaken-app:src/components/ui/Markdown.tsx#2', skills: ['react', 'typescript', 'react development'] },
         { id: '66702463-c7aa-4363-9494-5938195096a0', file: 'tucaken-app:src/components/ui/Sparkline.tsx#0', skills: ['react', 'typescript', 'data visualisation', 'svg rendering'] },

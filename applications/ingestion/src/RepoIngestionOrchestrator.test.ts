@@ -12,7 +12,8 @@ import type { RepoActivityStore } from './RepoIngestionOrchestrator.js';
 import type { IRepoAdapter, RepoFile, RepoCommit, RepoPullRequest, CommitDetail } from './acquisition/IRepoAdapter.js';
 import type { IFileFilter } from './knowledge/IFileFilter.js';
 import type { ChunkerRegistry } from './knowledge/ChunkerRegistry.js';
-import type { IngestionPipeline, RawChunk, IngestionReport } from '@bedrock/shared';
+import type { IngestionPipeline } from './knowledge/IngestionPipeline.js';
+import type { RawChunk, IngestionReport } from '@bedrock/shared';
 
 // =============================================================================
 // FAKES

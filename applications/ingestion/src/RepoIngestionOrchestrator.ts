@@ -22,10 +22,11 @@
  *   deterministic despite concurrency.
  */
 
-import type { IngestionReport, RawChunk, IngestionPipeline } from '@bedrock/shared';
+import type { IngestionReport, RawChunk } from '@bedrock/shared';
 import type { IFileFilter }   from './knowledge/IFileFilter.js';
 import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoContributor, RepoFile, CommitDetail }  from './acquisition/IRepoAdapter.js';
 import type { ChunkerRegistry }    from './knowledge/ChunkerRegistry.js';
+import type { IngestionPipeline }  from './knowledge/IngestionPipeline.js';
 import { CommitChunker }      from './activity/CommitChunker.js';
 import { deriveRepoSignals, deriveEvidenceTopology } from '@bedrock/shared';
 

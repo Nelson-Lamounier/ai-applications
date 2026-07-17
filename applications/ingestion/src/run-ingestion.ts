@@ -33,7 +33,6 @@ import {
     SkillEmbeddingResolver,
     PhraseSkillResolver,
     backfillSkillEmbeddings,
-    IngestionPipeline,
     bootstrapK8sObservability,
     pushFinalMetrics,
     RdsUserProfileRollupRepository,
@@ -48,6 +47,7 @@ import {
 import { GitHubAdapter } from './acquisition/GitHubAdapter.js';
 import { FileFilter } from './knowledge/FileFilter.js';
 import { ChunkerRegistry } from './knowledge/ChunkerRegistry.js';
+import { IngestionPipeline } from './knowledge/IngestionPipeline.js';
 import { RepoIngestionOrchestrator } from './RepoIngestionOrchestrator.js';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';

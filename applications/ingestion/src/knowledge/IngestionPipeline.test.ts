@@ -8,13 +8,15 @@
  */
 
 import { IngestionPipeline } from './IngestionPipeline.js';
-import type { IChunkEnricher, ChunkEnrichment } from '../interfaces/IChunkEnricher.js';
-import type { IEmbeddingProvider } from '../interfaces/IEmbeddingProvider.js';
-import type { ISyncStateRepository } from '../interfaces/ISyncStateRepository.js';
-import type { IVectorStore } from '../interfaces/IVectorStore.js';
-import type { KbQualityInput } from '../quality/computeKbQuality.js';
-import type { IRetrievalProbe, RetrievalBreakdown } from '../quality/retrievalProbe.js';
 import type {
+    IChunkEnricher,
+    ChunkEnrichment,
+    IEmbeddingProvider,
+    ISyncStateRepository,
+    IVectorStore,
+    KbQualityInput,
+    IRetrievalProbe,
+    RetrievalBreakdown,
     ChunkIdentity,
     DocumentChunk,
     HashCheckResult,
@@ -22,7 +24,7 @@ import type {
     RawChunk,
     SimilarityResult,
     UpsertBatchResult,
-} from '../types.js';
+} from '@bedrock/shared';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { trace, context } from '@opentelemetry/api';
