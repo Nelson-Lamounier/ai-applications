@@ -393,24 +393,34 @@ function makeWatermarkStore(initialSha: string | null = null) {
 function fakePipelineWithOpts(): {
     pipeline: IngestionPipeline;
     lastChunks: () => RawChunk[];
-    lastOpts: () => { knownFilePaths?: string[] } | undefined;
+    lastOpts: () => { knownFilePaths?: string[]; stampProvider?: unknown } | undefined;
+    lastForceReindexOpts: () => { knownFilePaths?: string[]; stampProvider?: unknown } | undefined;
 } {
     let captured: RawChunk[] = [];
-    let capturedOpts: { knownFilePaths?: string[] } | undefined;
+    let capturedOpts: { knownFilePaths?: string[]; stampProvider?: unknown } | undefined;
+    let capturedForceReindexOpts: { knownFilePaths?: string[]; stampProvider?: unknown } | undefined;
     const pipeline = {
         async ingestChunks(
-            _u: string, _r: string, chunks: RawChunk[], opts?: { knownFilePaths?: string[] },
+            _u: string, _r: string, chunks: RawChunk[], opts?: { knownFilePaths?: string[]; stampProvider?: unknown },
         ): Promise<IngestionReport> {
             captured = chunks;
             capturedOpts = opts;
             return { totalRawChunks: chunks.length } as unknown as IngestionReport;
         },
-        async forceReindex(_u: string, _r: string, chunks: RawChunk[]): Promise<IngestionReport> {
+        async forceReindex(
+            _u: string, _r: string, chunks: RawChunk[], opts?: { knownFilePaths?: string[]; stampProvider?: unknown },
+        ): Promise<IngestionReport> {
             captured = chunks;
+            capturedForceReindexOpts = opts;
             return { totalRawChunks: chunks.length } as unknown as IngestionReport;
         },
     } as unknown as IngestionPipeline;
-    return { pipeline, lastChunks: () => captured, lastOpts: () => capturedOpts };
+    return {
+        pipeline,
+        lastChunks: () => captured,
+        lastOpts: () => capturedOpts,
+        lastForceReindexOpts: () => capturedForceReindexOpts,
+    };
 }
 
 describe('RepoIngestionOrchestrator incremental resync', () => {
@@ -551,6 +561,69 @@ describe('RepoIngestionOrchestrator incremental resync', () => {
             TREE.map(f => ({ path: f.path, blobSha: f.blobSha, sizeBytes: f.sizeBytes })),
         );
         expect(watermarkStore.setLastSyncedCommitSha).toHaveBeenLastCalledWith('u', 'o/a', 'head-9');
+    });
+});
+
+describe('RepoIngestionOrchestrator stampProvider threading (P1 Task 4, UNIFIED_INGESTION=on)', () => {
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    const TREE: RepoFile[] = [{ path: 'a.ts', sizeBytes: 10, blobSha: 'sha-a' }];
+
+    it('threads stampProvider into ingestChunks opts when configured', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-1');
+        const { pipeline, lastOpts } = fakePipelineWithOpts();
+        const stampProvider = async () => ({ repoStamp: {}, fileTechMap: new Map() }) as never;
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), fakeChunkerRegistry(), pipeline,
+            { commitChunker: null, stampProvider },
+        );
+
+        await orch.ingestRepo('u', 'o/a');
+
+        expect(lastOpts()?.stampProvider).toBe(stampProvider);
+    });
+
+    it('passes stampProvider: undefined into ingestChunks opts when not configured (byte-identical off path)', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-1');
+        const { pipeline, lastOpts } = fakePipelineWithOpts();
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), fakeChunkerRegistry(), pipeline,
+            { commitChunker: null },
+        );
+
+        await orch.ingestRepo('u', 'o/a');
+
+        // IngestionPipeline treats an undefined stampProvider identically to an
+        // absent one (`opts?.stampProvider ? ... : undefined`), so this is still
+        // the byte-identical off path.
+        expect(lastOpts()?.stampProvider).toBeUndefined();
+    });
+
+    it('threads stampProvider into forceReindex opts when configured', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-1');
+        const { pipeline, lastForceReindexOpts } = fakePipelineWithOpts();
+        const stampProvider = async () => ({ repoStamp: {}, fileTechMap: new Map() }) as never;
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), fakeChunkerRegistry(), pipeline,
+            { commitChunker: null, stampProvider },
+        );
+
+        await orch.forceReindex('u', 'o/a');
+
+        expect(lastForceReindexOpts()?.stampProvider).toBe(stampProvider);
+    });
+
+    it('passes stampProvider: undefined to forceReindex when not configured', async () => {
+        const adapter = new ResyncAdapter(TREE, 'head-1');
+        const { pipeline, lastForceReindexOpts } = fakePipelineWithOpts();
+        const orch = new RepoIngestionOrchestrator(
+            adapter, new FakeFileFilter(), fakeChunkerRegistry(), pipeline,
+            { commitChunker: null },
+        );
+
+        await orch.forceReindex('u', 'o/a');
+
+        expect(lastForceReindexOpts()?.stampProvider).toBeUndefined();
     });
 });
 

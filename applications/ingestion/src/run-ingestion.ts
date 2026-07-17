@@ -17,6 +17,18 @@
  *   DIRECTION_MODEL_ID — Bedrock model for Direction synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; direction synthesis disabled when neither is set)
  *   RECONCILIATION_MODEL_ID — Bedrock model for Reconciliation synthesis (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; reconciliation synthesis disabled when neither is set)
  *   DIAGNOSTIC_MODEL_ID — Bedrock model for Diagnostic narration (optional; falls back to PROFILE_EXTRACTOR_MODEL_ID; the deterministic score is computed regardless; only the LLM paragraph is skipped when neither is set)
+ *   UNIFIED_INGESTION — P1 unified ingestion flag: unset/"off" (default, today's
+ *     two-job behaviour, byte-identical) | "shadow" (additionally runs the facts
+ *     stage read-only and records per-layer parity against the legacy
+ *     tech-extract Job's persisted evidence, in unified_parity_runs) | "on"/"1"
+ *     (tarball acquisition + in-job facts stage + inline chunk stamping; the
+ *     post-hoc stamp pass is skipped for this repo). A tarball failure in 'on'
+ *     mode is fail-open — logs unified_fallback and falls back to 'off'.
+ *   WORK_DIR — scratch directory for shadow/on tarball fetch + extract
+ *     (default /tmp/ingest-work); should be an emptyDir volume in the pod spec
+ *   MAX_TARBALL_BYTES — cap on the downloaded tarball size (default 200 MiB)
+ *   GITHUB_SBOM_ENABLED — set to "1" to also run the GitHub dependency-graph
+ *     SBOM extractor lane in the shadow/on facts stage
  *
  * Exit codes:
  *   0 — ingestion complete (sync state set to 'complete')
@@ -43,6 +55,9 @@ import {
     stampUserEvidenceMetadata,
     TechSkillMapRepository,
     reconcileRepoName,
+    TechnologyEvidenceRepository,
+    RdsDsaEvidenceRepository,
+    RdsAiEvidenceRepository,
 } from '@bedrock/shared';
 import { GitHubAdapter } from './acquisition/GitHubAdapter.js';
 import { FileFilter } from './knowledge/FileFilter.js';
@@ -53,7 +68,17 @@ import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
 
 import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { parseEnv } from './env.js';
+import { fetchTarball } from './acquisition/tarball/fetchTarball.js';
+import { safeExtract } from './acquisition/tarball/safeExtract.js';
+import { TarballRepoAdapter } from './acquisition/TarballRepoAdapter.js';
+import { runFactsStage, type LaneGates } from './facts/run-facts-stage.js';
+import { computeLayerParity, type EvidenceKey } from './facts/parity/layer-parity.js';
+import { UnifiedParityRunRepository } from './persistence/UnifiedParityRunRepository.js';
+import { buildInlineStampInputs } from './facts/inline-stamp.js';
+import type { IRepoAdapter } from './acquisition/IRepoAdapter.js';
 import { ProfileInputCollector } from './narrative/ProfileInputCollector.js';
 import type { ProfileInputBundle } from './narrative/ProfileInputCollector.js';
 import type { RepoClassification } from './util/classifyRepo.js';
@@ -640,6 +665,276 @@ async function selfHealRepoName(deps: {
     }
 }
 
+// =============================================================================
+// UNIFIED_INGESTION (P1 unified ingestion, Task 4)
+//
+// Three-state flag: 'off' (default, today's two-job behaviour, byte-
+// identical) | 'shadow' (additionally runs the facts stage read-only and
+// records per-layer parity against the legacy tech-extract Job's persisted
+// evidence) | 'on' (tarball acquisition + in-job facts stage + inline chunk
+// stamping; the post-hoc stamp pass and the standalone tech-extract Job are
+// both skipped for this repo).
+// =============================================================================
+
+type UnifiedMode = 'off' | 'shadow' | 'on';
+
+function parseUnifiedIngestionFlag(): UnifiedMode {
+    const raw = process.env.UNIFIED_INGESTION;
+    if (raw === '1' || raw === 'on') return 'on';
+    if (raw === 'shadow') return 'shadow';
+    return 'off';
+}
+
+const MAX_TARBALL_BYTES = Number(process.env.MAX_TARBALL_BYTES ?? 200 * 1024 * 1024);
+/** Root scratch directory for tarball fetch + extract. One emptyDir-backed volume per pod. */
+const WORK_DIR = process.env.WORK_DIR ?? '/tmp/ingest-work';
+
+/**
+ * Fetch + extract a repo tarball into a fresh, uniquely-named subdirectory of
+ * WORK_DIR (so a concurrent shadow + on run, or two pods on the same node,
+ * never collide). Returns undefined on ANY failure (repo_too_large, network,
+ * extraction) — callers decide fallback behaviour; this never throws.
+ */
+async function fetchAndExtractForUnified(
+    repoFullName: string,
+    ref: string | undefined,
+    githubToken: string,
+    tag: 'shadow' | 'on',
+): Promise<{ extractDir: string; resolvedSha: string | undefined } | undefined> {
+    const runDir = path.join(WORK_DIR, `${tag}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const extractDir = path.join(runDir, 'tree');
+    const tarPath = path.join(runDir, 'repo.tar.gz');
+    try {
+        await fs.mkdir(extractDir, { recursive: true });
+        const resolvedSha = await fetchTarball(repoFullName, ref, githubToken, tarPath, MAX_TARBALL_BYTES);
+        await safeExtract(tarPath, extractDir);
+        return { extractDir, resolvedSha };
+    } catch (err) {
+        log.warn({ err: String(err), repoFullName, tag }, `unified_${tag}.tarball_failed`);
+        await fs.rm(runDir, { recursive: true, force: true }).catch(() => {});
+        return undefined;
+    }
+}
+
+/** Best-effort recursive removal of a tarball-fetch run directory (extractDir's parent). */
+async function cleanupUnifiedExtractDir(extractDir: string | undefined): Promise<void> {
+    if (!extractDir) return;
+    await fs.rm(path.dirname(extractDir), { recursive: true, force: true }).catch(() => {});
+}
+
+/**
+ * Per-lane idempotency gates for the `on`-mode facts stage, computed from the
+ * already-resolved commitSha (run-ingestion, unlike the standalone tech-
+ * extract Job, always resolves HEAD via the GitHub API before any tarball
+ * work — there is no raw-vs-resolved-sha ambiguity here). A force-reindex
+ * bypasses all three gates, mirroring run-tech-extract's own bypass.
+ */
+async function computeUnifiedLaneGates(
+    pool: Pool, userId: string, repoFullName: string, commitSha: string, forceReindex: boolean,
+): Promise<LaneGates> {
+    if (forceReindex) return { techDone: false, dsaDone: false, aiDone: false };
+    try {
+        const evidenceRepo = new TechnologyEvidenceRepository(pool);
+        const dsaEvidenceRepo = new RdsDsaEvidenceRepository(pool);
+        const aiEvidenceRepo = new RdsAiEvidenceRepository(pool);
+        const [techDone, dsaDone, aiDone] = await Promise.all([
+            evidenceRepo.hasEvidenceForCommit(userId, repoFullName, commitSha),
+            dsaEvidenceRepo.hasDsaScanForCommit(userId, repoFullName, commitSha),
+            aiEvidenceRepo.hasAiScanForCommit(userId, repoFullName, commitSha),
+        ]);
+        return { techDone, dsaDone, aiDone };
+    } catch {
+        // A gate-probe failure must never block the facts stage — worst case
+        // it re-scans a commit it had already scanned.
+        return { techDone: false, dsaDone: false, aiDone: false };
+    }
+}
+
+/** Legacy (persisted, two-job path) evidence keys for computeLayerParity's LHS. */
+async function loadPersistedEvidenceKeys(pool: Pool, userId: string, repoFullName: string): Promise<EvidenceKey[]> {
+    const { rows } = await pool.query<{ canonical_name: string; source_layer: string; file_path: string | null }>(
+        `SELECT o.canonical_name, te.source_layer, te.file_path
+           FROM technology_evidence te
+           JOIN technology_ontology o ON o.id = te.technology_id
+          WHERE te.user_id = $1 AND te.repo_full_name = $2`,
+        [userId, repoFullName],
+    );
+    return rows.map((r) => ({
+        sourceLayer: r.source_layer,
+        canonicalId: r.canonical_name.toLowerCase(),
+        filePath:    r.file_path,
+    }));
+}
+
+/**
+ * UNIFIED_INGESTION=on acquisition: fetch + extract the tarball ONE time so
+ * the rest of the run can read every file off local disk (adapter, profile
+ * collection, orchestrator) instead of one GitHub API call per file. Tarball
+ * failure (e.g. repo_too_large) or a missing commitSha is fail-open: log
+ * loudly and degrade to 'off' for the rest of this run — the caller uses the
+ * returned `unified`, not its input, from here on.
+ */
+async function resolveUnifiedAcquisition(deps: {
+    unified: UnifiedMode;
+    repoAdapter: GitHubAdapter;
+    repoFullName: string;
+    commitSha: string | null;
+    githubToken: string;
+}): Promise<{ unified: UnifiedMode; activeAdapter: IRepoAdapter; unifiedExtractDir?: string }> {
+    const { unified, repoAdapter, repoFullName, commitSha, githubToken } = deps;
+    if (unified !== 'on') return { unified, activeAdapter: repoAdapter };
+
+    if (!commitSha) {
+        log.warn({ repoFullName }, 'unified_fallback: no resolvable commit sha — falling back to legacy acquisition');
+        return { unified: 'off', activeAdapter: repoAdapter };
+    }
+
+    const fetched = await fetchAndExtractForUnified(repoFullName, commitSha, githubToken, 'on');
+    if (!fetched) {
+        log.warn({ repoFullName }, 'unified_fallback: tarball acquisition failed — falling back to legacy acquisition');
+        return { unified: 'off', activeAdapter: repoAdapter };
+    }
+
+    return {
+        unified: 'on',
+        activeAdapter: new TarballRepoAdapter(fetched.extractDir, fetched.resolvedSha ?? commitSha, repoAdapter),
+        unifiedExtractDir: fetched.extractDir,
+    };
+}
+
+/**
+ * Dispatch the shadow parity pass or the on-mode persist-writes facts stage,
+ * depending on `unified` — a no-op for 'off'. Runs AFTER Phase 0 (profile
+ * classification informs the inline stamp) and BEFORE the orchestrator (both
+ * wirings need `technology_evidence` written — 'on' for the lazy
+ * stampProvider's file_tech_stack query, 'shadow' just to diff against it).
+ * Both branches are internally best-effort; this never throws.
+ */
+async function runUnifiedFacts(deps: {
+    pool: Pool;
+    unified: UnifiedMode;
+    unifiedExtractDir: string | undefined;
+    userId: string;
+    repoFullName: string;
+    githubRepoId: number | null;
+    githubToken: string;
+    commitSha: string | null;
+    forceReindex: boolean;
+}): Promise<void> {
+    const { pool, unified, unifiedExtractDir, userId, repoFullName, githubRepoId, githubToken, commitSha, forceReindex } = deps;
+
+    if (unified === 'shadow') {
+        await runUnifiedShadow(pool, { userId, repoFullName, githubRepoId, githubToken, commitSha });
+        return;
+    }
+    if (unified !== 'on' || !unifiedExtractDir) return;
+
+    try {
+        const laneGates = await computeUnifiedLaneGates(pool, userId, repoFullName, commitSha as string, forceReindex);
+        const factsResult = await runFactsStage({
+            pool, userId, repoFullName, githubRepoId, commitSha: commitSha as string,
+            extractDir: unifiedExtractDir, laneGates,
+            writeMode: 'persist',
+            githubSbomEnabled: process.env['GITHUB_SBOM_ENABLED'] === '1',
+            githubToken,
+        });
+        log.info({
+            event:            'unified_facts.complete',
+            repoFullName,
+            evidenceKeys:     factsResult.evidenceKeys.length,
+            failedExtractors: factsResult.failedExtractors,
+            durationMs:       factsResult.durationMs,
+        }, 'unified facts stage complete');
+    } catch (err) {
+        // The tech lane failing does not invalidate tarball acquisition or the
+        // (still-lazy) inline stampProvider — it degrades to whatever
+        // technology_evidence already existed from a prior sync. Loud, but
+        // non-fatal: RAG embeddings are still the primary deliverable.
+        log.warn({ err: String(err), repoFullName }, 'unified_fallback: facts stage failed (non-fatal) — continuing with unified acquisition + stamp');
+    }
+}
+
+/**
+ * Post-hoc evidence-metadata stamp (verified-authorship + tech), skipped for
+ * `unified === 'on'` runs — the pipeline already stamped every chunk inline
+ * via `opts.stampProvider`, keyed off the same source tables, so this pass
+ * would only redo the identical `UPDATE`. Best-effort, never fatal.
+ */
+async function stampEvidenceMetadataUnlessInline(
+    pool: Pool, unified: UnifiedMode, userId: string, repoFullName: string,
+): Promise<void> {
+    if (unified === 'on') return;
+    try {
+        const stamped = await stampUserEvidenceMetadata(pool, userId, repoFullName);
+        console.info(`[run-ingestion] evidence-metadata stamped: ${stamped} repo(s)`);
+    } catch (err) {
+        console.warn(`[run-ingestion] evidence-metadata stamp skipped for ${repoFullName}:`, err);
+    }
+}
+
+/**
+ * Shadow gate (UNIFIED_INGESTION=shadow): fetch + extract a tarball, run the
+ * facts stage read-only (tech-lane only, zero writes), diff its in-memory
+ * evidence keys against the legacy two-job path's persisted
+ * technology_evidence, and record the per-layer comparison. Best-effort in
+ * its entirety — the legacy tech-extract Job remains the source of truth
+ * while this flag is 'shadow', so ANY failure here is caught, logged, and
+ * MUST NOT fail the sync.
+ */
+async function runUnifiedShadow(
+    pool: Pool,
+    deps: {
+        userId: string; repoFullName: string; githubRepoId: number | null;
+        githubToken: string; commitSha: string | null;
+    },
+): Promise<void> {
+    const { userId, repoFullName, githubRepoId, githubToken, commitSha } = deps;
+    if (!commitSha) {
+        log.warn({ repoFullName }, 'unified_shadow.skipped_no_commit_sha');
+        return;
+    }
+    const startMs = Date.now();
+    let extractDir: string | undefined;
+    try {
+        const fetched = await fetchAndExtractForUnified(repoFullName, commitSha, githubToken, 'shadow');
+        if (!fetched) {
+            log.warn({ repoFullName }, 'unified_shadow.skipped_tarball_unavailable');
+            return;
+        }
+        extractDir = fetched.extractDir;
+        const sha = fetched.resolvedSha ?? commitSha;
+
+        const result = await runFactsStage({
+            pool, userId, repoFullName, githubRepoId, commitSha: sha, extractDir,
+            writeMode: 'shadow',
+            githubSbomEnabled: process.env['GITHUB_SBOM_ENABLED'] === '1',
+            githubToken,
+        });
+
+        const legacyKeys = await loadPersistedEvidenceKeys(pool, userId, repoFullName);
+        const parity = computeLayerParity(legacyKeys, result.evidenceKeys);
+        await new UnifiedParityRunRepository(pool).insertMany(userId, repoFullName, sha, parity);
+
+        log.info({
+            event: 'unified_shadow.complete',
+            repoFullName,
+            sha,
+            durationMs: Date.now() - startMs,
+            layers: parity.map((p) => ({
+                sourceLayer:       p.sourceLayer,
+                legacyCount:       p.legacyCount,
+                unifiedCount:      p.unifiedCount,
+                intersectionCount: p.intersectionCount,
+            })),
+            failedExtractors: result.failedExtractors,
+        }, 'unified shadow parity recorded');
+    } catch (err) {
+        log.warn({ err: String(err), repoFullName }, 'unified_shadow.failed (non-fatal)');
+    } finally {
+        await cleanupUnifiedExtractDir(extractDir);
+    }
+}
+
 async function main(): Promise<void> {
     let env = parseEnv();
     const start = process.hrtime.bigint();
@@ -647,10 +942,16 @@ async function main(): Promise<void> {
     const runStartIso = new Date().toISOString();
     let outcome: 'success' | 'failed' = 'failed';
 
+    // UNIFIED_INGESTION (P1 Task 4) — parsed once. `unified` is mutable: an
+    // 'on' run that fails tarball acquisition degrades to 'off' for the rest
+    // of this run (fail-open — see the on-mode wiring below).
+    let unified: UnifiedMode = parseUnifiedIngestionFlag();
+
     log.info({
         userId:       env.userId,
         repoFullName: env.repoFullName,
         forceReindex: env.forceReindex,
+        unifiedIngestion: unified,
     }, 'starting');
 
     const rdsConfig = {
@@ -721,6 +1022,18 @@ async function main(): Promise<void> {
     if (healedName !== env.repoFullName) {
         env = { ...env, repoFullName: healedName };
     }
+
+    // UNIFIED_INGESTION=on acquisition: fetch + extract the tarball ONE time
+    // and read every file off local disk for the rest of the run (adapter,
+    // profile collection, orchestrator) instead of one GitHub API call per
+    // file. Fail-open — see resolveUnifiedAcquisition's doc comment.
+    const acquisition = await resolveUnifiedAcquisition({
+        unified, repoAdapter, repoFullName: env.repoFullName, commitSha, githubToken: env.githubToken,
+    });
+    unified = acquisition.unified;
+    const activeAdapter: IRepoAdapter = acquisition.activeAdapter;
+    // Set only when the on-mode tarball was extracted; cleaned up in the outer finally.
+    const unifiedExtractDir = acquisition.unifiedExtractDir;
 
     const embedder     = new TitanEmbeddingProvider(
         process.env.AWS_REGION ?? 'eu-west-1',
@@ -810,14 +1123,23 @@ async function main(): Promise<void> {
     const activityStore  = new RdsRepoActivityStore(pgPool, githubRepoId);
     const fileStateStore = new RdsRepoFileStateRepository(pgPool, githubRepoId);
 
+    // Inline stamping (P1 Task 4): only when 'on' mode actually acquired via
+    // tarball (unified may have degraded to 'off' above). Lazy —
+    // buildInlineStampInputs is invoked once, inside the pipeline's
+    // embed+upsert phase, after commits are persisted.
+    const stampProvider = unified === 'on'
+        ? () => buildInlineStampInputs(pgPool, env.userId, env.repoFullName)
+        : undefined;
+
     const orchestrator = new RepoIngestionOrchestrator(
-        repoAdapter, fileFilter, chunkerReg, pipeline,
+        activeAdapter, fileFilter, chunkerReg, pipeline,
         {
             activityStore,
             repositoryId: repositoryId ?? undefined,
             syncStateSignalSink: syncState,
             fileStateStore,
             watermarkStore: syncState,
+            stampProvider,
         },
     );
 
@@ -826,6 +1148,10 @@ async function main(): Promise<void> {
     const rollupRepo       = new RdsUserProfileRollupRepository(pgPool);
     const embRepo          = new RepositoryProfileEmbeddingsRepository(pgPool);
     const profileExtractor = new ProfileExtractor(env.profileExtractorModelId, pgPool);
+    // ProfileInputCollector is typed to the concrete GitHubAdapter (not the
+    // IRepoAdapter seam) — keep it on the real adapter even in 'on' mode. It
+    // still avoids a duplicate tree fetch: `prefetchedFiles` below comes from
+    // `activeAdapter` (the tarball, when 'on') and is passed into `.collect()`.
     const profileCollector = new ProfileInputCollector(repoAdapter, fileCache);
 
     const rootSpan = tracer.startSpan('ingestion.pipeline', {
@@ -851,7 +1177,7 @@ async function main(): Promise<void> {
         // Best-effort: on failure each consumer fetches its own tree.
         let prefetchedFiles: RepoFile[] | undefined;
         try {
-            prefetchedFiles = await repoAdapter.listFiles(env.repoFullName);
+            prefetchedFiles = await activeAdapter.listFiles(env.repoFullName);
         } catch {
             prefetchedFiles = undefined;
         }
@@ -880,6 +1206,17 @@ async function main(): Promise<void> {
             // RAG embeddings + technology extraction below still complete.
             await doExtractAndEmbed({ profileRepo, profileExtractor, embedder, embRepo }, env, bundle, classification, profileInputHash, chatbotEnabled);
         }
+
+        // ── UNIFIED_INGESTION shadow/on facts stage ──────────────────────────────
+        // Runs AFTER Phase 0 (profile classification informs the inline stamp) and
+        // BEFORE the orchestrator (both wirings need `technology_evidence` written
+        // — 'on' for the lazy stampProvider's file_tech_stack query, 'shadow' just
+        // to diff against it). No-op for 'off'; internally best-effort.
+        await runUnifiedFacts({
+            pool: pgPool, unified, unifiedExtractDir,
+            userId: env.userId, repoFullName: env.repoFullName, githubRepoId: env.githubRepoId,
+            githubToken: env.githubToken, commitSha, forceReindex: env.forceReindex,
+        });
 
         // Surface file-fetch progress to the UI (the 'fetching' phase). Fire-
         // and-forget; a progress write must never affect ingestion.
@@ -926,13 +1263,9 @@ async function main(): Promise<void> {
 
         // Stamp evidence metadata (verified-authorship + tech) onto this repo's chunks
         // so filter-then-rank retrieval can gate fork/low-trust evidence + pre-filter by
-        // tech. Reads already-persisted profile/commits/tech; best-effort, never fatal.
-        try {
-            const stamped = await stampUserEvidenceMetadata(pgPool, env.userId, env.repoFullName);
-            console.info(`[run-ingestion] evidence-metadata stamped: ${stamped} repo(s)`);
-        } catch (err) {
-            console.warn(`[run-ingestion] evidence-metadata stamp skipped for ${env.repoFullName}:`, err);
-        }
+        // tech. Skipped for 'on' runs — the pipeline already stamped every chunk
+        // inline via opts.stampProvider, keyed off the SAME source tables.
+        await stampEvidenceMetadataUnlessInline(pgPool, unified, env.userId, env.repoFullName);
 
         // Record the sync classification on the (already-upserted) repo_sync_state
         // row so the dashboard can show which repos were initial vs full-reindex vs
@@ -1081,6 +1414,9 @@ async function main(): Promise<void> {
         const duration = Number(process.hrtime.bigint() - start) / 1e9;
         ingestionRuns.inc({ outcome, sync_type: syncType });
         ingestionDuration.observe({ outcome, sync_type: syncType }, duration);
+        // UNIFIED_INGESTION=on's tarball extract dir — best-effort, WORK_DIR is an
+        // emptyDir volume that outlives this process otherwise.
+        await cleanupUnifiedExtractDir(unifiedExtractDir);
         // Teardown is best-effort and time-boxed. The work + sync_status are
         // already persisted; nothing here may keep a one-shot Job alive until
         // K8s activeDeadlineSeconds kills it (which marks an otherwise-SUCCESSFUL

@@ -26,7 +26,7 @@ import type { IngestionReport, RawChunk } from '@bedrock/shared';
 import type { IFileFilter }   from './knowledge/IFileFilter.js';
 import type { IRepoAdapter, RepoCommit, RepoPullRequest, RepoContributor, RepoFile, CommitDetail }  from './acquisition/IRepoAdapter.js';
 import type { ChunkerRegistry }    from './knowledge/ChunkerRegistry.js';
-import type { IngestionPipeline }  from './knowledge/IngestionPipeline.js';
+import type { IngestionPipeline, StampProvider }  from './knowledge/IngestionPipeline.js';
 import { CommitChunker }      from './activity/CommitChunker.js';
 import { deriveRepoSignals, deriveEvidenceTopology } from '@bedrock/shared';
 
@@ -121,6 +121,14 @@ export interface OrchestratorOptions {
     readonly fileStateStore?: RepoFileStateStore;
     /** HEAD-commit watermark store — see {@link fileStateStore}. */
     readonly watermarkStore?: CommitWatermarkStore;
+    /**
+     * `UNIFIED_INGESTION=on` only (P1 Task 4): threaded through to
+     * `ingestionPipeline.ingestChunks`/`forceReindex`'s `opts.stampProvider` so
+     * chunks are stamped inline instead of by the post-hoc pass. No reorder
+     * needed — commits are already persisted (step 3.5) before the pipeline
+     * call (step 4) in both `ingestRepo` and `forceReindex`.
+     */
+    readonly stampProvider?: StampProvider;
 }
 
 export class RepoIngestionOrchestrator {
@@ -136,6 +144,10 @@ export class RepoIngestionOrchestrator {
     private readonly syncStateSignalSink: OrchestratorOptions['syncStateSignalSink'] | null;
     private readonly fileStateStore:    RepoFileStateStore | null;
     private readonly watermarkStore:    CommitWatermarkStore | null;
+    // Kept as `T | undefined` (unlike the other options above) — it is passed
+    // straight through to the pipeline's own `opts.stampProvider?:`, so no
+    // null-normalization branch is needed here or at either call site below.
+    private readonly stampProvider:     StampProvider | undefined;
 
     constructor(
         repoAdapter:       IRepoAdapter,
@@ -159,6 +171,7 @@ export class RepoIngestionOrchestrator {
         this.syncStateSignalSink = options.syncStateSignalSink ?? null;
         this.fileStateStore    = options.fileStateStore ?? null;
         this.watermarkStore    = options.watermarkStore ?? null;
+        this.stampProvider     = options.stampProvider;
     }
 
     // =========================================================================
@@ -261,7 +274,8 @@ export class RepoIngestionOrchestrator {
         // -----------------------------------------------------------------
         const commitPaths = [...new Set(commitChunks.map((c) => c.filePath))];
         const report = await this.ingestionPipeline.ingestChunks(
-            userId, repoFullName, rawChunks, { knownFilePaths: [...includedPaths, ...commitPaths] },
+            userId, repoFullName, rawChunks,
+            { knownFilePaths: [...includedPaths, ...commitPaths], stampProvider: this.stampProvider },
         );
 
         // -----------------------------------------------------------------
@@ -578,7 +592,9 @@ export class RepoIngestionOrchestrator {
         rawChunks.push(...await this.fetchAndChunkCommits(userId, repoFullName));
         await this.fetchAndPersistPulls(userId, repoFullName);
 
-        const report = await this.ingestionPipeline.forceReindex(userId, repoFullName, rawChunks);
+        const report = await this.ingestionPipeline.forceReindex(
+            userId, repoFullName, rawChunks, { stampProvider: this.stampProvider },
+        );
 
         // Refresh state + watermark to the just-synced tree (only when wired).
         if (this.fileStateStore && this.watermarkStore) {
