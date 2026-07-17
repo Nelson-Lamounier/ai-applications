@@ -297,6 +297,16 @@ export interface PartialMatch {
     readonly framingSuggestion: string;
     /** KB file paths that back this match (empty array when evidence is career-history only) */
     readonly evidenceFiles: string[];
+    /**
+     * How this match was reached — 'direct' evidence for the skill itself, or
+     * 'transferable' (the matcher's evidence is for a sibling technology, per
+     * `transferVia`). Omitted for legacy/unclassified partial matches.
+     */
+    readonly matchBasis?: 'direct' | 'transferable';
+    /** The evidenced sibling technology this match leans on (set only when matchBasis is 'transferable'). */
+    readonly transferVia?: string;
+    /** The tech-transfer group's basis text for the skill<->transferVia pair, when resolvable. */
+    readonly transferBasis?: string;
 }
 
 /**

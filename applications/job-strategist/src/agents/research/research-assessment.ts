@@ -12,7 +12,7 @@
  * A skill the model failed to assess defaults to a (soft) gap — honest: we never
  * claim evidence the matcher did not assert. Pure + deterministic + unit-tested.
  */
-import type { VerifiedMatch, PartialMatch, SkillGap, SkillDepth, GapType, GapSeverity } from '@bedrock/shared';
+import type { VerifiedMatch, PartialMatch, SkillGap, SkillDepth, GapType, GapSeverity, TechTransferGroup } from '@bedrock/shared';
 
 export type Verdict = 'verified' | 'partial' | 'gap';
 
@@ -33,6 +33,13 @@ export interface SkillAssessment {
     readonly gapType?: GapType;
     readonly impactSeverity?: GapSeverity;
     readonly disqualifyingAssessment?: string;
+    /**
+     * The evidenced sibling technology this verdict leans on, ONLY when the
+     * candidate's evidence is for a transferable sibling, not the skill itself.
+     * When set, `assessmentsToMatching` never buckets the skill into
+     * `verifiedMatches` — it is downgraded to a transferable `PartialMatch`.
+     */
+    readonly transferVia?: string;
 }
 
 export interface DerivedMatching {
@@ -64,6 +71,65 @@ function toPartial(a: SkillAssessment): PartialMatch {
     };
 }
 
+/**
+ * Resolve the transfer-basis text for a skill<->sibling pair from the first
+ * group whose membership contains BOTH (case-insensitive). Returns undefined
+ * when no such group exists or the group carries no typed basis.
+ */
+function findTransferBasis(
+    skill: string,
+    transferVia: string,
+    transferGroups: readonly TechTransferGroup[],
+): string | undefined {
+    const skillLower = skill.toLowerCase();
+    const viaLower = transferVia.toLowerCase();
+    for (const g of transferGroups) {
+        const membersLower = new Set(g.members.map((m) => m.toLowerCase()));
+        if (membersLower.has(skillLower) && membersLower.has(viaLower)) {
+            return g.transferBasis ?? undefined;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Build a transferable PartialMatch — used to downgrade a 'verified' verdict
+ * that carries transferVia, and to enrich a 'partial' verdict that carries it.
+ *
+ * A downgraded 'verified' assessment never populated the partial-only fields
+ * (gapDescription/transferableFoundation/framingSuggestion are not part of the
+ * model's verified schema), so `toPartial(a)` alone would leave
+ * `transferableFoundation` empty on the resulting PartialMatch — losing the
+ * one thing a transferable match must state honestly. When that happens,
+ * seed it from what the verified assessment DID provide: the sibling name and
+ * its sourceCitation. A 'partial' verdict that already carries
+ * transferableFoundation from the model is left untouched.
+ */
+function toTransferablePartial(a: SkillAssessment, transferGroups: readonly TechTransferGroup[]): PartialMatch {
+    const transferVia = a.transferVia as string; // caller guarantees truthy
+    const transferBasis = findTransferBasis(a.skill, transferVia, transferGroups);
+    const base = toPartial(a);
+    const transferableFoundation = base.transferableFoundation
+        || `Transferable from ${transferVia}: ${a.sourceCitation ?? ''}`.trim();
+    return {
+        ...base,
+        transferableFoundation,
+        matchBasis: 'transferable',
+        transferVia,
+        ...(transferBasis ? { transferBasis } : {}),
+    };
+}
+
+/** A canonical JD skill the matcher never assessed — an honest, unclaimed soft gap. */
+function toUnassessedGap(skill: string): SkillGap {
+    return {
+        skill,
+        gapType: 'soft',
+        impactSeverity: 'minor',
+        disqualifyingAssessment: 'Not assessed by the matcher — treated as an honest gap pending evidence.',
+    };
+}
+
 function toGap(a: SkillAssessment): SkillGap {
     return {
         skill: a.skill,
@@ -73,18 +139,43 @@ function toGap(a: SkillAssessment): SkillGap {
     };
 }
 
+type BucketedAssessment =
+    | { readonly bucket: 'verified'; readonly value: VerifiedMatch }
+    | { readonly bucket: 'partial'; readonly value: PartialMatch }
+    | { readonly bucket: 'gap'; readonly value: SkillGap };
+
 /**
- * Convert per-skill assessments into the legacy three-bucket matching shape.
+ * Decide which of the three legacy buckets a single assessment belongs in.
+ * Isolated from the aggregation loop so the transferVia downgrade guard's
+ * branching stays out of `assessmentsToMatching`'s cyclomatic complexity.
  *
- * @param assessments - The matcher's per-skill verdicts.
- * @param jdSkills    - The canonical JD skill list. Any skill with no assessment
- *                      (or an unrecognised verdict) becomes a soft gap so the
- *                      output covers the full list and never over-claims.
+ * Any assessment carrying transferVia NEVER lands in 'verified' — it is
+ * downgraded (verdict verified) or enriched (verdict partial) into a
+ * transferable PartialMatch. No transferVia -> behaviour identical to today.
  */
-export function assessmentsToMatching(
+function classifyAssessment(a: SkillAssessment, transferGroups: readonly TechTransferGroup[]): BucketedAssessment {
+    if (a.transferVia && (a.verdict === 'verified' || a.verdict === 'partial')) {
+        return { bucket: 'partial', value: toTransferablePartial(a, transferGroups) };
+    }
+    if (a.verdict === 'verified') return { bucket: 'verified', value: toVerified(a) };
+    if (a.verdict === 'partial') return { bucket: 'partial', value: toPartial(a) };
+    // 'gap' or any unrecognised verdict -> honest gap. A 'gap' verdict carrying
+    // transferVia is a model inconsistency (transfer credit only ever applies
+    // to verified/partial verdicts) — ignored by design; logged for observability
+    // so a systematic mis-emission doesn't go unnoticed.
+    if (a.transferVia && a.verdict === 'gap') {
+        console.warn(
+            `research-assessment.classifyAssessment: skill '${a.skill}' has verdict 'gap' with transferVia '${a.transferVia}' set -- ignored by design (gap verdicts never receive transfer credit)`,
+        );
+    }
+    return { bucket: 'gap', value: toGap(a) };
+}
+
+/** Bucket every assessed skill into verified/partial/gap, tracking what was covered. */
+function bucketAssessments(
     assessments: readonly SkillAssessment[],
-    jdSkills: readonly string[] = [],
-): DerivedMatching {
+    transferGroups: readonly TechTransferGroup[],
+): DerivedMatching & { assessed: Set<string> } {
     const verifiedMatches: VerifiedMatch[] = [];
     const partialMatches: PartialMatch[] = [];
     const gaps: SkillGap[] = [];
@@ -93,22 +184,41 @@ export function assessmentsToMatching(
     for (const a of assessments) {
         if (!a.skill || a.skill.trim().length === 0) continue;
         assessed.add(a.skill.toLowerCase());
-        if (a.verdict === 'verified') verifiedMatches.push(toVerified(a));
-        else if (a.verdict === 'partial') partialMatches.push(toPartial(a));
-        else gaps.push(toGap(a)); // 'gap' or any unrecognised verdict → honest gap
+        const classified = classifyAssessment(a, transferGroups);
+        if (classified.bucket === 'verified') verifiedMatches.push(classified.value);
+        else if (classified.bucket === 'partial') partialMatches.push(classified.value);
+        else gaps.push(classified.value);
     }
 
-    // Coverage: a canonical skill the matcher didn't assess defaults to a soft gap.
+    return { verifiedMatches, partialMatches, gaps, assessed };
+}
+
+/** Coverage guarantee: a canonical JD skill the matcher didn't assess defaults to a soft gap. */
+function addUnassessedGaps(jdSkills: readonly string[], assessed: Set<string>, gaps: SkillGap[]): void {
     for (const skill of jdSkills) {
         if (!skill || assessed.has(skill.toLowerCase())) continue;
         assessed.add(skill.toLowerCase());
-        gaps.push({
-            skill,
-            gapType: 'soft',
-            impactSeverity: 'minor',
-            disqualifyingAssessment: 'Not assessed by the matcher — treated as an honest gap pending evidence.',
-        });
+        gaps.push(toUnassessedGap(skill));
     }
+}
 
+/**
+ * Convert per-skill assessments into the legacy three-bucket matching shape.
+ *
+ * @param assessments    - The matcher's per-skill verdicts.
+ * @param jdSkills       - The canonical JD skill list. Any skill with no assessment
+ *                         (or an unrecognised verdict) becomes a soft gap so the
+ *                         output covers the full list and never over-claims.
+ * @param transferGroups - Tech-transfer groups used to resolve `transferBasis`
+ *                         for any assessment carrying `transferVia`. Optional —
+ *                         defaults to `[]` (no basis resolved, guard still applies).
+ */
+export function assessmentsToMatching(
+    assessments: readonly SkillAssessment[],
+    jdSkills: readonly string[] = [],
+    transferGroups: readonly TechTransferGroup[] = [],
+): DerivedMatching {
+    const { verifiedMatches, partialMatches, gaps, assessed } = bucketAssessments(assessments, transferGroups);
+    addUnassessedGaps(jdSkills, assessed, gaps);
     return { verifiedMatches, partialMatches, gaps };
 }

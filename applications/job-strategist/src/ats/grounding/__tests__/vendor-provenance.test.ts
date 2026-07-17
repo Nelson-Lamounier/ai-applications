@@ -1,13 +1,19 @@
 /** @format */
 import { isReferenceDoc, vendorGroupForSkill, demoteMisattributedVendors } from '../vendor-provenance.js';
 import * as shared from '@bedrock/shared';
-import type { ResearchMatching, VerifiedMatch } from '@bedrock/shared';
+import type { ResearchMatching, VerifiedMatch, TechTransferGroup } from '@bedrock/shared';
 
 const CHECKLIST = 'Nelson-Lamounier/ai-applications/docs/checklists/structure-output-checklist.md';
 const AUTHORED = 'Nelson-Lamounier/ai-applications/applications/shared/src/llm/bedrock-client.ts';
 
 // openai is interchangeable with claude/anthropic/bedrock (tech-transfer group).
+// vendorGroupForSkill still takes plain member arrays (unchanged contract);
+// demoteMisattributedVendors takes the typed TechTransferGroup shape.
 const GROUPS: string[][] = [['openai', 'claude', 'anthropic', 'bedrock']];
+/** Untyped test fixture group — mirrors an ontology component with no relationship-graph metadata. */
+const asGroups = (groups: string[][]): TechTransferGroup[] =>
+    groups.map((members) => ({ members, transferClass: null, transferTier: null, transferBasis: null }));
+const TYPED_GROUPS: TechTransferGroup[] = asGroups(GROUPS);
 const ALIAS = new Map<string, string>([
     ['openai api', 'openai'],
     ['chatgpt', 'openai'],
@@ -56,7 +62,7 @@ describe('demoteMisattributedVendors', () => {
     it('demotes a competing vendor backed ONLY by a reference doc', () => {
         const r = demoteMisattributedVendors(
             matching([verified('OpenAI API and ChatGPT integration', [CHECKLIST])]),
-            { techGroups: GROUPS, techAliasMap: ALIAS },
+            { techGroups: TYPED_GROUPS, techAliasMap: ALIAS },
         );
         expect(r.matching.verifiedMatches).toHaveLength(0);
         expect(r.matching.partialMatches).toHaveLength(1);
@@ -76,7 +82,7 @@ describe('demoteMisattributedVendors', () => {
     ])('KEEPS a %s', (_label, skill, files) => {
         const r = demoteMisattributedVendors(
             matching([verified(skill, files)]),
-            { techGroups: GROUPS, techAliasMap: ALIAS },
+            { techGroups: TYPED_GROUPS, techAliasMap: ALIAS },
         );
         expect(r.matching.verifiedMatches).toHaveLength(1);
         expect(r.demotions).toHaveLength(0);
@@ -89,7 +95,7 @@ describe('demoteMisattributedVendors', () => {
                 verified('OpenAI API and ChatGPT integration', [CHECKLIST]),
                 verified('SaaS troubleshooting', []),
             ]),
-            { techGroups: GROUPS, techAliasMap: ALIAS },
+            { techGroups: TYPED_GROUPS, techAliasMap: ALIAS },
         );
         expect(r.matching.verifiedMatches.map((v) => v.skill).sort((a, b) => a.localeCompare(b)))
             .toEqual(['Python scripting and automation', 'SaaS troubleshooting']);
@@ -116,7 +122,7 @@ describe('demoteMisattributedVendors', () => {
             const warnSpy = jest.spyOn(shared, 'log').mockImplementation(() => undefined);
             const r = demoteMisattributedVendors(
                 matching([verified('Python scripting and automation', [CHECKLIST])]),
-                { techGroups: GROUPS, techAliasMap: ALIAS },
+                { techGroups: TYPED_GROUPS, techAliasMap: ALIAS },
             );
             expect(r.demotions).toHaveLength(0);
             expect(warnSpy).not.toHaveBeenCalled();
@@ -132,7 +138,7 @@ describe('demoteMisattributedVendors', () => {
             // Claims OpenAI from a normal (non-reference) doc, but the code uses Bedrock.
             const r = demoteMisattributedVendors(
                 matching([verified('OpenAI API and ChatGPT integration', [AUTHORED])]),
-                { techGroups: GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('bedrock', 'typescript') },
+                { techGroups: TYPED_GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('bedrock', 'typescript') },
             );
             expect(r.matching.verifiedMatches).toHaveLength(0);
             expect(r.matching.partialMatches).toHaveLength(1);
@@ -140,7 +146,7 @@ describe('demoteMisattributedVendors', () => {
         });
 
         it('lists ONLY the code-present alternatives in the bridge — drops group noise (aws_vpc)', () => {
-            const noisyGroup: string[][] = [['openai', 'claude', 'bedrock', 'aws_vpc']];
+            const noisyGroup: TechTransferGroup[] = asGroups([['openai', 'claude', 'bedrock', 'aws_vpc']]);
             const r = demoteMisattributedVendors(
                 matching([verified('OpenAI API', [AUTHORED])]),
                 { techGroups: noisyGroup, techAliasMap: ALIAS, codeTechByRepo: codeWith('bedrock') },
@@ -154,7 +160,7 @@ describe('demoteMisattributedVendors', () => {
         it('KEEPS a vendor that IS in the candidate code (real production use)', () => {
             const r = demoteMisattributedVendors(
                 matching([verified('OpenAI API', [AUTHORED])]),
-                { techGroups: GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('openai', 'bedrock') },
+                { techGroups: TYPED_GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('openai', 'bedrock') },
             );
             expect(r.matching.verifiedMatches).toHaveLength(1);
             expect(r.demotions).toHaveLength(0);
@@ -163,7 +169,7 @@ describe('demoteMisattributedVendors', () => {
         it('KEEPS a vendor absent from code when NO sibling is in code (no transferable bridge — could be undetectable)', () => {
             const r = demoteMisattributedVendors(
                 matching([verified('OpenAI API', [AUTHORED])]),
-                { techGroups: GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('python', 'kubernetes') },
+                { techGroups: TYPED_GROUPS, techAliasMap: ALIAS, codeTechByRepo: codeWith('python', 'kubernetes') },
             );
             expect(r.matching.verifiedMatches).toHaveLength(1);
             expect(r.demotions).toHaveLength(0);

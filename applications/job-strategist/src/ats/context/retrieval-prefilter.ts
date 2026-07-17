@@ -9,7 +9,7 @@
  * exists to surface (Bedrock chunks for an OpenAI JD). Pure + deterministic.
  */
 
-import type { RetrievalPrefilter } from '@bedrock/shared';
+import type { RetrievalPrefilter, TechTransferGroup } from '@bedrock/shared';
 import { resolveCanonical } from '../matching/keyword-match.js';
 
 function norm(s: string): string {
@@ -19,13 +19,13 @@ function norm(s: string): string {
 /**
  * @param jdSkills  - JD required/preferred skills (free text).
  * @param jdTech    - JD technologies (tools/languages/frameworks/infrastructure).
- * @param techGroups- transfer groups of canonical tech names (lowercased).
+ * @param techGroups- transfer groups (each carries lowercased canonical `.members`).
  * @param aliasMap  - alias(lower) → canonical(lower).
  */
 export function buildRetrievalPrefilter(
     jdSkills: ReadonlyArray<string>,
     jdTech: ReadonlyArray<string>,
-    techGroups: ReadonlyArray<ReadonlyArray<string>>,
+    techGroups: ReadonlyArray<TechTransferGroup>,
     aliasMap: ReadonlyMap<string, string>,
 ): RetrievalPrefilter {
     const skills = [...new Set(jdSkills.map(norm).filter((s) => s.length > 0))];
@@ -41,8 +41,8 @@ export function buildRetrievalPrefilter(
     // Expand with transfer-group siblings (interchangeable techs).
     const tech = new Set(canon);
     for (const group of techGroups) {
-        if (group.some((m) => canon.has(m))) {
-            for (const m of group) tech.add(m);
+        if (group.members.some((m) => canon.has(m))) {
+            for (const m of group.members) tech.add(m);
         }
     }
 

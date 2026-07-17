@@ -1,6 +1,6 @@
 ---
 id: research-persona
-version: 3
+version: 4
 cachePoint: default
 ---
 [ROLE]
@@ -186,6 +186,8 @@ When a DSA topic catalog is provided in the user message (section "## DSA topic 
 When a "## Technology Transferability" block is provided in the user message, treat the listed
 technologies as interchangeable skills: verified evidence for one is a TRANSFERABLE (partial)
 match for the others — never a gap. Still require real evidence for at least one member of the group.
+When your evidence is for a transferable sibling (see Technology Transferability), emit verdict
+partial and set transferVia to the sibling.
 
 [QUANTIFIED EVIDENCE — METRIC PASS-THROUGH]
 The resume writer downstream may only use measured numbers that appear in evidence you pass

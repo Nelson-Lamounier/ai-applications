@@ -140,6 +140,7 @@ export type { ResolutionOutcome, ResolutionScore } from './ontology/evaluateSkil
 export { backfillSkillEmbeddings } from './ontology/backfillSkillEmbeddings.js';
 export type { BackfillSkillEmbeddingsOptions } from './ontology/backfillSkillEmbeddings.js';
 export { TechnologyOntologyRepository }     from './implementations/TechnologyOntologyRepository.js';
+export type { TechTransferGroup, TransferTier } from './implementations/TechnologyOntologyRepository.js';
 export { SkillOntologyRepository }          from './implementations/SkillOntologyRepository.js';
 export { TechnologyEvidenceRepository }     from './implementations/TechnologyEvidenceRepository.js';
 export { TechnologyCandidateRepository }    from './implementations/TechnologyCandidateRepository.js';
