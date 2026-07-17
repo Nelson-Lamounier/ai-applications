@@ -1,6 +1,108 @@
 /** @format */
 import type { Pool } from 'pg';
 
+/** How completely a transfer group's skills substitute for one another (migration 120). */
+export type TransferTier = 'full' | 'partial';
+
+/**
+ * One connected component of mutually-transferable canonical tech names.
+ *
+ * `transferClass`/`transferTier`/`transferBasis` are read from the
+ * `technology_relationships` edges the component was built from (migration
+ * 120). `loadCategoryGroups()` groups have no relationship edges backing
+ * them, so all three are always `null` there. Within `loadTransferGroups()`,
+ * a component with NO typed edges (legacy `related_to` rows predating 120)
+ * also carries all-`null` metadata — the group is still returned, just
+ * untyped.
+ */
+export interface TechTransferGroup {
+    readonly members: string[];
+    readonly transferClass: string | null;
+    readonly transferTier: TransferTier | null;
+    readonly transferBasis: string | null;
+}
+
+/** One `technology_relationships` edge, node names lowercased, typed metadata as read (may be null). */
+interface TransferEdge {
+    readonly from: string;
+    readonly to: string;
+    readonly transferClass: string | null;
+    readonly transferTier: TransferTier | null;
+    readonly transferBasis: string | null;
+}
+
+/** Build an undirected adjacency map from a lowercased edge list. */
+function buildAdjacency(edges: readonly TransferEdge[]): Map<string, Set<string>> {
+    const adj = new Map<string, Set<string>>();
+    for (const { from, to } of edges) {
+        if (!adj.has(from)) adj.set(from, new Set());
+        if (!adj.has(to)) adj.set(to, new Set());
+        (adj.get(from) as Set<string>).add(to);
+        (adj.get(to) as Set<string>).add(from);
+    }
+    return adj;
+}
+
+/**
+ * Non-recursive BFS over an adjacency map. Returns each connected component
+ * of ≥2 nodes (singletons give no transfer signal and are dropped).
+ */
+function findConnectedComponents(adj: ReadonlyMap<string, Set<string>>): string[][] {
+    const visited = new Set<string>();
+    const components: string[][] = [];
+    for (const node of adj.keys()) {
+        if (visited.has(node)) continue;
+        const component: string[] = [];
+        const queue: string[] = [node];
+        visited.add(node);
+        while (queue.length > 0) {
+            const current = queue.shift() as string;
+            component.push(current);
+            for (const neighbour of adj.get(current) ?? []) {
+                if (!visited.has(neighbour)) {
+                    visited.add(neighbour);
+                    queue.push(neighbour);
+                }
+            }
+        }
+        if (component.length >= 2) components.push(component);
+    }
+    return components;
+}
+
+/**
+ * Resolve a component's typed transfer metadata from its member edges: the
+ * first non-null `transfer_class` among edges whose `from` node is in the
+ * component wins. A second, DIFFERENT non-null class in the same component
+ * is a data inconsistency (should not happen — 120 seeds one class per
+ * pairwise family) — keep the first and warn once so it surfaces without
+ * failing the read.
+ */
+function resolveComponentMetadata(
+    component: readonly string[],
+    edges: readonly TransferEdge[],
+): Pick<TechTransferGroup, 'transferClass' | 'transferTier' | 'transferBasis'> {
+    const members = new Set(component);
+    let transferClass: string | null = null;
+    let transferTier: TransferTier | null = null;
+    let transferBasis: string | null = null;
+    let warned = false;
+    for (const edge of edges) {
+        if (edge.transferClass === null || !members.has(edge.from)) continue;
+        if (transferClass === null) {
+            transferClass = edge.transferClass;
+            transferTier = edge.transferTier;
+            transferBasis = edge.transferBasis;
+        } else if (edge.transferClass !== transferClass && !warned) {
+            console.warn(
+                `TechnologyOntologyRepository.loadTransferGroups: component [${component.join(', ')}] has conflicting transfer_class values ('${transferClass}' vs '${edge.transferClass}') -- keeping the first`,
+            );
+            warned = true;
+        }
+    }
+    return { transferClass, transferTier, transferBasis };
+}
+
 /**
  * Reads the global technology ontology + aliases. Reference data is not
  * user-scoped, so no RLS / set_config needed.
@@ -268,9 +370,11 @@ export class TechnologyOntologyRepository {
      * Group active, curated/auto-imported technologies by category.
      * Returns one array per category that has ≥2 members; singletons are
      * dropped because a group of 1 gives no transfer signal.
-     * Used as a fallback when the relationships graph is empty.
+     * Used as a fallback when the relationships graph is empty. Category
+     * groups have no backing relationship edges, so the typed metadata
+     * fields are always `null`.
      */
-    async loadCategoryGroups(): Promise<string[][]> {
+    async loadCategoryGroups(): Promise<TechTransferGroup[]> {
         const { rows } = await this.pool.query<{ canonical_name: string; category: string }>(
             `SELECT canonical_name, category
                FROM technology_ontology
@@ -287,9 +391,11 @@ export class TechnologyOntologyRepository {
                 byCategory.set(key, [r.canonical_name.toLowerCase()]);
             }
         }
-        const groups: string[][] = [];
+        const groups: TechTransferGroup[] = [];
         for (const members of byCategory.values()) {
-            if (members.length >= 2) groups.push(members);
+            if (members.length >= 2) {
+                groups.push({ members, transferClass: null, transferTier: null, transferBasis: null });
+            }
         }
         return groups;
     }
@@ -297,59 +403,44 @@ export class TechnologyOntologyRepository {
     /**
      * Compute connected components over the technology_relationships graph,
      * treating all relationship kinds as undirected edges. Returns each
-     * component of ≥2 nodes as an array of lowercased canonical names.
+     * component of ≥2 nodes as a `TechTransferGroup` — lowercased canonical
+     * members plus the typed transfer metadata (migration 120) read off the
+     * component's edges (`resolveComponentMetadata`); a component built only
+     * from legacy untyped `related_to` edges carries all-`null` metadata.
      *
      * When the table is empty (no relationships seeded yet) returns [] so
      * the caller can fall back to loadCategoryGroups().
      *
-     * Connected-components are found with a non-recursive union-find (safe
-     * for any realistic ontology size).
+     * Connected-components are found with a non-recursive BFS (safe for any
+     * realistic ontology size).
      */
-    async loadTransferGroups(): Promise<string[][]> {
-        const { rows } = await this.pool.query<{ from_name: string; to_name: string }>(
-            `SELECT f.canonical_name AS from_name, t.canonical_name AS to_name
+    async loadTransferGroups(): Promise<TechTransferGroup[]> {
+        const { rows } = await this.pool.query<{
+            from_name: string;
+            to_name: string;
+            transfer_class: string | null;
+            transfer_tier: TransferTier | null;
+            transfer_basis: string | null;
+        }>(
+            `SELECT f.canonical_name AS from_name, t.canonical_name AS to_name,
+                    r.transfer_class AS transfer_class, r.transfer_tier AS transfer_tier, r.transfer_basis AS transfer_basis
                FROM technology_relationships r
                JOIN technology_ontology f ON f.id = r.from_id
                JOIN technology_ontology t ON t.id = r.to_id`,
         );
         if (rows.length === 0) return [];
 
-        // Build adjacency map (undirected)
-        const adj = new Map<string, Set<string>>();
-        const addEdge = (a: string, b: string): void => {
-            const aLow = a.toLowerCase();
-            const bLow = b.toLowerCase();
-            if (!adj.has(aLow)) adj.set(aLow, new Set());
-            if (!adj.has(bLow)) adj.set(bLow, new Set());
-            // Non-null assertions safe: we just set them above
-            (adj.get(aLow) as Set<string>).add(bLow);
-            (adj.get(bLow) as Set<string>).add(aLow);
-        };
-        for (const r of rows) addEdge(r.from_name, r.to_name);
-
-        // BFS over adjacency map to find connected components
-        const visited = new Set<string>();
-        const components: string[][] = [];
-        for (const node of adj.keys()) {
-            if (visited.has(node)) continue;
-            const component: string[] = [];
-            const queue: string[] = [node];
-            visited.add(node);
-            while (queue.length > 0) {
-                const current = queue.shift() as string;
-                component.push(current);
-                const neighbours = adj.get(current);
-                if (neighbours !== undefined) {
-                    for (const neighbour of neighbours) {
-                        if (!visited.has(neighbour)) {
-                            visited.add(neighbour);
-                            queue.push(neighbour);
-                        }
-                    }
-                }
-            }
-            if (component.length >= 2) components.push(component);
-        }
-        return components;
+        const edges: TransferEdge[] = rows.map((r) => ({
+            from: r.from_name.toLowerCase(),
+            to: r.to_name.toLowerCase(),
+            transferClass: r.transfer_class,
+            transferTier: r.transfer_tier,
+            transferBasis: r.transfer_basis,
+        }));
+        const components = findConnectedComponents(buildAdjacency(edges));
+        return components.map((members) => ({
+            members,
+            ...resolveComponentMetadata(members, edges),
+        }));
     }
 }

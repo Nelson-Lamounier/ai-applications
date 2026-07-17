@@ -9,6 +9,7 @@
  * Pure function — no I/O. Returns '' when no groups intersect.
  */
 
+import type { TechTransferGroup } from '@bedrock/shared';
 import { resolveCanonical } from '../matching/keyword-match.js';
 
 /**
@@ -28,13 +29,13 @@ function formatGroupLine(members: string[]): string {
  * never dumped into the prompt.
  *
  * @param jdTools   - Raw JD tool/language/skill strings from the extraction
- * @param techGroups - Transfer groups: arrays of lowercased canonical tech names
+ * @param techGroups - Transfer groups (each carries lowercased canonical `.members`)
  * @param aliasMap  - Alias → canonical map (lowercased keys)
  * @returns Formatted context string, or '' when no groups intersect
  */
 export function formatTechTransferContext(
     jdTools: string[],
-    techGroups: string[][],
+    techGroups: TechTransferGroup[],
     aliasMap: Map<string, string>,
 ): string {
     if (jdTools.length === 0 || techGroups.length === 0) return '';
@@ -45,8 +46,8 @@ export function formatTechTransferContext(
     // Collect groups that intersect at least one JD canonical (dedupe by reference equality)
     const emittedGroups = new Set<string[]>();
     for (const group of techGroups) {
-        if (group.some((member) => jdCanonicals.has(member))) {
-            emittedGroups.add(group);
+        if (group.members.some((member) => jdCanonicals.has(member))) {
+            emittedGroups.add(group.members);
         }
     }
 

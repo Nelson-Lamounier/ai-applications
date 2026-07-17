@@ -27,7 +27,7 @@
  * Pure + deterministic. No LLM. FAIL-SAFE: no groups → no change.
  */
 
-import type { ResearchMatching, VerifiedMatch, PartialMatch } from '@bedrock/shared';
+import type { ResearchMatching, VerifiedMatch, PartialMatch, TechTransferGroup } from '@bedrock/shared';
 import { log } from '@bedrock/shared';
 import { buildReverseAliasMap, mentionsCanonical, padded } from '../matching/keyword-match.js';
 
@@ -155,7 +155,7 @@ function toPartial(vm: VerifiedMatch, hit: VendorGroupHit, reason: DemotionReaso
 export function demoteMisattributedVendors(
     matching: ResearchMatching,
     deps: {
-        techGroups: ReadonlyArray<ReadonlyArray<string>>;
+        techGroups: ReadonlyArray<TechTransferGroup>;
         techAliasMap: ReadonlyMap<string, string>;
         /** Per-repo current code tech — enables the absent-from-code demotion. Optional/fail-open. */
         codeTechByRepo?: ReadonlyMap<string, ReadonlySet<string>>;
@@ -169,13 +169,17 @@ export function demoteMisattributedVendors(
         return { matching, demotions: [] };
     }
     const code = allCodeTech(deps.codeTechByRepo);
+    // vendorGroupForSkill works over plain member arrays — unpack once here so
+    // the typed metadata (class/tier/basis) doesn't leak into that helper's
+    // (unchanged) contract.
+    const groupMembers = deps.techGroups.map((g) => g.members);
 
     const keptVerified: VerifiedMatch[] = [];
     const demotedPartials: PartialMatch[] = [];
     const demotions: VendorDemotion[] = [];
 
     for (const vm of matching.verifiedMatches) {
-        const hit = vendorGroupForSkill(vm.skill, deps.techGroups, deps.techAliasMap);
+        const hit = vendorGroupForSkill(vm.skill, groupMembers, deps.techAliasMap);
         const reason = hit ? demotionReason(vm, hit, code) : null;
         if (hit && reason) {
             demotedPartials.push(toPartial(vm, hit, reason, code));

@@ -25,7 +25,7 @@ import { Pool } from 'pg';
 import {
     RdsVectorStore, TitanEmbeddingProvider,
     SkillOntologyRepository, TechnologyOntologyRepository,
-    type RetrievalPrefilter,
+    type RetrievalPrefilter, type TechTransferGroup,
 } from '@bedrock/shared';
 import { buildRetrievalPrefilter } from '../../ats/context/retrieval-prefilter.js';
 import {
@@ -144,7 +144,7 @@ function makePool(): Pool {
 }
 
 interface OntologyMaps {
-    techGroups: string[][];
+    techGroups: TechTransferGroup[];
     techAliasToCanonical: Map<string, string>;
     skillAliasToCanonical: Map<string, string>;
 }
@@ -153,8 +153,8 @@ interface OntologyMaps {
 async function loadOntologyMaps(pool: Pool): Promise<OntologyMaps> {
     const techRepo = new TechnologyOntologyRepository(pool);
     const [transfer, category, techAlias, skillAlias] = await Promise.all([
-        techRepo.loadTransferGroups().catch(() => [] as string[][]),
-        techRepo.loadCategoryGroups().catch(() => [] as string[][]),
+        techRepo.loadTransferGroups().catch(() => [] as TechTransferGroup[]),
+        techRepo.loadCategoryGroups().catch(() => [] as TechTransferGroup[]),
         techRepo.loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
         new SkillOntologyRepository(pool).loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
     ]);

@@ -1,7 +1,12 @@
 /** @format */
+import type { TechTransferGroup } from '@bedrock/shared';
 import { buildRetrievalPrefilter } from '../retrieval-prefilter.js';
 
-const GROUPS: string[][] = [['openai', 'claude', 'anthropic', 'bedrock']];
+/** Untyped test fixture group — mirrors an ontology component with no relationship-graph metadata. */
+const asGroup = (members: string[]): TechTransferGroup =>
+    ({ members, transferClass: null, transferTier: null, transferBasis: null });
+
+const GROUPS: TechTransferGroup[] = [asGroup(['openai', 'claude', 'anthropic', 'bedrock'])];
 const ALIAS = new Map<string, string>([
     ['openai api', 'openai'],
     ['kubernetes', 'kubernetes'],

@@ -1,9 +1,14 @@
 /** @format */
+import type { TechTransferGroup } from '@bedrock/shared';
 import { formatTechTransferContext } from '../tech-transfer-context.js';
+
+/** Untyped test fixture group — mirrors an ontology component with no relationship-graph metadata. */
+const asGroup = (members: string[]): TechTransferGroup =>
+    ({ members, transferClass: null, transferTier: null, transferBasis: null });
 
 const aiProviderGroup = ['anthropic_claude', 'openai', 'aws_bedrock', 'chatgpt', 'codex'];
 const containerGroup = ['docker', 'podman', 'containerd'];
-const techGroups = [aiProviderGroup, containerGroup];
+const techGroups: TechTransferGroup[] = [asGroup(aiProviderGroup), asGroup(containerGroup)];
 
 const aliasMap = new Map<string, string>([
     ['openai api', 'openai'],
@@ -71,7 +76,7 @@ describe('formatTechTransferContext', () => {
 
     it('canonicalisation divergence fix: a punctuation-bearing JD term with no alias hit resolves via the shared normalizeTerm-based fallback (Node.js -> node_js), matching a group containing that canonical', () => {
         const runtimeGroup = ['node_js', 'deno', 'bun'];
-        const result = formatTechTransferContext(['Node.js'], [runtimeGroup], new Map());
+        const result = formatTechTransferContext(['Node.js'], [asGroup(runtimeGroup)], new Map());
         expect(result).toContain('## Technology Transferability');
         expect(result).toContain('deno');
         expect(result).toContain('bun');

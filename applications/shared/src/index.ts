@@ -351,6 +351,7 @@ export type { ResolutionOutcome, ResolutionScore } from './rds/index.js';
 export { backfillSkillEmbeddings } from './rds/index.js';
 export type { BackfillSkillEmbeddingsOptions } from './rds/index.js';
 export { TechnologyOntologyRepository }     from './rds/index.js';
+export type { TechTransferGroup, TransferTier } from './rds/index.js';
 export { SkillOntologyRepository }          from './rds/index.js';
 export { TechnologyEvidenceRepository }     from './rds/index.js';
 export { TechnologyCandidateRepository }    from './rds/index.js';

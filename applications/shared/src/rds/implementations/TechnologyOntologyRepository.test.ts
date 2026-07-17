@@ -74,7 +74,7 @@ describe('TechnologyOntologyRepository.loadCategoryGroups', () => {
         const groups = await repo.loadCategoryGroups();
         // Only the ai_platform group has ≥2 members; cloud_networking singleton is dropped
         expect(groups).toHaveLength(1);
-        expect(new Set(groups[0])).toEqual(new Set(['anthropic_claude', 'openai']));
+        expect(new Set(groups[0].members)).toEqual(new Set(['anthropic_claude', 'openai']));
         expect(pool.calls[0].sql).toContain('FROM technology_ontology');
         expect(pool.calls[0].sql).toContain('is_active = true');
         expect(pool.calls[0].sql).toContain("curation_level IN ('curated', 'auto_imported')");
@@ -95,7 +95,19 @@ describe('TechnologyOntologyRepository.loadCategoryGroups', () => {
         ]);
         const repo = new TechnologyOntologyRepository(pool as never);
         const groups = await repo.loadCategoryGroups();
-        expect(new Set(groups[0])).toEqual(new Set(['typescript', 'javascript']));
+        expect(new Set(groups[0].members)).toEqual(new Set(['typescript', 'javascript']));
+    });
+
+    it('transferClass/transferTier/transferBasis are always null — category groups carry no relationship typing', async () => {
+        const pool = fakePool([
+            { canonical_name: 'anthropic_claude', category: 'ai_platform' },
+            { canonical_name: 'openai',            category: 'ai_platform' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadCategoryGroups();
+        expect(groups[0].transferClass).toBeNull();
+        expect(groups[0].transferTier).toBeNull();
+        expect(groups[0].transferBasis).toBeNull();
     });
 });
 
@@ -107,30 +119,40 @@ describe('TechnologyOntologyRepository.loadTransferGroups', () => {
         expect(pool.calls[0].sql).toContain('FROM technology_relationships');
     });
 
+    it('selects the typed transfer columns from technology_relationships (migration 120)', async () => {
+        const pool = fakePool([]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        await repo.loadTransferGroups();
+        const sql = pool.calls[0].sql;
+        expect(sql).toContain('transfer_class');
+        expect(sql).toContain('transfer_tier');
+        expect(sql).toContain('transfer_basis');
+    });
+
     it('merges a triangle of edges into one component', async () => {
         // claude↔openai, bedrock↔openai, claude↔bedrock — should all merge
         const pool = fakePool([
-            { from_name: 'anthropic_claude', to_name: 'openai' },
-            { from_name: 'aws_bedrock',      to_name: 'openai' },
-            { from_name: 'anthropic_claude', to_name: 'aws_bedrock' },
+            { from_name: 'anthropic_claude', to_name: 'openai',      transfer_class: null, transfer_tier: null, transfer_basis: null },
+            { from_name: 'aws_bedrock',      to_name: 'openai',      transfer_class: null, transfer_tier: null, transfer_basis: null },
+            { from_name: 'anthropic_claude', to_name: 'aws_bedrock', transfer_class: null, transfer_tier: null, transfer_basis: null },
         ]);
         const repo = new TechnologyOntologyRepository(pool as never);
         const groups = await repo.loadTransferGroups();
         expect(groups).toHaveLength(1);
-        expect(new Set(groups[0])).toEqual(
+        expect(new Set(groups[0].members)).toEqual(
             new Set(['anthropic_claude', 'openai', 'aws_bedrock']),
         );
     });
 
     it('keeps disconnected components separate', async () => {
         const pool = fakePool([
-            { from_name: 'anthropic_claude', to_name: 'openai' },
-            { from_name: 'typescript',       to_name: 'javascript' },
+            { from_name: 'anthropic_claude', to_name: 'openai',    transfer_class: null, transfer_tier: null, transfer_basis: null },
+            { from_name: 'typescript',       to_name: 'javascript', transfer_class: null, transfer_tier: null, transfer_basis: null },
         ]);
         const repo = new TechnologyOntologyRepository(pool as never);
         const groups = await repo.loadTransferGroups();
         expect(groups).toHaveLength(2);
-        const sets = groups.map(g => new Set(g));
+        const sets = groups.map(g => new Set(g.members));
         const claudeGroup = sets.find(s => s.has('anthropic_claude'));
         const tsGroup = sets.find(s => s.has('typescript'));
         expect(claudeGroup).toEqual(new Set(['anthropic_claude', 'openai']));
@@ -139,11 +161,51 @@ describe('TechnologyOntologyRepository.loadTransferGroups', () => {
 
     it('lowercases canonical names', async () => {
         const pool = fakePool([
-            { from_name: 'Anthropic_Claude', to_name: 'OpenAI' },
+            { from_name: 'Anthropic_Claude', to_name: 'OpenAI', transfer_class: null, transfer_tier: null, transfer_basis: null },
         ]);
         const repo = new TechnologyOntologyRepository(pool as never);
         const groups = await repo.loadTransferGroups();
-        expect(new Set(groups[0])).toEqual(new Set(['anthropic_claude', 'openai']));
+        expect(new Set(groups[0].members)).toEqual(new Set(['anthropic_claude', 'openai']));
+    });
+
+    it('carries typed metadata (class/tier/basis) from a typed edge onto its component', async () => {
+        const pool = fakePool([
+            { from_name: 'terraform', to_name: 'aws_cdk', transfer_class: 'iac-declarative', transfer_tier: 'full', transfer_basis: 'Declarative infrastructure-as-code transfers directly' },
+            { from_name: 'aws_cdk',   to_name: 'terraform', transfer_class: 'iac-declarative', transfer_tier: 'full', transfer_basis: 'Declarative infrastructure-as-code transfers directly' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(groups).toHaveLength(1);
+        expect(groups[0].transferClass).toBe('iac-declarative');
+        expect(groups[0].transferTier).toBe('full');
+        expect(groups[0].transferBasis).toBe('Declarative infrastructure-as-code transfers directly');
+    });
+
+    it('untyped (legacy) edges produce transferClass/transferTier/transferBasis: null — backwards compatible', async () => {
+        const pool = fakePool([
+            { from_name: 'anthropic_claude', to_name: 'openai', transfer_class: null, transfer_tier: null, transfer_basis: null },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(groups[0].transferClass).toBeNull();
+        expect(groups[0].transferTier).toBeNull();
+        expect(groups[0].transferBasis).toBeNull();
+    });
+
+    it('when a component mixes disagreeing non-null transfer_class values, the FIRST wins and a warning is logged once', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const pool = fakePool([
+            { from_name: 'a', to_name: 'b', transfer_class: 'class-one', transfer_tier: 'full',    transfer_basis: 'basis-one' },
+            { from_name: 'b', to_name: 'c', transfer_class: 'class-two', transfer_tier: 'partial', transfer_basis: 'basis-two' },
+        ]);
+        const repo = new TechnologyOntologyRepository(pool as never);
+        const groups = await repo.loadTransferGroups();
+        expect(groups).toHaveLength(1);
+        expect(groups[0].transferClass).toBe('class-one');
+        expect(groups[0].transferTier).toBe('full');
+        expect(groups[0].transferBasis).toBe('basis-one');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        warnSpy.mockRestore();
     });
 });
 

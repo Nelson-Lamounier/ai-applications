@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter, StrategistAnalysisResult, AgentResult, SkillEvidenceEntry } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter, StrategistAnalysisResult, AgentResult, SkillEvidenceEntry, TechTransferGroup } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -611,7 +611,7 @@ function buildQuerySkillResolver(pool: Pool): (phrase: string) => Promise<string
 async function buildQueryRetrievalPrefilter(
     pool: Pool,
     jdExtraction: JdSignal,
-    techGroups: ReadonlyArray<ReadonlyArray<string>>,
+    techGroups: ReadonlyArray<TechTransferGroup>,
     aliasToCanonical: ReadonlyMap<string, string>,
 ): Promise<ReturnType<typeof buildRetrievalPrefilter> | undefined> {
     if (process.env['RETRIEVAL_PREFILTER'] !== 'on') return undefined;
@@ -2298,8 +2298,8 @@ export async function main(): Promise<void> {
         // Prefer the explicit relationship graph; fall back to category groups when sparse.
         const techRepo = new TechnologyOntologyRepository(pool);
         const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths, evidenceTopology, canonicalToCodeFiles] = await Promise.all([
-            techRepo.loadTransferGroups().catch(() => [] as string[][]),
-            techRepo.loadCategoryGroups().catch(() => [] as string[][]),
+            techRepo.loadTransferGroups().catch(() => [] as TechTransferGroup[]),
+            techRepo.loadCategoryGroups().catch(() => [] as TechTransferGroup[]),
             techRepo.loadAliasMap().catch(() => new Map<string, string>()),
             techRepo.loadRepoCodeTech(env.userId).catch(() => new Map<string, Set<string>>()),
             techRepo.loadSucceedsEdges().catch(() => new Map<string, Set<string>>()),
@@ -2309,7 +2309,13 @@ export async function main(): Promise<void> {
             techRepo.loadRepoEvidenceTopology(env.userId).catch(() => new Map<string, Record<string, unknown>>()),
             techRepo.loadCanonicalToCodeFiles(env.userId).catch(() => new Map<string, string[]>()),
         ]);
-        const techGroups = techTransferGroups.length > 0 ? techTransferGroups : techCategoryGroups;
+        // Typed groups (class/tier/basis) feed the 3 consumers that read the metadata
+        // directly (tech-transfer context, retrieval prefilter, vendor-provenance guard);
+        // the plain member-name shape (`techGroups`) keeps every other downstream consumer
+        // (skill-evidence ledger, ATS gate matching) unchanged.
+        const techTransferOrCategoryGroups: TechTransferGroup[] =
+            techTransferGroups.length > 0 ? techTransferGroups : techCategoryGroups;
+        const techGroups: string[][] = techTransferOrCategoryGroups.map((g) => g.members);
 
         // A5 — build grounded tech-transfer context for the matcher persona.
         // Lists only the groups relevant to THIS JD's tools (not the full ontology).
@@ -2317,7 +2323,7 @@ export async function main(): Promise<void> {
             ...jdExtraction.technologyInventory.tools,
             ...jdExtraction.technologyInventory.languages,
         ];
-        const techTransferContext = formatTechTransferContext(jdTools, techGroups, techAliasMap);
+        const techTransferContext = formatTechTransferContext(jdTools, techTransferOrCategoryGroups, techAliasMap);
         // Doc-vs-code drift + repo identity: the authoritative current code stack per repo
         // AND each repo's deterministic profile (cdk-infra/k8s-platform/…, what it provisions).
         // Folded into one grounding block so the matcher prefers code over stale docs and
@@ -2329,7 +2335,7 @@ export async function main(): Promise<void> {
         // Filter-then-rank pre-filter (Increment 2): transfer-aware tech/skill + the
         // structural fork/junk gates over the chunk metadata stamp. Env-gated so it
         // ships dark; absent ⇒ today's pure-vector retrieval (fail-open).
-        const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techGroups, aliasToCanonical);
+        const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techTransferOrCategoryGroups, aliasToCanonical);
 
         const research = await stageSeconds(pipelineStageSeconds, 'research', () =>
             executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock));
@@ -2350,7 +2356,7 @@ export async function main(): Promise<void> {
         // while the real stack is Bedrock/Anthropic) was VERIFIED by the LLM → demote to a
         // transferable partialMatch so it is never written as first-person production work.
         // Runs BEFORE the ledger + strategist so the correction propagates to both.
-        const { matching: vendorGuarded, demotions } = demoteMisattributedVendors(research.data, { techGroups, techAliasMap, codeTechByRepo });
+        const { matching: vendorGuarded, demotions } = demoteMisattributedVendors(research.data, { techGroups: techTransferOrCategoryGroups, techAliasMap, codeTechByRepo });
         if (demotions.length > 0) {
             log.warn({
                 pipelineRunId: env.pipelineRunId,
