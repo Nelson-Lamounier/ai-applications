@@ -1,7 +1,7 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
 import { summariseCommitChange, cyclomaticComplexityDelta, buildFileChangeImpact, percentChange, buildChangeImpactReport } from '../change-metrics.js';
-import type { CommitDetail } from '../../../ingestion/interfaces/IRepoAdapter.js';
+import type { CommitDetail } from '../../../repo-entities.js';
 import type { FileChange, PerfMetric } from '../../../rds/implementations/RdsRepoActivityStore.js';
 
 const detail = (over: Partial<CommitDetail> = {}): CommitDetail => ({

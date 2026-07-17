@@ -1,4 +1,4 @@
-import type { ExtractedRepoData } from '../agents/ProfileExtractor.js';
+import type { ExtractedRepoData } from '../narrative/ProfileExtractor.js';
 
 /**
  * Render each extracted lifecycle event to one retrievable sentence, e.g.

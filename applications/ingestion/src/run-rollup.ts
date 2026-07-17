@@ -31,10 +31,10 @@ import {
 } from '@bedrock/shared';
 import { Pool } from 'pg';
 
-import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
-import { DirectionSynthesizer } from './agents/DirectionSynthesizer.js';
-import { ReconciliationSynthesizer } from './agents/ReconciliationSynthesizer.js';
-import { DiagnosticNarrator } from './agents/DiagnosticNarrator.js';
+import { MirrorRevealSynthesizer } from './narrative/MirrorRevealSynthesizer.js';
+import { DirectionSynthesizer } from './narrative/DirectionSynthesizer.js';
+import { ReconciliationSynthesizer } from './narrative/ReconciliationSynthesizer.js';
+import { DiagnosticNarrator } from './narrative/DiagnosticNarrator.js';
 import { refreshUserProfileRollup } from './util/refreshUserProfileRollup.js';
 
 const obs = bootstrapK8sObservability({ serviceName: 'rollup-refresh' });

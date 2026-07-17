@@ -11,6 +11,7 @@ on:
     branches: [develop]
     paths:
       - "applications/tech-extractor/**"
+      - "applications/ingestion/**"
       - "applications/shared/**"
       - ".github/workflows/deploy-tech-extractor.yml"
   workflow_dispatch:

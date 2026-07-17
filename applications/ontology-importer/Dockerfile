@@ -13,7 +13,6 @@ COPY applications/tsconfig.json ./applications/
 # ingestion Dockerfile's full manifest copy; add ontology-importer).
 COPY applications/shared/package.json         ./applications/shared/
 COPY applications/ontology-importer/package.json ./applications/ontology-importer/
-COPY applications/tech-extractor/package.json ./applications/tech-extractor/
 COPY applications/ingestion/package.json      ./applications/ingestion/
 COPY api/public-api/package.json              ./api/public-api/
 COPY applications/article-pipeline/package.json  ./applications/article-pipeline/

@@ -6,7 +6,7 @@ sources:
   - applications/ingestion/src/run-ingestion.ts
   - applications/job-strategist/src/run-pipeline.ts
   - applications/article-pipeline/src/run-pipeline.ts
-  - applications/tech-extractor/src/run-tech-extract.ts
+  - applications/ingestion/src/run-tech-extract.ts
   - applications/self-healing/src/index.ts
   - applications/chatbot-public/src/index.ts
 created: 2026-05-27
@@ -150,7 +150,7 @@ infrastructure must be alive before the failure can be recorded.
 | Service | Entry point | Variant |
 | :- | :- | :- |
 | ingestion | [applications/ingestion/src/run-ingestion.ts](../../applications/ingestion/src/run-ingestion.ts) | K8s single-pass |
-| tech-extractor | [applications/tech-extractor/src/run-tech-extract.ts](../../applications/tech-extractor/src/run-tech-extract.ts) | K8s single-pass |
+| tech-extractor | [applications/ingestion/src/run-tech-extract.ts](../../applications/ingestion/src/run-tech-extract.ts) | K8s single-pass |
 | ontology-importer | [applications/ontology-importer/src/run-import.ts](../../applications/ontology-importer/src/run-import.ts) | K8s single-pass |
 | job-strategist | [applications/job-strategist/src/run-pipeline.ts](../../applications/job-strategist/src/run-pipeline.ts) | K8s pipeline |
 | article-pipeline | [applications/article-pipeline/src/run-pipeline.ts](../../applications/article-pipeline/src/run-pipeline.ts) | K8s pipeline |
@@ -162,6 +162,12 @@ infrastructure must be alive before the failure can be recorded.
 
 Ten composition points across nine services. Every one follows the
 same scaffold modulo K8s-vs-Lambda lifetime differences.
+
+The `ingestion` and `tech-extractor` rows both point into the
+`applications/ingestion` source tree (one workspace, two composition
+roots) — `applications/tech-extractor/` holds only the Dockerfile
+that builds the second image from that tree; see
+[docs/projects/tech-extractor.md](../projects/tech-extractor.md#repository-layout).
 
 ## Variants
 
@@ -254,4 +260,7 @@ Evidence trail (auto-generated):
 - Source: applications/tech-extractor/src/run-tech-extract.ts (lines 1-50 on 2026-05-27)
 - Source: applications/self-healing/src/index.ts (read in prior session)
 - Source: applications/chatbot-public/src/index.ts (referenced by bedrock-rag-surface concept doc)
+- Path update (C0 ingestion consolidation, 2026-07-17): run-tech-extract.ts
+  moved to applications/ingestion/src/run-tech-extract.ts; re-verified against
+  the working tree on 2026-07-17.
 -->

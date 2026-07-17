@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 # (dockerfile frontend >= 1.4 required for `COPY --from ... --chmod`)
 # ── Stage 1: Build ───────────────────────────────────────────────────────────
+# Sources live in the ingestion workspace (applications/ingestion/src/facts +
+# applications/ingestion/src/run-tech-extract.ts) — this image is a separate
+# deployable built from that shared workspace, not a workspace of its own.
 FROM node:22-alpine AS builder
 WORKDIR /app
 RUN corepack enable && corepack prepare yarn@4.12.0 --activate
@@ -10,11 +13,10 @@ COPY tsconfig.base.json ./
 COPY applications/tsconfig.json ./applications/
 
 # Sibling-workspace manifests required for lockfile resolution (mirror the
-# ingestion Dockerfile's full manifest copy; add tech-extractor).
+# ingestion Dockerfile's full manifest copy).
 COPY applications/shared/package.json         ./applications/shared/
-COPY applications/tech-extractor/package.json ./applications/tech-extractor/
-COPY applications/ontology-importer/package.json ./applications/ontology-importer/
 COPY applications/ingestion/package.json      ./applications/ingestion/
+COPY applications/ontology-importer/package.json ./applications/ontology-importer/
 COPY api/public-api/package.json              ./api/public-api/
 COPY applications/article-pipeline/package.json  ./applications/article-pipeline/
 COPY applications/job-strategist/package.json    ./applications/job-strategist/
@@ -29,18 +31,18 @@ COPY infra/package.json                          ./infra/
 COPY mcp-servers/tucaken-smoke/package.json     ./mcp-servers/tucaken-smoke/
 RUN yarn install --immutable
 
-COPY applications/shared/tsconfig.json         ./applications/shared/
-COPY applications/shared/src                   ./applications/shared/src/
-COPY applications/tech-extractor/tsconfig.json ./applications/tech-extractor/
-COPY applications/tech-extractor/src           ./applications/tech-extractor/src/
+COPY applications/shared/tsconfig.json    ./applications/shared/
+COPY applications/shared/src              ./applications/shared/src/
+COPY applications/ingestion/tsconfig.json ./applications/ingestion/
+COPY applications/ingestion/src           ./applications/ingestion/src/
 
-RUN node_modules/.bin/tsc -b applications/shared applications/tech-extractor --force \
- || [ -f applications/tech-extractor/dist/run-tech-extract.js ]
+RUN node_modules/.bin/tsc -b applications/shared applications/ingestion --force \
+ || [ -f applications/ingestion/dist/run-tech-extract.js ]
 
 # Patch @bedrock/shared main -> dist for runtime require().
 RUN node -e "const f='applications/shared/package.json';const p=require('./'+f);p.main='dist/index.js';p.types='dist/index.d.ts';require('fs').writeFileSync(f,JSON.stringify(p,null,2));"
 
-RUN yarn workspaces focus @bedrock/shared @bedrock/tech-extractor --production
+RUN yarn workspaces focus @bedrock/shared @bedrock/ingestion --production
 
 # ── Stage 2: Syft binary ─────────────────────────────────────────────────────
 # Official image ships a static binary that runs on alpine/musl.
@@ -56,8 +58,8 @@ WORKDIR /app
 # be able to modify its own code/deps at runtime (defense-in-depth). Directories
 # use 0555 (traversable + readable, no write); standalone files use 0444.
 # The only writable path at runtime is the /work emptyDir mounted by the Job.
-COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/tech-extractor/dist ./applications/tech-extractor/dist
-COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/tech-extractor/package.json ./applications/tech-extractor/
+COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/ingestion/dist ./applications/ingestion/dist
+COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/ingestion/package.json ./applications/ingestion/
 COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/applications/shared/dist ./applications/shared/dist
 COPY --from=builder --chown=appuser:appgroup --chmod=0444 /app/applications/shared/package.json ./applications/shared/
 COPY --from=builder --chown=appuser:appgroup --chmod=0555 /app/node_modules ./node_modules
@@ -71,5 +73,5 @@ ENV SYFT_BIN=/usr/local/bin/syft
 # AST pass, COPY any extra .wasm grammar files here. (Phase 1 regex pass needs none.)
 
 USER appuser
-WORKDIR /app/applications/tech-extractor
+WORKDIR /app/applications/ingestion
 CMD ["node", "dist/run-tech-extract.js"]

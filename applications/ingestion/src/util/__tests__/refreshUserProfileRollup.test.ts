@@ -1,11 +1,11 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { refreshUserProfileRollup } from '../refreshUserProfileRollup.js';
 import type { IUserProfileRollupRepository } from '@bedrock/shared';
-import type { MirrorRevealSynthesizer } from '../../agents/MirrorRevealSynthesizer.js';
-import type { DirectionSynthesizer } from '../../agents/DirectionSynthesizer.js';
-import type { ReconciliationSynthesizer } from '../../agents/ReconciliationSynthesizer.js';
+import type { MirrorRevealSynthesizer } from '../../narrative/MirrorRevealSynthesizer.js';
+import type { DirectionSynthesizer } from '../../narrative/DirectionSynthesizer.js';
+import type { ReconciliationSynthesizer } from '../../narrative/ReconciliationSynthesizer.js';
 import type { ICareerHistoryReadRepository } from '@bedrock/shared';
-import type { DiagnosticNarrator } from '../../agents/DiagnosticNarrator.js';
+import type { DiagnosticNarrator } from '../../narrative/DiagnosticNarrator.js';
 import type { IDiagnosticInputsReadRepository, DiagnosticInputs } from '@bedrock/shared';
 
 const inputsOk: DiagnosticInputs = {

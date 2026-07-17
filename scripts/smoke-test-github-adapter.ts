@@ -9,7 +9,7 @@
  *   MAX_COMMITS=50              (commits to pull; default 50)
  */
 
-import { GitHubAdapter } from '../applications/shared/src/ingestion/implementations/GitHubAdapter.js';
+import { GitHubAdapter } from '../applications/ingestion/src/acquisition/GitHubAdapter.js';
 
 async function main(): Promise<void> {
     const token = process.env['GITHUB_TOKEN'];

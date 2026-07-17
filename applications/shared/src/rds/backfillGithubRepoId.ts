@@ -41,7 +41,7 @@
 
 import type { Pool } from 'pg';
 
-import { RepoNotFoundError } from '../ingestion/implementations/github-errors.js';
+import { RepoNotFoundError } from '../github-errors.js';
 
 /** Minimal adapter surface this backfill needs (a real GitHubAdapter satisfies it). */
 export interface ResolveByNameAdapter {

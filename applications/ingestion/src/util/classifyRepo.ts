@@ -1,4 +1,4 @@
-import type { ProfileInputBundle } from '../agents/ProfileInputCollector.js';
+import type { ProfileInputBundle } from '../narrative/ProfileInputCollector.js';
 
 export type RepoClassification =
     | 'project'

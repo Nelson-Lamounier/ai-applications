@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import type { ExtractedRepoData } from '../../agents/ProfileExtractor.js';
+import type { ExtractedRepoData } from '../../narrative/ProfileExtractor.js';
 import { renderLifecycleChunks } from '../lifecycle-chunks.js';
 
 function withLifecycle(lifecycle: ExtractedRepoData['lifecycle']): ExtractedRepoData {

@@ -24,7 +24,6 @@
  */
 
 import {
-    GitHubAdapter,
     RdsVectorStore,
     RdsSyncStateRepository,
     TitanEmbeddingProvider,
@@ -34,10 +33,6 @@ import {
     SkillEmbeddingResolver,
     PhraseSkillResolver,
     backfillSkillEmbeddings,
-    IngestionPipeline,
-    FileFilter,
-    ChunkerRegistry,
-    RepoIngestionOrchestrator,
     bootstrapK8sObservability,
     pushFinalMetrics,
     RdsUserProfileRollupRepository,
@@ -49,20 +44,25 @@ import {
     TechSkillMapRepository,
     reconcileRepoName,
 } from '@bedrock/shared';
+import { GitHubAdapter } from './acquisition/GitHubAdapter.js';
+import { FileFilter } from './knowledge/FileFilter.js';
+import { ChunkerRegistry } from './knowledge/ChunkerRegistry.js';
+import { IngestionPipeline } from './knowledge/IngestionPipeline.js';
+import { RepoIngestionOrchestrator } from './RepoIngestionOrchestrator.js';
 import { Counter, Histogram } from 'prom-client';
 import { Pool } from 'pg';
 
 import { createHash } from 'node:crypto';
 import { parseEnv } from './env.js';
-import { ProfileInputCollector } from './agents/ProfileInputCollector.js';
-import type { ProfileInputBundle } from './agents/ProfileInputCollector.js';
+import { ProfileInputCollector } from './narrative/ProfileInputCollector.js';
+import type { ProfileInputBundle } from './narrative/ProfileInputCollector.js';
 import type { RepoClassification } from './util/classifyRepo.js';
-import { ProfileExtractor, sha256 } from './agents/ProfileExtractor.js';
-import { RetrievalProbe } from './agents/RetrievalProbe.js';
-import { MirrorRevealSynthesizer } from './agents/MirrorRevealSynthesizer.js';
-import { DirectionSynthesizer } from './agents/DirectionSynthesizer.js';
-import { ReconciliationSynthesizer } from './agents/ReconciliationSynthesizer.js';
-import { DiagnosticNarrator } from './agents/DiagnosticNarrator.js';
+import { ProfileExtractor, sha256 } from './narrative/ProfileExtractor.js';
+import { RetrievalProbe } from './narrative/RetrievalProbe.js';
+import { MirrorRevealSynthesizer } from './narrative/MirrorRevealSynthesizer.js';
+import { DirectionSynthesizer } from './narrative/DirectionSynthesizer.js';
+import { ReconciliationSynthesizer } from './narrative/ReconciliationSynthesizer.js';
+import { DiagnosticNarrator } from './narrative/DiagnosticNarrator.js';
 import { FileFetchCache } from './util/FileFetchCache.js';
 import { classifyRepo } from './util/classifyRepo.js';
 import { renderLifecycleChunks } from './util/lifecycle-chunks.js';
@@ -74,10 +74,10 @@ import { applyPostSyncProjectAction } from './util/applyPostSyncProjectAction.js
 import { normalizeEnrichmentMode } from './util/enrichmentMode.js';
 import { friendlyIngestionError } from './friendly-error.js';
 import type { RepoFile } from '@bedrock/shared';
-import { RepositoryProfileRepository } from './repositories/RepositoryProfileRepository.js';
-import { RepositoryProfileEmbeddingsRepository } from './repositories/RepositoryProfileEmbeddingsRepository.js';
-import type { ExtractedRepoData } from './agents/ProfileExtractor.js';
-import type { ProfileEmbeddingRow } from './repositories/RepositoryProfileEmbeddingsRepository.js';
+import { RepositoryProfileRepository } from './persistence/RepositoryProfileRepository.js';
+import { RepositoryProfileEmbeddingsRepository } from './persistence/RepositoryProfileEmbeddingsRepository.js';
+import type { ExtractedRepoData } from './narrative/ProfileExtractor.js';
+import type { ProfileEmbeddingRow } from './persistence/RepositoryProfileEmbeddingsRepository.js';
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import {
     profileCollectDurationSeconds,

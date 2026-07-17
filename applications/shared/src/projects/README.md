@@ -85,10 +85,10 @@ the tucaken app (separate repository).
 
 ## Source of the data and how it is ingested
 
-The raw source is the **GitHub REST API**. The ingestion pipeline
-(`applications/shared/src/ingestion` + the `applications/ingestion` app) runs
-as a one-shot Kubernetes Job per repo (`run-ingestion.ts`), authenticated
-with a `GITHUB_TOKEN` personal access token (`contents:read`). It fetches:
+The raw source is the **GitHub REST API**. The ingestion pipeline (the
+`applications/ingestion` app) runs as a one-shot Kubernetes Job per repo
+(`run-ingestion.ts`), authenticated with a `GITHUB_TOKEN` personal access
+token (`contents:read`). It fetches:
 
 - the full file tree (Git Trees API, `recursive=1`) and file contents (Blobs
   API),

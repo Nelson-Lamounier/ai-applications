@@ -8,7 +8,9 @@
  *   types        — pure domain value types
  *   interfaces   — contracts (IVectorStore, ISyncStateRepository, IEmbeddingProvider)
  *   implementations — concrete AWS-backed classes (Aurora, Titan)
- *   pipeline     — IngestionPipeline orchestrator
+ *
+ * IngestionPipeline itself lives in applications/ingestion/src/knowledge/ —
+ * this barrel only exports the interfaces/helpers it consumes.
  */
 
 // Domain types
@@ -45,16 +47,13 @@ export type { BedrockChunkEnricherConfig } from './implementations/BedrockChunkE
 // Runtime credential hydration — SSM host + Secrets Manager password
 export { hydrateRdsEnv }             from './hydrate-rds-env.js';
 
-// Pipeline
-export { IngestionPipeline }          from './pipeline/IngestionPipeline.js';
-export type { IngestionPipelineOptions } from './pipeline/IngestionPipeline.js';
-
 // Quality
 export { computeKbQuality } from './quality/computeKbQuality.js';
 export type {
     KbQualityFactor,
     KbQualityBreakdown,
     KbQualityResult,
+    KbQualityInput,
 } from './quality/computeKbQuality.js';
 
 // Profile

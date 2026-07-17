@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { scoreProfile } from '../scoreProfile.js';
-import type { ExtractedRepoData } from '../../agents/ProfileExtractor.js';
-import type { ProfileInputBundle } from '../../agents/ProfileInputCollector.js';
+import type { ExtractedRepoData } from '../../narrative/ProfileExtractor.js';
+import type { ProfileInputBundle } from '../../narrative/ProfileInputCollector.js';
 
 function makeExtracted(overrides: Partial<ExtractedRepoData> = {}): ExtractedRepoData {
     return {

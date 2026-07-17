@@ -48,7 +48,7 @@ a Job that fetches, extracts, persists, and exits.
 
 Set by the K8s Job spec (sibling repos:
 `kubernetes-platform` / `kubernetes-bootstrap`)
-([applications/tech-extractor/src/env.ts:20-35](../../applications/tech-extractor/src/env.ts#L20-L35)):
+([applications/ingestion/src/env-tech-extract.ts:33-51](../../applications/ingestion/src/env-tech-extract.ts#L33-L51)):
 
 | Variable | Default | Purpose |
 | :- | :- | :- |
@@ -64,7 +64,7 @@ Set by the K8s Job spec (sibling repos:
 
 - **GitHub archive API.** Single tarball fetch per Job, follows the
   302 to codeload, enforces `Content-Length` against `MAX_TARBALL_BYTES`
-  ([applications/tech-extractor/src/tarball/fetchTarball.ts:10-30](../../applications/tech-extractor/src/tarball/fetchTarball.ts#L10-L30)).
+  ([applications/ingestion/src/acquisition/tarball/fetchTarball.ts:24-43](../../applications/ingestion/src/acquisition/tarball/fetchTarball.ts#L24-L43)).
 - **Postgres reference data.** `technology_aliases`, `ontology_version`
   loaded once per Job by
   [TechnologyOntologyRepository](../../applications/shared/src/rds/implementations/TechnologyOntologyRepository.ts).
@@ -81,37 +81,54 @@ Set by the K8s Job spec (sibling repos:
 - **`technology_parity_runs` row.** One per Job (watchdog; LLM
   comparison now always shows zero post-decommission).
 - **Prom metrics** (pushed to Pushgateway at end of Job):
-  `tech_extractor_layer1_recall{repo}` Gauge,
   `tech_extractor_extractor_failed_total{extractor}` Counter
-  ([applications/tech-extractor/src/run-tech-extract.ts:28-40](../../applications/tech-extractor/src/run-tech-extract.ts#L28-L40)).
+  ([applications/ingestion/src/run-tech-extract.ts:43-46](../../applications/ingestion/src/run-tech-extract.ts#L43-L46)).
+  The earlier `tech_extractor_layer1_recall` gauge was removed alongside
+  the decommissioned LLM parity lane — it compared against a
+  permanently-empty set once chunk-enrichment tech extraction was
+  decommissioned (see the same file, lines 210-217).
 
 ## Repository layout
 
+Since the C0 ingestion consolidation, `run-tech-extract.ts` and every
+module it depends on live in the `applications/ingestion` source tree
+(one workspace, `@bedrock/ingestion`) alongside the ingestion Job code.
+`applications/tech-extractor/` now holds only the `Dockerfile` that
+builds the tech-extract image from that shared tree.
+
 ```text
-applications/tech-extractor/
+applications/ingestion/
 ├── src/
-│   ├── run-tech-extract.ts            ← Job entrypoint
-│   ├── env.ts                         ← env-var contract
-│   ├── orchestrator/
-│   │   └── TechExtractOrchestrator.ts ← Promise.allSettled fan-out
-│   ├── extractors/
-│   │   ├── Extractor.ts               ← interface
-│   │   ├── SyftExtractor.ts           ← SBOM / dependency manifest
-│   │   ├── TreeSitterExtractor.ts     ← imports + SDK call patterns
-│   │   ├── CommentExtractor.ts        ← code-prose range extraction
-│   │   └── iac/                       ← 10 parsers + 2 universal scanners
-│   ├── tarball/
-│   │   ├── fetchTarball.ts            ← GitHub archive + max-size cap
-│   │   └── safeExtract.ts             ← symlink/path-traversal guard
-│   ├── util/fileWalk.ts               ← text-file enumeration
-│   ├── parity/ParityReporter.ts       ← watchdog (post-decommission)
-│   └── config/sdkCallPatterns.json    ← regex patterns by language
-├── parity/                            ← measurement artefacts (CSVs + analysis)
-├── specs/                             ← design specs
-├── Dockerfile
+│   ├── run-tech-extract.ts             ← tech-extract Job entrypoint
+│   ├── env-tech-extract.ts             ← tech-extract env-var contract
+│   ├── acquisition/tarball/
+│   │   ├── fetchTarball.ts             ← GitHub archive + max-size cap
+│   │   └── safeExtract.ts              ← symlink/path-traversal guard
+│   └── facts/
+│       ├── TechExtractOrchestrator.ts  ← Promise.allSettled fan-out
+│       ├── extractors/
+│       │   ├── Extractor.ts            ← interface
+│       │   ├── SyftExtractor.ts        ← SBOM / dependency manifest
+│       │   ├── GithubSbomExtractor.ts  ← GitHub dependency-graph SBOM (optional lane)
+│       │   ├── TreeSitterExtractor.ts  ← imports + SDK call patterns
+│       │   ├── CommentExtractor.ts     ← code-prose range extraction
+│       │   ├── DsaPatternExtractor.ts  ← DSA evidence-signal lane
+│       │   ├── AiPatternExtractor.ts   ← AI evidence-signal lane
+│       │   └── iac/                    ← IaC/manifest parsers + scanners
+│       ├── manifests/collectDirectDeps.ts ← direct-dependency collection
+│       ├── parity/ParityReporter.ts    ← watchdog (post-decommission)
+│       ├── util/fileWalk.ts            ← text-file enumeration
+│       └── config/sdkCallPatterns.json ← regex patterns by language
+├── docs/tech-extractor/                ← parity artefacts + specs carried over from the move
+├── Dockerfile                          ← ingestion image (CMD dist/run-ingestion.js)
 ├── jest.config.js
-├── package.json
+├── package.json                        (@bedrock/ingestion)
 └── tsconfig.json
+
+applications/tech-extractor/
+└── Dockerfile                          ← tech-extract image, built from the
+                                           applications/ingestion tree above
+                                           (CMD dist/run-tech-extract.js)
 ```
 
 ## How to run locally
@@ -120,20 +137,21 @@ Local invocation requires a live ontology database. With one
 available (or via the smoke harness):
 
 ```bash
-yarn workspace @bedrock/tech-extractor build
-yarn workspace @bedrock/tech-extractor test
-yarn workspace @bedrock/tech-extractor lint   # tsc --noEmit only
+yarn workspace @bedrock/ingestion build
+yarn workspace @bedrock/ingestion test
+yarn workspace @bedrock/ingestion typecheck   # tsc --noEmit only
 
 # Single repo extraction (requires env)
 USER_ID=test REPO_FULL_NAME=owner/repo GITHUB_TOKEN=$GH_TOKEN \
   PG_HOST=... PG_PORT=5432 PG_DATABASE=... PG_USER=... PG_PASSWORD=... \
-  node applications/tech-extractor/dist/run-tech-extract.js
+  node applications/ingestion/dist/run-tech-extract.js
 ```
 
 The compiled entry point sits at
-`applications/tech-extractor/dist/run-tech-extract.js`
-(matches `"main"` in
-[package.json:6](../../applications/tech-extractor/package.json#L6)).
+`applications/ingestion/dist/run-tech-extract.js` — the same build
+output as the ingestion Job, selected by the `tech-extractor`
+Dockerfile's `CMD` rather than a separate workspace
+([applications/tech-extractor/Dockerfile:77](../../applications/tech-extractor/Dockerfile#L77)).
 
 ## Deploy
 
@@ -142,8 +160,8 @@ CI/CD via
 The workflow:
 
 1. Triggers on `push` to `develop` against
-   `applications/tech-extractor/**`, `applications/shared/**`, or the
-   workflow file itself.
+   `applications/tech-extractor/**`, `applications/ingestion/**`,
+   `applications/shared/**`, or the workflow file itself.
 2. Calls the reusable `_build-push-image.yml` workflow with:
    - `app-name: tech-extractor`
    - `dockerfile: applications/tech-extractor/Dockerfile`
@@ -195,4 +213,9 @@ Evidence trail (auto-generated):
 - Source: applications/tech-extractor/Dockerfile (lines 1-30 on 2026-05-27)
 - Source: applications/tech-extractor/package.json (read on 2026-05-27)
 - Source: .github/workflows/deploy-tech-extractor.yml (lines 1-50 on 2026-05-27)
+- Path update (C0 ingestion consolidation, 2026-07-17): tech-extract source
+  moved to applications/ingestion/src (env-tech-extract.ts, run-tech-extract.ts,
+  acquisition/tarball/*, facts/*); applications/tech-extractor/ now holds only
+  the Dockerfile. Re-verified against the working tree and
+  applications/ingestion/src/run-tech-extract.ts on 2026-07-17.
 -->

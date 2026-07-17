@@ -14,7 +14,7 @@
 import { Pool, type QueryResult } from 'pg';
 
 import { buildCroissant, type CroissantDataset } from '../../rag/croissant.js';
-import { COMMIT_HISTORY_PATH_PREFIX } from '../../ingestion/implementations/CommitChunker.js';
+import { COMMIT_HISTORY_PATH_PREFIX } from '../../repo-entities.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import type { KbQualityInput } from '../quality/computeKbQuality.js';
 import type {

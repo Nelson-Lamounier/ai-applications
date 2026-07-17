@@ -8,7 +8,7 @@
  * not invent a number absent from them. Pure — no I/O, no clock, no randomness.
  */
 
-import type { CommitDetail } from '../../ingestion/interfaces/IRepoAdapter.js';
+import type { CommitDetail } from '../../repo-entities.js';
 import type { FileChange, PerfMetric } from '../../rds/implementations/RdsRepoActivityStore.js';
 
 export interface CommitChangeMetrics {

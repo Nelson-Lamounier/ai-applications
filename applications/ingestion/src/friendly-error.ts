@@ -5,7 +5,7 @@
  * so this lives separately to stay testable).
  */
 import { RepoNotFoundError, GitHubResponseShapeError } from '@bedrock/shared';
-import { ProfileExtractionError } from './agents/ProfileExtractor.js';
+import { ProfileExtractionError } from './narrative/ProfileExtractor.js';
 
 export function friendlyIngestionError(err: unknown): string {
   if (err instanceof RepoNotFoundError) {

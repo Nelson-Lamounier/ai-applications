@@ -18,7 +18,7 @@
 
 import { Pool } from 'pg';
 
-import { GitHubAdapter } from '../applications/shared/src/ingestion/implementations/GitHubAdapter.js';
+import { GitHubAdapter } from '../applications/ingestion/src/acquisition/GitHubAdapter.js';
 import { backfillGithubRepoId } from '../applications/shared/src/rds/backfillGithubRepoId.js';
 
 async function main(): Promise<void> {
