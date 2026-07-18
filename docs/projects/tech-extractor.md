@@ -9,6 +9,22 @@ created: 2026-05-27
 updated: 2026-05-27
 ---
 
+> **Retired (2026-07-18).** The standalone `tech-extractor` Job, its
+> Dockerfile (`applications/tech-extractor/`) and deploy workflow
+> (`.github/workflows/deploy-tech-extractor.yml`) have been deleted.
+> The deterministic facts extractors described below did not go away —
+> they now run in-process inside the unified ingestion Job's facts
+> stage (`applications/ingestion/src/facts/`, entry point
+> `runFactsStage`), dispatched with `UNIFIED_INGESTION=on`. See the
+> [unified-ingestion design](../superpowers/plans/2026-07-17-p1-unified-ingestion.md)
+> for the cutover and
+> [docs/superpowers/plans/2026-07-18-p2-cutover-concepts.md](../superpowers/plans/2026-07-18-p2-cutover-concepts.md)
+> for the retirement plan. The content below is kept for historical
+> reference — architecture, extractor internals, and the parity
+> engagement that justified the deterministic approach (ADR 0001)
+> remain accurate descriptions of *how the extraction works*, just not
+> of *where it runs*.
+
 ## What it does
 
 The `tech-extractor` service runs as a Kubernetes Job per user-repo

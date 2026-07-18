@@ -41,7 +41,7 @@ Documentation index for the ai-applications monorepo. See the root
 | [/AI_USAGE.md](../AI_USAGE.md) | Detailed AI-tool-usage disclosure |
 | [/rag-checklist/](../rag-checklist/) | Per-service RAG deploy checklists (referenced by docs/plans + docs/reviews) |
 | [/content/articles/](../content/articles/) | Long-form engineering write-ups |
-| [/applications/tech-extractor/parity/](../applications/tech-extractor/parity/) | Measurement artefacts cited by ADR 0001 |
+| [/applications/ingestion/docs/tech-extractor/parity/](../applications/ingestion/docs/tech-extractor/parity/) | Measurement artefacts cited by ADR 0001 (moved here when the standalone tech-extractor service was retired) |
 
 ## Conventions
 
