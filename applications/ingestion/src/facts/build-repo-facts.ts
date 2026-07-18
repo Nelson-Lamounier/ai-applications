@@ -46,10 +46,16 @@
  * a deterministic pick rather than one dependent on arbitrary row order.
  *
  * ── concepts ─────────────────────────────────────────────────────────────────
- * Signal-derived only (no LLM, no file-content detectors yet — that's a later
- * phase). Each concept fires straight off `RepoRoleSignals` plus one extra
- * raw flag, `has_monitoring_config`, which ships in the broader
- * `repo_sync_state.archetype_signals` JSONB
+ * P2: detector-backed first, signal-derived as a fallback. `deriveConcepts`
+ * loads `concept_evidence` (migration 123, `ConceptPatternExtractor` /
+ * `runConceptLane` in `run-facts-stage.ts`) joined to `skill_ontology`,
+ * grouped by (canonical name, detector) — each row becomes one `ConceptEntry`
+ * with a real `files` count, and a concept may carry more than one entry when
+ * more than one detector fired for it. The pre-P2 signal-derived concepts
+ * (below) remain, but ONLY for a concept name with zero detector rows —
+ * those entries keep `detector: 'signal'`, `files: 0` as before, straight off
+ * `RepoRoleSignals` plus one extra raw flag, `has_monitoring_config`, which
+ * ships in the broader `repo_sync_state.archetype_signals` JSONB
  * (`applications/shared/src/projects/evidence/repo-signals.ts`) but isn't
  * part of the narrower `RepoRoleSignals.archetype` shape that
  * `loadRepoRoleSignals` exposes for kind classification — so it's read
@@ -61,6 +67,14 @@
  *   has_iac                                                 -> "infrastructure as code"
  *   has_monitoring_config                                   -> "observability"
  *   evidence_topology.has_migrations                        -> "database migrations"
+ *
+ * Note: the signal-derived name for the CI concept is the literal string
+ * `'ci/cd'`, while the concept-detector canonical is `'ci/cd pipelines'`
+ * (migration 123 deliberately did not create a duplicate `'ci/cd'` canonical
+ * — see plan self-review). The two do not string-match, so a repo with both
+ * CI signals and detector-confirmed workflow files can carry both a
+ * `'ci/cd'` (signal) and a `'ci/cd pipelines'` (detector) entry side by side;
+ * this is a pre-existing naming split, not something this phase reconciles.
  */
 
 import type { Pool } from 'pg';
@@ -80,15 +94,23 @@ export interface FactEntry {
 }
 
 /**
- * One signal-derived concept. `detector` is always `'signal'` and `files` is
- * always `0` for this phase — reserved fields for a future file-count /
- * content-detector lane (spec P1+), kept in the shape now so consumers don't
- * need a schema migration when that lane ships.
+ * One repo concept entry. `detector` is either a real detector name
+ * (`'workflow-ci'`, `'monitoring-config'`, ...) with a real `files` count
+ * when backed by `concept_evidence`, or the legacy `'signal'` / `0` pair when
+ * it is a fallback derived purely from `RepoRoleSignals` (no detector rows
+ * exist yet for that concept). See the module header "concepts" section.
  */
 export interface ConceptEntry {
     readonly name: string;
-    readonly detector: 'signal';
-    readonly files: 0;
+    readonly detector: string;
+    readonly files: number;
+}
+
+/** One aggregated `concept_evidence` row: one per (canonical concept, detector). */
+export interface ConceptDetectorRow {
+    readonly name: string; // skill_ontology.canonical_name
+    readonly detector: string;
+    readonly files: number;
 }
 
 /** The `repo_facts.facts` JSONB payload. */
@@ -156,6 +178,8 @@ export interface RepoFactsInputs {
     readonly signals: RepoRoleSignals;
     /** repo_sync_state.archetype_signals->>'has_monitoring_config'; see header. */
     readonly hasMonitoringConfig: boolean;
+    /** Aggregated `concept_evidence` rows for this repo (empty when the concept lane has never run for it). */
+    readonly conceptRows: readonly ConceptDetectorRow[];
 }
 
 function concept(name: string): ConceptEntry {
@@ -196,18 +220,32 @@ function foldInPrimaryLanguage(languages: FactEntry[], primaryLanguage: string |
     }
 }
 
-/** See the module header "concepts" section for the full signal -> concept table. */
-function deriveConcepts(signals: RepoRoleSignals, hasMonitoringConfig: boolean): ConceptEntry[] {
-    const concepts: ConceptEntry[] = [];
+/**
+ * See the module header "concepts" section. Detector-backed rows always win:
+ * every `conceptRows` entry becomes a `ConceptEntry` as-is (one per detector
+ * per concept). The signal-derived fallback entries are then appended, but
+ * ONLY for a concept name that has zero detector rows — a concept name
+ * covered by at least one detector row never also gets a `'signal'` entry.
+ */
+function deriveConcepts(
+    signals: RepoRoleSignals, hasMonitoringConfig: boolean, conceptRows: readonly ConceptDetectorRow[],
+): ConceptEntry[] {
+    const detectorEntries: ConceptEntry[] = conceptRows.map((row) => (
+        { name: row.name, detector: row.detector, files: row.files }
+    ));
+    const detectorNames = new Set(detectorEntries.map((entry) => entry.name));
+
+    const signalFallback: ConceptEntry[] = [];
     const archetype = signals.archetype;
-    if (archetype.has_ci) concepts.push(concept('ci/cd'));
+    if (archetype.has_ci) signalFallback.push(concept('ci/cd'));
     if (archetype.has_k8s_manifests || archetype.has_helm_chart || archetype.has_argocd_apps) {
-        concepts.push(concept('container orchestration'));
+        signalFallback.push(concept('container orchestration'));
     }
-    if (archetype.has_iac) concepts.push(concept('infrastructure as code'));
-    if (hasMonitoringConfig) concepts.push(concept('observability'));
-    if (signals.evidence.has_migrations) concepts.push(concept('database migrations'));
-    return concepts;
+    if (archetype.has_iac) signalFallback.push(concept('infrastructure as code'));
+    if (hasMonitoringConfig) signalFallback.push(concept('observability'));
+    if (signals.evidence.has_migrations) signalFallback.push(concept('database migrations'));
+
+    return [...detectorEntries, ...signalFallback.filter((entry) => !detectorNames.has(entry.name))];
 }
 
 export function assembleRepoFacts(inputs: RepoFactsInputs): RepoFactsPayload {
@@ -224,7 +262,7 @@ export function assembleRepoFacts(inputs: RepoFactsInputs): RepoFactsPayload {
     }
 
     foldInPrimaryLanguage(languages, inputs.primaryLanguage);
-    const concepts = deriveConcepts(inputs.signals, inputs.hasMonitoringConfig);
+    const concepts = deriveConcepts(inputs.signals, inputs.hasMonitoringConfig, inputs.conceptRows);
 
     return { languages, frameworks, databases, infrastructure, tools, concepts };
 }
@@ -299,6 +337,18 @@ async function loadTechRows(pool: Pool, userId: string, repoFullName: string): P
     }));
 }
 
+async function loadConceptRows(pool: Pool, userId: string, repoFullName: string): Promise<ConceptDetectorRow[]> {
+    const { rows } = await pool.query<{ canonical_name: string; detector: string; files: string | number }>(
+        `SELECT so.canonical_name, ce.detector, count(*) AS files
+           FROM concept_evidence ce
+           JOIN skill_ontology so ON so.id = ce.skill_id
+          WHERE ce.user_id = $1 AND ce.repo_full_name = $2
+          GROUP BY 1, 2`,
+        [userId, repoFullName],
+    );
+    return rows.map((row) => ({ name: row.canonical_name, detector: row.detector, files: Number(row.files) }));
+}
+
 const FACT_VERSION = 1;
 
 /**
@@ -316,9 +366,10 @@ export async function buildRepoFacts(pool: Pool, userId: string, repoFullName: s
         throw new Error(`repo_facts: repository not found for user ${userId} / ${repoFullName}`);
     }
 
-    const [techRows, signalsMap] = await Promise.all([
+    const [techRows, signalsMap, conceptRows] = await Promise.all([
         loadTechRows(pool, userId, repoFullName),
         loadRepoRoleSignals(pool, userId),
+        loadConceptRows(pool, userId, repoFullName),
     ]);
 
     const signals = signalsMap.get(repoRow.repositoryId);
@@ -332,6 +383,7 @@ export async function buildRepoFacts(pool: Pool, userId: string, repoFullName: s
         primaryLanguage:     repoRow.primaryLanguage,
         signals,
         hasMonitoringConfig: repoRow.hasMonitoringConfig,
+        conceptRows,
     });
 
     const repository = new RepoFactsRepository(pool);

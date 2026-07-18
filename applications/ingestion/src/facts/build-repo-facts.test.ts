@@ -3,7 +3,7 @@ import { describe, it, expect } from '@jest/globals';
 import type { RepoRoleSignals } from '@bedrock/shared';
 
 import { assembleRepoFacts } from './build-repo-facts.js';
-import type { RepoFactsInputs, TechEvidenceRow } from './build-repo-facts.js';
+import type { ConceptDetectorRow, RepoFactsInputs, TechEvidenceRow } from './build-repo-facts.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,6 +37,16 @@ function inputs(over: Partial<RepoFactsInputs> = {}): RepoFactsInputs {
         primaryLanguage:     null,
         signals:             signals(),
         hasMonitoringConfig: false,
+        conceptRows:         [],
+        ...over,
+    };
+}
+
+function conceptRow(over: Partial<ConceptDetectorRow> = {}): ConceptDetectorRow {
+    return {
+        name:     'observability',
+        detector: 'monitoring-config',
+        files:    3,
         ...over,
     };
 }
@@ -189,6 +199,64 @@ describe('assembleRepoFacts — signal-derived concepts', () => {
             'infrastructure as code',
             'observability',
         ].sort());
+    });
+});
+
+// ---------------------------------------------------------------------------
+// (c2) Detector-backed concept rows vs. signal-derived fallback
+// ---------------------------------------------------------------------------
+
+describe('assembleRepoFacts — detector-backed concepts vs. signal fallback', () => {
+    it('detector rows win: a concept with a detector row does not also get a signal fallback entry', () => {
+        const facts = assembleRepoFacts(inputs({
+            hasMonitoringConfig: true,
+            conceptRows: [conceptRow({ name: 'observability', detector: 'monitoring-config', files: 4 })],
+        }));
+
+        expect(facts.concepts).toEqual([
+            { name: 'observability', detector: 'monitoring-config', files: 4 },
+        ]);
+    });
+
+    it('signal fallback fills gaps: a concept with zero detector rows still gets its signal entry', () => {
+        const facts = assembleRepoFacts(inputs({
+            signals: signals({ archetype: { has_iac: true } }),
+            conceptRows: [conceptRow({ name: 'observability', detector: 'monitoring-config', files: 2 })],
+        }));
+
+        expect(facts.concepts).toContainEqual({ name: 'observability', detector: 'monitoring-config', files: 2 });
+        expect(facts.concepts).toContainEqual({ name: 'infrastructure as code', detector: 'signal', files: 0 });
+    });
+
+    it('multiple detectors for one concept each become their own entry', () => {
+        const facts = assembleRepoFacts(inputs({
+            conceptRows: [
+                conceptRow({ name: 'ci/cd pipelines', detector: 'workflow-ci', files: 3 }),
+                conceptRow({ name: 'ci/cd pipelines', detector: 'workflow-deploy', files: 1 }),
+            ],
+        }));
+
+        expect(facts.concepts).toEqual([
+            { name: 'ci/cd pipelines', detector: 'workflow-ci', files: 3 },
+            { name: 'ci/cd pipelines', detector: 'workflow-deploy', files: 1 },
+        ]);
+    });
+
+    it('both-present case: detector rows for one concept and signal fallback for a different concept coexist', () => {
+        const facts = assembleRepoFacts(inputs({
+            signals: signals({ archetype: { has_ci: true, has_iac: true } }),
+            conceptRows: [conceptRow({ name: 'container orchestration', detector: 'k8s-orchestration', files: 5 })],
+        }));
+
+        expect(facts.concepts).toContainEqual({ name: 'container orchestration', detector: 'k8s-orchestration', files: 5 });
+        // 'ci/cd' (signal) and 'ci/cd pipelines' (detector canonical) are different
+        // name strings -- see the module header note -- so both would coexist here,
+        // but only has_ci/has_iac fired and neither has a detector row: both fall back.
+        expect(facts.concepts).toContainEqual({ name: 'ci/cd', detector: 'signal', files: 0 });
+        expect(facts.concepts).toContainEqual({ name: 'infrastructure as code', detector: 'signal', files: 0 });
+        // container orchestration's signal condition never fired here, so there is
+        // exactly one 'container orchestration' entry (the detector-backed one).
+        expect(facts.concepts.filter((c) => c.name === 'container orchestration')).toHaveLength(1);
     });
 });
 

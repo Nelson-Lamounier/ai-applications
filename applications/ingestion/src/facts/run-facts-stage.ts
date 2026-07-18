@@ -2,7 +2,7 @@
  *
  * The reusable "facts" stage extracted from `run-tech-extract.ts` (P1 unified
  * ingestion, Task 3). Given an already-extracted repo tree, this runs the
- * tech/DSA/AI/story-mining lanes in the same order as the standalone
+ * tech/concept/DSA/AI/story-mining lanes in the same order as the standalone
  * tech-extract Job. The per-lane idempotency gates are computed ONCE by the
  * caller (from its raw env commit sha) and passed in via `laneGates` — this
  * module never recomputes them from the resolved sha (see
@@ -10,17 +10,27 @@
  *
  * `writeMode`:
  *  - `'persist'`: exactly today's tech-extract behaviour — all lanes, all
- *    writes (technology_evidence, candidates, dsa_evidence, ai_evidence,
- *    story candidates, tech_stack reconciliation), same commit-SHA scan
- *    markers.
+ *    writes (technology_evidence, candidates, concept_evidence, dsa_evidence,
+ *    ai_evidence, story candidates, tech_stack reconciliation), same
+ *    commit-SHA scan markers.
  *  - `'shadow'`: ONLY the tech-lane extractors + ontology resolution run
  *    (the deterministic, side-effect-free part). No writes of any kind —
- *    no evidence insertMany, no candidates, no DSA/AI lanes, no story
- *    mining, no reconciliation, no scan markers — and the per-lane
- *    idempotency gates are ignored (shadow always computes fresh rows,
- *    since the whole point is a fresh comparison against the persisted
- *    legacy rows). This is the seam `TechExtractOrchestrator.run({ dryRun })`
- *    provides.
+ *    no evidence insertMany, no candidates, no concept lane, no DSA/AI
+ *    lanes, no story mining, no reconciliation, no scan markers — and the
+ *    per-lane idempotency gates are ignored (shadow always computes fresh
+ *    rows, since the whole point is a fresh comparison against the
+ *    persisted legacy rows). This is the seam
+ *    `TechExtractOrchestrator.run({ dryRun })` provides.
+ *
+ * The concept lane (P2) runs AFTER the tech lane, persist mode only, gated
+ * by the SAME `techDone` gate as the tech lane itself (concepts recompute
+ * whenever tech does — the `concept_evidence` upsert is idempotent on
+ * `(user_id, repo_full_name, skill_id, detector, file_path)`, so a re-run is
+ * cheap and correct, unlike DSA/AI which own a separate scan marker). It
+ * consumes the tech lane's already-resolved `evidenceKeys` (mapped to
+ * `ConceptTechEvidence`) so the aggregate detectors (`k8s-orchestration`,
+ * `iac-presence`, `broker-topology`) never re-parse manifests the tech lane
+ * already parsed. Fail-open: its own try/catch, never breaks the stage.
  *
  * `EvidenceKey.canonicalId` is the LOWERCASED CANONICAL NAME, not the
  * internal `technology_ontology` UUID. `TechnologyEvidenceRow.technologyId`
@@ -53,6 +63,9 @@ import { GithubSbomExtractor } from './extractors/GithubSbomExtractor.js';
 import { TreeSitterExtractor } from './extractors/TreeSitterExtractor.js';
 import { DsaPatternExtractor } from './extractors/DsaPatternExtractor.js';
 import { AiPatternExtractor } from './extractors/AiPatternExtractor.js';
+import { ConceptPatternExtractor } from './extractors/ConceptPatternExtractor.js';
+import type { ConceptTechEvidence } from './extractors/ConceptPatternExtractor.js';
+import { RdsConceptEvidenceRepository } from '../persistence/RdsConceptEvidenceRepository.js';
 import { parseDockerfile } from './extractors/iac/DockerfileParser.js';
 import { parseK8sManifest, parseK8sManifestValues } from './extractors/iac/K8sManifestParser.js';
 import { parseTerraform } from './extractors/iac/TerraformParser.js';
@@ -319,9 +332,33 @@ async function runAiLane(
     }
 }
 
+interface ConceptLaneOpts {
+    userId: string; repoFullName: string; githubRepoId: number | null; commitSha: string;
+    files: string[]; readFile: (rel: string) => Promise<string | null>; techEvidence: ConceptTechEvidence[];
+}
+
 /**
- * Runs the tech/DSA/AI/story-mining lanes over an already-extracted repo
- * tree. See the module header for `writeMode` semantics.
+ * Concept detector lane (fail-open: never breaks the facts stage). Persist
+ * mode only — the caller must not invoke this in shadow mode (see the
+ * module header). No own scan marker: idempotency is the `concept_evidence`
+ * upsert itself, so this simply re-runs whenever the tech lane does.
+ */
+async function runConceptLane(pool: Pool, opts: ConceptLaneOpts): Promise<void> {
+    const { userId, repoFullName, githubRepoId, commitSha, files, readFile, techEvidence } = opts;
+    const log = jobLogger();
+    const conceptEvidenceRepo = new RdsConceptEvidenceRepository(pool);
+    try {
+        const raw = await new ConceptPatternExtractor().extract({ files, readFile, techEvidence });
+        await conceptEvidenceRepo.insertMany(userId, repoFullName, githubRepoId, commitSha, raw);
+        log.info({ repo: repoFullName, sha: commitSha, detected: raw.length }, 'concept.evidence.persisted');
+    } catch (err) {
+        log.warn({ err: String(err) }, 'concept.extraction.failed (non-fatal)');
+    }
+}
+
+/**
+ * Runs the tech/concept/DSA/AI/story-mining lanes over an already-extracted
+ * repo tree. See the module header for `writeMode` semantics.
  */
 export async function runFactsStage(input: FactsStageInput): Promise<FactsStageResult> {
     const start = Date.now();
@@ -346,6 +383,16 @@ export async function runFactsStage(input: FactsStageInput): Promise<FactsStageR
     // keeps the full list — a real import in a test is still valid "uses X" evidence.
     const patternFiles = files.filter((f) => !isTestFile(f));
     const readFile = (rel: string) => fs.readFile(path.join(extractDir, rel), 'utf-8');
+    // Concept lane's readFile contract returns null on a read failure instead of
+    // throwing (ConceptPatternExtractorInput.readFile) -- files.length differs
+    // by nothing here (same walk), only the failure mode is wrapped.
+    const readFileOrNull = async (rel: string): Promise<string | null> => {
+        try {
+            return await readFile(rel);
+        } catch {
+            return null;
+        }
+    };
 
     // ── Tech lane (syft/treesitter/iac → technology_evidence + parity) ──
     let evidenceKeys: EvidenceKey[] = [];
@@ -365,6 +412,20 @@ export async function runFactsStage(input: FactsStageInput): Promise<FactsStageR
     if (dryRun) {
         // Shadow: tech-lane-only, no writes at all — stop here.
         return { evidenceKeys, failedExtractors, durationMs: Date.now() - start };
+    }
+
+    // ── Concept lane (deterministic pattern detectors → concept_evidence) ──
+    // Persist mode only (unreachable above in shadow — see the `dryRun` return).
+    // Gated by the SAME tech gate as the tech lane: concepts recompute whenever
+    // tech does, since the aggregate detectors consume this run's evidenceKeys
+    // and the upsert is idempotent (see runConceptLane's header).
+    if (!techDone) {
+        const techEvidence: ConceptTechEvidence[] = evidenceKeys
+            .filter((key): key is EvidenceKey & { filePath: string } => key.filePath !== null)
+            .map((key) => ({ sourceLayer: key.sourceLayer, canonicalName: key.canonicalId, filePath: key.filePath }));
+        await runConceptLane(pool, {
+            userId, repoFullName, githubRepoId, commitSha, files, readFile: readFileOrNull, techEvidence,
+        });
     }
 
     // Reconcile the profile's LLM tech_stack against the file-cited

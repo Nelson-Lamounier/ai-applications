@@ -46,6 +46,7 @@ function makePool(opts: {
     repoRow: Record<string, unknown> | null;
     roleSignalsRow: Record<string, unknown>;
     techRows?: Array<Record<string, unknown>>;
+    conceptRows?: Array<Record<string, unknown>>;
 }): { pool: Pool; clientQuery: jest.Mock; poolQuery: jest.Mock } {
     const poolQuery = jest.fn<() => Promise<{ rows: unknown[] }>>();
     poolQuery.mockImplementation(async (...args: unknown[]) => {
@@ -55,6 +56,9 @@ function makePool(opts: {
         }
         if (/FROM technology_evidence/.test(sql)) {
             return { rows: opts.techRows ?? [] };
+        }
+        if (/FROM concept_evidence/.test(sql)) {
+            return { rows: opts.conceptRows ?? [] };
         }
         if (/archetype_signals\s+AS\s+archetype_signals/.test(sql)) {
             return { rows: [opts.roleSignalsRow] };
@@ -134,5 +138,23 @@ describe('buildRepoFacts — orchestration', () => {
         const facts = JSON.parse(params[5] as string);
         expect(facts.languages).toEqual([{ name: 'typescript', version: null, evidenceCount: 3 }]);
         expect(facts.concepts).toContainEqual({ name: 'ci/cd', detector: 'signal', files: 0 });
+    });
+
+    it('threads detector-backed concept_evidence rows into facts.concepts alongside signal fallback', async () => {
+        const { pool, clientQuery } = makePool({
+            repoRow:        makeRepoRow(),
+            roleSignalsRow: makeRoleSignalsRow({ archetype_signals: { has_iac: true } }),
+            conceptRows:    [{ canonical_name: 'observability', detector: 'monitoring-config', files: '4' }],
+        });
+
+        await buildRepoFacts(pool, 'user-1', 'octo/repo');
+
+        const insertCall = (clientQuery.mock.calls as Array<[string, unknown[]]>).find(
+            ([sql]) => typeof sql === 'string' && /INSERT INTO repo_facts/i.test(sql),
+        );
+        const [, params] = insertCall!;
+        const facts = JSON.parse(params[5] as string);
+        expect(facts.concepts).toContainEqual({ name: 'observability', detector: 'monitoring-config', files: 4 });
+        expect(facts.concepts).toContainEqual({ name: 'infrastructure as code', detector: 'signal', files: 0 });
     });
 });
