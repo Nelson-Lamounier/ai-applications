@@ -1,10 +1,12 @@
 /**
  * @format
  * RdsSystemTourRepository — one tour per project (project_id UNIQUE).
- * Mirrors the dsa-evidence repo's RLS mechanism: every call opens a txn and
- * stamps `SELECT set_config('app.current_user_id', $1, true)` so the
- * project_system_tours RLS policy (USING user_id = current_setting(...))
- * lets the write/read through. Verified against a fakePool.
+ * Mirrors the dsa-evidence repo's RLS mechanism: every call runs through
+ * `withUserRls`, which demotes to `tucaken_app` and stamps
+ * `SELECT set_config('app.current_user_id', $1, true)` in the same
+ * transaction so the project_system_tours RLS policy
+ * (USING user_id = current_setting(...)) lets the write/read through.
+ * Verified against a fakePool.
  */
 import { describe, it, expect, jest } from '@jest/globals';
 
@@ -37,6 +39,7 @@ describe('RdsSystemTourRepository.upsert', () => {
 
         const sql = query.mock.calls.map((c) => (c as unknown[])[0] as string);
         expect(sql.some((s) => /BEGIN/.test(s))).toBe(true);
+        expect(sql.some((s) => s === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         expect(sql.some((s) => /set_config\('app.current_user_id'/.test(s))).toBe(true);
         expect(
             sql.some(
@@ -96,6 +99,7 @@ describe('RdsSystemTourRepository.getForProject', () => {
         expect(out).toEqual(sampleTour);
 
         const sql = query.mock.calls.map((c) => (c as unknown[])[0] as string);
+        expect(sql.some((s) => s === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         expect(sql.some((s) => /set_config\('app.current_user_id'/.test(s))).toBe(true);
     });
 

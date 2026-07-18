@@ -11,6 +11,7 @@ export class RdsDiagnosticInputsReadRepository implements IDiagnosticInputsReadR
   async getDiagnosticInputs(userId: string): Promise<DiagnosticInputs> {
     // RLS wrapper copied verbatim from
     // RdsCareerHistoryReadRepository.getResumeForReconciliation.
+    // read path: superuser connection; rows are user_id-scoped by the query itself
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');

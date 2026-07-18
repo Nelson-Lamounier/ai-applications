@@ -154,6 +154,7 @@ export class PgVectorRetriever {
         profileWeight: number,
         filters:       ProfileFilters,
     ): Promise<RetrievedPassage[]> {
+        // read path: superuser connection; rows are user_id-scoped by the query itself
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
@@ -232,6 +233,7 @@ export class PgVectorRetriever {
         // BM25 (content_tsv) is empty-query tolerant: a non-matching plainto_tsquery
         // yields no text rows, so it degrades to pure vector — never worse.
         const candidatePool = Math.min(limit * 4, 50);
+        // read path: superuser connection; rows are user_id-scoped by the query itself
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');

@@ -19,6 +19,7 @@ describe('RdsAiEvidenceRepository.insertMany', () => {
         rawName: 'cachePoint', filePath: 'bedrock.ts', lineStart: 3, confidence: 0.78 },
     ]);
     const sql = (query.mock.calls.map((c) => (c as unknown[])[0] as string));
+    expect(sql.some((s) => s === 'SET LOCAL ROLE tucaken_app')).toBe(true);
     expect(sql.some((s) => /set_config\('app.current_user_id'/.test(s))).toBe(true);
     expect(sql.some((s) => /INSERT INTO ai_evidence/.test(s))).toBe(true);
   });

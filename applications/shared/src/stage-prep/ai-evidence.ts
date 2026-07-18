@@ -1,6 +1,8 @@
 /** @format */
 import type { Pool } from 'pg';
 
+import { withUserRls } from '../rds/with-user-rls.js';
+
 export class AiTopicResolver {
   constructor(private readonly valid: ReadonlySet<string>) {}
   /** @returns the canonical name if seeded in ai_topics, else null (never invents). */
@@ -23,32 +25,20 @@ export class RdsAiEvidenceRepository {
    * re-sync. Lets an already-tech-scanned commit still get a one-time AI backfill.
    */
   async hasAiScanForCommit(userId: string, repoFullName: string, commitSha: string): Promise<boolean> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+    return withUserRls(this.pool, userId, async (client) => {
       const { rows } = await client.query(
         `SELECT 1 FROM ai_scanned_commits
           WHERE user_id = $1::uuid AND repo_full_name = $2 AND commit_sha = $3
           LIMIT 1`,
         [userId, repoFullName, commitSha],
       );
-      await client.query('COMMIT');
       return rows.length > 0;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Records that the AI pass completed for a commit (idempotent), with the match count. */
   async recordAiScan(userId: string, repoFullName: string, commitSha: string, matchCount: number): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+    await withUserRls(this.pool, userId, async (client) => {
       await client.query(
         `INSERT INTO ai_scanned_commits (user_id, repo_full_name, commit_sha, match_count)
          VALUES ($1::uuid, $2, $3, $4)
@@ -56,21 +46,12 @@ export class RdsAiEvidenceRepository {
          DO UPDATE SET match_count = EXCLUDED.match_count, scanned_at = now()`,
         [userId, repoFullName, commitSha, matchCount],
       );
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async insertMany(userId: string, rows: AiEvidenceRow[]): Promise<void> {
     if (rows.length === 0) return;
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+    await withUserRls(this.pool, userId, async (client) => {
       for (const r of rows) {
         await client.query(
           `INSERT INTO ai_evidence (
@@ -80,29 +61,18 @@ export class RdsAiEvidenceRepository {
           [userId, r.repoFullName, r.commitSha, r.aiTopic, r.signal, r.rawName, r.filePath, r.lineStart, r.confidence],
         );
       }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async listForRepo(userId: string, repoFullName: string): Promise<AiEvidenceRow[]> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+    return withUserRls(this.pool, userId, async (client) => {
       const { rows } = await client.query(
         `SELECT repo_full_name, commit_sha, ai_topic, signal, raw_name, file_path, line_start, confidence
            FROM ai_evidence WHERE user_id=$1::uuid AND repo_full_name=$2
           ORDER BY ai_topic, file_path, line_start`, [userId, repoFullName]);
-      await client.query('COMMIT');
       return rows.map((r: any) => ({ repoFullName: r.repo_full_name, commitSha: r.commit_sha,
         aiTopic: r.ai_topic, signal: r.signal, rawName: r.raw_name, filePath: r.file_path,
         lineStart: r.line_start, confidence: r.confidence }));
-    } catch (err) { await client.query('ROLLBACK').catch(() => {}); throw err; }
-    finally { client.release(); }
+    });
   }
 }

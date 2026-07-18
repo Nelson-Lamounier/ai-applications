@@ -611,3 +611,4 @@ export type { SbomComponent, CycloneDxBom, BomMeta, EvidenceComponentInput } fro
 export { buildCroissant } from './rag/croissant.js';
 export type { CroissantDataset, CroissantInput } from './rag/croissant.js';
 export { resolvePortfolioOwnerId } from './rds/index.js';
+export { withUserRls } from './rds/index.js';

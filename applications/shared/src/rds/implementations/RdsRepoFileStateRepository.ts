@@ -1,5 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
+import { withUserRls } from '../with-user-rls.js';
 
 export interface RepoFileEntry {
     readonly path:      string;
@@ -21,30 +22,18 @@ export class RdsRepoFileStateRepository {
     ) {}
 
     async getFileState(userId: string, repoFullName: string): Promise<Map<string, string>> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        return withUserRls(this.pool, userId, async (client) => {
             const { rows } = await client.query<{ file_path: string; blob_sha: string }>(
                 `SELECT file_path, blob_sha FROM repo_file_state
                   WHERE user_id = $1 AND repo_full_name = $2`,
                 [userId, repoFullName],
             );
-            await client.query('COMMIT');
             return new Map(rows.map(r => [r.file_path, r.blob_sha]));
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     async upsertFileState(userId: string, repoFullName: string, files: readonly RepoFileEntry[]): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        await withUserRls(this.pool, userId, async (client) => {
             await client.query(
                 `DELETE FROM repo_file_state WHERE user_id = $1 AND repo_full_name = $2`,
                 [userId, repoFullName],
@@ -63,30 +52,15 @@ export class RdsRepoFileStateRepository {
                     values,
                 );
             }
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     async deleteFileState(userId: string, repoFullName: string): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        await withUserRls(this.pool, userId, async (client) => {
             await client.query(
                 `DELETE FROM repo_file_state WHERE user_id = $1 AND repo_full_name = $2`,
                 [userId, repoFullName],
             );
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 }
