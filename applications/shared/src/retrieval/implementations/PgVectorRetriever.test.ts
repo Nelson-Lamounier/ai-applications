@@ -261,6 +261,27 @@ describe('PgVectorRetriever', () => {
         });
     });
 
+    // ─── docType filter ─────────────────────────────────────────────────────
+    describe('docType', () => {
+        it('passes filterByDocType through to the chunk query params', async () => {
+            const chunkQuery = makeQueryMock([]);
+            const chunkClient = { query: chunkQuery, release: jest.fn() } as unknown as PoolClient;
+            mockConnect.mockResolvedValueOnce(makeClient([])).mockResolvedValueOnce(chunkClient);
+            await retriever.retrieve(USER_ID, 'q', { filterByDocType: ['adr', 'readme'], neighbourRadius: 0 });
+            const params = chunkQuery.mock.calls[2][1] as unknown[];
+            expect(params).toContainEqual(['adr', 'readme']);
+        });
+
+        it('binds null when filterByDocType is absent (fail-open, unchanged shape)', async () => {
+            const chunkQuery = makeQueryMock([]);
+            const chunkClient = { query: chunkQuery, release: jest.fn() } as unknown as PoolClient;
+            mockConnect.mockResolvedValueOnce(makeClient([])).mockResolvedValueOnce(chunkClient);
+            await retriever.retrieve(USER_ID, 'q', { neighbourRadius: 0 });
+            const params = chunkQuery.mock.calls[2][1] as unknown[];
+            expect(params[params.length - 1]).toBeNull();
+        });
+    });
+
     // ─── Neighbour expansion ───────────────────────────────────────────────
     describe('neighbour expansion', () => {
         const ANCHOR = {

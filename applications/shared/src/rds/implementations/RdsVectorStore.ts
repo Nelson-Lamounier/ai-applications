@@ -501,7 +501,7 @@ export class RdsVectorStore implements IVectorStore {
     /** One filtered vector pass. `applySoft` toggles the tech/skill widener; `excludeIds` skips already-returned chunks. */
     private async runFilteredVector(params: QueryParams, applySoft: boolean, excludeIds: string[]): Promise<SimilarityResult[]> {
         const { userId, repoFullName, queryEmbedding, limit = 10, efSearch = 40, prefilter } = params;
-        const { skills = [], tech = [], skillsLane = true } = prefilter ?? {};
+        const { skills = [], tech = [], skillsLane = true, docTypes } = prefilter ?? {};
         const result = await this.execute<SimilarityRow>(
             `WITH _ AS (SELECT set_config('hnsw.ef_search', $1, true))
              SELECT d.id, d.repo_full_name, d.file_path, d.heading, d.content, d.chunk_index, d.tags,
@@ -516,6 +516,12 @@ export class RdsVectorStore implements IVectorStore {
                 AND COALESCE((d.metadata->>'is_fork')::bool, false) = false
                 AND COALESCE((d.metadata->>'authored')::bool, true) = true
                 AND COALESCE(d.metadata->>'repo_classification', 'project') NOT IN ('noise', 'tutorial')
+                -- HARD gate: restrict docs-lane chunks to the requested docType
+                -- values when prefilter.docTypes is present ($10). NULL-fail-open
+                -- so absent ⇒ today's behaviour. Applied identically in both the
+                -- soft pass and the hard-gates-only top-up pass — it is a hard
+                -- gate, not the soft tech/skill widener below.
+                AND ($10::text[] IS NULL OR d.metadata->>'docType' = ANY($10))
                 -- SOFT tech/skill widener (transfer-aware), applied by chunk TYPE:
                 --   • PROSE (docs/README) is NEVER tech-gated — it is the cosine "evidence"
                 --     lane; gating it by repo tech wrongly drops cross-domain prose (e.g. a
@@ -546,6 +552,7 @@ export class RdsVectorStore implements IVectorStore {
                 [...new Set([...skills, ...tech])],
                 excludeIds.length > 0 ? excludeIds : null,
                 skillsLane,
+                docTypes ?? null,
             ],
         );
         return result.rows.map((row) => this.mapSimilarityRow(row));

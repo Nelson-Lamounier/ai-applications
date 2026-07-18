@@ -16,6 +16,7 @@ import { CodeChunker } from './CodeChunker.js';
 import { DefaultChunker } from './DefaultChunker.js';
 import { MarkdownChunker } from './MarkdownChunker.js';
 import { classifyFile } from './file-classifier.js';
+import { classifyDocType } from './doc-type-classifier.js';
 
 export class ChunkerRegistry {
     private readonly chunkers: IChunker[];
@@ -43,11 +44,16 @@ export class ChunkerRegistry {
         }
         // Stamp the semantic role on every chunk here — the single point all
         // file chunks pass through — so retrieval can filter/weight by role
-        // without each chunker re-deriving it.
+        // without each chunker re-deriving it. docType refines the `docs`
+        // role into a closed taxonomy (readme/adr/runbook/…), computed once
+        // per file rather than per chunk.
         const fileClass = classifyFile(filePath);
+        const docType = fileClass === 'docs'
+            ? classifyDocType(filePath, content.slice(0, 2000))
+            : undefined;
         return chunker.chunk(content, filePath).map(c => ({
             ...c,
-            metadata: { ...c.metadata, fileClass },
+            metadata: { ...c.metadata, fileClass, ...(docType ? { docType } : {}) },
         }));
     }
 

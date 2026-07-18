@@ -231,6 +231,40 @@ describe('RdsVectorStore.querySimilar (filter-then-rank)', () => {
         const [sql] = query.mock.calls[0] as unknown as [string, unknown[]];
         expect(sql).not.toMatch(/file_tech_stack/);
     });
+
+    it('hard-gates docTypes when prefilter.docTypes is present', async () => {
+        const query = jest.fn(async () => ({ rows: [simRow()] }));
+        await store(query).querySimilar({
+            userId: 'u1', queryEmbedding: [0.1, 0.2], limit: 5,
+            prefilter: { skills: [], tech: [], minResults: 1, docTypes: ['adr', 'readme'] },
+        });
+        const [sql, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(sql).toMatch(/\$10::text\[\] IS NULL OR d\.metadata->>'docType' = ANY\(\$10\)/);
+        expect(values[9]).toEqual(['adr', 'readme']);
+    });
+
+    it('binds null docTypes when prefilter.docTypes is absent (fail-open, unchanged shape)', async () => {
+        const query = jest.fn(async () => ({ rows: [simRow()] }));
+        await store(query).querySimilar({
+            userId: 'u1', queryEmbedding: [0.1, 0.2], limit: 5,
+            prefilter: { skills: ['python'], tech: ['openai_api'], minResults: 1 },
+        });
+        const [, values] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(values[9]).toBeNull();
+    });
+
+    it('applies the docTypes hard gate on the pass-2 top-up as well', async () => {
+        const query = jest.fn()
+            .mockResolvedValueOnce({ rows: [simRow({ id: 'p1' })] })           // pass 1
+            .mockResolvedValueOnce({ rows: [simRow({ id: 't1' })] });          // pass 2 top-up
+        await store(query).querySimilar({
+            userId: 'u1', queryEmbedding: [0.1, 0.2], limit: 3,
+            prefilter: { skills: [], tech: ['openai_api'], minResults: 3, docTypes: ['adr'] },
+        });
+        expect(query).toHaveBeenCalledTimes(2);
+        const [, p2vals] = query.mock.calls[1] as unknown as [string, unknown[]];
+        expect(p2vals[9]).toEqual(['adr']);
+    });
 });
 
 describe('RdsVectorStore.pruneDeletedFiles (commit-history lane)', () => {
