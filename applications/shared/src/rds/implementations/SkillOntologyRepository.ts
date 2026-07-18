@@ -2,13 +2,31 @@
 import type { Pool } from 'pg';
 
 /**
+ * One aggregated `concept_evidence` row (migration 123): a JD-evidenced
+ * "concept" (CI/CD, observability, distributed systems, ...) detected in one
+ * of a user's repos, resolved to its `skill_ontology` canonical name and
+ * grouped by (canonical, repo, detector) with a file count.
+ */
+export interface RepoConceptRow {
+    readonly canonicalName: string;
+    readonly repoFullName: string;
+    readonly detector: string;
+    readonly files: number;
+}
+
+/**
  * Reads the global skill ontology + aliases (migration 092). The deterministic
  * counterpart to TechnologyOntologyRepository — resolves the free-text `skills`
  * the LLM enricher emits to canonical skills, collapsing variance like
  * "k8s networking" ≈ "kubernetes networking".
  *
- * Reference data is not user-scoped, so no RLS / set_config needed. Built once
- * per Job and handed to the generic OntologyResolver (Map<alias,id>).
+ * The ontology/alias tables themselves are reference data (not user-scoped, no
+ * RLS / set_config needed); `loadRepoConcepts` below is the one per-user
+ * evidence exception, mirroring `TechnologyOntologyRepository.loadRepoCodeTech`
+ * — same idiom, different evidence table (`concept_evidence`, not
+ * `technology_evidence`), so it lives alongside the ontology it resolves
+ * against rather than bloating the tech-only repository. Built once per Job
+ * and handed to the generic OntologyResolver (Map<alias,id>).
  */
 export class SkillOntologyRepository {
     constructor(private readonly pool: Pool) {}
@@ -94,6 +112,39 @@ export class SkillOntologyRepository {
             canonical: r.canonical_name,
             curationLevel: r.curation_level,
             embedding: r.embedding.replace(/[[\]]/g, '').split(',').map(Number),
+        }));
+    }
+
+    /**
+     * Load a user's concept-evidence rows, aggregated by (canonical, repo,
+     * detector) — the deterministic detector-backed facts from
+     * `concept_evidence` (migration 123), resolved to ontology canonical
+     * names. `concept_evidence` is user-scoped and RLS-enabled; the explicit
+     * `user_id = $1` filter mirrors `TechnologyOntologyRepository`'s per-user
+     * evidence loaders (e.g. `loadRepoCodeTech`) — the connecting role reads
+     * across the filter, same convention.
+     *
+     * Empty array when no concept evidence exists (callers fail-open).
+     */
+    async loadRepoConcepts(userId: string): Promise<RepoConceptRow[]> {
+        const { rows } = await this.pool.query<{
+            canonical_name: string;
+            repo_full_name: string;
+            detector: string;
+            files: number;
+        }>(
+            `SELECT so.canonical_name, ce.repo_full_name, ce.detector, count(*)::int AS files
+               FROM concept_evidence ce
+               JOIN skill_ontology so ON so.id = ce.skill_id
+              WHERE ce.user_id = $1
+              GROUP BY 1, 2, 3`,
+            [userId],
+        );
+        return rows.map((r) => ({
+            canonicalName: r.canonical_name.toLowerCase(),
+            repoFullName:  r.repo_full_name,
+            detector:      r.detector,
+            files:         r.files,
         }));
     }
 }

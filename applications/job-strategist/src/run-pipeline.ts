@@ -13,7 +13,7 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter, StrategistAnalysisResult, AgentResult, SkillEvidenceEntry, TechTransferGroup } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter, StrategistAnalysisResult, AgentResult, SkillEvidenceEntry, TechTransferGroup, RepoConceptRow } from '@bedrock/shared';
 import type { Pool } from 'pg';
 import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
@@ -563,6 +563,7 @@ function recordProjectsAgentObservability(
     }
 }
 import { formatTechTransferContext } from './ats/context/tech-transfer-context.js';
+import { formatConceptEvidenceContext } from './ats/context/concept-evidence-context.js';
 import { attachCodeEvidence } from './ats/grounding/tool-evidence-retrieval.js';
 import { attachSourceLanes, mergeRepoLane } from './ats/grounding/evidence-lane.js';
 import { applyDegreeReconcile } from './ats/reconcile/education-reconcile.js';
@@ -2297,7 +2298,8 @@ export async function main(): Promise<void> {
         // Tech-ontology grounding — load transfer groups + alias map ONCE (fail-open).
         // Prefer the explicit relationship graph; fall back to category groups when sparse.
         const techRepo = new TechnologyOntologyRepository(pool);
-        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths, evidenceTopology, canonicalToCodeFiles] = await Promise.all([
+        const skillOntologyRepo = new SkillOntologyRepository(pool);
+        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths, evidenceTopology, canonicalToCodeFiles, repoConcepts, skillAliasToCanonical] = await Promise.all([
             techRepo.loadTransferGroups().catch(() => [] as TechTransferGroup[]),
             techRepo.loadCategoryGroups().catch(() => [] as TechTransferGroup[]),
             techRepo.loadAliasMap().catch(() => new Map<string, string>()),
@@ -2308,6 +2310,8 @@ export async function main(): Promise<void> {
             techRepo.loadRepoFilePaths(env.userId).catch(() => new Map<string, Set<string>>()),
             techRepo.loadRepoEvidenceTopology(env.userId).catch(() => new Map<string, Record<string, unknown>>()),
             techRepo.loadCanonicalToCodeFiles(env.userId).catch(() => new Map<string, string[]>()),
+            skillOntologyRepo.loadRepoConcepts(env.userId).catch(() => [] as RepoConceptRow[]),
+            skillOntologyRepo.loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
         ]);
         // Typed groups (class/tier/basis) feed the 3 consumers that read the metadata
         // directly (tech-transfer context, retrieval prefilter, vendor-provenance guard);
@@ -2324,6 +2328,11 @@ export async function main(): Promise<void> {
             ...jdExtraction.technologyInventory.languages,
         ];
         const techTransferContext = formatTechTransferContext(jdTools, techTransferOrCategoryGroups, techAliasMap);
+        // P2 Task 5 — ground JD "concepts" (observability, distributed systems, ...)
+        // in deterministic concept_evidence facts. Only concepts THIS JD mentions
+        // that have evidence render a line (empty ⇒ omitted, same discipline as
+        // techTransferContext above).
+        const conceptEvidenceContext = formatConceptEvidenceContext(jdExtraction.concepts, repoConcepts, skillAliasToCanonical);
         // Doc-vs-code drift + repo identity: the authoritative current code stack per repo
         // AND each repo's deterministic profile (cdk-infra/k8s-platform/…, what it provisions).
         // Folded into one grounding block so the matcher prefers code over stale docs and
@@ -2338,7 +2347,7 @@ export async function main(): Promise<void> {
         const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techTransferOrCategoryGroups, aliasToCanonical);
 
         const research = await stageSeconds(pipelineStageSeconds, 'research', () =>
-            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock, techTransferOrCategoryGroups));
+            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock, techTransferOrCategoryGroups, conceptEvidenceContext));
 
         // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line.
         // Computed BEFORE the guard chain so it can deterministically constrain the matcher's

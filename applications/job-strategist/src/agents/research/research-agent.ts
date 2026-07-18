@@ -393,6 +393,8 @@ interface ResearchMessageOptions {
     jdSignalBlock?: string;
     /** Grounded technology transferability context (A5). Injected as its own section when non-empty. */
     techTransferContext?: string;
+    /** Grounded concept-evidence context (P2 Task 5 — observability, distributed systems, ...). Injected as its own section when non-empty. */
+    conceptEvidenceContext?: string;
     /** Current code-stack truth per repo (doc-vs-code drift). Injected as its own section when non-empty. */
     codeStackContext?: string;
 }
@@ -424,6 +426,7 @@ function buildResearchMessage(
         roleEvidenceSection = '',
         jdSignalBlock = '',
         techTransferContext = '',
+        conceptEvidenceContext = '',
         codeStackContext = '',
     } = opts;
 
@@ -505,6 +508,10 @@ function buildResearchMessage(
 
     if (techTransferContext) {
         sections.push(techTransferContext, '');
+    }
+
+    if (conceptEvidenceContext) {
+        sections.push(conceptEvidenceContext, '');
     }
 
     if (codeStackContext) {
@@ -818,6 +825,7 @@ export async function executeResearchAgent(
     retrievalPrefilter?: RetrievalPrefilter,
     certificationsBlock = '',
     transferGroups: TechTransferGroup[] = [],
+    conceptEvidenceContext = '',
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -959,6 +967,7 @@ export async function executeResearchAgent(
         roleEvidenceSection: roleEvidenceBlock,
         jdSignalBlock,
         techTransferContext,
+        conceptEvidenceContext,
         codeStackContext,
     });
 
