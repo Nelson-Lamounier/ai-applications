@@ -2,9 +2,20 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
+/**
+ * `.sql` was added for `detectMigrationsDir` (ConceptPatternExtractor), which needs
+ * migration files to reach it via `walkTextFiles`. Verified indifferent everywhere else
+ * that consumes the walked list: TreeSitterExtractor/DsaPatternExtractor/AiPatternExtractor
+ * all gate per-file on a lang-extension map that has no `.sql` entry (skipped, not parsed);
+ * the IaC extractor's `parseByFileShape` has no `.sql` branch (falls through to `[]`) and
+ * `scanYamlValues`/CommentExtractor only run when `isYaml(rel)`, which `.sql` never is;
+ * `collectDirectDeps` only matches manifest basenames (package.json, go.mod, ...), none of
+ * which are `.sql`. So extending this shared set — rather than adding a second walker or an
+ * `extraExtensions` option — is the minimal change that cannot regress any other consumer.
+ */
 const TEXT_EXT = new Set([
     '.ts','.tsx','.js','.jsx','.py','.go','.rs','.java',
-    '.tf','.hcl','.yaml','.yml','.json','.toml','.md','.sh',
+    '.tf','.hcl','.yaml','.yml','.json','.toml','.md','.sh','.sql',
 ]);
 const SPECIAL_NAMES = new Set(['dockerfile']);
 
