@@ -28,6 +28,24 @@ export interface GetCommitDetailOptions {
     readonly maxTotalPatchBytes?: number;
 }
 
+/**
+ * Repo-level metadata for profile extraction (language, description, topics,
+ * stars/forks, fork/created/pushed dates). Lives here — not in GitHubAdapter.ts
+ * — so `IRepoAdapter.getRepoMeta` can reference it without a circular import;
+ * GitHubAdapter.ts re-exports it under the same name for its existing
+ * consumers.
+ */
+export interface GitHubRepoMeta {
+    primary_language: string | null;
+    description:      string | null;
+    topics:           string[];
+    stars:            number;
+    forks:            number;
+    is_fork:          boolean;
+    created_at:       string | null;
+    pushed_at:        string | null;
+}
+
 export interface IRepoAdapter {
     /**
      * List all files in a repository at the default branch.
@@ -72,4 +90,12 @@ export interface IRepoAdapter {
      * Patches are size-capped per {@link GetCommitDetailOptions}.
      */
     getCommitDetail?(repoFullName: string, sha: string, opts?: GetCommitDetailOptions): Promise<CommitDetail>;
+
+    /**
+     * Fetch repo-level metadata (language, description, topics, stars/forks,
+     * fork/created/pushed dates) for profile extraction. Optional — adapters
+     * without a concept of repo metadata omit it. `ProfileInputCollector`
+     * requires it and throws a clear error at `collect()` start when absent.
+     */
+    getRepoMeta?(repoFullName: string): Promise<GitHubRepoMeta>;
 }

@@ -22,7 +22,7 @@
 import { bootstrapK8sObservability, pushFinalMetrics } from '@bedrock/shared';
 import { Pool } from 'pg';
 
-import { buildRepoFacts } from './facts/build-repo-facts.js';
+import { buildRepoFactsBatch } from './facts/build-repo-facts.js';
 
 const obs = bootstrapK8sObservability({ serviceName: 'repo-facts-backfill' });
 const log = obs.logger;
@@ -55,23 +55,18 @@ async function main(): Promise<void> {
 
     log.info({ userId }, 'repo_facts_backfill.start');
 
-    let succeeded = 0;
-    let failed    = 0;
     let repoFullNames: string[] = [];
 
     try {
         const single = process.env['REPO_FULL_NAME'];
         repoFullNames = single ? [single] : await loadRepoFullNames(pgPool, userId);
 
-        for (const repoFullName of repoFullNames) {
-            try {
-                await buildRepoFacts(pgPool, userId, repoFullName);
-                succeeded += 1;
-            } catch (err) {
-                failed += 1;
-                log.warn({ err, userId, repoFullName }, 'repo_facts_backfill.repo_failed');
-            }
-        }
+        // buildRepoFactsBatch loads the user's role-signals ONCE for the whole
+        // batch (rather than once per repo, as looping buildRepoFacts did) and
+        // isolates each repo's failure with its own try/catch internally.
+        const { succeeded, failed } = await buildRepoFactsBatch(pgPool, userId, repoFullNames, (repoFullName, err) => {
+            log.warn({ err, userId, repoFullName }, 'repo_facts_backfill.repo_failed');
+        });
 
         log.info({
             event:     'repo_facts_backfill.complete',

@@ -12,6 +12,22 @@ export function shaFromCodeloadUrl(url: string): string | undefined {
 }
 
 /**
+ * The 40-hex commit SHA suffix from a tarball's captured root directory
+ * name, else undefined. GitHub API tarballs name that directory
+ * `{owner}-{repo}-{40-hex-sha}`; owner/repo may themselves contain hyphens,
+ * so this anchors on a trailing `-<40 hex chars>` rather than splitting on
+ * `-`. Fallback path used when {@link shaFromCodeloadUrl} can't parse the
+ * resolved URL (see `fetchAndExtractTarball` in `run-tech-extract.ts`) — a
+ * short (< 40 hex) suffix cannot be expanded to a full SHA, so this
+ * deliberately returns undefined rather than a truncated value.
+ */
+export function shaFromRootDir(rootDir: string | null): string | undefined {
+    if (!rootDir) return undefined;
+    const match = /-([0-9a-f]{40})$/i.exec(rootDir);
+    return match ? match[1].toLowerCase() : undefined;
+}
+
+/**
  * Download a repo tarball to `outPath`. One request per repo; fetch follows the
  * 302 to codeload automatically. Enforces a max-size cap (Content-Length) to
  * defend against runaway repos; throws `repo_too_large` past the cap.

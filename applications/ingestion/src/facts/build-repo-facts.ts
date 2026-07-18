@@ -352,23 +352,21 @@ async function loadConceptRows(pool: Pool, userId: string, repoFullName: string)
 const FACT_VERSION = 1;
 
 /**
- * Orchestration: load inputs (repo + repository_profiles + repo_sync_state +
- * aggregated technology_evidence + role signals), classify the repo's
- * component kind, assemble the fact sheet, and upsert it.
- *
- * Throws on a missing repository row / missing role signals / DB error —
- * both callers (the run-ingestion hook and the backfill runner) wrap this in
- * their own try/catch and treat it as best-effort, never fatal.
+ * Per-repo assembly + upsert, given an already-loaded role-signals map (see
+ * `buildRepoFactsBatch`). Throws on a missing repository row / missing role
+ * signals / DB error — callers decide whether that is fatal (single-repo
+ * `buildRepoFacts`) or isolated (`buildRepoFactsBatch`'s per-repo try/catch).
  */
-export async function buildRepoFacts(pool: Pool, userId: string, repoFullName: string): Promise<void> {
+async function buildOneRepoFacts(
+    pool: Pool, userId: string, repoFullName: string, signalsMap: Map<string, RepoRoleSignals>,
+): Promise<void> {
     const repoRow = await loadRepoRow(pool, userId, repoFullName);
     if (!repoRow) {
         throw new Error(`repo_facts: repository not found for user ${userId} / ${repoFullName}`);
     }
 
-    const [techRows, signalsMap, conceptRows] = await Promise.all([
+    const [techRows, conceptRows] = await Promise.all([
         loadTechRows(pool, userId, repoFullName),
-        loadRepoRoleSignals(pool, userId),
         loadConceptRows(pool, userId, repoFullName),
     ]);
 
@@ -394,4 +392,57 @@ export async function buildRepoFacts(pool: Pool, userId: string, repoFullName: s
         facts,
         factVersion:    FACT_VERSION,
     });
+}
+
+export interface BuildRepoFactsBatchResult {
+    readonly succeeded: number;
+    readonly failed:    number;
+}
+
+/**
+ * Batch orchestration: loads `loadRepoRoleSignals` ONCE for the whole user
+ * (a single query returning every repo's signals) instead of once per repo —
+ * the single-repo `buildRepoFacts` below re-ran that same user-wide query for
+ * every repo when looped by the backfill runner. Assembles + upserts each
+ * repo's fact sheet with its OWN try/catch so one repo's failure never
+ * aborts the rest of the batch.
+ *
+ * `onRepoError`, when provided, receives the raw per-repo error (repo full
+ * name + the thrown error) — used by `buildRepoFacts` below to recover and
+ * rethrow the original error for its single-repo throw-on-failure contract,
+ * and by the backfill runner to log a warning per failed repo.
+ */
+export async function buildRepoFactsBatch(
+    pool: Pool, userId: string, repoFullNames: readonly string[],
+    onRepoError?: (repoFullName: string, err: unknown) => void,
+): Promise<BuildRepoFactsBatchResult> {
+    const signalsMap = await loadRepoRoleSignals(pool, userId);
+
+    let succeeded = 0;
+    let failed = 0;
+    for (const repoFullName of repoFullNames) {
+        try {
+            await buildOneRepoFacts(pool, userId, repoFullName, signalsMap);
+            succeeded += 1;
+        } catch (err) {
+            failed += 1;
+            onRepoError?.(repoFullName, err);
+        }
+    }
+    return { succeeded, failed };
+}
+
+/**
+ * Orchestration: single-repo entrypoint. Delegates to `buildRepoFactsBatch`
+ * with a one-element array, then rethrows the original per-repo error (via
+ * `onRepoError`) when it failed — preserving the historical throw-on-failure
+ * contract (missing repository row / missing role signals / DB error). Both
+ * callers (the run-ingestion hook and, historically, the backfill runner —
+ * now `buildRepoFactsBatch` directly) wrap this in their own try/catch and
+ * treat it as best-effort, never fatal.
+ */
+export async function buildRepoFacts(pool: Pool, userId: string, repoFullName: string): Promise<void> {
+    let thrown: unknown;
+    const { succeeded } = await buildRepoFactsBatch(pool, userId, [repoFullName], (_repo, err) => { thrown = err; });
+    if (succeeded === 0) throw thrown;
 }

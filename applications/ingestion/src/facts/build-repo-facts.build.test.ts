@@ -2,7 +2,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import type { Pool, PoolClient } from 'pg';
 
-import { buildRepoFacts } from './build-repo-facts.js';
+import { buildRepoFacts, buildRepoFactsBatch } from './build-repo-facts.js';
 
 // ---------------------------------------------------------------------------
 // A single mocked pool is shared by:
@@ -156,5 +156,109 @@ describe('buildRepoFacts — orchestration', () => {
         const facts = JSON.parse(params[5] as string);
         expect(facts.concepts).toContainEqual({ name: 'observability', detector: 'monitoring-config', files: 4 });
         expect(facts.concepts).toContainEqual({ name: 'infrastructure as code', detector: 'signal', files: 0 });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildRepoFactsBatch (P2 Task 4, Fix C) — one loadRepoRoleSignals call for
+// the whole batch, per-repo failure isolation.
+// ---------------------------------------------------------------------------
+
+/**
+ * A pool that differentiates the repo-row lookup by the queried repo_full_name
+ * (2nd bind param), so a multi-repo batch test can give each repo its own
+ * repository_id / github_repo_id, while `loadRepoRoleSignals` still answers
+ * from ONE query returning every repo's role-signals row at once (its real
+ * shape: one row per repository for the user).
+ */
+function makeBatchPool(opts: {
+    repos: Record<string, { repositoryId: string; found: boolean }>;
+    roleSignalsRows: Array<Record<string, unknown>>;
+}): { pool: Pool; clientQuery: jest.Mock; poolQuery: jest.Mock } {
+    const poolQuery = jest.fn<() => Promise<{ rows: unknown[] }>>();
+    poolQuery.mockImplementation(async (...args: unknown[]) => {
+        const sql = args[0] as string;
+        const params = (args[1] ?? []) as unknown[];
+
+        if (/has_monitoring_config/.test(sql)) {
+            const repoFullName = params[1] as string;
+            const entry = opts.repos[repoFullName];
+            if (!entry || !entry.found) return { rows: [] };
+            return { rows: [makeRepoRow({ repository_id: entry.repositoryId })] };
+        }
+        if (/FROM technology_evidence/.test(sql)) return { rows: [] };
+        if (/FROM concept_evidence/.test(sql)) return { rows: [] };
+        if (/archetype_signals\s+AS\s+archetype_signals/.test(sql)) {
+            return { rows: opts.roleSignalsRows };
+        }
+        return { rows: [] };
+    });
+
+    const clientQuery = jest.fn<() => Promise<{ rows: unknown[] }>>().mockResolvedValue({ rows: [] });
+    const client = { query: clientQuery, release: jest.fn() } as unknown as PoolClient;
+
+    const pool = {
+        query:   poolQuery,
+        connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client),
+    } as unknown as Pool;
+
+    return { pool, clientQuery, poolQuery };
+}
+
+describe('buildRepoFactsBatch — orchestration', () => {
+    it('loads the role-signals map exactly ONCE for 3 repos, not once per repo', async () => {
+        const { pool, poolQuery } = makeBatchPool({
+            repos: {
+                'octo/repo-a': { repositoryId: 'repo-a-id', found: true },
+                'octo/repo-b': { repositoryId: 'repo-b-id', found: true },
+                'octo/repo-c': { repositoryId: 'repo-c-id', found: true },
+            },
+            roleSignalsRows: [
+                makeRoleSignalsRow({ repository_id: 'repo-a-id' }),
+                makeRoleSignalsRow({ repository_id: 'repo-b-id' }),
+                makeRoleSignalsRow({ repository_id: 'repo-c-id' }),
+            ],
+        });
+
+        const result = await buildRepoFactsBatch(pool, 'user-1', ['octo/repo-a', 'octo/repo-b', 'octo/repo-c']);
+
+        expect(result).toEqual({ succeeded: 3, failed: 0 });
+        const signalsCalls = (poolQuery.mock.calls as Array<[string]>).filter(
+            ([sql]) => /archetype_signals\s+AS\s+archetype_signals/.test(sql),
+        );
+        expect(signalsCalls).toHaveLength(1);
+    });
+
+    it('isolates a per-repo failure: one repo failing does not abort the rest of the batch', async () => {
+        const { pool } = makeBatchPool({
+            repos: {
+                'octo/repo-a': { repositoryId: 'repo-a-id', found: true },
+                'octo/repo-b': { repositoryId: 'repo-b-id', found: false }, // repository row missing
+                'octo/repo-c': { repositoryId: 'repo-c-id', found: true },
+            },
+            roleSignalsRows: [
+                makeRoleSignalsRow({ repository_id: 'repo-a-id' }),
+                makeRoleSignalsRow({ repository_id: 'repo-c-id' }),
+            ],
+        });
+
+        const errors: Array<{ repoFullName: string; err: unknown }> = [];
+        const result = await buildRepoFactsBatch(
+            pool, 'user-1', ['octo/repo-a', 'octo/repo-b', 'octo/repo-c'],
+            (repoFullName, err) => { errors.push({ repoFullName, err }); },
+        );
+
+        expect(result).toEqual({ succeeded: 2, failed: 1 });
+        expect(errors).toHaveLength(1);
+        expect(errors[0]!.repoFullName).toBe('octo/repo-b');
+        expect(String((errors[0]!.err as Error).message)).toMatch(/repository not found/);
+    });
+});
+
+describe('buildRepoFacts — delegates to buildRepoFactsBatch, preserving single-repo throw semantics', () => {
+    it('still throws (not swallows) when the one repo fails, via the onRepoError escape hatch', async () => {
+        const { pool } = makePool({ repoRow: null, roleSignalsRow: makeRoleSignalsRow() });
+
+        await expect(buildRepoFacts(pool, 'user-1', 'octo/repo')).rejects.toThrow(/repository not found/);
     });
 });
