@@ -4,7 +4,7 @@ import { isTextCandidate } from './fileWalk.js';
 
 describe('isTextCandidate', () => {
     it('accepts source + config extensions', () => {
-        for (const f of ['a.ts','b.py','c.go','d.rs','e.java','Dockerfile','f.tf','g.yaml','README.md']) {
+        for (const f of ['a.ts','b.py','c.go','d.rs','e.java','Dockerfile','f.tf','g.yaml','README.md','001_init.sql']) {
             expect(isTextCandidate(f)).toBe(true);
         }
     });

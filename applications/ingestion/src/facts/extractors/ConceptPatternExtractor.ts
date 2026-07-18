@@ -176,22 +176,36 @@ const secretsConfig: FileDetector = (rel, content) => {
   return null;
 };
 
-/** scheduled-automation -> 'process automation': a CronJob manifest, or a workflow file
- *  with an `on.schedule` trigger. */
+// Helm-templated manifests (`{{ .Values.x }}` interpolations) are not valid YAML, so
+// `tryParseYamlObject` always fails on them — but a real CronJob's `kind:` line is
+// still literal text (Helm never templates the `kind` key). Line-anchored so a prose
+// mention ("kind: CronJob" inside a code fence in a README) never fires — README files
+// do not end in .ya?ml, so this only ever runs against manifest-shaped files anyway.
+const CRONJOB_KIND_LINE = /^kind:\s*CronJob\b/m;
+
+const SCHEDULED_AUTOMATION_HIT = { conceptAlias: 'process automation', detector: 'scheduled-automation', confidence: 1.0 } as const;
+
+/** True when a strictly-parsed YAML doc is a CronJob, or a workflow doc with an `on.schedule` trigger. */
+function isScheduledAutomationDoc(rel: string, obj: Record<string, unknown>): boolean {
+  if (obj['kind'] === 'CronJob') return true;
+  if (!isWorkflowPath(rel) || isExcludedWorkflowPath(rel)) return false;
+  const on = obj['on'];
+  return !!on && typeof on === 'object' && !Array.isArray(on) && 'schedule' in (on as Record<string, unknown>);
+}
+
+/** scheduled-automation -> 'process automation': a CronJob manifest (strict YAML, or a
+ *  Helm-templated manifest sniffed by its literal `kind:` line), or a workflow file with
+ *  an `on.schedule` trigger. */
 const scheduledAutomation: FileDetector = (rel, content) => {
   if (!/\.ya?ml$/i.test(rel)) return null;
   const obj = tryParseYamlObject(content);
-  if (!obj) return null;
-  if (obj['kind'] === 'CronJob') {
-    return { conceptAlias: 'process automation', detector: 'scheduled-automation', filePath: rel, confidence: 1.0 };
+  if (obj) {
+    return isScheduledAutomationDoc(rel, obj) ? { ...SCHEDULED_AUTOMATION_HIT, filePath: rel } : null;
   }
-  if (isWorkflowPath(rel) && !isExcludedWorkflowPath(rel)) {
-    const on = obj['on'];
-    if (on && typeof on === 'object' && !Array.isArray(on) && 'schedule' in (on as Record<string, unknown>)) {
-      return { conceptAlias: 'process automation', detector: 'scheduled-automation', filePath: rel, confidence: 1.0 };
-    }
-  }
-  return null;
+  // Strict parse failed — likely a Helm template (`{{ }}` interpolation). Fall back to
+  // a literal `kind: CronJob` line sniff; workflow files are never Helm templates, so no
+  // equivalent fallback is needed for the `on.schedule` branch above.
+  return CRONJOB_KIND_LINE.test(content) ? { ...SCHEDULED_AUTOMATION_HIT, filePath: rel } : null;
 };
 
 const FILE_DETECTORS: FileDetector[] = [
@@ -262,6 +276,11 @@ export function detectMigrationsDir(files: readonly string[]): RawConceptEvidenc
   return out;
 }
 
+// redis is deliberately excluded: SBOM/IaC evidence for redis cannot distinguish broker
+// use (pub/sub, queues) from cache use (the far more common role in this codebase's
+// repos), so counting it here would produce unverifiable "distributed systems" claims.
+// This is a documented FP-discipline decision, not a missed canonical — do not add it
+// without a content-level signal (e.g. an actual pub/sub API call site) to back it.
 const MESSAGE_BROKER_CANONICALS = new Set(['kafka', 'rabbitmq', 'aws_sqs', 'aws_sns', 'aws_eventbridge']);
 const COMPOSE_FILE = /(^|\/)(docker-)?compose(\.[\w-]+)?\.ya?ml$/i;
 

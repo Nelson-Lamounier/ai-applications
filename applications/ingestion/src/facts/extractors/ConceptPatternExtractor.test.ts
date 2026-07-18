@@ -1,10 +1,14 @@
 /** @format */
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   detectConceptFilePatterns, detectK8sOrchestration, detectIacPresence,
   detectMigrationsDir, detectBrokerTopology, ConceptPatternExtractor,
 } from './ConceptPatternExtractor.js';
 import type { ConceptTechEvidence, RawConceptEvidence } from './ConceptPatternExtractor.js';
+import { walkTextFiles } from '../util/fileWalk.js';
 
 function only(detector: string, out: RawConceptEvidence[]): RawConceptEvidence[] {
   return out.filter((r) => r.detector === detector);
@@ -312,6 +316,63 @@ describe('scheduled-automation', () => {
     const src = ['on: push', 'jobs:', '  build:', '    runs-on: ubuntu-latest'].join('\n');
     expect(only('scheduled-automation', detectConceptFilePatterns('.github/workflows/ci.yaml', src))).toEqual([]);
   });
+
+  // Real-shape regression: live repos declare CronJobs as Helm templates. `{{ }}`
+  // interpolations break strict YAML parsing (verified: `tryParseYamlObject` returns
+  // null, several "Block collections are not allowed within flow collections" /
+  // "Missing , or : between flow map items" errors) -- before this fix the detector
+  // returned null right there and never saw `kind: CronJob`, which is why it could
+  // structurally never fire against a real Helm chart.
+  it('fires on a Helm-templated CronJob manifest (fails strict YAML parse, sniffed by literal kind: line)', () => {
+    const src = [
+      'apiVersion: batch/v1',
+      'kind: CronJob',
+      'metadata:',
+      '  name: {{ include "myapp.fullname" . }}',
+      '  labels:',
+      '    {{- include "myapp.labels" . | nindent 4 }}',
+      'spec:',
+      '  schedule: "{{ .Values.cron.schedule }}"',
+      '  jobTemplate:',
+      '    spec:',
+      '      template:',
+      '        spec:',
+      '          containers:',
+      '            - name: {{ .Chart.Name }}',
+      '              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"',
+      '              {{- if .Values.env }}',
+      '              env:',
+      '                {{- toYaml .Values.env | nindent 16 }}',
+      '              {{- end }}',
+      '          restartPolicy: OnFailure',
+    ].join('\n');
+    expect(only('scheduled-automation', detectConceptFilePatterns('charts/myapp/templates/cronjob.yaml', src))).toEqual([
+      { conceptAlias: 'process automation', detector: 'scheduled-automation', filePath: 'charts/myapp/templates/cronjob.yaml', confidence: 1.0 },
+    ]);
+  });
+
+  it('near-miss: does NOT fire on a Helm-templated Deployment manifest (same parse failure, no CronJob kind line)', () => {
+    const src = [
+      'apiVersion: apps/v1',
+      'kind: Deployment',
+      'metadata:',
+      '  name: {{ include "myapp.fullname" . }}',
+      '  labels:',
+      '    {{- include "myapp.labels" . | nindent 4 }}',
+      'spec:',
+      '  replicas: {{ .Values.replicaCount }}',
+      '  template:',
+      '    spec:',
+      '      containers:',
+      '        - name: {{ .Chart.Name }}',
+      '          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"',
+      '          {{- if .Values.env }}',
+      '          env:',
+      '            {{- toYaml .Values.env | nindent 12 }}',
+      '          {{- end }}',
+    ].join('\n');
+    expect(only('scheduled-automation', detectConceptFilePatterns('charts/myapp/templates/deployment.yaml', src))).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -329,6 +390,51 @@ describe('migrations-dir', () => {
   it('near-miss: does NOT fire when a directory has only 2 numbered SQL files (count threshold)', () => {
     const files = ['migrations/001_init.sql', 'migrations/002_add_users.sql'];
     expect(detectMigrationsDir(files)).toEqual([]);
+  });
+
+  // Real-shape regression: the unit tests above pass a synthetic path list straight
+  // to detectMigrationsDir, which masked a real bug -- `walkTextFiles` (fileWalk.ts)
+  // never had `.sql` in TEXT_EXT, so on an ACTUAL repo tree the walk never surfaced
+  // migration files to this detector at all, no matter the count. Exercise the real
+  // filesystem walk end to end to prove the fix.
+  describe('via a real walkTextFiles() scan (not a synthetic list)', () => {
+    let root: string;
+
+    beforeEach(async () => {
+      root = await fs.mkdtemp(path.join(os.tmpdir(), 'concept-migrations-'));
+    });
+
+    afterEach(async () => {
+      await fs.rm(root, { recursive: true, force: true });
+    });
+
+    it('fires migrations-dir for a real trio of numbered .sql files on disk', async () => {
+      const dir = path.join(root, 'applications', 'x', 'migrations');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, '001_a.sql'), 'CREATE TABLE a (id int);\n');
+      await fs.writeFile(path.join(dir, '002_b.sql'), 'CREATE TABLE b (id int);\n');
+      await fs.writeFile(path.join(dir, '003_c.sql'), 'CREATE TABLE c (id int);\n');
+
+      const walked = await walkTextFiles(root);
+      expect(walked).toEqual(expect.arrayContaining([
+        'applications/x/migrations/001_a.sql',
+        'applications/x/migrations/002_b.sql',
+        'applications/x/migrations/003_c.sql',
+      ]));
+      expect(detectMigrationsDir(walked)).toEqual([
+        { conceptAlias: 'database migrations', detector: 'migrations-dir', filePath: 'applications/x/migrations/001_a.sql', confidence: 1.0 },
+      ]);
+    });
+
+    it('near-miss: does NOT fire for only 2 real .sql files on disk', async () => {
+      const dir = path.join(root, 'applications', 'x', 'migrations');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, '001_a.sql'), 'CREATE TABLE a (id int);\n');
+      await fs.writeFile(path.join(dir, '002_b.sql'), 'CREATE TABLE b (id int);\n');
+
+      const walked = await walkTextFiles(root);
+      expect(detectMigrationsDir(walked)).toEqual([]);
+    });
   });
 });
 
