@@ -13,9 +13,9 @@
  * On Strategist success the Strategist-authored tailored StructuredResumeData
  * (Option A) is validated and persisted to platform RDS resumes.
  */
-import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter, StrategistAnalysisResult, AgentResult, SkillEvidenceEntry, TechTransferGroup, RepoConceptRow } from '@bedrock/shared';
+import type { StrategistPipelineContext, StrategistResearchResult, StructuredResumeData, CoverLetter, GroundingMode, JdSignal, BasePipelineContext, PartialMatch, SkillGap, RetrievalPrefilter, StrategistAnalysisResult, AgentResult, SkillEvidenceEntry, TechTransferGroup, RepoConceptRow, RepoFactRow } from '@bedrock/shared';
 import type { Pool } from 'pg';
-import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore } from '@bedrock/shared';
+import { setDefaultAgentInvocationSink, bootstrapK8sObservability, pushFinalMetrics, BedrockGroundingVerifier, BedrockProseLinter, PgSemanticCache, OutputSanitiser, recordInvocationToRds, RoleOntologyRepository, TitanEmbeddingProvider, TechnologyOntologyRepository, SkillOntologyRepository, SkillEmbeddingResolver, PhraseSkillResolver, canonicaliseSkills, RdsVectorStore, RepoFactsReadRepository } from '@bedrock/shared';
 import { Counter, Histogram } from 'prom-client';
 import { extractResumeProseSections } from './lib/resume/resume-prose.js';
 
@@ -564,6 +564,7 @@ function recordProjectsAgentObservability(
 }
 import { formatTechTransferContext } from './ats/context/tech-transfer-context.js';
 import { formatConceptEvidenceContext } from './ats/context/concept-evidence-context.js';
+import { formatRepoFactsContext } from './ats/context/repo-facts-context.js';
 import { attachCodeEvidence } from './ats/grounding/tool-evidence-retrieval.js';
 import { attachSourceLanes, mergeRepoLane } from './ats/grounding/evidence-lane.js';
 import { applyDegreeReconcile } from './ats/reconcile/education-reconcile.js';
@@ -2299,7 +2300,8 @@ export async function main(): Promise<void> {
         // Prefer the explicit relationship graph; fall back to category groups when sparse.
         const techRepo = new TechnologyOntologyRepository(pool);
         const skillOntologyRepo = new SkillOntologyRepository(pool);
-        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths, evidenceTopology, canonicalToCodeFiles, repoConcepts, skillAliasToCanonical] = await Promise.all([
+        const repoFactsRepo = new RepoFactsReadRepository(pool);
+        const [techTransferGroups, techCategoryGroups, techAliasMap, codeTechByRepo, succeedsEdges, aliasToCanonical, archetypeSignals, repoFilePaths, evidenceTopology, canonicalToCodeFiles, repoConcepts, skillAliasToCanonical, repoFacts] = await Promise.all([
             techRepo.loadTransferGroups().catch(() => [] as TechTransferGroup[]),
             techRepo.loadCategoryGroups().catch(() => [] as TechTransferGroup[]),
             techRepo.loadAliasMap().catch(() => new Map<string, string>()),
@@ -2312,6 +2314,7 @@ export async function main(): Promise<void> {
             techRepo.loadCanonicalToCodeFiles(env.userId).catch(() => new Map<string, string[]>()),
             skillOntologyRepo.loadRepoConcepts(env.userId).catch(() => [] as RepoConceptRow[]),
             skillOntologyRepo.loadAliasToCanonicalMap().catch(() => new Map<string, string>()),
+            repoFactsRepo.loadForUser(env.userId).catch(() => [] as RepoFactRow[]),
         ]);
         // Typed groups (class/tier/basis) feed the 3 consumers that read the metadata
         // directly (tech-transfer context, retrieval prefilter, vendor-provenance guard);
@@ -2333,6 +2336,10 @@ export async function main(): Promise<void> {
         // that have evidence render a line (empty ⇒ omitted, same discipline as
         // techTransferContext above).
         const conceptEvidenceContext = formatConceptEvidenceContext(jdExtraction.concepts, repoConcepts, skillAliasToCanonical);
+        // Task 5 — materialised per-repo fact sheets (repo_facts): what each repo IS
+        // (languages/frameworks/databases/infrastructure/tools + concepts, evidence-counted).
+        // Unfiltered by the JD (unlike conceptEvidenceContext above) — fork/noise repos excluded.
+        const repoFactsContext = formatRepoFactsContext(repoFacts);
         // Doc-vs-code drift + repo identity: the authoritative current code stack per repo
         // AND each repo's deterministic profile (cdk-infra/k8s-platform/…, what it provisions).
         // Folded into one grounding block so the matcher prefers code over stale docs and
@@ -2347,7 +2354,7 @@ export async function main(): Promise<void> {
         const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techTransferOrCategoryGroups, aliasToCanonical);
 
         const research = await stageSeconds(pipelineStageSeconds, 'research', () =>
-            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock, techTransferOrCategoryGroups, conceptEvidenceContext));
+            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock, techTransferOrCategoryGroups, conceptEvidenceContext, repoFactsContext));
 
         // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line.
         // Computed BEFORE the guard chain so it can deterministically constrain the matcher's

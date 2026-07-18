@@ -143,6 +143,10 @@ export { TechnologyOntologyRepository }     from './implementations/TechnologyOn
 export type { TechTransferGroup, TransferTier } from './implementations/TechnologyOntologyRepository.js';
 export { SkillOntologyRepository }          from './implementations/SkillOntologyRepository.js';
 export type { RepoConceptRow }              from './implementations/SkillOntologyRepository.js';
+export { RepoFactsReadRepository }          from './implementations/RepoFactsReadRepository.js';
+export type {
+    RepoFactRow, RepoFactsPayload, RepoFactEntry, RepoFactConceptEntry,
+} from './implementations/RepoFactsReadRepository.js';
 export { TechnologyEvidenceRepository }     from './implementations/TechnologyEvidenceRepository.js';
 export { TechnologyCandidateRepository }    from './implementations/TechnologyCandidateRepository.js';
 export { TechnologyParityRunRepository }    from './implementations/TechnologyParityRunRepository.js';

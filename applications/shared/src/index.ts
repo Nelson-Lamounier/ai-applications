@@ -354,6 +354,10 @@ export { TechnologyOntologyRepository }     from './rds/index.js';
 export type { TechTransferGroup, TransferTier } from './rds/index.js';
 export { SkillOntologyRepository }          from './rds/index.js';
 export type { RepoConceptRow }              from './rds/index.js';
+export { RepoFactsReadRepository }          from './rds/index.js';
+export type {
+    RepoFactRow, RepoFactsPayload, RepoFactEntry, RepoFactConceptEntry,
+} from './rds/index.js';
 export { TechnologyEvidenceRepository }     from './rds/index.js';
 export { TechnologyCandidateRepository }    from './rds/index.js';
 export { TechnologyParityRunRepository }    from './rds/index.js';
