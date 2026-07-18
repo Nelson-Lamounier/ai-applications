@@ -35,7 +35,7 @@ that also back [nelsonlamounier.com](https://nelsonlamounier.com).
 
 ## What it does
 
-The repository is a Yarn 4 workspace monorepo of **13 services** built
+The repository is a Yarn 4 workspace monorepo of **11 services** built
 on a shared TypeScript foundation. The services share one Bedrock
 account, one RDS PostgreSQL instance (`k8s-dev-platform-rds`), one Redis
 cluster, and one managed Amazon EKS cluster (`k8s-eks-development`;
@@ -248,9 +248,10 @@ Pushgateway), and the per-user `recordBedrockCost` ledger.
 ```text
 .
 ├── api/                       — Fastify HTTP layer (public-api)
-├── applications/              — 13 services + shared module
+├── applications/              — 11 services + shared module
 │   ├── shared/                — hexagonal RDS, observability, security, cache
-│   ├── chatbot{,-public,-authenticated}/
+│   ├── chatbot-public/
+│   ├── chatbot-authenticated/
 │   ├── ingestion/             — profile extractor + 4 synthesizer agents + facts extraction
 │   ├── ontology-importer/     — Bedrock Batch tier-2 ontology import
 │   ├── self-healing/          — Bedrock MCP tool-use agent

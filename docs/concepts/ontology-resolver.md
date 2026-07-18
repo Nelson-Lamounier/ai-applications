@@ -61,7 +61,7 @@ export class OntologyResolver {
 
 Normalisation is lowercase + trim — **not** the candidate
 normalisation in the orchestrator (`replace(/[^a-z0-9]/g, '')`,
-[TechExtractOrchestrator.ts:27-29](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts#L27-L29)).
+[TechExtractOrchestrator.ts:27-29](../../applications/ingestion/src/facts/TechExtractOrchestrator.ts#L27-L29)).
 The asymmetry is deliberate: the resolver looks up exact aliases the
 ontology stores (`@aws-sdk/client-s3`, `aws-cdk-lib/aws-ec2`,
 `kube-prometheus-stack`), so stripping punctuation here would lose
@@ -96,7 +96,7 @@ identically to imports / IaC paths.
 
 Each evidence row is tagged with the `ontology_version` current at
 the time of extraction
-([TechExtractOrchestrator.ts:56](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts#L56)).
+([TechExtractOrchestrator.ts:56](../../applications/ingestion/src/facts/TechExtractOrchestrator.ts#L56)).
 The version is read once per Job via
 `TechnologyOntologyRepository.currentVersion()`
 ([TechnologyOntologyRepository.ts:43-49](../../applications/shared/src/rds/implementations/TechnologyOntologyRepository.ts#L43-L49))
@@ -112,7 +112,7 @@ deliberately does not attempt it. Two reasons:
 
 1. **Candidate loop covers it.** The orchestrator's `normalizeForCandidate`
    strips all non-alphanumerics
-   ([TechExtractOrchestrator.ts:27-29](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts#L27-L29))
+   ([TechExtractOrchestrator.ts:27-29](../../applications/ingestion/src/facts/TechExtractOrchestrator.ts#L27-L29))
    and uses the normalised string as a grouping key. Multiple raw
    names that lose their distinction under that rule collapse to one
    `technology_candidate` row presented to the ontology-importer's
@@ -133,7 +133,7 @@ deliberately does not attempt it. Two reasons:
 | Resolver class (15 lines) | [applications/shared/src/rds/ontology/OntologyResolver.ts](../../applications/shared/src/rds/ontology/OntologyResolver.ts) |
 | Repository (alias-map + prose-safe + version) | [applications/shared/src/rds/implementations/TechnologyOntologyRepository.ts](../../applications/shared/src/rds/implementations/TechnologyOntologyRepository.ts) |
 | Schema (ontology + aliases + version singleton) | [applications/platform-rds-bootstrap/migrations/034_technology_graph.sql](../../applications/platform-rds-bootstrap/migrations/034_technology_graph.sql) |
-| Caller (orchestrator) | [applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts](../../applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts) |
+| Caller (orchestrator) | [applications/ingestion/src/facts/TechExtractOrchestrator.ts](../../applications/ingestion/src/facts/TechExtractOrchestrator.ts) |
 | Consumer of misses (candidate review) | [applications/ontology-importer/src/](../../applications/ontology-importer/src/) |
 | Tests | [applications/shared/src/rds/ontology/OntologyResolver.test.ts](../../applications/shared/src/rds/ontology/OntologyResolver.test.ts) |
 
@@ -190,5 +190,5 @@ Evidence trail (auto-generated):
 - Source: applications/shared/src/rds/ontology/OntologyResolver.ts (read in full on 2026-05-27)
 - Source: applications/shared/src/rds/implementations/TechnologyOntologyRepository.ts (lines 1-50 on 2026-05-27)
 - Source: applications/platform-rds-bootstrap/migrations/034_technology_graph.sql (lines 1-40 on 2026-05-27)
-- Source: applications/tech-extractor/src/orchestrator/TechExtractOrchestrator.ts (lines 27-56 on 2026-05-27)
+- Source: applications/ingestion/src/facts/TechExtractOrchestrator.ts (lines 27-56 on 2026-05-27)
 -->

@@ -6,7 +6,7 @@ sources:
   - applications/tech-extractor/
   - .github/workflows/deploy-tech-extractor.yml
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-07-18
 ---
 
 > **Retired (2026-07-18).** The standalone `tech-extractor` Job, its
@@ -24,6 +24,23 @@ updated: 2026-05-27
 > engagement that justified the deterministic approach (ADR 0001)
 > remain accurate descriptions of *how the extraction works*, just not
 > of *where it runs*.
+>
+> **Note (2026-07-18):** the "Runtime contract," "Repository layout,"
+> "How to run locally," and "Deploy" sections below describe an
+> *intermediate* state — the C0 consolidation, where
+> `applications/tech-extractor/` held only a `Dockerfile` building off
+> the shared `ingestion` tree, with its own env-var contract
+> (`env-tech-extract.ts`) and `deploy-tech-extractor.yml` workflow.
+> Both of those have since also been deleted (this same retirement);
+> `applications/tech-extractor/` does not exist at all any more, and
+> there is no standalone env-var contract or deploy workflow to run —
+> the `ingestion` Job's own contract
+> ([applications/ingestion/src/env.ts](../../applications/ingestion/src/env.ts),
+> [applications/ingestion/README.md](../../applications/ingestion/README.md))
+> is what actually runs today. Those sections, and "Unified ingestion
+> (P1)" below (whose retirement it describes as still-pending is now
+> complete), are kept for historical/audit value only — do not follow
+> their commands.
 
 ## What it does
 
