@@ -44,6 +44,11 @@ export interface RetrieveOptions {
      */
     filterByFileClass?: string[];
     /**
+     * Restrict chunk hits to these `metadata.docType` values (docs lane only,
+     * e.g. ['adr','readme']). Omit to consider all doc types.
+     */
+    filterByDocType?:   string[];
+    /**
      * Per-role score multiplier. Overrides {@link DEFAULT_FILE_CLASS_WEIGHTS}
      * for the named roles; unlisted roles keep their default. Lets a query
      * favour, say, IaC over docs without excluding either.
@@ -122,6 +127,7 @@ export class PgVectorRetriever {
             filterByDomain,
             filterByTechStack,
             filterByFileClass,
+            filterByDocType,
             fileClassWeights,
             filterByRepoSignals,
             filterByPrimaryLanguage,
@@ -135,7 +141,7 @@ export class PgVectorRetriever {
             this.queryProfileLayer(userId, vectorStr, maxProfiles, profileWeight, {
                 filterByDomain, filterByTechStack, filterByRepoSignals, filterByPrimaryLanguage, boostByRepoSignals,
             }),
-            this.queryChunkLayer(userId, vectorStr, query, maxChunks, neighbourRadius, filterByFileClass, fileClassWeights),
+            this.queryChunkLayer(userId, vectorStr, query, maxChunks, neighbourRadius, filterByFileClass, filterByDocType, fileClassWeights),
         ]);
 
         return [...profilePassages, ...chunkPassages].sort((a, b) => b.score - a.score);
@@ -217,6 +223,7 @@ export class PgVectorRetriever {
         limit:             number,
         neighbourRadius:   number,
         filterByFileClass?: string[],
+        filterByDocType?:   string[],
         fileClassWeights?:  Record<string, number>,
     ): Promise<RetrievedPassage[]> {
         // Fuse a wider candidate pool (vector + BM25) via Reciprocal Rank Fusion,
@@ -239,12 +246,14 @@ export class PgVectorRetriever {
                 score:          number | string;
             }>(
                 // $6 (nullable text[]) optionally restricts both candidate CTEs to
-                // the requested fileClass roles before fusion.
+                // the requested fileClass roles before fusion; $7 (nullable text[])
+                // likewise restricts to the requested docType values.
                 `WITH vector_ranked AS (
                     SELECT d.id, ROW_NUMBER() OVER (ORDER BY d.embedding <=> $2::vector) AS vrank
                     FROM document_embeddings d
                     WHERE d.user_id = $1::uuid
                       AND ($6::text[] IS NULL OR d.metadata->>'fileClass' = ANY($6))
+                      AND ($7::text[] IS NULL OR d.metadata->>'docType' = ANY($7))
                     ORDER BY d.embedding <=> $2::vector
                     LIMIT $4
                 ),
@@ -256,6 +265,7 @@ export class PgVectorRetriever {
                     WHERE d.user_id = $1::uuid
                       AND d.content_tsv @@ plainto_tsquery('english', $3)
                       AND ($6::text[] IS NULL OR d.metadata->>'fileClass' = ANY($6))
+                      AND ($7::text[] IS NULL OR d.metadata->>'docType' = ANY($7))
                     ORDER BY ts_rank(d.content_tsv, plainto_tsquery('english', $3)) DESC
                     LIMIT $4
                 ),
@@ -277,7 +287,7 @@ export class PgVectorRetriever {
                  JOIN document_embeddings d ON d.id = r.id
                 ORDER BY r.rrf_score DESC
                 LIMIT $5`,
-                [userId, vectorStr, queryText, candidatePool, limit, filterByFileClass ?? null],
+                [userId, vectorStr, queryText, candidatePool, limit, filterByFileClass ?? null, filterByDocType ?? null],
             );
 
             const primary: RetrievedPassage[] = result.rows.map((row) => {

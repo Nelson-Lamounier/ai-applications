@@ -173,6 +173,13 @@ export interface RetrievalPrefilter {
      * chunk enrichment were retired.
      */
     readonly skillsLane?: boolean;
+    /**
+     * Hard include-filter on the docs-lane `metadata.docType` value (e.g.
+     * ['adr','readme']). Absent ⇒ no constraint (fail-open, matches today's
+     * behaviour). Applied in both filter passes (it is a hard gate, not the
+     * soft tech/skill widener).
+     */
+    readonly docTypes?: readonly string[];
 }
 
 // =============================================================================
