@@ -24,7 +24,7 @@ describe('formatConceptEvidenceContext', () => {
             aliasMap,
         );
         expect(result).toContain('## Evidenced Concepts');
-        expect(result).toContain('- observability: 11 files across 1 repos (detectors: grafana-config)');
+        expect(result).toContain('- observability: 11 files across 1 repo (detectors: grafana-config)');
     });
 
     it('returns "" when no JD concept intersects any evidence', () => {

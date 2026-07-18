@@ -259,6 +259,45 @@ describe('runFactsStage', () => {
             expect(calls.some((c) => c.includes('INSERT INTO concept_evidence'))).toBe(false);
         });
 
+        it('persist: a firing-shaped fixture under a test path produces NO concept evidence (FP guard mirrors DSA/AI lanes)', async () => {
+            // monitoring-config fires on path (grafana/dashboards//alert/prometheus.yaml/
+            // alloy/otel-collector) AND content ("panels":/groups:/receivers:/scrape_configs:).
+            // Only workflowCi/workflowDeploy carry their own fixtures-path guard -- without
+            // scanning patternFiles (not the full file list) this Grafana-shaped fixture would
+            // persist a real concept_evidence row despite living under __tests__/fixtures/.
+            await fs.mkdir(path.join(extractDir, 'src', '__tests__', 'fixtures'), { recursive: true });
+            await fs.writeFile(
+                path.join(extractDir, 'src', '__tests__', 'fixtures', 'grafana-dashboard.json'),
+                JSON.stringify({ panels: [{ title: 'CPU' }] }),
+            );
+
+            // A resolvable 'observability' skill alias: proves this is not a silent no-op
+            // via alias-unresolved skip (RdsConceptEvidenceRepository.insertMany) -- if the
+            // fixture WERE scanned, monitoring-config's 'observability' conceptAlias would
+            // resolve and insert.
+            const routes: Route[] = [
+                ...ONTOLOGY_ROUTES,
+                { needle: 'alias, skill_id FROM skill_aliases', rows: [{ alias: 'observability', skill_id: 'skill-observability' }] },
+            ];
+            const { pool, client } = fakePool(routes);
+
+            const result = await runFactsStage({
+                pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
+                commitSha: 'abc', extractDir, writeMode: 'persist',
+                laneGates: { techDone: false, dsaDone: false, aiDone: false },
+                githubSbomEnabled: false, githubToken: 'tok',
+            });
+
+            expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'dockerfile', canonicalId: 'node.js', filePath: 'Dockerfile' });
+
+            // The fixture is the only concept-shaped file in the tree -- with it correctly
+            // excluded, the concept lane detects nothing at all, so insertMany's own
+            // rows.length===0 guard means concept_evidence is never even attempted.
+            const insertCalls = (client.query as jest.Mock).mock.calls
+                .filter(([sql]) => typeof sql === 'string' && /INSERT INTO concept_evidence/i.test(sql));
+            expect(insertCalls).toEqual([]);
+        });
+
         it('persist: a concept-lane failure (DB error inside insertMany) is fail-open -- does not fail the stage, and downstream lanes still run', async () => {
             await fs.mkdir(path.join(extractDir, '.github', 'workflows'), { recursive: true });
             await fs.writeFile(

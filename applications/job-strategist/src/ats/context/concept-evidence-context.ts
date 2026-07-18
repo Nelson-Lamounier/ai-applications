@@ -70,7 +70,8 @@ export function formatConceptEvidenceContext(
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([canonical, agg]) => {
             const detectors = [...agg.detectors].sort().join(', ');
-            return `- ${canonical}: ${agg.files} files across ${agg.repos.size} repos (detectors: ${detectors})`;
+            const repoWord = agg.repos.size === 1 ? 'repo' : 'repos';
+            return `- ${canonical}: ${agg.files} files across ${agg.repos.size} ${repoWord} (detectors: ${detectors})`;
         });
 
     return ['## Evidenced Concepts', ...lines].join('\n');

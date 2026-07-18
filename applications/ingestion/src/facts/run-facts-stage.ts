@@ -378,14 +378,16 @@ export async function runFactsStage(input: FactsStageInput): Promise<FactsStageR
     const { techDone, dsaDone, aiDone } = dryRun ? NO_GATES : (input.laneGates ?? NO_GATES);
 
     const files = await walkTextFiles(extractDir);
-    // DSA + AI "real-work" lanes must not score test fixtures (a test's `class TreeNode`
-    // / `.sort((a,b)=>…)` / `cmp_to_key` is not real-work evidence). The tech/IaC lane
-    // keeps the full list — a real import in a test is still valid "uses X" evidence.
+    // DSA + AI + concept "real-work" lanes must not score test fixtures (a test's
+    // `class TreeNode` / a fixture Grafana dashboard JSON is not real-work evidence —
+    // only workflowCi/workflowDeploy carry their own fixtures-path guard, the other
+    // concept detectors do not). The tech/IaC lane keeps the full list — a real
+    // import in a test is still valid "uses X" evidence.
     const patternFiles = files.filter((f) => !isTestFile(f));
     const readFile = (rel: string) => fs.readFile(path.join(extractDir, rel), 'utf-8');
     // Concept lane's readFile contract returns null on a read failure instead of
-    // throwing (ConceptPatternExtractorInput.readFile) -- files.length differs
-    // by nothing here (same walk), only the failure mode is wrapped.
+    // throwing (ConceptPatternExtractorInput.readFile) -- patternFiles.length differs
+    // by nothing here (same filtered list), only the failure mode is wrapped.
     const readFileOrNull = async (rel: string): Promise<string | null> => {
         try {
             return await readFile(rel);
@@ -423,8 +425,14 @@ export async function runFactsStage(input: FactsStageInput): Promise<FactsStageR
         const techEvidence: ConceptTechEvidence[] = evidenceKeys
             .filter((key): key is EvidenceKey & { filePath: string } => key.filePath !== null)
             .map((key) => ({ sourceLayer: key.sourceLayer, canonicalName: key.canonicalId, filePath: key.filePath }));
+        // Same FP discipline as the DSA/AI lanes: only the two workflow detectors
+        // (workflowCi/workflowDeploy) carry their own fixtures-path guard, so the
+        // other five concept detectors (monitoring-config, scheduled-automation,
+        // migrations-dir, runbooks, secrets-config) would otherwise persist real
+        // concept_evidence rows off test/fixture files. Scan the same test-file-
+        // filtered list the DSA/AI lanes use, not the full `files`.
         await runConceptLane(pool, {
-            userId, repoFullName, githubRepoId, commitSha, files, readFile: readFileOrNull, techEvidence,
+            userId, repoFullName, githubRepoId, commitSha, files: patternFiles, readFile: readFileOrNull, techEvidence,
         });
     }
 
