@@ -254,6 +254,24 @@ describe('ChunkerRegistry', () => {
             expect(doc[0].metadata?.fileClass).toBe('docs');
         });
 
+        it('stamps metadata.docType on every chunk of a docs-lane file', () => {
+            const chunks = registry.chunk(
+                '# Overview\n\nBody long enough to pass the minimum character threshold for chunking.',
+                'README.md',
+            );
+            expect(chunks.length).toBeGreaterThan(0);
+            for (const chunk of chunks) {
+                expect(chunk.metadata?.docType).toBe('readme');
+            }
+        });
+
+        it('does not stamp docType on a non-docs file', () => {
+            const chunks = registry.chunk('export const x = 1;', 'src/index.ts');
+            for (const chunk of chunks) {
+                expect(chunk.metadata).not.toHaveProperty('docType');
+            }
+        });
+
         it('handles .mdx files with MarkdownChunker', () => {
             const chunks = registry.chunk(
                 '# MDX Component\n\nContent with enough characters to pass the minimum threshold.',
