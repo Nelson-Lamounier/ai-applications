@@ -144,6 +144,43 @@ describe('ProfileInputCollector against a TarballRepoAdapter (unified acquisitio
         expect(delegateListCommits).toHaveBeenCalledTimes(1);
     });
 
+    it('treats a missing probe file on the tarball adapter as absent, silently (no console.warn)', async () => {
+        // Real disk-backed adapter (not a stub): only README.md exists, so
+        // every manifest/changelog probe hits fs ENOENT -> RepoNotFoundError
+        // (see TarballRepoAdapter.fetchFile). This must classify identically
+        // to the GitHub 404 path in ProfileInputCollector.fetchFile.
+        const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-collector-tarball-missing-'));
+        dirs.push(extractDir);
+        await fs.writeFile(path.join(extractDir, 'README.md'), '# Only a README');
+
+        const delegate = {
+            getRepoMeta: async () => ({
+                primary_language: 'TypeScript',
+                description:      'A tarball-backed repo',
+                topics:            [] as string[],
+                stars:             0,
+                forks:             0,
+                is_fork:           false,
+                created_at:        '2024-01-01T00:00:00Z',
+                pushed_at:         '2024-06-01T00:00:00Z',
+            }),
+            listCommits: async (): Promise<RepoCommit[]> => [],
+            fetchFile:   async () => { throw new Error('delegate.fetchFile should not be called'); },
+            listFiles:   async () => [],
+        } as unknown as IRepoAdapter;
+
+        const adapter = new TarballRepoAdapter(extractDir, 'resolved-sha', delegate);
+        const collector = new ProfileInputCollector(adapter, new FileFetchCache());
+
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const bundle = await collector.collect('owner/repo');
+
+        expect(bundle.readme).toBe('# Only a README');
+        expect(bundle.manifests).toEqual({});
+        expect(bundle.changelog ?? null).toBeNull();
+        expect(warn).not.toHaveBeenCalled();
+    });
+
     it('throws a clear error when the adapter has no getRepoMeta (e.g. a bare stub adapter)', async () => {
         const adapterWithoutRepoMeta = {
             listCommits: async () => [],

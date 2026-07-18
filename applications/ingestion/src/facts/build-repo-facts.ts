@@ -62,19 +62,18 @@
  * directly off `repo_sync_state` in `buildRepoFacts` and threaded into
  * `assembleRepoFacts` as a separate input:
  *
- *   has_ci                                                 -> "ci/cd"
+ *   has_ci                                                 -> "ci/cd pipelines"
  *   has_k8s_manifests || has_helm_chart || has_argocd_apps  -> "container orchestration"
  *   has_iac                                                 -> "infrastructure as code"
  *   has_monitoring_config                                   -> "observability"
  *   evidence_topology.has_migrations                        -> "database migrations"
  *
- * Note: the signal-derived name for the CI concept is the literal string
- * `'ci/cd'`, while the concept-detector canonical is `'ci/cd pipelines'`
- * (migration 123 deliberately did not create a duplicate `'ci/cd'` canonical
- * — see plan self-review). The two do not string-match, so a repo with both
- * CI signals and detector-confirmed workflow files can carry both a
- * `'ci/cd'` (signal) and a `'ci/cd pipelines'` (detector) entry side by side;
- * this is a pre-existing naming split, not something this phase reconciles.
+ * Note: the signal-derived name for the CI concept is `'ci/cd pipelines'`,
+ * matching the concept-detector canonical (migration 123's `skill_ontology`
+ * seed) exactly — a repo with both CI signals and detector-confirmed
+ * workflow files never carries a divergent `'ci/cd'` / `'ci/cd pipelines'`
+ * pair; `deriveConcepts`'s `detectorNames` dedup collapses them into the one
+ * detector-backed entry, as intended.
  */
 
 import type { Pool } from 'pg';
@@ -237,7 +236,7 @@ function deriveConcepts(
 
     const signalFallback: ConceptEntry[] = [];
     const archetype = signals.archetype;
-    if (archetype.has_ci) signalFallback.push(concept('ci/cd'));
+    if (archetype.has_ci) signalFallback.push(concept('ci/cd pipelines'));
     if (archetype.has_k8s_manifests || archetype.has_helm_chart || archetype.has_argocd_apps) {
         signalFallback.push(concept('container orchestration'));
     }

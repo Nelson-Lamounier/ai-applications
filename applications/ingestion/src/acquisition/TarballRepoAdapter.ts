@@ -35,6 +35,8 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
+import { RepoNotFoundError } from '@bedrock/shared';
+
 import type {
     IRepoAdapter,
     ListCommitsOptions,
@@ -152,7 +154,12 @@ export class TarballRepoAdapter implements IRepoAdapter {
             return await fs.readFile(abs, 'utf-8');
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-                throw new Error(`TarballRepoAdapter.fetchFile: file not found: ${filePath}`);
+                // Mirror GitHubAdapter's 404 classification (see github-errors.ts)
+                // so ProfileInputCollector's absent-file handling — which
+                // branches on `instanceof RepoNotFoundError` — treats an
+                // on-disk probe miss identically to a GitHub 404: silent
+                // "absent", not a logged warning.
+                throw new RepoNotFoundError(filePath);
             }
             throw err;
         }

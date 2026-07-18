@@ -137,7 +137,7 @@ describe('buildRepoFacts — orchestration', () => {
 
         const facts = JSON.parse(params[5] as string);
         expect(facts.languages).toEqual([{ name: 'typescript', version: null, evidenceCount: 3 }]);
-        expect(facts.concepts).toContainEqual({ name: 'ci/cd', detector: 'signal', files: 0 });
+        expect(facts.concepts).toContainEqual({ name: 'ci/cd pipelines', detector: 'signal', files: 0 });
     });
 
     it('threads detector-backed concept_evidence rows into facts.concepts alongside signal fallback', async () => {

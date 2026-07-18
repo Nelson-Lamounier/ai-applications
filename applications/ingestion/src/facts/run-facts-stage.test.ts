@@ -201,7 +201,7 @@ describe('runFactsStage', () => {
                     ],
                 },
                 {
-                    needle: 'FROM skill_aliases a',
+                    needle: 'alias, skill_id FROM skill_aliases',
                     rows: [
                         { alias: 'infrastructure as code', skill_id: 'skill-iac' },
                         { alias: 'container orchestration', skill_id: 'skill-k8s-orch' },
@@ -220,7 +220,7 @@ describe('runFactsStage', () => {
             // The tech lane resolved the k8s manifest's 'kubernetes' iac-layer row --
             // proves the concept lane's aggregate detectors receive it as techEvidence.
             expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'iac', canonicalId: 'kubernetes', filePath: 'k8s/deploy.yaml' });
-            expect(calls.some((c) => c.includes('FROM skill_aliases a'))).toBe(true);
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(true);
 
             const insertParams = (client.query as jest.Mock).mock.calls
                 .filter(([sql]) => typeof sql === 'string' && /INSERT INTO concept_evidence/i.test(sql))
@@ -241,7 +241,7 @@ describe('runFactsStage', () => {
                 githubSbomEnabled: false, githubToken: 'tok',
             });
 
-            expect(calls.some((c) => c.includes('FROM skill_aliases a'))).toBe(false);
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(false);
             expect(calls.some((c) => c.includes('INSERT INTO concept_evidence'))).toBe(false);
         });
 
@@ -255,7 +255,7 @@ describe('runFactsStage', () => {
                 githubSbomEnabled: false, githubToken: 'tok',
             });
 
-            expect(calls.some((c) => c.includes('FROM skill_aliases a'))).toBe(false);
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(false);
             expect(calls.some((c) => c.includes('INSERT INTO concept_evidence'))).toBe(false);
         });
 
@@ -268,7 +268,7 @@ describe('runFactsStage', () => {
 
             const routes: Route[] = [
                 ...ONTOLOGY_ROUTES,
-                { needle: 'FROM skill_aliases a', rows: [{ alias: 'ci/cd pipelines', skill_id: 'skill-cicd' }] },
+                { needle: 'alias, skill_id FROM skill_aliases', rows: [{ alias: 'ci/cd pipelines', skill_id: 'skill-cicd' }] },
             ];
             const { pool, calls } = fakePool(routes, /INSERT INTO concept_evidence/i);
 
@@ -280,7 +280,7 @@ describe('runFactsStage', () => {
             });
 
             expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'dockerfile', canonicalId: 'node.js', filePath: 'Dockerfile' });
-            expect(calls.some((c) => c.includes('FROM skill_aliases a'))).toBe(true);
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(true);
             // Downstream lanes still ran despite the concept lane's DB error.
             expect(calls.some((c) => c.includes('INSERT INTO dsa_scanned_commits'))).toBe(true);
             expect(calls.some((c) => c.includes('INSERT INTO ai_scanned_commits'))).toBe(true);

@@ -9,6 +9,9 @@ import type { RawConceptEvidence } from '../facts/extractors/ConceptPatternExtra
 // Helpers
 // ---------------------------------------------------------------------------
 
+// SkillOntologyRepository.loadAliasMap() queries `SELECT alias, skill_id FROM
+// skill_aliases` and does NOT lowercase keys — normalisation now happens at
+// resolve time via OntologyResolver/normalizeAlias (lowercase + trim).
 const ALIAS_ROWS = [
     { alias: 'ci/cd pipelines', skill_id: 'skill-cicd' },
     { alias: 'container orchestration', skill_id: 'skill-k8s' },
@@ -39,21 +42,38 @@ function row(over: Partial<RawConceptEvidence> = {}): RawConceptEvidence {
 }
 
 // ---------------------------------------------------------------------------
-// loadAliasMap
+// alias resolution — now delegated to the shared SkillOntologyRepository +
+// OntologyResolver infrastructure instead of a bespoke query/normalisation
 // ---------------------------------------------------------------------------
 
-describe('RdsConceptEvidenceRepository.loadAliasMap', () => {
-    it('lowercases both alias and joins skill_aliases -> skill_ontology', async () => {
+describe('RdsConceptEvidenceRepository alias resolution (shared ontology infra)', () => {
+    it('loads the alias map via SkillOntologyRepository.loadAliasMap() (skill_aliases only, no bespoke join)', async () => {
         const { client } = makeClient();
-        const pool = makePool(client, [{ alias: 'CI/CD Pipelines', skill_id: 'skill-cicd' }]);
+        const pool = makePool(client, ALIAS_ROWS);
         const repo = new RdsConceptEvidenceRepository(pool);
 
-        const map = await repo.loadAliasMap();
+        await repo.insertMany('user-1', 'octo/repo', 42, 'sha1', [row()]);
 
-        expect(map.get('ci/cd pipelines')).toBe('skill-cicd');
         const [sql] = (pool.query as jest.Mock).mock.calls[0] as [string];
-        expect(sql).toMatch(/FROM skill_aliases a/);
-        expect(sql).toMatch(/JOIN skill_ontology o ON o\.id = a\.skill_id/);
+        expect(sql).toMatch(/SELECT alias, skill_id FROM skill_aliases/);
+    });
+
+    it('resolves a mixed-case conceptAlias via OntologyResolver.normalizeAlias (lowercase + trim on the query side)', async () => {
+        const { client } = makeClient();
+        const pool = makePool(client, ALIAS_ROWS);
+        const repo = new RdsConceptEvidenceRepository(pool);
+
+        await repo.insertMany('user-1', 'octo/repo', 42, 'sha1', [
+            row({ conceptAlias: '  CI/CD Pipelines  ' }),
+        ]);
+
+        const insertCall = (client.query as jest.Mock).mock.calls.find(
+            ([sql]) => typeof sql === 'string' && /INSERT INTO concept_evidence/i.test(sql),
+        ) as [string, unknown[]] | undefined;
+        expect(insertCall).toBeDefined();
+        expect(insertCall![1]).toEqual(
+            expect.arrayContaining(['skill-cicd']),
+        );
     });
 });
 
