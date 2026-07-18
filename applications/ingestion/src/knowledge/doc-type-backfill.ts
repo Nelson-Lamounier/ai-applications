@@ -78,6 +78,7 @@ async function backfillRepo(
 
     const client = await pool.connect();
     try {
+        // bulk document_embeddings path: runs as superuser by design (2026-05-16 rls plan D4); not demoted
         await client.query('BEGIN');
         for (const file of files) {
             const docType = classifyDocType(file.file_path, file.content.slice(0, CLASSIFY_CONTENT_CHARS));

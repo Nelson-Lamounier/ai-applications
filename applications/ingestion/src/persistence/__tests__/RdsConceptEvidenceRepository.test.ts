@@ -100,21 +100,22 @@ describe('RdsConceptEvidenceRepository.insertMany', () => {
         expect(pool.connect).not.toHaveBeenCalled();
     });
 
-    it('stamps set_config before the upsert, inside one BEGIN/COMMIT transaction', async () => {
+    it('demotes to tucaken_app and stamps set_config before the upsert, inside one BEGIN/COMMIT transaction', async () => {
         await repo.insertMany('user-1', 'octo/repo', 42, 'sha1', [row()]);
 
         const calls = query.mock.calls as Array<[string, unknown[]?]>;
         const kinds = calls.map(([sql]) => {
             if (/^BEGIN/i.test(sql as string)) return 'BEGIN';
+            if (/^SET LOCAL ROLE tucaken_app/i.test(sql as string)) return 'SET_LOCAL_ROLE';
             if (/set_config/.test(sql as string)) return 'set_config';
             if (/INSERT INTO concept_evidence/i.test(sql as string)) return 'INSERT';
             if (/^COMMIT/i.test(sql as string)) return 'COMMIT';
             if (/^ROLLBACK/i.test(sql as string)) return 'ROLLBACK';
             return 'OTHER';
         });
-        expect(kinds).toEqual(['BEGIN', 'set_config', 'INSERT', 'COMMIT']);
+        expect(kinds).toEqual(['BEGIN', 'SET_LOCAL_ROLE', 'set_config', 'INSERT', 'COMMIT']);
 
-        const setConfigCall = calls[1];
+        const setConfigCall = calls[2];
         expect(setConfigCall[0]).toMatch(/SELECT set_config\('app\.current_user_id', \$1, true\)/);
         expect(setConfigCall[1]).toEqual(['user-1']);
     });

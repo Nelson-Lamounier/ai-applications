@@ -1,6 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
-import { type IChunkEnricher, tier1SkillsFromTech } from '@bedrock/shared';
+import { type IChunkEnricher, tier1SkillsFromTech, withUserRls } from '@bedrock/shared';
 
 /** Filter + bounds for a re-enrich run. */
 export interface ReenrichOptions {
@@ -417,9 +417,11 @@ async function persistFreshCache(
 
 /**
  * Load cached skills for this run's content hashes (same user + model). One query
- * on a dedicated connection that sets the RLS user context. Returns a composite-key
- * (`${rawHash}#${modelId}`) → skills map; empty when dedup is disabled or on any
- * failure (degrades to full enrichment, never breaks it).
+ * run through the shared `withUserRls` helper, so it is genuinely RLS-scoped
+ * (SET LOCAL ROLE tucaken_app + set_config), not just filtered by the WHERE
+ * clause. Returns a composite-key (`${rawHash}#${modelId}`) → skills map; empty
+ * when dedup is disabled or on any failure (degrades to full enrichment, never
+ * breaks it).
  *
  * The composite key is the stored `content_hash` column value — model identity is
  * folded into the key so a PK of (user_id, content_hash) naturally scopes each entry
@@ -437,20 +439,18 @@ async function loadEnrichmentCache(
     if (rawHashes.length === 0) return out;
     // Composite keys are the values actually stored in the content_hash column.
     const compositeKeys = rawHashes.map(cacheKey);
-    const client = await pool.connect();
     try {
-        await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-        const { rows: cached } = await client.query<{ content_hash: string; skills: string[] }>(
-            `SELECT content_hash, skills FROM chunk_enrichment_cache
-              WHERE user_id = $1::uuid AND content_hash = ANY($2::text[])`,
-            [userId, compositeKeys],
-        );
-        // Key the map by composite hash — matches what processRow looks up via cacheKey().
-        for (const c of cached) out.set(c.content_hash, c.skills);
+        await withUserRls(pool, userId, async (client) => {
+            const { rows: cached } = await client.query<{ content_hash: string; skills: string[] }>(
+                `SELECT content_hash, skills FROM chunk_enrichment_cache
+                  WHERE user_id = $1::uuid AND content_hash = ANY($2::text[])`,
+                [userId, compositeKeys],
+            );
+            // Key the map by composite hash — matches what processRow looks up via cacheKey().
+            for (const c of cached) out.set(c.content_hash, c.skills);
+        });
     } catch (err) {
         console.warn('[reenrichSkippedChunks] enrichment-cache read failed (non-fatal)', err);
-    } finally {
-        client.release();
     }
     return out;
 }
@@ -465,10 +465,7 @@ async function saveEnrichmentCache(
     pool: Pool, userId: string, modelId: string, entries: ReadonlyMap<string, string[]>,
 ): Promise<void> {
     const items = [...entries.entries()];
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+    await withUserRls(pool, userId, async (client) => {
         const values: unknown[] = [];
         const placeholders = items.map((_, i) => {
             const b = i * 4;
@@ -484,11 +481,5 @@ async function saveEnrichmentCache(
                  SET skills = EXCLUDED.skills, model_id = EXCLUDED.model_id, updated_at = now()`,
             values,
         );
-        await client.query('COMMIT');
-    } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-    } finally {
-        client.release();
-    }
+    });
 }

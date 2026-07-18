@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
-import { PiiScrubber } from '@bedrock/shared';
+import { PiiScrubber, withUserRls } from '@bedrock/shared';
 
 const piiScrubber = new PiiScrubber();
 
@@ -20,11 +20,7 @@ export class RepositoryProfileEmbeddingsRepository {
     async upsertBatch(userId: string, rows: ProfileEmbeddingRow[]): Promise<void> {
         if (rows.length === 0) return;
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        await withUserRls(this.pool, userId, async (client) => {
             const valuePlaceholders = rows.map((_, i) => {
                 const base = i * 7;
                 return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}::vector, $${base + 7}::jsonb)`;
@@ -87,13 +83,6 @@ export class RepositoryProfileEmbeddingsRepository {
                     [profileId, [...chunkTypes], [...scrubbedHashes]],
                 );
             }
-
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 }

@@ -6,15 +6,16 @@
  *
  * RLS parity with the other `project_*` / DSA-lane repositories (mirrors
  * `RdsSystemTourRepository` / `system-tour-persistence.ts`): every write
- * opens a transaction and stamps the current user with
+ * runs through the shared `withUserRls(pool, userId, fn)` helper, which
+ * demotes the transaction to `tucaken_app` via `SET LOCAL ROLE` and stamps
  * `SELECT set_config('app.current_user_id', $1, true)` so the
  * `rls_repo_facts` policy
  * (`USING user_id = current_setting('app.current_user_id', true)::uuid`)
- * authorises the write. COMMIT on success, ROLLBACK on error, release the
- * client in `finally`.
+ * actually authorises the write. COMMIT on success, ROLLBACK on error,
+ * release the client in `finally` — all handled by the shared helper.
  */
 import type { Pool } from 'pg';
-import type { ProjectComponentKind } from '@bedrock/shared';
+import { withUserRls, type ProjectComponentKind } from '@bedrock/shared';
 
 import type { RepoFactsPayload } from '../facts/build-repo-facts.js';
 
@@ -38,13 +39,7 @@ export class RepoFactsRepository {
      * previously-known one.
      */
     async upsert(userId: string, repoFullName: string, row: RepoFactsRow): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(
-                `SELECT set_config('app.current_user_id', $1, true)`,
-                [userId],
-            );
+        await withUserRls(this.pool, userId, async (client) => {
             await client.query(
                 `INSERT INTO repo_facts (
                     user_id, repo_full_name, github_repo_id, role, classification, facts, fact_version
@@ -66,12 +61,6 @@ export class RepoFactsRepository {
                     row.factVersion,
                 ],
             );
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 }
