@@ -11,6 +11,7 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1001.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1001.0",
+    "@bedrock/shared": "workspace:*",
     "@types/aws-lambda": "^8.10.159",
     "@types/pg": "^8.20.0",
     "pg": "^8.20.0"
