@@ -6,11 +6,11 @@ sources:
   - applications/ingestion/src/run-ingestion.ts
   - applications/job-strategist/src/run-pipeline.ts
   - applications/article-pipeline/src/run-pipeline.ts
-  - applications/ingestion/src/run-tech-extract.ts
   - applications/self-healing/src/index.ts
   - applications/chatbot-public/src/index.ts
+  - applications/chatbot-authenticated/src/index.ts
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-07-18
 ---
 
 ## Intent
@@ -95,7 +95,7 @@ single process with one composition point.
 
 For Lambda services
 ([applications/chatbot-public/src/index.ts](../../applications/chatbot-public/src/index.ts),
-[applications/chatbot/src/index.ts](../../applications/chatbot/src/index.ts),
+[applications/chatbot-authenticated/src/index.ts](../../applications/chatbot-authenticated/src/index.ts),
 [applications/self-healing/src/index.ts](../../applications/self-healing/src/index.ts)),
 the composition root is split:
 
@@ -153,14 +153,22 @@ infrastructure must be alive before the failure can be recorded.
 | ontology-importer | [applications/ontology-importer/src/run-import.ts](../../applications/ontology-importer/src/run-import.ts) | K8s single-pass |
 | job-strategist | [applications/job-strategist/src/run-pipeline.ts](../../applications/job-strategist/src/run-pipeline.ts) | K8s pipeline |
 | article-pipeline | [applications/article-pipeline/src/run-pipeline.ts](../../applications/article-pipeline/src/run-pipeline.ts) | K8s pipeline |
-| chatbot (managed agent) | [applications/chatbot/src/index.ts](../../applications/chatbot/src/index.ts) | Lambda |
 | chatbot-public | [applications/chatbot-public/src/index.ts](../../applications/chatbot-public/src/index.ts) | Lambda |
 | chatbot-authenticated | [applications/chatbot-authenticated/src/index.ts](../../applications/chatbot-authenticated/src/index.ts) | Lambda |
 | self-healing agent | [applications/self-healing/src/index.ts](../../applications/self-healing/src/index.ts) | Lambda |
 | self-healing outcome-tracker | [applications/self-healing/src/outcome-tracker.ts](../../applications/self-healing/src/outcome-tracker.ts) | Lambda |
 
-Nine composition points across eight services. Every one follows the
+Eight composition points across seven services. Every one follows the
 same scaffold modulo K8s-vs-Lambda lifetime differences.
+
+> **Note (2026-07-18):** this table previously carried a `chatbot
+> (managed agent)` row pointing at
+> `applications/chatbot/src/index.ts`. That path is untracked — the
+> `applications/chatbot/` directory holds only stale build output
+> (`dist/`, `tsconfig.tsbuildinfo`), no `src/` (verified with
+> `git ls-files applications/chatbot` returning empty) — so the row
+> described a composition root that does not exist in this repo and
+> has been removed.
 
 **Retired (2026-07-18):** this table used to carry a `tech-extractor`
 row pointing at `applications/ingestion/src/run-tech-extract.ts`, a
@@ -261,10 +269,13 @@ Evidence trail (auto-generated):
 - Source: applications/ingestion/src/run-ingestion.ts (lines 1-50 on 2026-05-27)
 - Source: applications/job-strategist/src/run-pipeline.ts (lines 1-40 on 2026-05-27)
 - Source: applications/article-pipeline/src/run-pipeline.ts (lines 1-40 on 2026-05-27)
-- Source: applications/tech-extractor/src/run-tech-extract.ts (lines 1-50 on 2026-05-27)
 - Source: applications/self-healing/src/index.ts (read in prior session)
 - Source: applications/chatbot-public/src/index.ts (referenced by bedrock-rag-surface concept doc)
-- Path update (C0 ingestion consolidation, 2026-07-17): run-tech-extract.ts
-  moved to applications/ingestion/src/run-tech-extract.ts; re-verified against
-  the working tree on 2026-07-17.
+- Source: applications/chatbot-authenticated/src/index.ts (read on 2026-07-18)
+- Path update (P2 tech-extract retirement, 2026-07-18): run-tech-extract.ts
+  and its composition-root row have been deleted entirely (not merely
+  moved); removed from this doc's sources and table. Also removed the
+  phantom `applications/chatbot/src/index.ts` row (untracked, no `src/`
+  in the working tree) and corrected the chatbot Lambda examples to the
+  two tracked variants (chatbot-public, chatbot-authenticated).
 -->

@@ -189,7 +189,7 @@ Pool (M2M only — password policy / MFA / advanced security inapplicable)
 
 | Project | Relationship |
 | :- | :- |
-| [tech-extractor](../../applications/tech-extractor/) | Same monorepo, *opposite* design point — see [ADR 0001](../decisions/0001-deterministic-over-llm-extraction.md). |
+| [tech-extractor (retired, now `ingestion`'s facts stage)](../concepts/tech-extractor-architecture.md) | Same monorepo, *opposite* design point — see [ADR 0001](../decisions/0001-deterministic-over-llm-extraction.md). |
 | `kubernetes-platform` / `kubernetes-bootstrap` (sibling repos) | The cluster the agent operates against. Bootstrap step semantics referenced by the agent's diagnostic guidance live there. |
 | [ingestion](../../applications/ingestion/) | Uses the same `@bedrock/shared` observability primitives (`withSpan`, structured logger). |
 

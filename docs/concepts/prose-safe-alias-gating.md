@@ -6,10 +6,19 @@ sources:
   - applications/ontology-importer/src/categorization/ProseSafeTagger.ts
   - applications/ontology-importer/src/run-tag-aliases-prose-safe.ts
   - applications/platform-rds-bootstrap/migrations/037_alias_prose_safe.sql
-  - applications/tech-extractor/src/extractors/iac/ReadmeParser.ts
+  - applications/ingestion/src/facts/extractors/iac/ReadmeParser.ts
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-07-18
 ---
+
+> **Consumer relocated (2026-07-18):** the ReadmeParser this doc
+> describes as the consumer of `prose_safe` used to live in a
+> standalone `applications/tech-extractor/` service. That service has
+> been retired; the parser now runs in-process inside
+> `applications/ingestion/src/facts/` as part of the unified ingestion
+> Job. See [docs/concepts/tech-extractor-architecture.md](tech-extractor-architecture.md)
+> for the retirement note. Nothing about the `prose_safe` gating
+> mechanism itself changed — only where the consumer runs.
 
 ## Overview
 
@@ -28,7 +37,8 @@ contains "go", "rust", "next" or "swift".
 It is the **bootstrap** for ReadmeParser v2 — the parser itself does
 not know about prose_safe; it consumes a `ReadonlySet<string>` of
 already-safe aliases passed by the caller
-([applications/tech-extractor/src/run-tech-extract.ts:48](../../applications/tech-extractor/src/run-tech-extract.ts#L48)).
+(`ontologyRepo.loadProseSafeAliases()`,
+[applications/ingestion/src/facts/run-facts-stage.ts:227](../../applications/ingestion/src/facts/run-facts-stage.ts#L227)).
 
 ## How it works
 
@@ -125,7 +135,7 @@ classified
 This preserves any manual overrides written to the column (e.g. the
 post-F4 backfill `UPDATE … SET prose_safe = true WHERE alias ~
 '^(aws|amazon|azure|google|gcp|apache)_'` described in the
-[decommission appendix](../../applications/tech-extractor/parity/2026-05-27-decommission.md)).
+[decommission appendix](../../applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)).
 
 ## Implementation in this codebase
 
@@ -134,8 +144,8 @@ post-F4 backfill `UPDATE … SET prose_safe = true WHERE alias ~
 | Tagger class + few-shot prompt | [applications/ontology-importer/src/categorization/ProseSafeTagger.ts](../../applications/ontology-importer/src/categorization/ProseSafeTagger.ts) |
 | Job entry point | [applications/ontology-importer/src/run-tag-aliases-prose-safe.ts](../../applications/ontology-importer/src/run-tag-aliases-prose-safe.ts) |
 | Schema migration | [applications/platform-rds-bootstrap/migrations/037_alias_prose_safe.sql](../../applications/platform-rds-bootstrap/migrations/037_alias_prose_safe.sql) |
-| Consumer (parser) | [applications/tech-extractor/src/extractors/iac/ReadmeParser.ts](../../applications/tech-extractor/src/extractors/iac/ReadmeParser.ts) |
-| Caller wiring (load-and-pass) | [applications/tech-extractor/src/run-tech-extract.ts](../../applications/tech-extractor/src/run-tech-extract.ts) |
+| Consumer (parser) | [applications/ingestion/src/facts/extractors/iac/ReadmeParser.ts](../../applications/ingestion/src/facts/extractors/iac/ReadmeParser.ts) |
+| Caller wiring (load-and-pass) | [applications/ingestion/src/facts/run-facts-stage.ts](../../applications/ingestion/src/facts/run-facts-stage.ts) |
 | Tests (pure functions) | [applications/ontology-importer/src/categorization/ProseSafeTagger.test.ts](../../applications/ontology-importer/src/categorization/ProseSafeTagger.test.ts) |
 
 ## Tradeoffs
@@ -194,8 +204,8 @@ Evidence trail (auto-generated):
 - Source: applications/ontology-importer/src/categorization/ProseSafeTagger.ts (read in full on 2026-05-27)
 - Source: applications/ontology-importer/src/run-tag-aliases-prose-safe.ts (referenced on 2026-05-27)
 - Source: applications/platform-rds-bootstrap/migrations/037_alias_prose_safe.sql (referenced on 2026-05-27)
-- Source: applications/tech-extractor/src/extractors/iac/ReadmeParser.ts (lines 25-50 on 2026-05-27)
-- Source: applications/tech-extractor/src/run-tech-extract.ts (line 48 on 2026-05-27)
-- Source: applications/tech-extractor/parity/2026-05-27-decommission.md (appendix on 2026-05-27)
+- Source: applications/ingestion/src/facts/extractors/iac/ReadmeParser.ts (read on 2026-07-18)
+- Source: applications/ingestion/src/facts/run-facts-stage.ts (line 227 on 2026-07-18)
+- Source: applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md (appendix on 2026-05-27)
 - Commits: 9a4bae9, 71853a6
 -->

@@ -3,9 +3,9 @@ title: Deterministic extraction replaces LLM ChunkEnricher for technologies
 type: decision
 tags: [bedrock, llm, ontology, finops, architecture]
 sources:
-  - applications/tech-extractor/parity/2026-05-27-decommission.md
-  - applications/tech-extractor/parity/2026-05-26-analysis.md
-  - applications/tech-extractor/src/extractors/
+  - applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md
+  - applications/ingestion/docs/tech-extractor/parity/2026-05-26-analysis.md
+  - applications/ingestion/src/facts/extractors/
   - applications/shared/src/rds/implementations/BedrockChunkEnricher.ts
 created: 2026-05-27
 updated: 2026-05-27
@@ -14,6 +14,14 @@ updated: 2026-05-27
 ## Status
 
 Accepted — landed 2026-05-27 (commit `69eae87 feat(ingestion): decommission BedrockChunkEnricher technologies extraction`).
+
+> **Note (2026-07-18):** the extractors this ADR describes lived in a
+> standalone `applications/tech-extractor/` service at acceptance time.
+> That service has since been retired and folded into
+> `applications/ingestion/src/facts/` (see
+> [docs/projects/tech-extractor.md](../projects/tech-extractor.md) for
+> the retirement note). Source links below have been updated to the
+> current paths; the decision itself is unchanged.
 
 ## Context
 
@@ -33,7 +41,7 @@ Three pressures converged:
    reproducible token sets — two ingestions of the same source should
    produce the same evidence. LLM extraction does not guarantee that.
 3. **An incremental engineering path existed.** Static-analysis primitives
-   in `applications/tech-extractor/src/extractors/` (Tree-sitter
+   in `applications/ingestion/src/facts/extractors/` (Tree-sitter
    comment scanner, IaC YAML/Dockerfile/Terraform/Helm parsers, README
    prose parser) were already in place for a separate use case
    (repository-profile signals). A "promote them to be the canonical
@@ -42,7 +50,7 @@ Three pressures converged:
 The measurement engagement ran from "pre-ReadmeParser v2" (KBS recall
 0.368, TUC 0.253, ~100 LLM-only canonicals) through six iterations to
 v2.4
-([applications/tech-extractor/parity/2026-05-27-decommission.md](../../applications/tech-extractor/parity/2026-05-27-decommission.md)):
+([applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md](../../applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)):
 
 | State | KBS recall | TUC recall | LLM-only canonicals |
 | :- | -: | -: | -: |
@@ -65,7 +73,7 @@ as of 2026-05-27.** The deterministic `tech-extractor` Layer-1 pipeline
 is the sole source of truth for `technology_evidence` going forward.
 
 Specific code changes
-([decommission artefact §3](../../applications/tech-extractor/parity/2026-05-27-decommission.md)):
+([decommission artefact §3](../../applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)):
 
 - `BedrockChunkEnricher.SYSTEM_PROMPT` no longer instructs the model
   to extract technologies.
@@ -88,7 +96,7 @@ Specific code changes
 
 - **Per-chunk token spend drops ~30-50% output / ~10% input.** The tool
   schema dropped from 2 properties to 1; the system prompt shortened
-  ([decommission artefact §3](../../applications/tech-extractor/parity/2026-05-27-decommission.md)).
+  ([decommission artefact §3](../../applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)).
 - **Reproducible technology evidence.** Same repository ingested twice
   yields identical `technology_evidence` rows. Downstream clustering and
   KB-quality scoring becomes deterministic.
@@ -114,7 +122,7 @@ Specific code changes
   Gateway`) and single-token identifiers (`bash`, `curl`, `jwt`,
   `cors`, `pino`, `vite`, `yarn`) judged ambiguous by the original
   ProseSafeTagger run
-  ([decommission artefact appendix](../../applications/tech-extractor/parity/2026-05-27-decommission.md)).
+  ([decommission artefact appendix](../../applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)).
 - **Skills extraction still depends on the LLM path.** A future
   decommission would require either a deterministic skills extractor
   (no obvious design) or accepting the LLM cost for skills only.
@@ -152,7 +160,7 @@ residual). Landed during the engagement as the appendix work. Took
 recall to 0.673 / 0.548, still short of gates, but cut LLM-only from
 89 → 80 and demonstrated zero false positives across 30 sampled
 bigram rows (or 10% counting borderlines like `aws_profile`)
-([decommission artefact appendix](../../applications/tech-extractor/parity/2026-05-27-decommission.md)).
+([decommission artefact appendix](../../applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)).
 F4 shipped because it was incremental, measurable, and reversible —
 not because it would unblock the decision.
 
@@ -169,9 +177,9 @@ the input is structured and the output must be reproducible**.
 
 <!--
 Evidence trail (auto-generated):
-- Source: applications/tech-extractor/parity/2026-05-27-decommission.md (read on 2026-05-27)
-- Source: applications/tech-extractor/parity/2026-05-26-analysis.md (referenced)
-- Source: applications/tech-extractor/src/extractors/ (directory listing on 2026-05-27)
+- Source: applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md (read on 2026-05-27)
+- Source: applications/ingestion/docs/tech-extractor/parity/2026-05-26-analysis.md (referenced)
+- Source: applications/ingestion/src/facts/extractors/ (directory listing on 2026-05-27)
 - Commit: 69eae87 feat(ingestion): decommission BedrockChunkEnricher technologies extraction
 - Commit: d1e6f34 feat(tech-extractor): F4 prefix-guarded bigrams + negation detection (PR #66, post-decommission appendix)
 -->

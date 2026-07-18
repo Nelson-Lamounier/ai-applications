@@ -289,7 +289,7 @@ the Lambda dependency surface to just AWS SDKs.
   per-tool source layout.
 - [docs/decisions/0001-deterministic-over-llm-extraction.md](../decisions/0001-deterministic-over-llm-extraction.md)
   — the converse case: where LLM-based approaches were *removed* from
-  the platform (see also [tech-extractor parity artefacts](../../applications/tech-extractor/parity/2026-05-27-decommission.md)).
+  the platform (see also [tech-extractor parity artefacts](../../applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)).
 
 ## Related concepts
 
