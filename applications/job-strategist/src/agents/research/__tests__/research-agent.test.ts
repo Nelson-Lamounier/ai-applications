@@ -146,7 +146,10 @@ interface CapturedCallData {
  * Drives executeResearchAgent with mocked infra and returns captured call data.
  * Uses jest.isolateModules so the module re-executes with env + mocks in place.
  */
-async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
+async function runResearchAgentForTest(
+    jd: string,
+    trailingArgs: unknown[] = [],
+): Promise<CapturedCallData> {
     const capturedQueryTexts: string[] = [];
     let capturedUserMessage = '';
 
@@ -173,7 +176,7 @@ async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
         },
     );
 
-    let executeResearchAgent!: (ctx: any) => Promise<any>;
+    let executeResearchAgent!: (ctx: any, ...rest: unknown[]) => Promise<any>;
 
     jest.isolateModules(() => {
         // Set required env before the module executes.
@@ -228,7 +231,7 @@ async function runResearchAgentForTest(jd: string): Promise<CapturedCallData> {
         environment: 'test',
         cumulativeTokens: { input: 0, output: 0, thinking: 0 },
         cumulativeCostUsd: 0,
-    });
+    }, ...trailingArgs);
 
     // Collect queryText from all querySimilar calls.
     for (const call of mockQuerySimilar.mock.calls) {
@@ -262,5 +265,55 @@ describe('Strategist Research Agent — PII redaction before retrieval and Bedro
         expect(captured.bedrockUserMessage).not.toContain('recruiter@acme.com');
         expect(captured.bedrockUserMessage).not.toContain('415-555-2671');
         expect(captured.bedrockUserMessage).not.toContain('Contact recruiter');
+    });
+});
+
+// =============================================================================
+// SECTION THREADING — repoFactsContext (Task 5)
+// =============================================================================
+
+describe('Strategist Research Agent — repoFactsContext threading', () => {
+    it('injects the repo-facts block into the user message immediately after conceptEvidenceContext, before codeStackContext', async () => {
+        const conceptEvidenceContext = '## Evidenced Concepts\n- observability: 11 files across 1 repo (detectors: grafana-config)';
+        const repoFactsContext = '## Repo Fact Sheets\n- org/repo-a (backend): languages: typescript';
+        const codeStackContext = '## Repository Profiles — what each repo IS\n- org/repo-a [cdk-infra]';
+
+        // Positional args 2-14 of executeResearchAgent (after ctx) — see the
+        // signature in research-agent.ts. Everything but techTransferContext/
+        // codeStackContext/conceptEvidenceContext/repoFactsContext is a no-op
+        // default so this test isolates ONLY section ordering.
+        const trailingArgs = [
+            undefined,           // pool
+            '', '',               // projectEvidenceBlock, educationBlock
+            null, null,           // jdSignal, careerEntries
+            '',                    // roleEvidenceBlock
+            '',                    // techTransferContext
+            codeStackContext,     // codeStackContext
+            undefined,             // retrievalPrefilter
+            '',                    // certificationsBlock
+            [],                    // transferGroups
+            conceptEvidenceContext,
+            repoFactsContext,
+        ];
+
+        const captured = await runResearchAgentForTest('Senior Engineer role requiring AWS, Kubernetes and Terraform across distributed backend teams.', trailingArgs);
+
+        const conceptIdx = captured.bedrockUserMessage.indexOf(conceptEvidenceContext);
+        const repoFactsIdx = captured.bedrockUserMessage.indexOf(repoFactsContext);
+        const codeStackIdx = captured.bedrockUserMessage.indexOf(codeStackContext);
+
+        expect(conceptIdx).toBeGreaterThan(-1);
+        expect(repoFactsIdx).toBeGreaterThan(-1);
+        expect(codeStackIdx).toBeGreaterThan(-1);
+        expect(conceptIdx).toBeLessThan(repoFactsIdx);
+        expect(repoFactsIdx).toBeLessThan(codeStackIdx);
+    });
+
+    it('omits the repo-facts section entirely when repoFactsContext is empty', async () => {
+        const trailingArgs = [
+            undefined, '', '', null, null, '', '', '', undefined, '', [], '', '',
+        ];
+        const captured = await runResearchAgentForTest('Senior Engineer role requiring AWS, Kubernetes and Terraform across distributed backend teams.', trailingArgs);
+        expect(captured.bedrockUserMessage).not.toContain('## Repo Fact Sheets');
     });
 });

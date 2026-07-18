@@ -395,6 +395,8 @@ interface ResearchMessageOptions {
     techTransferContext?: string;
     /** Grounded concept-evidence context (P2 Task 5 — observability, distributed systems, ...). Injected as its own section when non-empty. */
     conceptEvidenceContext?: string;
+    /** Materialised per-repo fact sheets (repo_facts, Task 5) — what each repo IS. Injected as its own section when non-empty. */
+    repoFactsContext?: string;
     /** Current code-stack truth per repo (doc-vs-code drift). Injected as its own section when non-empty. */
     codeStackContext?: string;
 }
@@ -427,6 +429,7 @@ function buildResearchMessage(
         jdSignalBlock = '',
         techTransferContext = '',
         conceptEvidenceContext = '',
+        repoFactsContext = '',
         codeStackContext = '',
     } = opts;
 
@@ -512,6 +515,10 @@ function buildResearchMessage(
 
     if (conceptEvidenceContext) {
         sections.push(conceptEvidenceContext, '');
+    }
+
+    if (repoFactsContext) {
+        sections.push(repoFactsContext, '');
     }
 
     if (codeStackContext) {
@@ -826,6 +833,7 @@ export async function executeResearchAgent(
     certificationsBlock = '',
     transferGroups: TechTransferGroup[] = [],
     conceptEvidenceContext = '',
+    repoFactsContext = '',
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -968,6 +976,7 @@ export async function executeResearchAgent(
         jdSignalBlock,
         techTransferContext,
         conceptEvidenceContext,
+        repoFactsContext,
         codeStackContext,
     });
 
