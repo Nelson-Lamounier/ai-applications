@@ -39,6 +39,7 @@ describe('storeAtsArtifacts', () => {
         expect(query.mock.calls.map((c) => c[0])).toEqual(
             expect.arrayContaining([
                 'BEGIN',
+                'SET LOCAL ROLE tucaken_app',
                 expect.stringMatching(/set_config\('app\.current_user_id'/),
                 expect.stringMatching(/UPDATE resumes/i),
                 'COMMIT',
@@ -81,6 +82,7 @@ describe('storeAtsCheckJson (F6 — re-store the attainable-enriched check)', ()
         expect(query.mock.calls.map((c) => c[0])).toEqual(
             expect.arrayContaining([
                 'BEGIN',
+                'SET LOCAL ROLE tucaken_app',
                 expect.stringMatching(/set_config\('app\.current_user_id'/),
                 expect.stringMatching(/UPDATE resumes SET ats_check_json/i),
                 'COMMIT',

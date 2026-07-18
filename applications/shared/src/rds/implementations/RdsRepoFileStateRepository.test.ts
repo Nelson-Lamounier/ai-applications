@@ -60,6 +60,7 @@ describe('RdsRepoFileStateRepository', () => {
         expect(select!.params).toEqual(['user-1', 'owner/repo']);
 
         const sqls = pool.client.queries.map(q => q.sql);
+        expect(sqls).toContain('SET LOCAL ROLE tucaken_app');
         expect(sqls.some(s => /set_config\('app.current_user_id'/.test(s))).toBe(true);
         expect(sqls).toContain('COMMIT');
     });
@@ -83,6 +84,7 @@ describe('RdsRepoFileStateRepository', () => {
         await repo.upsertFileState('user-1', 'owner/repo', files);
 
         const sqls = pool.client.queries.map(q => q.sql);
+        expect(sqls).toContain('SET LOCAL ROLE tucaken_app');
         expect(sqls.some(s => /set_config\('app.current_user_id'/.test(s))).toBe(true);
         expect(sqls.some(s => /DELETE FROM repo_file_state/.test(s))).toBe(true);
         expect(sqls.some(s => /INSERT INTO repo_file_state/.test(s))).toBe(true);

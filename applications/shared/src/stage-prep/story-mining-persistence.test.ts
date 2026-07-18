@@ -12,6 +12,7 @@ describe('RdsStoryCandidateRepository.upsertMany', () => {
       { storyType: 'incident', anchorKey: 'sha1', anchors: { revertSha: 'sha1' }, confidence: 0.85 },
     ]);
     const sql = query.mock.calls.map((c) => (c as unknown[])[0] as string);
+    expect(sql.some((s) => s === 'SET LOCAL ROLE tucaken_app')).toBe(true);
     expect(sql.some((s) => /set_config\('app.current_user_id'/.test(s))).toBe(true);
     expect(sql.some((s) => /INSERT INTO story_candidates/.test(s) && /ON CONFLICT/.test(s))).toBe(true);
   });

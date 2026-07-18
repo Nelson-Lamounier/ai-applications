@@ -13,6 +13,7 @@ export class RdsCareerHistoryReadRepository implements ICareerHistoryReadReposit
   constructor(private readonly pool: Pool) {}
 
   async getResumeForReconciliation(userId: string): Promise<ResumeForReconciliation | undefined> {
+    // read path: superuser connection; rows are user_id-scoped by the query itself
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');

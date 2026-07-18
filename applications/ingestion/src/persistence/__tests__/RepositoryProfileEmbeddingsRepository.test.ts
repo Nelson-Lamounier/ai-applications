@@ -68,6 +68,32 @@ describe('RepositoryProfileEmbeddingsRepository.upsertBatch – prune superseded
     });
 
     // -----------------------------------------------------------------------
+    // Test 0 – demotes to tucaken_app and stamps set_config before the write,
+    // inside one BEGIN/COMMIT transaction (RLS ritual via withUserRls)
+    // -----------------------------------------------------------------------
+    it('demotes to tucaken_app and stamps set_config before the INSERT, inside one BEGIN/COMMIT transaction', async () => {
+        await repo.upsertBatch('user-1', [row()]);
+
+        const calls = query.mock.calls as Array<[string, unknown[]?]>;
+        const kinds = calls.map(([sql]) => {
+            if (/^BEGIN/i.test(sql as string)) return 'BEGIN';
+            if (/^SET LOCAL ROLE tucaken_app/i.test(sql as string)) return 'SET_LOCAL_ROLE';
+            if (/set_config/.test(sql as string)) return 'set_config';
+            if (/INSERT INTO repository_profile_embeddings/i.test(sql as string)) return 'INSERT';
+            if (/DELETE FROM repository_profile_embeddings/i.test(sql as string)) return 'DELETE';
+            if (/^COMMIT/i.test(sql as string)) return 'COMMIT';
+            if (/^ROLLBACK/i.test(sql as string)) return 'ROLLBACK';
+            return 'OTHER';
+        });
+
+        expect(kinds).toEqual(['BEGIN', 'SET_LOCAL_ROLE', 'set_config', 'INSERT', 'DELETE', 'COMMIT']);
+
+        const setConfigCall = calls[2];
+        expect(setConfigCall[0]).toMatch(/SELECT set_config\('app\.current_user_id', \$1, true\)/);
+        expect(setConfigCall[1]).toEqual(['user-1']);
+    });
+
+    // -----------------------------------------------------------------------
     // Test 1 – DELETE is issued after INSERT with correct params
     // -----------------------------------------------------------------------
     it('issues a DELETE for superseded rows scoped to the batch profile and chunk types', async () => {

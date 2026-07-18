@@ -31,6 +31,7 @@ describe('TechnologyEvidenceRepository.insertMany', () => {
         const repo = new TechnologyEvidenceRepository(fakePool(client) as never);
         await repo.insertMany('u1', [row]);
         const sqls = client.calls.map(c => c.sql).join('\n');
+        expect(sqls).toContain('SET LOCAL ROLE tucaken_app');
         expect(sqls).toContain("set_config('app.current_user_id'");
         const insert = client.calls.find(c => c.sql.includes('INSERT INTO technology_evidence'))!;
         expect(insert.sql).toContain('ON CONFLICT');
@@ -67,6 +68,7 @@ describe('TechnologyEvidenceRepository.hasEvidenceForCommit', () => {
         const client = fakeClient([{ one: 1 }]);
         const repo = new TechnologyEvidenceRepository(fakePool(client) as never);
         expect(await repo.hasEvidenceForCommit('u1', 'o/r', 'abc')).toBe(true);
+        expect(client.calls.some(c => c.sql === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         expect(client.calls.some(c => c.sql.includes("set_config('app.current_user_id'"))).toBe(true);
     });
     it('returns false when no row exists', async () => {
@@ -86,6 +88,7 @@ describe('TechnologyEvidenceRepository.toCycloneDxBom', () => {
         const repo = new TechnologyEvidenceRepository(fakePool(client) as never);
         const bom = await repo.toCycloneDxBom('u1', 'o/r');
 
+        expect(client.calls.some(c => c.sql === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         expect(client.calls.some(c => c.sql.includes("set_config('app.current_user_id'"))).toBe(true);
         expect(client.calls.some(c => c.sql.includes('FROM technology_evidence'))).toBe(true);
         expect(bom.bomFormat).toBe('CycloneDX');

@@ -3,10 +3,11 @@
  * RdsUserProfileRollupRepository — reads all of a user's repository_profiles
  * rows (RLS-scoped) and upserts the precomputed user_profile_rollup row.
  * Scope/aggregation lives in computeUserProfileRollup (pure); this class is
- * only data access. Mirrors RepositoryProfileRepository's connect + BEGIN +
- * set_config RLS idiom.
+ * only data access. Every call runs through `withUserRls`, which demotes to
+ * `tucaken_app` and stamps `app.current_user_id` in the same transaction.
  */
 import type { Pool } from 'pg';
+import { withUserRls } from '../with-user-rls.js';
 import type { IUserProfileRollupRepository, MirrorJson, RevealJson, DirectionJson, ReconciliationJson, DiagnosticJson, RollupRow } from '../interfaces/IUserProfileRollupRepository.js';
 import type {
     ProfileAggInput,
@@ -17,10 +18,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
     constructor(private readonly pool: Pool) {}
 
     async listProfilesForRollup(userId: string): Promise<ProfileAggInput[]> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        return withUserRls(this.pool, userId, async (client) => {
             const { rows } = await client.query<ProfileAggInput>(
                 `SELECT
                      repo_full_name                                            AS "repoFullName",
@@ -38,20 +36,13 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                   WHERE user_id = $1::uuid`,
                 [userId],
             );
-            await client.query('COMMIT');
             return rows.map(r => ({
                 ...r,
                 isHidden:    Boolean(r.isHidden),
                 commitCount: Number(r.commitCount ?? 0),
                 techStack:   Array.isArray(r.techStack) ? r.techStack : [],
             }));
-        } catch (err) {
-            // Best-effort: do not shadow the original error if ROLLBACK fails.
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     async upsert(
@@ -64,10 +55,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
         diagnostic?: DiagnosticJson,
         synthesisInputHash?: string | null,
     ): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        await withUserRls(this.pool, userId, async (client) => {
             // Stamp synthesis_refreshed_at when any synthesis output (mirror, reveal,
             // direction, reconciliation, or diagnostic) is supplied. A rollup-only
             // refresh passes null for all five; COALESCE then preserves the prior values.
@@ -112,28 +100,17 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                     synthesisInputHash ?? null,
                 ],
             );
-            await client.query('COMMIT');
-        } catch (err) {
-            // Best-effort: do not shadow the original error if ROLLBACK fails.
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     async getRollup(userId: string): Promise<RollupRow | null> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        return withUserRls(this.pool, userId, async (client) => {
             const { rows } = await client.query(
                 `SELECT rollup, mirror, reveal, direction, reconciliation, diagnostic, refreshed_at, synthesis_refreshed_at
                    FROM user_profile_rollup
                   WHERE user_id = $1::uuid`,
                 [userId],
             );
-            await client.query('COMMIT');
             if (rows.length === 0) return null;
             const row = rows[0];
             return {
@@ -146,13 +123,7 @@ export class RdsUserProfileRollupRepository implements IUserProfileRollupReposit
                 refreshedAt:          (row.refreshed_at as Date | null)?.toISOString() ?? '',
                 synthesisRefreshedAt: (row.synthesis_refreshed_at as Date | null)?.toISOString() ?? null,
             };
-        } catch (err) {
-            // Best-effort: do not shadow the original error if ROLLBACK fails.
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /**

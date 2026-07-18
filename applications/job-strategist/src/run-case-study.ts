@@ -37,6 +37,7 @@ import {
     RdsSystemTourRepository,
     loadRepoRoleSignals,
     recomputeConfirmedProjectComponents,
+    withUserRls,
 } from '@bedrock/shared';
 import type { BasePipelineContext } from '@bedrock/shared';
 
@@ -104,19 +105,9 @@ async function refreshProjectComponentsBestEffort(
 ): Promise<void> {
     try {
         const roleSignals = await loadRepoRoleSignals(pool, userId);
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-            const refreshed = await recomputeConfirmedProjectComponents(client, userId, roleSignals, { projectId });
-            await client.query('COMMIT');
-            log.info({ projectId, ...refreshed }, 'refreshed components from grounded signals');
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
-        }
+        const refreshed = await withUserRls(pool, userId, async (client) =>
+            recomputeConfirmedProjectComponents(client, userId, roleSignals, { projectId }));
+        log.info({ projectId, ...refreshed }, 'refreshed components from grounded signals');
     } catch (err) {
         log.warn({ err: err instanceof Error ? err.message : String(err), projectId }, 'component refresh skipped');
     }

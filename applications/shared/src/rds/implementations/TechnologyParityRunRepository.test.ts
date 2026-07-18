@@ -28,6 +28,7 @@ describe('TechnologyParityRunRepository.insert', () => {
         const repo = new TechnologyParityRunRepository(fakePool(client) as never);
         await repo.insert(run);
         const sqls = client.calls.map(c => c.sql).join('\n');
+        expect(sqls).toContain('SET LOCAL ROLE tucaken_app');
         expect(sqls).toContain("set_config('app.current_user_id'");
         const insert = client.calls.find(c => c.sql.includes('INSERT INTO technology_parity_runs'))!;
         expect(insert.sql).toContain('llm_only_examples');

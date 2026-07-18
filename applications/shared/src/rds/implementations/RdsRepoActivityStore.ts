@@ -1,5 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
+import { withUserRls } from '../with-user-rls.js';
 import type { RepoCommit, RepoPullRequest, RepoContributor, CommitDetail } from '../../repo-entities.js';
 
 /** A measured performance metric recorded at a commit SHA (never LLM-produced). */
@@ -32,8 +33,9 @@ export interface FileChange {
  * Tables (migration 045):
  *   - repo_commits         UNIQUE (repository_id, sha)
  *   - repo_pull_requests   UNIQUE (repository_id, number)
- * Both are RLS-protected on `app.current_user_id`, so every write runs inside a
- * transaction that first sets that GUC via set_config().
+ * Both are RLS-protected on `app.current_user_id`, so every call runs through
+ * `withUserRls`, which demotes to `tucaken_app` and stamps that GUC in the
+ * same transaction.
  */
 export class RdsRepoActivityStore {
     /**
@@ -57,11 +59,7 @@ export class RdsRepoActivityStore {
     ): Promise<number> {
         if (commits.length === 0) return 0;
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             const valuePlaceholders = commits.map((_, i) => {
                 const base = i * 9;
                 return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}::timestamptz, $${base + 8}, $${base + 9})`;
@@ -95,14 +93,8 @@ export class RdsRepoActivityStore {
                 values,
             );
 
-            await client.query('COMMIT');
             return commits.length;
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     async upsertPullRequests(
@@ -113,11 +105,7 @@ export class RdsRepoActivityStore {
     ): Promise<number> {
         if (pulls.length === 0) return 0;
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             const valuePlaceholders = pulls.map((_, i) => {
                 const base = i * 12;
                 return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}::int, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}::timestamptz, $${base + 10}::timestamptz, $${base + 11}, $${base + 12})`;
@@ -157,14 +145,8 @@ export class RdsRepoActivityStore {
                 values,
             );
 
-            await client.query('COMMIT');
             return pulls.length;
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     async upsertContributors(
@@ -176,11 +158,7 @@ export class RdsRepoActivityStore {
         const rows = contributors.filter((c): c is RepoContributor & { login: string } => !!c.login);
         if (rows.length === 0) return 0;
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             const valuePlaceholders = rows.map((_, i) => {
                 const base = i * 6;
                 return `($${base + 1}::uuid, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}::int, $${base + 6})`;
@@ -203,14 +181,8 @@ export class RdsRepoActivityStore {
                 values,
             );
 
-            await client.query('COMMIT');
             return rows.length;
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /**
@@ -226,11 +198,7 @@ export class RdsRepoActivityStore {
     ): Promise<number> {
         if (metrics.length === 0) return 0;
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             for (const m of metrics) {
                 await client.query(
                     `INSERT INTO repo_commit_perf
@@ -248,14 +216,8 @@ export class RdsRepoActivityStore {
                 );
             }
 
-            await client.query('COMMIT');
             return metrics.length;
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /** Read measured performance metrics recorded at a commit SHA. */
@@ -264,11 +226,7 @@ export class RdsRepoActivityStore {
         repoFullName: string,
         sha:          string,
     ): Promise<PerfMetric[]> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             const result = await client.query<{
                 commit_sha: string; metric_name: string; value: number | string;
                 unit: string; source: string; measured_at: string;
@@ -280,7 +238,6 @@ export class RdsRepoActivityStore {
                 [userId, repoFullName, sha],
             );
 
-            await client.query('COMMIT');
             return result.rows.map((r) => ({
                 commitSha:  r.commit_sha,
                 metricName: r.metric_name,
@@ -289,12 +246,7 @@ export class RdsRepoActivityStore {
                 source:     r.source,
                 measuredAt: r.measured_at,
             }));
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /**
@@ -308,11 +260,7 @@ export class RdsRepoActivityStore {
         filePath:     string,
         limit         = 50,
     ): Promise<FileChange[]> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             const result = await client.query<{
                 commit_sha: string; status: string; additions: number; deletions: number;
                 changes: number; patch: string | null; patch_truncated: boolean;
@@ -331,7 +279,6 @@ export class RdsRepoActivityStore {
                 [userId, repoFullName, filePath, limit],
             );
 
-            await client.query('COMMIT');
             return result.rows.map((r) => ({
                 commitSha:      r.commit_sha,
                 status:         r.status,
@@ -343,12 +290,7 @@ export class RdsRepoActivityStore {
                 authoredAt:     r.authored_at,
                 message:        r.message,
             }));
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /**
@@ -364,11 +306,7 @@ export class RdsRepoActivityStore {
     ): Promise<string[]> {
         if (shas.length === 0) return [];
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             const result = await client.query<{ sha: string }>(
                 `SELECT sha FROM repo_commits
                   WHERE user_id = $1::uuid
@@ -378,14 +316,8 @@ export class RdsRepoActivityStore {
                 [userId, repoFullName, shas],
             );
 
-            await client.query('COMMIT');
             return result.rows.map((r) => r.sha);
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /**
@@ -402,11 +334,7 @@ export class RdsRepoActivityStore {
     ): Promise<number> {
         if (details.length === 0) return 0;
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
-
+        return withUserRls(this.pool, userId, async (client) => {
             let fileCount = 0;
             for (const d of details) {
                 await client.query(
@@ -441,13 +369,7 @@ export class RdsRepoActivityStore {
                 }
             }
 
-            await client.query('COMMIT');
             return fileCount;
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 }

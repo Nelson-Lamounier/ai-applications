@@ -179,3 +179,7 @@ export { OntologySkippedImportRepository }  from './implementations/OntologySkip
 export type { OntologySkippedImportInput }  from './implementations/OntologySkippedImportRepository.js';
 
 export { resolvePortfolioOwnerId } from './portfolioOwner.js';
+
+// RLS demoting transaction helper — the canonical BEGIN / SET LOCAL ROLE /
+// set_config / COMMIT ritual, the only implementation in the repo.
+export { withUserRls } from './with-user-rls.js';

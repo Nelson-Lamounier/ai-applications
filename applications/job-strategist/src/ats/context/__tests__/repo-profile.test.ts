@@ -139,13 +139,14 @@ describe('persistRepoProfiles (F12 — RLS-scoped write)', () => {
         expect(connect).toHaveBeenCalledTimes(1);
         expect(query.mock.calls.map((c) => c[0])).toEqual([
             'BEGIN',
+            'SET LOCAL ROLE tucaken_app',
             expect.stringMatching(/set_config\('app\.current_user_id'/),
             expect.stringMatching(/INSERT INTO repo_profile/i),
             'COMMIT',
         ]);
-        const setConfigCall = query.mock.calls[1];
+        const setConfigCall = query.mock.calls[2];
         expect(setConfigCall[1]).toEqual(['u-1']);
-        const insertCall = query.mock.calls[2];
+        const insertCall = query.mock.calls[3];
         expect(insertCall[1]).toEqual(['run-1', 'u-1', 'o/r', profile.repoType, profile.frameworks, profile.services, profile.concepts]);
         expect(release).toHaveBeenCalledTimes(1);
     });

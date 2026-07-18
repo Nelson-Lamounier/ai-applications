@@ -121,12 +121,13 @@ describe('persistEvidenceProvenance (F12 — RLS-scoped write)', () => {
         expect(connect).toHaveBeenCalledTimes(1);
         expect(query.mock.calls.map((c) => c[0])).toEqual([
             'BEGIN',
+            'SET LOCAL ROLE tucaken_app',
             expect.stringMatching(/set_config\('app\.current_user_id'/),
             expect.stringMatching(/INSERT INTO evidence_provenance/i),
             'COMMIT',
         ]);
-        expect(query.mock.calls[1][1]).toEqual(['u-1']);
-        expect(query.mock.calls[2][1]?.[1]).toBe('u-1'); // user_id is the 2nd bound param
+        expect(query.mock.calls[2][1]).toEqual(['u-1']);
+        expect(query.mock.calls[3][1]?.[1]).toBe('u-1'); // user_id is the 2nd bound param
         expect(release).toHaveBeenCalledTimes(1);
     });
 
@@ -151,12 +152,13 @@ describe('persistRepoEvidenceQuality (F12 — RLS-scoped write)', () => {
         expect(connect).toHaveBeenCalledTimes(1);
         expect(query.mock.calls.map((c) => c[0])).toEqual([
             'BEGIN',
+            'SET LOCAL ROLE tucaken_app',
             expect.stringMatching(/set_config\('app\.current_user_id'/),
             expect.stringMatching(/INSERT INTO repo_evidence_quality/i),
             'COMMIT',
         ]);
-        expect(query.mock.calls[1][1]).toEqual(['u-1']);
-        expect(query.mock.calls[2][1]?.[1]).toBe('u-1'); // user_id is the 2nd bound param
+        expect(query.mock.calls[2][1]).toEqual(['u-1']);
+        expect(query.mock.calls[3][1]?.[1]).toBe('u-1'); // user_id is the 2nd bound param
         expect(release).toHaveBeenCalledTimes(1);
     });
 

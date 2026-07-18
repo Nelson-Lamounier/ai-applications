@@ -7,17 +7,20 @@
  * each row's `conceptAlias` with the shared strict `normalizeAlias`
  * (lowercase + trim) — the same resolve idiom `run-facts-stage.ts` uses for
  * the tech lane's `TechnologyOntologyRepository`. `RepoFactsRepository`'s RLS
- * writer pattern still applies: every write opens a transaction and stamps
- * the current user with `SELECT set_config('app.current_user_id', $1, true)`
- * so the `rls_concept_evidence` policy authorises the write. COMMIT on
- * success, ROLLBACK on error, release the client in `finally`.
+ * writer pattern still applies: every write runs through the shared
+ * `withUserRls(pool, userId, fn)` helper, which demotes the transaction to
+ * `tucaken_app` via `SET LOCAL ROLE` and stamps
+ * `SELECT set_config('app.current_user_id', $1, true)` so the
+ * `rls_concept_evidence` policy actually authorises the write. COMMIT on
+ * success, ROLLBACK on error, release the client in `finally` — all handled
+ * by the shared helper.
  *
  * Unresolved `conceptAlias` values (no seeded skill_aliases row) are logged
  * and skipped — never thrown. A missing ontology seed must not break a run
  * (same fail-open discipline as the DSA/AI lanes' resolver skip path).
  */
 import type { Pool } from 'pg';
-import { jobLogger, OntologyResolver, SkillOntologyRepository } from '@bedrock/shared';
+import { jobLogger, OntologyResolver, SkillOntologyRepository, withUserRls } from '@bedrock/shared';
 
 import type { RawConceptEvidence } from '../facts/extractors/ConceptPatternExtractor.js';
 
@@ -60,10 +63,7 @@ export class RdsConceptEvidenceRepository {
         }
         if (resolved.length === 0) return;
 
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        await withUserRls(this.pool, userId, async (client) => {
             for (const { skillId, row } of resolved) {
                 await client.query(
                     `INSERT INTO concept_evidence (
@@ -87,12 +87,6 @@ export class RdsConceptEvidenceRepository {
                     ],
                 );
             }
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 }

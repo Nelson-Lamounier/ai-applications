@@ -1,5 +1,6 @@
 /** @format */
 import type { Pool } from 'pg';
+import { withUserRls } from '../with-user-rls.js';
 import { toPurl } from '../../sbom/purl.js';
 import {
     buildCycloneDxBom,
@@ -14,33 +15,21 @@ export class TechnologyEvidenceRepository {
 
     /** Commit-SHA short-circuit: has this exact commit already been extracted? */
     async hasEvidenceForCommit(userId: string, repoFullName: string, commitSha: string): Promise<boolean> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        return withUserRls(this.pool, userId, async (client) => {
             const { rows } = await client.query(
                 `SELECT 1 FROM technology_evidence
                  WHERE user_id = $1::uuid AND repo_full_name = $2 AND commit_sha = $3
                  LIMIT 1`,
                 [userId, repoFullName, commitSha],
             );
-            await client.query('COMMIT');
             return rows.length > 0;
-        } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /** Insert a batch; duplicates (per uq_technology_evidence) are skipped. */
     async insertMany(userId: string, rows: TechnologyEvidenceRow[]): Promise<void> {
         if (rows.length === 0) return;
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        await withUserRls(this.pool, userId, async (client) => {
             for (const r of rows) {
                 // Canonical purl derived here (the single persistence boundary) so
                 // every writer gets identity consistent with migration 089's backfill.
@@ -75,13 +64,7 @@ export class TechnologyEvidenceRepository {
                     ],
                 );
             }
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /**
@@ -92,10 +75,7 @@ export class TechnologyEvidenceRepository {
      * the stored `purl` column has been backfilled.
      */
     async toCycloneDxBom(userId: string, repoFullName: string): Promise<CycloneDxBom> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        return withUserRls(this.pool, userId, async (client) => {
             const { rows } = await client.query<{
                 raw_name: string; ecosystem: string | null; version: string | null; commit_sha: string;
             }>(
@@ -104,16 +84,10 @@ export class TechnologyEvidenceRepository {
                   WHERE user_id = $1::uuid AND repo_full_name = $2`,
                 [userId, repoFullName],
             );
-            await client.query('COMMIT');
             const components = preferSpecificPurls(technologyEvidenceToComponents(
                 rows.map(r => ({ rawName: r.raw_name, ecosystem: r.ecosystem, version: r.version ?? undefined })),
             ));
             return buildCycloneDxBom(components, { repoFullName, commitSha: rows[0]?.commit_sha });
-        } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 }

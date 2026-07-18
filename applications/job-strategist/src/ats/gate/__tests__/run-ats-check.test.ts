@@ -84,6 +84,7 @@ describe('renderCheckAndStoreAts', () => {
         expect(check.status).toBe('passed');
         expect(put).toHaveBeenCalledTimes(1);          // PDF uploaded
         expect(connect).toHaveBeenCalledTimes(1);      // resumes row updated in RLS txn
+        expect(query.mock.calls.some((c) => c[0] === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         expect(query.mock.calls.some((c) => /UPDATE resumes/i.test(c[0] as string))).toBe(true);
         expect(outcomes).toEqual(['passed']);
     });

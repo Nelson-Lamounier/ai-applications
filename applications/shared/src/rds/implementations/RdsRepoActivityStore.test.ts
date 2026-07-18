@@ -77,6 +77,7 @@ describe('RdsRepoActivityStore', () => {
 
         expect(count).toBe(2);
         const sqls = pool.client.queries.map(q => q.sql);
+        expect(sqls).toContain('SET LOCAL ROLE tucaken_app');
         expect(sqls.some(s => /set_config\('app.current_user_id'/.test(s))).toBe(true);
         expect(sqls.some(s => /INSERT INTO repo_commits/.test(s))).toBe(true);
         expect(sqls.some(s => /ON CONFLICT \(repository_id, sha\) DO UPDATE/.test(s))).toBe(true);
@@ -103,6 +104,7 @@ describe('RdsRepoActivityStore', () => {
 
         expect(count).toBe(2);
         const sqls = pool.client.queries.map(q => q.sql);
+        expect(sqls).toContain('SET LOCAL ROLE tucaken_app');
         expect(sqls.some(s => /INSERT INTO repo_pull_requests/.test(s))).toBe(true);
         expect(sqls.some(s => /ON CONFLICT \(repository_id, number\) DO UPDATE/.test(s))).toBe(true);
     });
@@ -171,6 +173,7 @@ describe('RdsRepoActivityStore.upsertCommitDetails', () => {
         await store.upsertCommitDetails('user-1', 'repo-uuid', 'o/r', [DETAIL]);
 
         const sqls = pool.client.queries.map(q => q.sql).join('\n');
+        expect(sqls).toContain('SET LOCAL ROLE tucaken_app');
         expect(sqls).toContain('UPDATE repo_commits');
         expect(sqls).toContain('INSERT INTO repo_commit_files');
         expect(sqls).toContain('COMMIT');

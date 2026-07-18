@@ -25,9 +25,11 @@ describe('applyPostSyncProjectAction', () => {
     const { pool, calls, release } = poolFrom([{ id: 'proj-1', post_sync_action: 'build', post_sync_target_project_id: null }]);
     const out = await applyPostSyncProjectAction(pool, 'u1', 'Owner/Repo');
     expect(out).toBe('build');
-    // RLS context is set on the same client before any read/write.
+    // RLS context is set on the same client before any read/write: demote to
+    // tucaken_app via SET LOCAL ROLE, then stamp set_config (withUserRls ritual).
     expect(calls[0].sql).toMatch(/BEGIN/i);
-    expect(calls[1].sql).toMatch(/set_config\('app\.current_user_id'/i);
+    expect(calls[1].sql).toMatch(/SET LOCAL ROLE tucaken_app/i);
+    expect(calls[2].sql).toMatch(/set_config\('app\.current_user_id'/i);
     const upd = calls.find(c => /UPDATE projects/i.test(c.sql) && /is_user_confirmed\s*=\s*TRUE/i.test(c.sql))!;
     expect(upd.sql).toMatch(/case_study_status\s*=\s*'pending'/i);
     expect(upd.sql).toMatch(/post_sync_action\s*=\s*NULL/i);

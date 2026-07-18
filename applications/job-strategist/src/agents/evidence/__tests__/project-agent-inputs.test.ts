@@ -154,7 +154,7 @@ describe('loadProjectAgentInputs -- RLS-scoped two-lane read', () => {
         for (const call of query.mock.calls) {
             const sql = call[0] as string;
             const params = call[1] as unknown[] | undefined;
-            if (/^BEGIN$|^COMMIT$/i.test(sql.trim())) continue;
+            if (/^BEGIN$|^COMMIT$|^SET LOCAL ROLE/i.test(sql.trim())) continue;
             expect(params).toContain(userId);
         }
     });

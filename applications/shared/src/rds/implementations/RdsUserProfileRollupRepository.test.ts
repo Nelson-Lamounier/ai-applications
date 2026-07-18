@@ -34,6 +34,7 @@ describe('RdsUserProfileRollupRepository.listProfilesForRollup', () => {
         const repo = new RdsUserProfileRollupRepository(fakePool(client));
         const out = await repo.listProfilesForRollup('11111111-1111-1111-1111-111111111111');
 
+        expect(client.calls.some(c => c.sql === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         const cfg = client.calls.find(c => c.sql.includes('set_config'));
         expect(cfg).toBeDefined();
         expect(cfg!.params[0]).toBe('11111111-1111-1111-1111-111111111111');
@@ -53,6 +54,7 @@ describe('RdsUserProfileRollupRepository.upsert', () => {
         const repo = new RdsUserProfileRollupRepository(fakePool(client));
         await repo.upsert('22222222-2222-2222-2222-222222222222', sampleRollup);
 
+        expect(client.calls.some(c => c.sql === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         const cfg = client.calls.find(c => c.sql.includes('set_config'))!;
         expect(cfg.params[0]).toBe('22222222-2222-2222-2222-222222222222');
         const up = client.calls.find(c => /INSERT INTO user_profile_rollup/i.test(c.sql))!;
@@ -88,6 +90,7 @@ describe('RdsUserProfileRollupRepository mirror/reveal', () => {
         const client = fakeClient([]);                          // SELECT returns rows:[]
         const repo = new RdsUserProfileRollupRepository(fakePool(client));
         const out = await repo.getRollup('11111111-1111-1111-1111-111111111111');
+        expect(client.calls.some(c => c.sql === 'SET LOCAL ROLE tucaken_app')).toBe(true);
         const cfg = client.calls.find(c => c.sql.includes('set_config'))!;
         expect(cfg.params[0]).toBe('11111111-1111-1111-1111-111111111111');
         const sel = client.calls.find(c => /SELECT[\s\S]*FROM user_profile_rollup/i.test(c.sql))!;

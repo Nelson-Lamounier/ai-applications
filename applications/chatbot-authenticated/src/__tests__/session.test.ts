@@ -73,6 +73,18 @@ describe('validateSession', () => {
         expect(rlsIdx).toBeGreaterThan(-1);
         expect(rlsIdx).toBeLessThan(selectIdx);
     });
+
+    it('demotes to tucaken_app before the RLS GUC is set', async () => {
+        const { pool, client } = makeMockPool({
+            'SELECT id FROM chat_sessions WHERE id = $1': { rows: [] },
+        });
+        await validateSession(pool, 'user-1', 'session-uuid');
+        const calls = client.query.mock.calls.map(c => c[0]);
+        const roleIdx = calls.findIndex(q => typeof q === 'string' && q.includes('SET LOCAL ROLE tucaken_app'));
+        const rlsIdx  = calls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
+        expect(roleIdx).toBeGreaterThan(-1);
+        expect(roleIdx).toBeLessThan(rlsIdx);
+    });
 });
 
 // ── createSession ─────────────────────────────────────────────────────────────
@@ -104,6 +116,17 @@ describe('createSession', () => {
         expect(sqls).toContain('COMMIT');
     });
 
+    it('demotes to tucaken_app before the RLS GUC is set', async () => {
+        const { pool, client } = makeMockPool();
+        await createSession(pool, 'user-1');
+
+        const calls = client.query.mock.calls.map(c => c[0]);
+        const roleIdx = calls.findIndex(q => typeof q === 'string' && q.includes('SET LOCAL ROLE tucaken_app'));
+        const rlsIdx  = calls.findIndex(q => typeof q === 'string' && q.includes('app.current_user_id'));
+        expect(roleIdx).toBeGreaterThan(-1);
+        expect(roleIdx).toBeLessThan(rlsIdx);
+    });
+
     it('rolls back and rethrows on error', async () => {
         const client: MockClient = {
             query:   jest.fn<PoolClient['query']>(),
@@ -112,7 +135,7 @@ describe('createSession', () => {
         let callCount = 0;
         client.query.mockImplementation(async () => {
             callCount++;
-            if (callCount === 3) throw new Error('db error'); // fail on INSERT
+            if (callCount === 4) throw new Error('db error'); // fail on INSERT (after BEGIN, SET LOCAL ROLE, set_config)
             return { rows: [], rowCount: 0 };
         });
         const pool = {
@@ -156,7 +179,7 @@ describe('appendMessages', () => {
         let n = 0;
         client.query.mockImplementation(async () => {
             n++;
-            if (n === 3) throw new Error('insert failed');
+            if (n === 4) throw new Error('insert failed');
             return { rows: [], rowCount: 0 };
         });
         const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;
@@ -235,7 +258,7 @@ describe('loadHistory', () => {
         let n = 0;
         client.query.mockImplementation(async () => {
             n++;
-            if (n === 3) throw new Error('select failed');
+            if (n === 4) throw new Error('select failed');
             return { rows: [], rowCount: 0 };
         });
         const pool = { connect: jest.fn<() => Promise<PoolClient>>().mockResolvedValue(client as unknown as PoolClient) } as unknown as Pool;

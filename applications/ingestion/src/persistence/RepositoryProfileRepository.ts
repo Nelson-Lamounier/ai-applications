@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { withUserRls } from '@bedrock/shared';
 import type { ExtractedRepoData } from '../narrative/ProfileExtractor.js';
 import type { ScoreBreakdown } from '../util/scoreProfile.js';
 import type { RepoClassification } from '../util/classifyRepo.js';
@@ -27,15 +28,35 @@ export interface RepositoryProfile {
     extractionStatus: string;
 }
 
+/** JSON-encode a value for a jsonb column, defaulting an absent value to an empty object. */
+function jsonOrEmpty(value: unknown): string {
+    return value ? JSON.stringify(value) : '{}';
+}
+
+/** Positional params for the `upsert` INSERT, extracted to keep the withUserRls callback's complexity under the lint gate. */
+function upsertParams(input: UpsertProfileInput): unknown[] {
+    return [
+        input.userId,
+        input.repositoryId ?? null,
+        input.repoFullName,
+        jsonOrEmpty(input.extracted),
+        input.classification ?? null,
+        input.qualityScore ?? 0,
+        jsonOrEmpty(input.qualityBreakdown),
+        input.extractionStatus,
+        input.extractionError ?? null,
+        input.extractedAt ?? null,
+        input.extractorModel ?? null,
+        input.extractorVersion ?? null,
+        input.profileInputHash ?? null,
+    ];
+}
+
 export class RepositoryProfileRepository {
     constructor(private readonly pool: Pool) {}
 
     async upsert(input: UpsertProfileInput): Promise<{ id: string }> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [input.userId]);
-
+        return withUserRls(this.pool, input.userId, async (client) => {
             const result = await client.query<{ id: string }>(
                 `INSERT INTO repository_profiles (
                     user_id, repository_id, repo_full_name,
@@ -66,24 +87,9 @@ export class RepositoryProfileRepository {
                     profile_input_hash = COALESCE(EXCLUDED.profile_input_hash, repository_profiles.profile_input_hash),
                     updated_at         = now()
                 RETURNING id`,
-                [
-                    input.userId,
-                    input.repositoryId ?? null,
-                    input.repoFullName,
-                    input.extracted ? JSON.stringify(input.extracted) : '{}',
-                    input.classification ?? null,
-                    input.qualityScore ?? 0,
-                    input.qualityBreakdown ? JSON.stringify(input.qualityBreakdown) : '{}',
-                    input.extractionStatus,
-                    input.extractionError ?? null,
-                    input.extractedAt ?? null,
-                    input.extractorModel ?? null,
-                    input.extractorVersion ?? null,
-                    input.profileInputHash ?? null,
-                ],
+                upsertParams(input),
             );
 
-            await client.query('COMMIT');
             const row = result.rows[0];
             if (!row) {
                 throw new Error(
@@ -92,22 +98,14 @@ export class RepositoryProfileRepository {
                 );
             }
             return { id: row.id };
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     async findByUserAndRepo(
         userId: string,
         repoFullName: string,
     ): Promise<RepositoryProfile | null> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        return withUserRls(this.pool, userId, async (client) => {
             const result = await client.query<RepositoryProfile>(
                 `SELECT id, user_id AS "userId", repo_full_name AS "repoFullName",
                         extraction_status AS "extractionStatus"
@@ -115,14 +113,8 @@ export class RepositoryProfileRepository {
                   WHERE user_id = $1::uuid AND repo_full_name = $2`,
                 [userId, repoFullName],
             );
-            await client.query('COMMIT');
             return result.rows[0] ?? null;
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 
     /**
@@ -148,10 +140,7 @@ export class RepositoryProfileRepository {
         status: 'completed' | 'failed',
         error?: string,
     ): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        await withUserRls(this.pool, userId, async (client) => {
             await client.query(
                 `UPDATE repository_profiles
                     SET extraction_status = $1,
@@ -161,12 +150,6 @@ export class RepositoryProfileRepository {
                     AND user_id = $4::uuid`,
                 [status, error ?? null, id, userId],
             );
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-        } finally {
-            client.release();
-        }
+        });
     }
 }
