@@ -32,13 +32,17 @@ describe('loadProjectResumeBulletsBlock — RLS-scoped read', () => {
         const sqls = query.mock.calls.map((c) => c[0] as string);
         expect(sqls).toEqual(expect.arrayContaining([
             'BEGIN',
+            'SET LOCAL ROLE tucaken_app',
             expect.stringMatching(/set_config\('app\.current_user_id'/),
             expect.stringMatching(/FROM project_resume_bullets/),
             'COMMIT',
         ]));
-        // GUC set before the SELECT.
+        // Demotion + GUC set before the SELECT.
+        const roleIdx = sqls.findIndex((s) => s === 'SET LOCAL ROLE tucaken_app');
         const gucIdx = sqls.findIndex((s) => /set_config\('app\.current_user_id'/.test(s));
         const selIdx = sqls.findIndex((s) => /FROM project_resume_bullets/.test(s));
+        expect(roleIdx).toBeGreaterThanOrEqual(0);
+        expect(roleIdx).toBeLessThan(gucIdx);
         expect(gucIdx).toBeGreaterThanOrEqual(0);
         expect(gucIdx).toBeLessThan(selIdx);
         expect(release).toHaveBeenCalledTimes(1);
