@@ -12,25 +12,30 @@
  *
  * `listFiles` / `getHeadCommitSha` / `fetchFile` operate purely on
  * `extractDir` — no network. Everything else IRepoAdapter can expose
- * (commits, pull requests, contributors, commit detail) has no tarball-local
- * representation, so those calls are forwarded to `delegate` — the same
- * host adapter (e.g. GitHubAdapter) that still has API access.
+ * (commits, pull requests, contributors, commit detail, repo metadata) has no
+ * tarball-local representation, so those calls are forwarded to `delegate` —
+ * the same host adapter (e.g. GitHubAdapter) that still has API access. This
+ * keeps the tarball download the ONE download for file content while
+ * `getRepoMeta` (profile extraction) still makes its own single API call
+ * through the delegate — see `ProfileInputCollector`.
  *
  * Optional-method optionality: IRepoAdapter declares listPullRequests /
- * listContributors / getCommitDetail as optional (`method?`), and
- * RepoIngestionOrchestrator feature-detects them with
- * `typeof adapter.xxx !== 'function'`. A plain class method is always
- * defined on the prototype — even one that only forwards — which would make
- * a delegate WITHOUT that capability look like it has it. So these three
- * are declared `declare` (type-only, no prototype method) and assigned as
- * instance properties in the constructor ONLY when `delegate` itself
- * defines them, keeping `typeof adapter.xxx` identical to
+ * listContributors / getCommitDetail / getRepoMeta as optional (`method?`),
+ * and RepoIngestionOrchestrator (or, for getRepoMeta, ProfileInputCollector)
+ * feature-detects them with `typeof adapter.xxx !== 'function'`. A plain
+ * class method is always defined on the prototype — even one that only
+ * forwards — which would make a delegate WITHOUT that capability look like
+ * it has it. So these four are declared `declare` (type-only, no prototype
+ * method) and assigned as instance properties in the constructor ONLY when
+ * `delegate` itself defines them, keeping `typeof adapter.xxx` identical to
  * `typeof delegate.xxx` for every optional method.
  */
 
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+
+import { RepoNotFoundError } from '@bedrock/shared';
 
 import type {
     IRepoAdapter,
@@ -57,6 +62,7 @@ export class TarballRepoAdapter implements IRepoAdapter {
     declare listPullRequests?: IRepoAdapter['listPullRequests'];
     declare listContributors?: IRepoAdapter['listContributors'];
     declare getCommitDetail?: IRepoAdapter['getCommitDetail'];
+    declare getRepoMeta?: IRepoAdapter['getRepoMeta'];
 
     private readonly rootDir: string;
 
@@ -78,6 +84,10 @@ export class TarballRepoAdapter implements IRepoAdapter {
         if (delegate.getCommitDetail) {
             const getCommitDetail = delegate.getCommitDetail.bind(delegate);
             this.getCommitDetail = (repoFullName, sha, opts) => getCommitDetail(repoFullName, sha, opts);
+        }
+        if (delegate.getRepoMeta) {
+            const getRepoMeta = delegate.getRepoMeta.bind(delegate);
+            this.getRepoMeta = (repoFullName) => getRepoMeta(repoFullName);
         }
     }
 
@@ -144,7 +154,12 @@ export class TarballRepoAdapter implements IRepoAdapter {
             return await fs.readFile(abs, 'utf-8');
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-                throw new Error(`TarballRepoAdapter.fetchFile: file not found: ${filePath}`);
+                // Mirror GitHubAdapter's 404 classification (see github-errors.ts)
+                // so ProfileInputCollector's absent-file handling — which
+                // branches on `instanceof RepoNotFoundError` — treats an
+                // on-disk probe miss identically to a GitHub 404: silent
+                // "absent", not a logged warning.
+                throw new RepoNotFoundError(filePath);
             }
             throw err;
         }

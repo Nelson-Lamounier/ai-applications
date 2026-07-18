@@ -18,6 +18,7 @@ import type {
     ListPullRequestsOptions,
 } from './IRepoAdapter.js';
 import type { RepoCommit, RepoPullRequest, RepoContributor, CommitDetail } from '@bedrock/shared';
+import { RepoNotFoundError } from '@bedrock/shared';
 
 // Known git blob SHA vectors (verified against `git hash-object`).
 const EMPTY_FILE_SHA = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
@@ -137,9 +138,10 @@ describe('TarballRepoAdapter', () => {
             expect(await adapter.fetchFile('o/r', 'nested/dir/multibyte.txt')).toBe(MULTIBYTE_CONTENT);
         });
 
-        it('throws a clear error for a missing file', async () => {
+        it('throws RepoNotFoundError for a missing file (matches the GitHub 404 classification)', async () => {
             const adapter = new TarballRepoAdapter(extractDir, 'deadbeef', stubDelegate());
 
+            await expect(adapter.fetchFile('o/r', 'does-not-exist.txt')).rejects.toThrow(RepoNotFoundError);
             await expect(adapter.fetchFile('o/r', 'does-not-exist.txt')).rejects.toThrow(/does-not-exist\.txt/);
         });
 

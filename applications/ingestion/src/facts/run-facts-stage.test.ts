@@ -22,8 +22,14 @@ import { runFactsStage } from './run-facts-stage.js';
 
 interface Route { readonly needle: string; readonly rows: unknown[] }
 
-/** Recording fake Pool: routes by SQL substring (first match wins), else `rows: []`. */
-function fakePool(routes: Route[] = []) {
+/**
+ * Recording fake Pool: routes by SQL substring (first match wins), else
+ * `rows: []`. `throwOnClientQuery`, when given, makes the transactional
+ * `client.query` (used by RLS-writer repositories like
+ * `RdsConceptEvidenceRepository.insertMany`) throw once it sees a matching
+ * statement — used to prove a lane's own try/catch is fail-open.
+ */
+function fakePool(routes: Route[] = [], throwOnClientQuery?: RegExp) {
     const calls: string[] = [];
     const respond = (sql: string) => {
         const normalized = sql.replace(/\s+/g, ' ').trim();
@@ -31,12 +37,18 @@ function fakePool(routes: Route[] = []) {
         const hit = routes.find((r) => normalized.includes(r.needle));
         return { rows: hit ? hit.rows : [] };
     };
-    const client = { query: jest.fn(async (sql: string) => respond(sql)), release: jest.fn() };
+    const client = {
+        query: jest.fn(async (sql: string) => {
+            if (throwOnClientQuery?.test(sql)) throw new Error('concept insert failed');
+            return respond(sql);
+        }),
+        release: jest.fn(),
+    };
     const pool = {
         query: jest.fn(async (sql: string) => respond(sql)),
         connect: jest.fn(async () => client),
     };
-    return { pool, calls };
+    return { pool, calls, client };
 }
 
 const ONTOLOGY_ROUTES: Route[] = [
@@ -160,5 +172,157 @@ describe('runFactsStage', () => {
             expect(calls.some((c) => c.includes('FROM dsa_scanned_commits'))).toBe(false);
             expect(calls.some((c) => c.includes('FROM ai_scanned_commits'))).toBe(false);
         }
+    });
+
+    // ── Concept lane (P2) ────────────────────────────────────────────────
+    describe('concept lane', () => {
+        it('persist: wires the concept lane -- resolves detector output via skill_aliases and writes concept_evidence with tech-lane evidence threaded through', async () => {
+            await fs.mkdir(path.join(extractDir, 'k8s'), { recursive: true });
+            await fs.writeFile(
+                path.join(extractDir, 'k8s', 'deploy.yaml'),
+                ['apiVersion: apps/v1', 'kind: Deployment', 'metadata:', '  name: app'].join('\n'),
+            );
+
+            const routes: Route[] = [
+                { needle: 'FROM ontology_version', rows: [{ version: 5 }] },
+                {
+                    needle: 'alias, technology_id FROM technology_aliases',
+                    rows: [
+                        { alias: 'node', technology_id: 'id-node' },
+                        { alias: 'kubernetes', technology_id: 'id-k8s' },
+                    ],
+                },
+                { needle: 'WHERE prose_safe = true', rows: [] },
+                {
+                    needle: 'SELECT id, canonical_name FROM technology_ontology',
+                    rows: [
+                        { id: 'id-node', canonical_name: 'Node.js' },
+                        { id: 'id-k8s', canonical_name: 'Kubernetes' },
+                    ],
+                },
+                {
+                    needle: 'alias, skill_id FROM skill_aliases',
+                    rows: [
+                        { alias: 'infrastructure as code', skill_id: 'skill-iac' },
+                        { alias: 'container orchestration', skill_id: 'skill-k8s-orch' },
+                    ],
+                },
+            ];
+            const { pool, calls, client } = fakePool(routes);
+
+            const result = await runFactsStage({
+                pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
+                commitSha: 'abc', extractDir, writeMode: 'persist',
+                laneGates: { techDone: false, dsaDone: false, aiDone: false },
+                githubSbomEnabled: false, githubToken: 'tok',
+            });
+
+            // The tech lane resolved the k8s manifest's 'kubernetes' iac-layer row --
+            // proves the concept lane's aggregate detectors receive it as techEvidence.
+            expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'iac', canonicalId: 'kubernetes', filePath: 'k8s/deploy.yaml' });
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(true);
+
+            const insertParams = (client.query as jest.Mock).mock.calls
+                .filter(([sql]) => typeof sql === 'string' && /INSERT INTO concept_evidence/i.test(sql))
+                .map(([, params]) => params);
+
+            // iac-presence -> 'infrastructure as code' and k8s-orchestration -> 'container
+            // orchestration' both fire off the same threaded iac-layer 'kubernetes' row.
+            expect(insertParams).toContainEqual(expect.arrayContaining(['skill-iac', 'iac-presence', 'k8s/deploy.yaml']));
+            expect(insertParams).toContainEqual(expect.arrayContaining(['skill-k8s-orch', 'k8s-orchestration', 'k8s/deploy.yaml']));
+        });
+
+        it('shadow: never constructs the concept extractor -- no skill_aliases read, no concept_evidence write', async () => {
+            const { pool, calls } = fakePool(ONTOLOGY_ROUTES);
+
+            await runFactsStage({
+                pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
+                commitSha: 'abc', extractDir, writeMode: 'shadow',
+                githubSbomEnabled: false, githubToken: 'tok',
+            });
+
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(false);
+            expect(calls.some((c) => c.includes('INSERT INTO concept_evidence'))).toBe(false);
+        });
+
+        it('persist: caller-supplied techDone gate skips the concept lane too (same gate as the tech lane)', async () => {
+            const { pool, calls } = fakePool(ONTOLOGY_ROUTES);
+
+            await runFactsStage({
+                pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
+                commitSha: 'abc', extractDir, writeMode: 'persist',
+                laneGates: { techDone: true, dsaDone: false, aiDone: false },
+                githubSbomEnabled: false, githubToken: 'tok',
+            });
+
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(false);
+            expect(calls.some((c) => c.includes('INSERT INTO concept_evidence'))).toBe(false);
+        });
+
+        it('persist: a firing-shaped fixture under a test path produces NO concept evidence (FP guard mirrors DSA/AI lanes)', async () => {
+            // monitoring-config fires on path (grafana/dashboards//alert/prometheus.yaml/
+            // alloy/otel-collector) AND content ("panels":/groups:/receivers:/scrape_configs:).
+            // Only workflowCi/workflowDeploy carry their own fixtures-path guard -- without
+            // scanning patternFiles (not the full file list) this Grafana-shaped fixture would
+            // persist a real concept_evidence row despite living under __tests__/fixtures/.
+            await fs.mkdir(path.join(extractDir, 'src', '__tests__', 'fixtures'), { recursive: true });
+            await fs.writeFile(
+                path.join(extractDir, 'src', '__tests__', 'fixtures', 'grafana-dashboard.json'),
+                JSON.stringify({ panels: [{ title: 'CPU' }] }),
+            );
+
+            // A resolvable 'observability' skill alias: proves this is not a silent no-op
+            // via alias-unresolved skip (RdsConceptEvidenceRepository.insertMany) -- if the
+            // fixture WERE scanned, monitoring-config's 'observability' conceptAlias would
+            // resolve and insert.
+            const routes: Route[] = [
+                ...ONTOLOGY_ROUTES,
+                { needle: 'alias, skill_id FROM skill_aliases', rows: [{ alias: 'observability', skill_id: 'skill-observability' }] },
+            ];
+            const { pool, client } = fakePool(routes);
+
+            const result = await runFactsStage({
+                pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
+                commitSha: 'abc', extractDir, writeMode: 'persist',
+                laneGates: { techDone: false, dsaDone: false, aiDone: false },
+                githubSbomEnabled: false, githubToken: 'tok',
+            });
+
+            expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'dockerfile', canonicalId: 'node.js', filePath: 'Dockerfile' });
+
+            // The fixture is the only concept-shaped file in the tree -- with it correctly
+            // excluded, the concept lane detects nothing at all, so insertMany's own
+            // rows.length===0 guard means concept_evidence is never even attempted.
+            const insertCalls = (client.query as jest.Mock).mock.calls
+                .filter(([sql]) => typeof sql === 'string' && /INSERT INTO concept_evidence/i.test(sql));
+            expect(insertCalls).toEqual([]);
+        });
+
+        it('persist: a concept-lane failure (DB error inside insertMany) is fail-open -- does not fail the stage, and downstream lanes still run', async () => {
+            await fs.mkdir(path.join(extractDir, '.github', 'workflows'), { recursive: true });
+            await fs.writeFile(
+                path.join(extractDir, '.github', 'workflows', 'ci.yaml'),
+                ['name: CI', 'on: push', 'jobs:', '  build:', '    runs-on: ubuntu-latest'].join('\n'),
+            );
+
+            const routes: Route[] = [
+                ...ONTOLOGY_ROUTES,
+                { needle: 'alias, skill_id FROM skill_aliases', rows: [{ alias: 'ci/cd pipelines', skill_id: 'skill-cicd' }] },
+            ];
+            const { pool, calls } = fakePool(routes, /INSERT INTO concept_evidence/i);
+
+            const result = await runFactsStage({
+                pool: pool as never, userId: 'u1', repoFullName: 'o/r', githubRepoId: 999,
+                commitSha: 'abc', extractDir, writeMode: 'persist',
+                laneGates: { techDone: false, dsaDone: false, aiDone: false },
+                githubSbomEnabled: false, githubToken: 'tok',
+            });
+
+            expect(result.evidenceKeys).toContainEqual({ sourceLayer: 'dockerfile', canonicalId: 'node.js', filePath: 'Dockerfile' });
+            expect(calls.some((c) => c.includes('alias, skill_id FROM skill_aliases'))).toBe(true);
+            // Downstream lanes still ran despite the concept lane's DB error.
+            expect(calls.some((c) => c.includes('INSERT INTO dsa_scanned_commits'))).toBe(true);
+            expect(calls.some((c) => c.includes('INSERT INTO ai_scanned_commits'))).toBe(true);
+        });
     });
 });

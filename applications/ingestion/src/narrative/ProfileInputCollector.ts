@@ -1,6 +1,6 @@
 import type { RepoFile } from '@bedrock/shared';
 import { PiiScrubber, RepoNotFoundError } from '@bedrock/shared';
-import type { GitHubAdapter } from '../acquisition/GitHubAdapter.js';
+import type { IRepoAdapter } from '../acquisition/IRepoAdapter.js';
 import type { FileFetchCache } from '../util/FileFetchCache.js';
 
 const piiScrubber = new PiiScrubber();
@@ -34,11 +34,21 @@ const MAX_COMMITS           = 30;
 
 export class ProfileInputCollector {
     constructor(
-        private readonly adapter: GitHubAdapter,
+        private readonly adapter: IRepoAdapter,
         private readonly cache:   FileFetchCache,
     ) {}
 
     async collect(repoFullName: string, prefetchedFiles?: RepoFile[]): Promise<ProfileInputBundle> {
+        // getRepoMeta is optional on IRepoAdapter (only host adapters with a
+        // concept of repo metadata implement it, e.g. GitHubAdapter — and
+        // TarballRepoAdapter delegates it through to its own GitHubAdapter).
+        // Profile extraction is meaningless without it, so fail loudly here
+        // rather than surface a confusing "getRepoMeta is not a function".
+        if (!this.adapter.getRepoMeta) {
+            throw new Error(
+                'ProfileInputCollector: adapter does not implement getRepoMeta — profile extraction requires repo metadata',
+            );
+        }
         const [meta, commits, readme, manifests, changelog, workflows] = await Promise.all([
             this.adapter.getRepoMeta(repoFullName),
             this.adapter.listCommits(repoFullName, { maxCommits: MAX_COMMITS }),

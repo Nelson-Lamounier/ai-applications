@@ -1,9 +1,14 @@
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ProfileInputCollector } from '../ProfileInputCollector.js';
 import { FileFetchCache } from '../../util/FileFetchCache.js';
 import type { RepoCommit } from '@bedrock/shared';
 import { RepoNotFoundError } from '@bedrock/shared';
 import type { GitHubAdapter } from '../../acquisition/GitHubAdapter.js';
+import type { IRepoAdapter } from '../../acquisition/IRepoAdapter.js';
+import { TarballRepoAdapter } from '../../acquisition/TarballRepoAdapter.js';
 
 // ---------------------------------------------------------------------------
 // Stub helpers
@@ -86,5 +91,105 @@ describe('ProfileInputCollector PII scrubbing', () => {
         expect(serialized).not.toContain('jane@corp.com');
         expect(serialized).not.toContain('john@corp.com');
         expect(bundle.readme ?? '').toContain('[EMAIL]');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// IRepoAdapter widening (P2 Task 4, Fix B) — one-download unified acquisition
+// ---------------------------------------------------------------------------
+
+describe('ProfileInputCollector against a TarballRepoAdapter (unified acquisition)', () => {
+    const dirs: string[] = [];
+    afterEach(async () => {
+        await Promise.all(dirs.splice(0).map((d) => fs.rm(d, { recursive: true, force: true })));
+    });
+
+    it('serves fetchFile from disk (no delegate.fetchFile calls) while getRepoMeta/listCommits delegate', async () => {
+        const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-collector-tarball-'));
+        dirs.push(extractDir);
+        await fs.writeFile(path.join(extractDir, 'README.md'), '# From disk');
+
+        const delegateFetchFile = jest.fn<() => Promise<string>>();
+        const delegateGetRepoMeta = jest.fn(async () => ({
+            primary_language: 'TypeScript',
+            description:      'A tarball-backed repo',
+            topics:            [] as string[],
+            stars:             0,
+            forks:             0,
+            is_fork:           false,
+            created_at:        '2024-01-01T00:00:00Z',
+            pushed_at:         '2024-06-01T00:00:00Z',
+        }));
+        const delegateListCommits = jest.fn(async (): Promise<RepoCommit[]> => [
+            { sha: 'sha0', authorName: 'Test Author', authoredAt: '2024-06-01T00:00:00Z', message: 'initial commit' },
+        ]);
+
+        const delegate = {
+            getRepoMeta:  delegateGetRepoMeta,
+            listCommits:  delegateListCommits,
+            fetchFile:    delegateFetchFile,
+            listFiles:    async () => [],
+        } as unknown as IRepoAdapter;
+
+        const adapter = new TarballRepoAdapter(extractDir, 'resolved-sha', delegate);
+        const cache = new FileFetchCache();
+        const collector = new ProfileInputCollector(adapter, cache);
+
+        const bundle = await collector.collect('owner/repo');
+
+        expect(bundle.readme).toBe('# From disk');
+        expect(delegateFetchFile).not.toHaveBeenCalled();
+        expect(delegateGetRepoMeta).toHaveBeenCalledTimes(1);
+        expect(delegateGetRepoMeta).toHaveBeenCalledWith('owner/repo');
+        expect(delegateListCommits).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a missing probe file on the tarball adapter as absent, silently (no console.warn)', async () => {
+        // Real disk-backed adapter (not a stub): only README.md exists, so
+        // every manifest/changelog probe hits fs ENOENT -> RepoNotFoundError
+        // (see TarballRepoAdapter.fetchFile). This must classify identically
+        // to the GitHub 404 path in ProfileInputCollector.fetchFile.
+        const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-collector-tarball-missing-'));
+        dirs.push(extractDir);
+        await fs.writeFile(path.join(extractDir, 'README.md'), '# Only a README');
+
+        const delegate = {
+            getRepoMeta: async () => ({
+                primary_language: 'TypeScript',
+                description:      'A tarball-backed repo',
+                topics:            [] as string[],
+                stars:             0,
+                forks:             0,
+                is_fork:           false,
+                created_at:        '2024-01-01T00:00:00Z',
+                pushed_at:         '2024-06-01T00:00:00Z',
+            }),
+            listCommits: async (): Promise<RepoCommit[]> => [],
+            fetchFile:   async () => { throw new Error('delegate.fetchFile should not be called'); },
+            listFiles:   async () => [],
+        } as unknown as IRepoAdapter;
+
+        const adapter = new TarballRepoAdapter(extractDir, 'resolved-sha', delegate);
+        const collector = new ProfileInputCollector(adapter, new FileFetchCache());
+
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const bundle = await collector.collect('owner/repo');
+
+        expect(bundle.readme).toBe('# Only a README');
+        expect(bundle.manifests).toEqual({});
+        expect(bundle.changelog ?? null).toBeNull();
+        expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('throws a clear error when the adapter has no getRepoMeta (e.g. a bare stub adapter)', async () => {
+        const adapterWithoutRepoMeta = {
+            listCommits: async () => [],
+            fetchFile:   async () => { throw new RepoNotFoundError('/x'); },
+            listFiles:   async () => [],
+        } as unknown as IRepoAdapter;
+
+        const collector = new ProfileInputCollector(adapterWithoutRepoMeta, new FileFetchCache());
+
+        await expect(collector.collect('owner/repo')).rejects.toThrow(/getRepoMeta/);
     });
 });

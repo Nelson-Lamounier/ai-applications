@@ -142,6 +142,7 @@ export type { BackfillSkillEmbeddingsOptions } from './ontology/backfillSkillEmb
 export { TechnologyOntologyRepository }     from './implementations/TechnologyOntologyRepository.js';
 export type { TechTransferGroup, TransferTier } from './implementations/TechnologyOntologyRepository.js';
 export { SkillOntologyRepository }          from './implementations/SkillOntologyRepository.js';
+export type { RepoConceptRow }              from './implementations/SkillOntologyRepository.js';
 export { TechnologyEvidenceRepository }     from './implementations/TechnologyEvidenceRepository.js';
 export { TechnologyCandidateRepository }    from './implementations/TechnologyCandidateRepository.js';
 export { TechnologyParityRunRepository }    from './implementations/TechnologyParityRunRepository.js';

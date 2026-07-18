@@ -26,6 +26,7 @@
 
 import https from 'https';
 
+export type { GitHubRepoMeta } from './IRepoAdapter.js';
 import type {
     IRepoAdapter,
     ListCommitsOptions,
@@ -38,6 +39,7 @@ import type {
     CommitDetail,
     CommitFileChange,
     GetCommitDetailOptions,
+    GitHubRepoMeta,
 } from './IRepoAdapter.js';
 
 import { RepoNotFoundError, GitHubResponseShapeError } from '@bedrock/shared';
@@ -172,21 +174,6 @@ function redirectPath(location: string): string | null {
     } catch {
         return location.startsWith('/') ? location : `/${location}`;
     }
-}
-
-// =============================================================================
-// PUBLIC TYPES — GitHubAdapter-specific (not part of IRepoAdapter)
-// =============================================================================
-
-export interface GitHubRepoMeta {
-    primary_language: string | null;
-    description:      string | null;
-    topics:           string[];
-    stars:            number;
-    forks:            number;
-    is_fork:          boolean;
-    created_at:       string | null;
-    pushed_at:        string | null;
 }
 
 export class GitHubAdapter implements IRepoAdapter {
@@ -591,7 +578,7 @@ export class GitHubAdapter implements IRepoAdapter {
     }
 
     // =========================================================================
-    // GitHubAdapter.getRepoMeta (not part of IRepoAdapter — profile-specific)
+    // IRepoAdapter.getRepoMeta (optional) — profile-specific repo metadata
     // =========================================================================
 
     async getRepoMeta(repoFullName: string): Promise<GitHubRepoMeta> {

@@ -707,6 +707,11 @@ async function fetchAndExtractForUnified(
     try {
         await fs.mkdir(extractDir, { recursive: true });
         const resolvedSha = await fetchTarball(repoFullName, ref, githubToken, tarPath, MAX_TARBALL_BYTES);
+        // safeExtract's rootDir (root-dir sha fallback) is unused here: `ref` is
+        // always an already-resolved commitSha by the time this is called (see
+        // resolveUnifiedAcquisition's `!commitSha` fallback-to-'off' guard below),
+        // so this path never risks the literal-'HEAD' ambiguity run-tech-extract.ts
+        // guards against.
         await safeExtract(tarPath, extractDir);
         return { extractDir, resolvedSha };
     } catch (err) {
@@ -1169,11 +1174,15 @@ async function main(): Promise<void> {
     const rollupRepo       = new RdsUserProfileRollupRepository(pgPool);
     const embRepo          = new RepositoryProfileEmbeddingsRepository(pgPool);
     const profileExtractor = new ProfileExtractor(env.profileExtractorModelId, pgPool);
-    // ProfileInputCollector is typed to the concrete GitHubAdapter (not the
-    // IRepoAdapter seam) — keep it on the real adapter even in 'on' mode. It
-    // still avoids a duplicate tree fetch: `prefetchedFiles` below comes from
-    // `activeAdapter` (the tarball, when 'on') and is passed into `.collect()`.
-    const profileCollector = new ProfileInputCollector(repoAdapter, fileCache);
+    // ProfileInputCollector now takes the IRepoAdapter seam so 'on' mode
+    // (unified acquisition) reads README/manifest/changelog/workflow probes
+    // off the already-extracted tarball (TarballRepoAdapter.fetchFile, local
+    // disk) instead of re-downloading each file over the GitHub API — the
+    // tarball fetch stays the ONE download for file content. getRepoMeta and
+    // listCommits still delegate to the real GitHubAdapter (no tarball-local
+    // representation). `prefetchedFiles` below comes from `activeAdapter` too,
+    // avoiding a duplicate tree fetch.
+    const profileCollector = new ProfileInputCollector(activeAdapter, fileCache);
 
     const rootSpan = tracer.startSpan('ingestion.pipeline', {
         attributes: {

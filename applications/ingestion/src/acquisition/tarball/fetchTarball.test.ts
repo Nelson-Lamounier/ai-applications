@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
-import { tarballUrl, fetchTarball, shaFromCodeloadUrl } from './fetchTarball.js';
+import { tarballUrl, fetchTarball, shaFromCodeloadUrl, shaFromRootDir } from './fetchTarball.js';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -74,5 +74,33 @@ describe('shaFromCodeloadUrl', () => {
     it('returns undefined for a non-SHA last segment (e.g. literal HEAD)', () => {
         expect(shaFromCodeloadUrl('https://api.github.com/repos/o/r/tarball/HEAD')).toBeUndefined();
         expect(shaFromCodeloadUrl('https://codeload.github.com/o/r/legacy.tar.gz/main')).toBeUndefined();
+    });
+});
+
+describe('shaFromRootDir', () => {
+    const sha = '2c9dacce1d3cf5ffd722b2a28021692023dea548';
+
+    it('extracts the trailing 40-hex SHA from a GitHub-shaped {owner}-{repo}-{sha} root dir', () => {
+        expect(shaFromRootDir(`octo-repo-${sha}`)).toBe(sha);
+    });
+
+    it('handles owner/repo names that themselves contain hyphens', () => {
+        expect(shaFromRootDir(`my-org-my-repo-name-${sha}`)).toBe(sha);
+    });
+
+    it('lowercases a mixed-case SHA', () => {
+        expect(shaFromRootDir(`octo-repo-${sha.toUpperCase()}`)).toBe(sha);
+    });
+
+    it('returns undefined for a short (non-expandable) suffix', () => {
+        expect(shaFromRootDir('octo-repo-2c9dacc')).toBeUndefined();
+    });
+
+    it('returns undefined for a non-sha suffix (e.g. a branch name)', () => {
+        expect(shaFromRootDir('octo-repo-main')).toBeUndefined();
+    });
+
+    it('returns undefined for null', () => {
+        expect(shaFromRootDir(null)).toBeUndefined();
     });
 });

@@ -3,7 +3,7 @@ import { describe, it, expect } from '@jest/globals';
 import type { RepoRoleSignals } from '@bedrock/shared';
 
 import { assembleRepoFacts } from './build-repo-facts.js';
-import type { RepoFactsInputs, TechEvidenceRow } from './build-repo-facts.js';
+import type { ConceptDetectorRow, RepoFactsInputs, TechEvidenceRow } from './build-repo-facts.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,6 +37,16 @@ function inputs(over: Partial<RepoFactsInputs> = {}): RepoFactsInputs {
         primaryLanguage:     null,
         signals:             signals(),
         hasMonitoringConfig: false,
+        conceptRows:         [],
+        ...over,
+    };
+}
+
+function conceptRow(over: Partial<ConceptDetectorRow> = {}): ConceptDetectorRow {
+    return {
+        name:     'observability',
+        detector: 'monitoring-config',
+        files:    3,
         ...over,
     };
 }
@@ -131,11 +141,11 @@ describe('assembleRepoFacts — signal-derived concepts', () => {
         expect(facts.concepts).toEqual([]);
     });
 
-    it('fires "ci/cd" from has_ci', () => {
+    it('fires "ci/cd pipelines" from has_ci', () => {
         const facts = assembleRepoFacts(inputs({
             signals: signals({ archetype: { has_ci: true } }),
         }));
-        expect(facts.concepts).toContainEqual({ name: 'ci/cd', detector: 'signal', files: 0 });
+        expect(facts.concepts).toContainEqual({ name: 'ci/cd pipelines', detector: 'signal', files: 0 });
     });
 
     it('fires "container orchestration" from has_k8s_manifests OR has_helm_chart OR has_argocd_apps', () => {
@@ -183,12 +193,71 @@ describe('assembleRepoFacts — signal-derived concepts', () => {
             hasMonitoringConfig: true,
         }));
         expect(facts.concepts.map((c) => c.name).sort()).toEqual([
-            'ci/cd',
+            'ci/cd pipelines',
             'container orchestration',
             'database migrations',
             'infrastructure as code',
             'observability',
         ].sort());
+    });
+});
+
+// ---------------------------------------------------------------------------
+// (c2) Detector-backed concept rows vs. signal-derived fallback
+// ---------------------------------------------------------------------------
+
+describe('assembleRepoFacts — detector-backed concepts vs. signal fallback', () => {
+    it('detector rows win: a concept with a detector row does not also get a signal fallback entry', () => {
+        const facts = assembleRepoFacts(inputs({
+            hasMonitoringConfig: true,
+            conceptRows: [conceptRow({ name: 'observability', detector: 'monitoring-config', files: 4 })],
+        }));
+
+        expect(facts.concepts).toEqual([
+            { name: 'observability', detector: 'monitoring-config', files: 4 },
+        ]);
+    });
+
+    it('signal fallback fills gaps: a concept with zero detector rows still gets its signal entry', () => {
+        const facts = assembleRepoFacts(inputs({
+            signals: signals({ archetype: { has_iac: true } }),
+            conceptRows: [conceptRow({ name: 'observability', detector: 'monitoring-config', files: 2 })],
+        }));
+
+        expect(facts.concepts).toContainEqual({ name: 'observability', detector: 'monitoring-config', files: 2 });
+        expect(facts.concepts).toContainEqual({ name: 'infrastructure as code', detector: 'signal', files: 0 });
+    });
+
+    it('multiple detectors for one concept each become their own entry', () => {
+        const facts = assembleRepoFacts(inputs({
+            conceptRows: [
+                conceptRow({ name: 'ci/cd pipelines', detector: 'workflow-ci', files: 3 }),
+                conceptRow({ name: 'ci/cd pipelines', detector: 'workflow-deploy', files: 1 }),
+            ],
+        }));
+
+        expect(facts.concepts).toEqual([
+            { name: 'ci/cd pipelines', detector: 'workflow-ci', files: 3 },
+            { name: 'ci/cd pipelines', detector: 'workflow-deploy', files: 1 },
+        ]);
+    });
+
+    it('both-present case: detector rows for one concept and signal fallback for a different concept coexist', () => {
+        const facts = assembleRepoFacts(inputs({
+            signals: signals({ archetype: { has_ci: true, has_iac: true } }),
+            conceptRows: [conceptRow({ name: 'container orchestration', detector: 'k8s-orchestration', files: 5 })],
+        }));
+
+        expect(facts.concepts).toContainEqual({ name: 'container orchestration', detector: 'k8s-orchestration', files: 5 });
+        // has_ci and has_iac fired but neither has a detector row in this
+        // repo's conceptRows, so both fall back to their signal entry —
+        // 'ci/cd pipelines' now matches the detector canonical exactly (see
+        // the module header note), it just has no detector row here.
+        expect(facts.concepts).toContainEqual({ name: 'ci/cd pipelines', detector: 'signal', files: 0 });
+        expect(facts.concepts).toContainEqual({ name: 'infrastructure as code', detector: 'signal', files: 0 });
+        // container orchestration's signal condition never fired here, so there is
+        // exactly one 'container orchestration' entry (the detector-backed one).
+        expect(facts.concepts.filter((c) => c.name === 'container orchestration')).toHaveLength(1);
     });
 });
 
