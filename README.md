@@ -29,13 +29,13 @@ and renders the results.
 
 Production AI/ML platform on AWS Bedrock — TypeScript, AWS CDK, RDS PostgreSQL +
 pgvector, Redis cluster, managed Amazon EKS, and a multi-agent synthesis
-pipeline. Powers the chatbot, job strategist, article pipeline, ingestion,
-self-healing agent, and deterministic tech extractor that also back
-[nelsonlamounier.com](https://nelsonlamounier.com).
+pipeline. Powers the chatbot, job strategist, article pipeline, ingestion
+(including its deterministic facts extraction), and self-healing agent
+that also back [nelsonlamounier.com](https://nelsonlamounier.com).
 
 ## What it does
 
-The repository is a Yarn 4 workspace monorepo of **14 services** built
+The repository is a Yarn 4 workspace monorepo of **13 services** built
 on a shared TypeScript foundation. The services share one Bedrock
 account, one RDS PostgreSQL instance (`k8s-dev-platform-rds`), one Redis
 cluster, and one managed Amazon EKS cluster (`k8s-eks-development`;
@@ -89,11 +89,12 @@ than re-implementing them.
   forced tool-use, zod schema validation, per-item grounding check,
   and must-not-throw semantics
   ([concept doc](docs/concepts/profile-synthesis-chain.md)).
-+ **Deterministic tech-extractor** that decommissioned an LLM
-  enricher with a measured 6-iteration parity engagement; recall
-  rose **0.368 → 0.673** on KBS and **0.253 → 0.548** on TUC across
-  the engagement
-  ([parity decommission artefact](applications/tech-extractor/parity/2026-05-27-decommission.md)).
++ **Deterministic facts extraction** (formerly a standalone
+  tech-extractor service, retired 2026-07-18 and folded into
+  ingestion's facts stage) that decommissioned an LLM enricher with a
+  measured 6-iteration parity engagement; recall rose **0.368 → 0.673**
+  on KBS and **0.253 → 0.548** on TUC across the engagement
+  ([parity decommission artefact](applications/ingestion/docs/tech-extractor/parity/2026-05-27-decommission.md)).
 + **Three-tier caching architecture** with shared `scope` + `kbTag`
   invalidation vocabulary: `RedisExactCache` (hash-keyed AI-gen),
   `RedisReadCache` (BFF read-through, shared cluster, different
@@ -105,7 +106,7 @@ than re-implementing them.
   a separate Haiku-backed grounding verifier that fail-safes to
   `NOT_GROUNDED` on any parse ambiguity
   ([concept doc](docs/concepts/bedrock-rag-surface.md)).
-+ **11 GitHub Actions deploy workflows** (per service) sharing two
++ **10 GitHub Actions deploy workflows** (per service) sharing two
   reusable workflows (`_build-push-image.yml`, `_deploy-stack.yml`);
   per-environment ECR + SSM-stored image URI for ArgoCD-driven sync.
 
@@ -126,8 +127,7 @@ flowchart TD
     end
 
     subgraph "K8s Jobs"
-        Ingest[ingestion<br/>profile extractor + 4 synthesizers]
-        TechE[tech-extractor<br/>deterministic 3-layer]
+        Ingest[ingestion<br/>profile extractor + 4 synthesizers + facts extraction]
         Ont[ontology-importer<br/>Bedrock Batch]
         Art[article-pipeline<br/>research → writer → QA]
         Strat[job-strategist<br/>research → strategist → coach]
@@ -166,7 +166,6 @@ flowchart TD
     ChatbotPub & ChatbotAuth --> Haiku
     Ingest --> Sonnet
     Ingest --> RDS
-    TechE --> RDS
     Ont --> Sonnet
     Art & Strat --> Sonnet
     SelfHeal --> Sonnet
@@ -215,7 +214,7 @@ Pushgateway), and the per-user `recordBedrockCost` ledger.
 + **Security**: Cognito (user auth + M2M client credentials),
   CloudFront WAF, AWS Comprehend (planned), regex `PiiScrubber`,
   input/output sanitisers, Bedrock Guardrail
-+ **CI/CD**: 11 GitHub Actions deploy workflows + 2 reusable
++ **CI/CD**: 10 GitHub Actions deploy workflows + 2 reusable
   workflows; per-environment ECR + SSM-stored image URIs;
   ArgoCD-driven sync from a sibling cluster repo
 + **Tooling**: Yarn 4 workspaces, Jest (+ contract + smoke), `just`
@@ -249,11 +248,10 @@ Pushgateway), and the per-user `recordBedrockCost` ledger.
 ```text
 .
 ├── api/                       — Fastify HTTP layer (public-api)
-├── applications/              — 14 services + shared module
+├── applications/              — 13 services + shared module
 │   ├── shared/                — hexagonal RDS, observability, security, cache
 │   ├── chatbot{,-public,-authenticated}/
-│   ├── ingestion/             — profile extractor + 4 synthesizer agents
-│   ├── tech-extractor/        — deterministic 3-layer extraction
+│   ├── ingestion/             — profile extractor + 4 synthesizer agents + facts extraction
 │   ├── ontology-importer/     — Bedrock Batch tier-2 ontology import
 │   ├── self-healing/          — Bedrock MCP tool-use agent
 │   ├── article-pipeline/      — research → writer → QA agents
@@ -314,7 +312,7 @@ share two reusable building blocks:
 + [`_deploy-stack.yml`](.github/workflows/_deploy-stack.yml) —
   invokes `cdk deploy` for stack-based services
 
-K8s Jobs (ingestion, tech-extractor, ontology-importer, etc.) read
+K8s Jobs (ingestion, ontology-importer, etc.) read
 their image URI from SSM at deploy time, so a code push to `develop`
 re-tags the image and the next ArgoCD sync rolls the change forward
 in the cluster — a managed Amazon EKS cluster provisioned by the

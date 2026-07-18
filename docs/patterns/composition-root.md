@@ -150,7 +150,6 @@ infrastructure must be alive before the failure can be recorded.
 | Service | Entry point | Variant |
 | :- | :- | :- |
 | ingestion | [applications/ingestion/src/run-ingestion.ts](../../applications/ingestion/src/run-ingestion.ts) | K8s single-pass |
-| tech-extractor | [applications/ingestion/src/run-tech-extract.ts](../../applications/ingestion/src/run-tech-extract.ts) | K8s single-pass |
 | ontology-importer | [applications/ontology-importer/src/run-import.ts](../../applications/ontology-importer/src/run-import.ts) | K8s single-pass |
 | job-strategist | [applications/job-strategist/src/run-pipeline.ts](../../applications/job-strategist/src/run-pipeline.ts) | K8s pipeline |
 | article-pipeline | [applications/article-pipeline/src/run-pipeline.ts](../../applications/article-pipeline/src/run-pipeline.ts) | K8s pipeline |
@@ -160,14 +159,19 @@ infrastructure must be alive before the failure can be recorded.
 | self-healing agent | [applications/self-healing/src/index.ts](../../applications/self-healing/src/index.ts) | Lambda |
 | self-healing outcome-tracker | [applications/self-healing/src/outcome-tracker.ts](../../applications/self-healing/src/outcome-tracker.ts) | Lambda |
 
-Ten composition points across nine services. Every one follows the
+Nine composition points across eight services. Every one follows the
 same scaffold modulo K8s-vs-Lambda lifetime differences.
 
-The `ingestion` and `tech-extractor` rows both point into the
-`applications/ingestion` source tree (one workspace, two composition
-roots) — `applications/tech-extractor/` holds only the Dockerfile
-that builds the second image from that tree; see
-[docs/projects/tech-extractor.md](../projects/tech-extractor.md#repository-layout).
+**Retired (2026-07-18):** this table used to carry a `tech-extractor`
+row pointing at `applications/ingestion/src/run-tech-extract.ts`, a
+second composition root over the same `applications/ingestion` source
+tree, built into its own image by `applications/tech-extractor/`
+(which held only a Dockerfile). Both the entry point and the Dockerfile
+have been deleted — the facts extraction it ran now executes
+in-process inside the `ingestion` composition root via
+`runFactsStage`. See
+[docs/projects/tech-extractor.md](../projects/tech-extractor.md) for
+the retirement note and historical architecture.
 
 ## Variants
 
