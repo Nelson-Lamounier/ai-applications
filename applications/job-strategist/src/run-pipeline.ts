@@ -565,6 +565,8 @@ function recordProjectsAgentObservability(
 import { formatTechTransferContext } from './ats/context/tech-transfer-context.js';
 import { formatConceptEvidenceContext } from './ats/context/concept-evidence-context.js';
 import { formatRepoFactsContext } from './ats/context/repo-facts-context.js';
+import { deriveEvidenceDocTypes } from './ats/context/evidence-doctype-select.js';
+import { buildDecisionEvidenceContext } from './ats/context/decision-evidence-context.js';
 import { attachCodeEvidence } from './ats/grounding/tool-evidence-retrieval.js';
 import { attachSourceLanes, mergeRepoLane } from './ats/grounding/evidence-lane.js';
 import { applyDegreeReconcile } from './ats/reconcile/education-reconcile.js';
@@ -2340,6 +2342,29 @@ export async function main(): Promise<void> {
         // (languages/frameworks/databases/infrastructure/tools + concepts, evidence-counted).
         // Unfiltered by the JD (unlike conceptEvidenceContext above) — fork/noise repos excluded.
         const repoFactsContext = formatRepoFactsContext(repoFacts);
+
+        // JD-driven docType evidence pass: an architecture-heavy JD additionally
+        // surfaces ADR (decision) chunks; an ops/SRE-heavy JD additionally surfaces
+        // runbook/troubleshooting chunks. Purely additive supplementary retrieval —
+        // the retrievalPrefilter built below (the main filter-then-rank pass) never
+        // sets docTypes, only this dedicated { docTypes }-only prefilter does. Env
+        // kill-switch + fail-open: any error, or a JD with no arch/ops signal,
+        // yields '' and the section is simply omitted downstream.
+        let decisionEvidenceContext = '';
+        if (process.env['DOCTYPE_EVIDENCE'] !== 'off') {
+            const { docTypes, angle } = deriveEvidenceDocTypes(jdExtraction);
+            if (docTypes.length > 0) {
+                try {
+                    const decisionEvidenceStore = RdsVectorStore.fromEnvironment();
+                    const retrieve = (q: string, k: number) =>
+                        querySingleRds(q, env.userId, decisionEvidenceStore, k, { skills: [], tech: [], minResults: k, docTypes });
+                    decisionEvidenceContext = await buildDecisionEvidenceContext(retrieve, jdExtraction, docTypes, angle);
+                } catch (err) {
+                    log.warn({ pipelineRunId: env.pipelineRunId, userId: env.userId, err: String(err) }, 'decision_evidence_context_failed_open');
+                }
+            }
+        }
+
         // Doc-vs-code drift + repo identity: the authoritative current code stack per repo
         // AND each repo's deterministic profile (cdk-infra/k8s-platform/…, what it provisions).
         // Folded into one grounding block so the matcher prefers code over stale docs and
@@ -2354,7 +2379,7 @@ export async function main(): Promise<void> {
         const retrievalPrefilter = await buildQueryRetrievalPrefilter(pool, jdExtraction, techTransferOrCategoryGroups, aliasToCanonical);
 
         const research = await stageSeconds(pipelineStageSeconds, 'research', () =>
-            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock, techTransferOrCategoryGroups, conceptEvidenceContext, repoFactsContext));
+            executeResearchAgent(ctx, pool, candidateGroundingBlock, educationBlock, jdExtraction, careerEntries, roleEvidenceBlock, techTransferContext, codeStackContext, retrievalPrefilter, certificationsBlock, techTransferOrCategoryGroups, conceptEvidenceContext, repoFactsContext, decisionEvidenceContext));
 
         // Years-gap — honest relevant-years vs the JD bar + a non-apologetic framing line.
         // Computed BEFORE the guard chain so it can deterministically constrain the matcher's

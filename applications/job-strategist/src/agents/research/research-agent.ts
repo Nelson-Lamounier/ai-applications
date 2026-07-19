@@ -397,6 +397,8 @@ interface ResearchMessageOptions {
     conceptEvidenceContext?: string;
     /** Materialised per-repo fact sheets (repo_facts, Task 5) — what each repo IS. Injected as its own section when non-empty. */
     repoFactsContext?: string;
+    /** Supplementary docType-scoped evidence (ADRs / runbooks / troubleshooting guides) selected by the JD's architecture/ops signal. Injected as its own section when non-empty. */
+    decisionEvidenceContext?: string;
     /** Current code-stack truth per repo (doc-vs-code drift). Injected as its own section when non-empty. */
     codeStackContext?: string;
 }
@@ -430,6 +432,7 @@ function buildResearchMessage(
         techTransferContext = '',
         conceptEvidenceContext = '',
         repoFactsContext = '',
+        decisionEvidenceContext = '',
         codeStackContext = '',
     } = opts;
 
@@ -519,6 +522,10 @@ function buildResearchMessage(
 
     if (repoFactsContext) {
         sections.push(repoFactsContext, '');
+    }
+
+    if (decisionEvidenceContext) {
+        sections.push(decisionEvidenceContext, '');
     }
 
     if (codeStackContext) {
@@ -834,6 +841,7 @@ export async function executeResearchAgent(
     transferGroups: TechTransferGroup[] = [],
     conceptEvidenceContext = '',
     repoFactsContext = '',
+    decisionEvidenceContext = '',
 ): Promise<AgentResult<ResearchMatching>> {
     // 1. Sanitise input
     log('INFO', 'Analysing JD', { agent: 'strategist-research', pipelineId: ctx.pipelineId, targetRole: ctx.targetRole });
@@ -977,6 +985,7 @@ export async function executeResearchAgent(
         techTransferContext,
         conceptEvidenceContext,
         repoFactsContext,
+        decisionEvidenceContext,
         codeStackContext,
     });
 

@@ -278,7 +278,7 @@ describe('Strategist Research Agent — repoFactsContext threading', () => {
         const repoFactsContext = '## Repo Fact Sheets\n- org/repo-a (backend): languages: typescript';
         const codeStackContext = '## Repository Profiles — what each repo IS\n- org/repo-a [cdk-infra]';
 
-        // Positional args 2-14 of executeResearchAgent (after ctx) — see the
+        // Positional args 2-15 of executeResearchAgent (after ctx) — see the
         // signature in research-agent.ts. Everything but techTransferContext/
         // codeStackContext/conceptEvidenceContext/repoFactsContext is a no-op
         // default so this test isolates ONLY section ordering.
@@ -294,6 +294,7 @@ describe('Strategist Research Agent — repoFactsContext threading', () => {
             [],                    // transferGroups
             conceptEvidenceContext,
             repoFactsContext,
+            '',                    // decisionEvidenceContext
         ];
 
         const captured = await runResearchAgentForTest('Senior Engineer role requiring AWS, Kubernetes and Terraform across distributed backend teams.', trailingArgs);
@@ -311,9 +312,58 @@ describe('Strategist Research Agent — repoFactsContext threading', () => {
 
     it('omits the repo-facts section entirely when repoFactsContext is empty', async () => {
         const trailingArgs = [
-            undefined, '', '', null, null, '', '', '', undefined, '', [], '', '',
+            undefined, '', '', null, null, '', '', '', undefined, '', [], '', '', '',
         ];
         const captured = await runResearchAgentForTest('Senior Engineer role requiring AWS, Kubernetes and Terraform across distributed backend teams.', trailingArgs);
         expect(captured.bedrockUserMessage).not.toContain('## Repo Fact Sheets');
+    });
+});
+
+// =============================================================================
+// SECTION THREADING — decisionEvidenceContext (Task 3, JD-driven docType evidence pass)
+// =============================================================================
+
+describe('Strategist Research Agent — decisionEvidenceContext threading', () => {
+    it('injects the decision-evidence block into the user message immediately after repoFactsContext, before codeStackContext', async () => {
+        const repoFactsContext = '## Repo Fact Sheets\n- org/repo-a (backend): languages: typescript';
+        const decisionEvidenceContext = '## Design & Operational Evidence\nArchitecture-decision records (ADRs) evidencing the candidate\'s design reasoning:\n\n- [Source: org/repo-a, Cosine: 0.500, Rerank: 0.400] ADR-001: chose event sourcing.';
+        const codeStackContext = '## Repository Profiles — what each repo IS\n- org/repo-a [cdk-infra]';
+
+        // Positional args 2-15 of executeResearchAgent (after ctx) — mirrors the
+        // repoFactsContext threading test above; isolates ONLY section ordering.
+        const trailingArgs = [
+            undefined,             // pool
+            '', '',                 // projectEvidenceBlock, educationBlock
+            null, null,             // jdSignal, careerEntries
+            '',                      // roleEvidenceBlock
+            '',                      // techTransferContext
+            codeStackContext,       // codeStackContext
+            undefined,               // retrievalPrefilter
+            '',                      // certificationsBlock
+            [],                      // transferGroups
+            '',                      // conceptEvidenceContext
+            repoFactsContext,
+            decisionEvidenceContext,
+        ];
+
+        const captured = await runResearchAgentForTest('Senior Engineer role requiring AWS, Kubernetes and Terraform across distributed backend teams.', trailingArgs);
+
+        const repoFactsIdx = captured.bedrockUserMessage.indexOf(repoFactsContext);
+        const decisionEvidenceIdx = captured.bedrockUserMessage.indexOf(decisionEvidenceContext);
+        const codeStackIdx = captured.bedrockUserMessage.indexOf(codeStackContext);
+
+        expect(repoFactsIdx).toBeGreaterThan(-1);
+        expect(decisionEvidenceIdx).toBeGreaterThan(-1);
+        expect(codeStackIdx).toBeGreaterThan(-1);
+        expect(repoFactsIdx).toBeLessThan(decisionEvidenceIdx);
+        expect(decisionEvidenceIdx).toBeLessThan(codeStackIdx);
+    });
+
+    it('omits the decision-evidence section entirely when decisionEvidenceContext is empty', async () => {
+        const trailingArgs = [
+            undefined, '', '', null, null, '', '', '', undefined, '', [], '', '', '',
+        ];
+        const captured = await runResearchAgentForTest('Senior Engineer role requiring AWS, Kubernetes and Terraform across distributed backend teams.', trailingArgs);
+        expect(captured.bedrockUserMessage).not.toContain('## Design & Operational Evidence');
     });
 });
