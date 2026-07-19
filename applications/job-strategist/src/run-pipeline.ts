@@ -2360,7 +2360,7 @@ export async function main(): Promise<void> {
                         querySingleRds(q, env.userId, decisionEvidenceStore, k, { skills: [], tech: [], minResults: k, docTypes });
                     decisionEvidenceContext = await buildDecisionEvidenceContext(retrieve, jdExtraction, docTypes, angle);
                 } catch (err) {
-                    log.warn({ err: String(err) }, 'decision_evidence_context_failed_open');
+                    log.warn({ pipelineRunId: env.pipelineRunId, userId: env.userId, err: String(err) }, 'decision_evidence_context_failed_open');
                 }
             }
         }

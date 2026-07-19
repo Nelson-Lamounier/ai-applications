@@ -111,4 +111,53 @@ describe('deriveEvidenceDocTypes', () => {
         }));
         expect(result.docTypes).toEqual(['adr', 'runbook', 'troubleshooting']);
     });
+
+    // -------------------------------------------------------------------
+    // Word-boundary regression tests — plain `.includes()` false-positived
+    // on short/ambiguous keywords ('sla', 'sre', 'slo', 'adr') inside common
+    // English words, firing the supplementary pass on generic JDs.
+    // -------------------------------------------------------------------
+
+    it('does not misfire on "sla" inside "translate" (word-boundary regression)', () => {
+        const result = deriveEvidenceDocTypes(jd({
+            responsibilities: ['Translate business requirements into technical solutions'],
+        }));
+        expect(result).toEqual({ docTypes: [], angle: null });
+    });
+
+    it('does not misfire on "sre" inside "misrepresent" (word-boundary regression)', () => {
+        const result = deriveEvidenceDocTypes(jd({
+            responsibilities: ['Do not misrepresent project outcomes to stakeholders'],
+        }));
+        expect(result).toEqual({ docTypes: [], angle: null });
+    });
+
+    it('does not misfire on "slo" inside "slower" (word-boundary regression)', () => {
+        const result = deriveEvidenceDocTypes(jd({
+            concepts: ['Ship features slower than competitors is not acceptable'],
+        }));
+        expect(result).toEqual({ docTypes: [], angle: null });
+    });
+
+    it('does not misfire on "adr" inside "quadrant"/"roadrunner"/"headroom" (word-boundary regression)', () => {
+        const result = deriveEvidenceDocTypes(jd({
+            responsibilities: ['Build a roadmap and quadrant analysis with headroom for the roadrunner rollout'],
+        }));
+        expect(result).toEqual({ docTypes: [], angle: null });
+    });
+
+    it('still matches "SLA" as a standalone word (true positive preserved)', () => {
+        const result = deriveEvidenceDocTypes(jd({ concepts: ['Meet the agreed SLA for every incident'] }));
+        expect(result.angle).toBe('operations');
+    });
+
+    it('still matches "SRE" as a standalone word (true positive preserved)', () => {
+        const result = deriveEvidenceDocTypes(jd({ concepts: ['Experience as an SRE for critical services'] }));
+        expect(result.angle).toBe('operations');
+    });
+
+    it('still matches "ADR" as a standalone word (true positive preserved)', () => {
+        const result = deriveEvidenceDocTypes(jd({ concepts: ['We write an ADR for every major design decision'] }));
+        expect(result.angle).toBe('architecture');
+    });
 });

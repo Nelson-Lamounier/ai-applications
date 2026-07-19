@@ -48,8 +48,22 @@ function keywordHaystack(jd: JdKeywordSignal): string {
     return [...jd.concepts, ...jd.responsibilities, ...jd.retrievalKeywords].join(' \n ').toLowerCase();
 }
 
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
+/** Word-boundary regex for one keyword — plain `.includes()` false-positives on
+ *  short/ambiguous tokens ('sla' inside "tranSLAte", 'sre' inside "miSREpresent",
+ *  'slo' inside "SLOwer", 'adr' inside "quADRant"/"roADRunner"/"headROOM"…).
+ *  `\b` anchors correctly for both single words and hyphen/space-joined phrases
+ *  ('on-call', 'trade-off', 'system design') since '-' and ' ' are non-word
+ *  characters. Applied uniformly to every keyword for consistency. */
+function wordBoundaryRegex(keyword: string): RegExp {
+    return new RegExp(String.raw`\b${escapeRegExp(keyword)}\b`);
+}
+
 function matchesAny(haystack: string, keywords: readonly string[]): boolean {
-    return keywords.some((k) => haystack.includes(k));
+    return keywords.some((k) => wordBoundaryRegex(k).test(haystack));
 }
 
 /**
