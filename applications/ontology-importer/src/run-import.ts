@@ -94,7 +94,8 @@ async function main(): Promise<void> {
         }
     } finally {
         await withTimeout(pool.end(), 10_000, 'pg-pool');
-        await withTimeout(pushFinalMetrics(obs.registry, 'ontology-importer', `import_${Date.now()}`), 8_000, 'pushgateway');
+        // Bounded key: constant "global", never a per-run timestamp (see pushgateway.ts).
+        await withTimeout(pushFinalMetrics(obs.registry, 'ontology-importer', 'global'), 8_000, 'pushgateway');
         await withTimeout(obs.shutdown(), 10_000, 'otel-shutdown');
     }
 }

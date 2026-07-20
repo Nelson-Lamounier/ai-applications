@@ -392,9 +392,8 @@ async function main(): Promise<void> {
       duration_s: duration,
     }, outcome === 'success' ? 'complete' : 'error');
 
-    // Push final metrics keyed by importId so successive runs replace
-    // (Pushgateway groups by URL path = job + groupings).
-    await pushFinalMetrics(obs.registry, 'resume-import-processor', env.importId);
+    // Bounded key: userId ("last import per user"), never per-import importId (see pushgateway.ts).
+    await pushFinalMetrics(obs.registry, 'resume-import-processor', env.userId);
     await obs.shutdown();
     process.exit(outcome === 'success' ? 0 : 1);
   }

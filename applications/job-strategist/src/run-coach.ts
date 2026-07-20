@@ -543,7 +543,8 @@ async function main(): Promise<void> {
         const duration = Number(process.hrtime.bigint() - start) / 1e9;
         strategistRuns.inc({ operation: 'coach', outcome });
         strategistDuration.observe({ operation: 'coach', outcome }, duration);
-        await pushFinalMetrics(obs.registry, 'job-strategist', env.coachPipelineRunId);
+        // Bounded key: userId, never the per-run coachPipelineRunId (see pushgateway.ts).
+        await pushFinalMetrics(obs.registry, 'job-strategist', env.userId);
         await obs.shutdown();
     }
 }

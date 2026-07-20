@@ -25,6 +25,50 @@ const emptyCounts = (): ImportRunCounts => ({
     aliasMerges: 0, unresolvedCount: 0, reviewQueueAdded: 0,
 });
 
+type FollowupRun = Awaited<ReturnType<OntologyImportRunRepository['findPendingBatches']>>[number];
+
+interface RouteDeps {
+    ontology:      OntologyWriteRepository;
+    importSources: OntologyImportSourceRepository;
+    skipped:       OntologySkippedImportRepository;
+    reviewQueue:   OntologyReviewQueueRepository;
+}
+
+/**
+ * Route one classified batch record to insert / skip / review-queue, mutating
+ * `counts`. Returns true if the record errored so the caller can tally it — a
+ * single bad record (DB constraint, parse failure, transient pg error) must
+ * NOT abort the whole batch; the unrouted record is re-pooled next import.
+ */
+async function routeBatchRecord(
+    record: Parameters<typeof parseModelOutput>[0],
+    run:    FollowupRun,
+    deps:   RouteDeps,
+    counts: ImportRunCounts,
+): Promise<boolean> {
+    try {
+        const { decision, category, reasoning } = parseModelOutput(record);
+        const mapped = run.recordMap[record.recordId];
+        if (!mapped) { log.warn({ recordId: record.recordId }, 'followup.unmapped_record'); return false; }
+        const { ecosystem, identifier } = mapped;
+
+        if (decision === 'yes' && category) {
+            const id = await deps.ontology.insertAutoImported(identifier.toLowerCase(), identifier, category, 'pooled_llm_batch');
+            await deps.importSources.upsertSeen(id, 'pooled_llm_batch', identifier, null, {});
+            counts.entriesInserted++;
+        } else if (decision === 'no') {
+            await deps.skipped.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', llmDecision: 'no', llmReasoning: reasoning ?? null, llmRunId: run.llmBatchId });
+        } else {
+            await deps.reviewQueue.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', reason: 'llm_maybe', suggestedCategory: category ?? null, llmReasoning: reasoning ?? null });
+            counts.reviewQueueAdded++;
+        }
+        return false;
+    } catch (err) {
+        log.warn({ recordId: record.recordId, err: String(err) }, 'followup.record_failed');
+        return true;
+    }
+}
+
 async function main(): Promise<void> {
     const env = parseEnv();
     const pool = new Pool({ ...env.pg, max: 3 });
@@ -55,32 +99,10 @@ async function main(): Promise<void> {
             }
 
             const counts = emptyCounts();
+            const deps: RouteDeps = { ontology, importSources, skipped, reviewQueue };
             let recordErrors = 0;
             for await (const record of llm.readResults(run.runKey)) {
-                try {
-                    const { decision, category, reasoning } = parseModelOutput(record);
-                    const mapped = run.recordMap[record.recordId];
-                    if (!mapped) { log.warn({ recordId: record.recordId }, 'followup.unmapped_record'); continue; }
-                    const { ecosystem, identifier } = mapped;
-
-                    if (decision === 'yes' && category) {
-                        const id = await ontology.insertAutoImported(identifier.toLowerCase(), identifier, category, 'pooled_llm_batch');
-                        await importSources.upsertSeen(id, 'pooled_llm_batch', identifier, null, {});
-                        counts.entriesInserted++;
-                    } else if (decision === 'no') {
-                        await skipped.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', llmDecision: 'no', llmReasoning: reasoning ?? null, llmRunId: run.llmBatchId });
-                    } else {
-                        await reviewQueue.add({ rawName: identifier, ecosystem, source: 'pooled_llm_batch', reason: 'llm_maybe', suggestedCategory: category ?? null, llmReasoning: reasoning ?? null });
-                        counts.reviewQueueAdded++;
-                    }
-                } catch (err) {
-                    // One bad record (DB constraint violation, parse failure, transient pg error)
-                    // must NOT abort the whole batch routing. Log + count; continue. The pooled
-                    // run still finishes 'success'; the unrouted record stays unrouted and will
-                    // be re-pooled by the next monthly import.
-                    recordErrors++;
-                    log.warn({ recordId: record.recordId, err: String(err) }, 'followup.record_failed');
-                }
+                if (await routeBatchRecord(record, run, deps, counts)) recordErrors++;
             }
             if (recordErrors > 0) log.warn({ batch: run.llmBatchId, recordErrors }, 'followup.record_errors');
 
@@ -89,7 +111,10 @@ async function main(): Promise<void> {
         }
     } finally {
         await withTimeout(pool.end(), 10_000, 'pg-pool');
-        await withTimeout(pushFinalMetrics(obs.registry, 'ontology-importer-followup', `followup_${Date.now()}`), 8_000, 'pushgateway');
+        // Bounded key: constant "global" for this singleton job, never a per-run
+        // timestamp. `followup_${Date.now()}` leaked 1,132 groups and OOMed the
+        // gateway — the original root cause. See pushgateway.ts.
+        await withTimeout(pushFinalMetrics(obs.registry, 'ontology-importer-followup', 'global'), 8_000, 'pushgateway');
         await withTimeout(obs.shutdown(), 10_000, 'otel-shutdown');
     }
 }

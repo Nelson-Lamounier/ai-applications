@@ -223,7 +223,8 @@ async function main(): Promise<void> {
       import_id:  env.importId,
       duration_s: duration,
     }, outcome === 'success' ? 'complete' : 'error');
-    await pushFinalMetrics(obs.registry, 'resume-enrichment-processor', env.importId);
+    // Bounded key: userId, never per-import importId — enrichment variant (see pushgateway.ts).
+    await pushFinalMetrics(obs.registry, 'resume-enrichment-processor', env.userId);
     await obs.shutdown();
     process.exit(outcome === 'success' ? 0 : 1);
   }
