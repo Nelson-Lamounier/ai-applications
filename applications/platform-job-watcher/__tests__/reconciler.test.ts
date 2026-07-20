@@ -18,6 +18,7 @@ const resumeEntry: WatcherEntry = {
   failedValue:      'failed',
   errorValue:       'WATCHER_TIMEOUT',
   terminalStatuses: ['completed', 'failed', 'awaiting_upload'],
+  jobLabelKey:      'import-id',
 };
 
 // Ingestion entry mapped to the repo_sync_state schema.
@@ -32,6 +33,7 @@ const ingestionEntry: WatcherEntry = {
   failedValue:      'error',
   errorValue:       'Ingestion job did not complete in time. Please re-sync.',
   terminalStatuses: ['complete', 'error'],
+  jobLabelKey:      'import-id',
 };
 
 describe('runReconciliation', () => {

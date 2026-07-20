@@ -15,6 +15,7 @@ export interface WatcherEntry {
   readonly failedValue:       string;       // value written to statusColumn on failure
   readonly errorValue:        string;       // value written to errorColumn on failure
   readonly terminalStatuses:  readonly string[]; // statuses the sweep must never overwrite
+  readonly jobLabelKey:       string;       // Job metadata label whose value = the dbTable row id (event fast path)
 }
 
 // Defaults preserve the original resume_imports behaviour.
@@ -26,6 +27,7 @@ const ENTRY_DEFAULTS = {
   failedValue:      'failed',
   errorValue:       'WATCHER_TIMEOUT',
   terminalStatuses: ['completed', 'failed', 'awaiting_upload'] as const,
+  jobLabelKey:      'import-id',
 } as const;
 
 export interface WatcherConfig {
@@ -43,6 +45,7 @@ interface RawWatcherEntry {
   failedValue?:      string;
   errorValue?:       string;
   terminalStatuses?: string[];
+  jobLabelKey?:      string;
 }
 
 function required(name: string): string {
@@ -58,6 +61,17 @@ function validateIdentifier(name: string, kind: string): string {
     throw new Error(String.raw`Invalid ${kind}: "${name}" — must match /^[a-zA-Z_]\w*$/`);
   }
   return name;
+}
+
+// A Kubernetes label key (optional dns-subdomain prefix + name segment). Unlike
+// SQL identifiers these legitimately contain '-'/'.'; the value is only ever
+// used to index job.metadata.labels, never interpolated into SQL, so this is a
+// sanity check, not an injection guard.
+function validateLabelKey(key: string): string {
+  if (!/^([a-z0-9]([-a-z0-9.]*[a-z0-9])?\/)?[a-zA-Z0-9]([-a-zA-Z0-9_.]*[a-zA-Z0-9])?$/.test(key) || key.length > 316) {
+    throw new Error(`Invalid jobLabelKey: "${key}" — must be a valid Kubernetes label key`);
+  }
+  return key;
 }
 
 function validateNamespace(ns: string): string {
@@ -88,6 +102,7 @@ export function loadConfig(): WatcherConfig {
       failedValue:       w.failedValue      ?? ENTRY_DEFAULTS.failedValue,
       errorValue:        w.errorValue       ?? ENTRY_DEFAULTS.errorValue,
       terminalStatuses:  w.terminalStatuses ?? [...ENTRY_DEFAULTS.terminalStatuses],
+      jobLabelKey:       validateLabelKey(w.jobLabelKey ?? ENTRY_DEFAULTS.jobLabelKey),
     })),
   };
 }
