@@ -97,7 +97,8 @@ async function main(): Promise<void> {
         log.info({ ...totalAgg }, 'prose-tag.complete');
     } finally {
         await withTimeout(pool.end(), 10_000, 'pg-pool');
-        await withTimeout(pushFinalMetrics(obs.registry, 'ontology-importer-prose-tagger', `prose_${Date.now()}`), 8_000, 'pushgateway');
+        // Bounded key: constant "global", never a per-run timestamp — prose-tagger variant (see pushgateway.ts).
+        await withTimeout(pushFinalMetrics(obs.registry, 'ontology-importer-prose-tagger', 'global'), 8_000, 'pushgateway');
         await withTimeout(obs.shutdown(), 10_000, 'otel-shutdown');
     }
 }

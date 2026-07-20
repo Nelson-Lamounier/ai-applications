@@ -556,7 +556,8 @@ async function main(): Promise<void> {
         const duration = Number(process.hrtime.bigint() - start) / 1e9;
         pipelineRuns.inc({ outcome });
         pipelineDuration.observe({ outcome }, duration);
-        await pushFinalMetrics(obs.registry, 'article-pipeline', env.pipelineRunId);
+        // Bounded key: userId when present else "global", never pipelineRunId (see pushgateway.ts).
+        await pushFinalMetrics(obs.registry, 'article-pipeline', env.userId ?? 'global');
         await obs.shutdown();
     }
 }

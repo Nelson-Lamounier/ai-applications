@@ -261,7 +261,8 @@ async function main(): Promise<void> {
         clusteringDuration.labels(outcome).observe(durationSec);
         clusteringRuns.labels(outcome).inc();
         try {
-            await pushFinalMetrics(obs.registry, 'project-clustering', env.pipelineRunId);
+            // Bounded key: userId, never the per-run pipelineRunId — clustering variant (see pushgateway.ts).
+            await pushFinalMetrics(obs.registry, 'project-clustering', env.userId);
         } catch (err) {
             const message = outputSanitiser.sanitise(err instanceof Error ? err.message : String(err));
             log.warn({ error: message }, 'pushFinalMetrics failed');

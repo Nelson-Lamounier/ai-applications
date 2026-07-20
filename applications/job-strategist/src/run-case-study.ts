@@ -396,7 +396,8 @@ async function main(): Promise<void> {
         caseStudyDuration.labels(outcome).observe(durationSec);
         caseStudyRuns.labels(outcome).inc();
         try {
-            await pushFinalMetrics(obs.registry, 'project-case-study', env.pipelineRunId);
+            // Bounded key: userId, never the per-run pipelineRunId (see pushgateway.ts).
+            await pushFinalMetrics(obs.registry, 'project-case-study', env.userId);
         } catch (err) {
             const message = outputSanitiser.sanitise(err instanceof Error ? err.message : String(err));
             log.warn({ error: message }, 'pushFinalMetrics failed');
