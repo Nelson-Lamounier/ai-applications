@@ -46,12 +46,13 @@ export function watchNamespace(
           const failed = job.status?.failed ?? 0;
           if (failed === 0) return;
 
-          // Event-driven fast path is keyed on the `import-id` label + an
-          // `id`/`status`/`error_code` schema (resume_imports). Tables without
-          // an `import-id` label (e.g. repo_sync_state ingestion Jobs) no-op
-          // here and are reconciled by the generalized stale sweep instead;
-          // for those, admin-api also reconciles at read time.
-          const importId = job.metadata?.labels?.['import-id'];
+          // Event-driven fast path is keyed on this entry's `jobLabelKey` label
+          // (default `import-id` for resume_imports; `pipeline-run-id` for the
+          // job-strategist/pipeline_runs entry) whose VALUE is the dbTable row id.
+          // Jobs without that label no-op here and are reconciled by the
+          // generalized stale sweep instead; for some, admin-api also reconciles
+          // at read time.
+          const importId = job.metadata?.labels?.[entry.jobLabelKey];
           await markJobFailed(pool, entry.dbTable, importId).catch((err) =>
             console.error('[watcher] markJobFailed threw', { err, importId }),
           );

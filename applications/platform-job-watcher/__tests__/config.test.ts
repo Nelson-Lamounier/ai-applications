@@ -39,6 +39,29 @@ watchers:
     expect(w.failedValue).toBe('failed');
     expect(w.errorValue).toBe('WATCHER_TIMEOUT');
     expect(w.terminalStatuses).toEqual(['completed', 'failed', 'awaiting_upload']);
+    expect(w.jobLabelKey).toBe('import-id');
+  });
+
+  it('honours a custom jobLabelKey (hyphenated, non-SQL-identifier)', async () => {
+    fs.writeFileSync(configFile, `
+watchers:
+  - namespace: job-strategist
+    dbTable: pipeline_runs
+    jobLabelKey: pipeline-run-id
+`);
+    const { loadConfig } = await import('../src/config.js');
+    expect(loadConfig().watchers[0].jobLabelKey).toBe('pipeline-run-id');
+  });
+
+  it('rejects an invalid jobLabelKey', async () => {
+    fs.writeFileSync(configFile, `
+watchers:
+  - namespace: job-strategist
+    dbTable: pipeline_runs
+    jobLabelKey: "bad key!"
+`);
+    const { loadConfig } = await import('../src/config.js');
+    expect(() => loadConfig()).toThrow(/jobLabelKey/);
   });
 
   it('parses a repo_sync_state entry with custom column mapping', async () => {
