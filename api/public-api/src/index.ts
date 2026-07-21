@@ -10,7 +10,7 @@
  *   - Tags route       → GET /api/tags
  *   - Resumes route    → GET /api/resumes/active
  *   - Chatbot route    → POST /api/chatbot/invoke
- *   - GitHub webhook   → POST /api/github-webhook
+ *   - GitHub webhook   → POST /webhooks/github
  *   - Projects routes  → GET /api/projects[/:slug] (portfolio owner), GET /public/projects/:username/:slug (share)
  *   - Article images   → GET /api/articles/images/:file (streams from the article-assets S3 bucket)
  *
