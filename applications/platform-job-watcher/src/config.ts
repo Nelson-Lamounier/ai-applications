@@ -16,6 +16,16 @@ export interface WatcherEntry {
   readonly errorValue:        string;       // value written to errorColumn on failure
   readonly terminalStatuses:  readonly string[]; // statuses the sweep must never overwrite
   readonly jobLabelKey:       string;       // Job metadata label whose value = the dbTable row id (event fast path)
+  // Optional denormalised-status reconcile. When the primary row is failed, also
+  // fail the row it links to (e.g. pipeline_runs.reference_id -> job_applications.id)
+  // if that row is still in `linkedFromValue`. Guarded to the primary row's LATEST
+  // sibling so a concurrent re-run of the same linked entity is never clobbered.
+  // All five must be set together (loadConfig enforces); absent = no linked reconcile.
+  readonly linkedTable?:        string;     // e.g. 'job_applications'
+  readonly linkedVia?:          string;     // column in dbTable holding linkedTable's id (e.g. 'reference_id')
+  readonly linkedStatusColumn?: string;     // status column on linkedTable (e.g. 'kanban_status')
+  readonly linkedFromValue?:    string;     // only overwrite when linked row is in this status (e.g. 'analysing')
+  readonly linkedToValue?:      string;     // value written to linkedStatusColumn (e.g. 'failed')
 }
 
 // Defaults preserve the original resume_imports behaviour.
@@ -46,6 +56,11 @@ interface RawWatcherEntry {
   errorValue?:       string;
   terminalStatuses?: string[];
   jobLabelKey?:      string;
+  linkedTable?:        string;
+  linkedVia?:          string;
+  linkedStatusColumn?: string;
+  linkedFromValue?:    string;
+  linkedToValue?:      string;
 }
 
 function required(name: string): string {
@@ -81,6 +96,30 @@ function validateNamespace(ns: string): string {
   return ns;
 }
 
+type LinkedFields = Pick<
+  WatcherEntry,
+  'linkedTable' | 'linkedVia' | 'linkedStatusColumn' | 'linkedFromValue' | 'linkedToValue'
+>;
+
+// Linked-reconcile is all-or-nothing. Table/column names are interpolated into
+// the reconcile UPDATE so they must be strict identifiers; the from/to values
+// are parameterised, so they pass through unchecked.
+function resolveLinked(w: RawWatcherEntry): LinkedFields {
+  if (!w.linkedTable) return {};
+  if (!w.linkedVia || !w.linkedStatusColumn || !w.linkedFromValue || !w.linkedToValue) {
+    throw new Error(
+      `Invalid linked-reconcile for "${w.dbTable}": linkedTable requires linkedVia, linkedStatusColumn, linkedFromValue and linkedToValue`,
+    );
+  }
+  return {
+    linkedTable:        validateIdentifier(w.linkedTable, 'linkedTable'),
+    linkedVia:          validateIdentifier(w.linkedVia, 'linkedVia'),
+    linkedStatusColumn: validateIdentifier(w.linkedStatusColumn, 'linkedStatusColumn'),
+    linkedFromValue:    w.linkedFromValue,
+    linkedToValue:      w.linkedToValue,
+  };
+}
+
 export function loadConfig(): WatcherConfig {
   const configPath = process.env['WATCHER_CONFIG_PATH'] ?? '/etc/watcher/config.yaml';
   const raw = fs.readFileSync(configPath, 'utf8');
@@ -103,6 +142,7 @@ export function loadConfig(): WatcherConfig {
       errorValue:        w.errorValue       ?? ENTRY_DEFAULTS.errorValue,
       terminalStatuses:  w.terminalStatuses ?? [...ENTRY_DEFAULTS.terminalStatuses],
       jobLabelKey:       validateLabelKey(w.jobLabelKey ?? ENTRY_DEFAULTS.jobLabelKey),
+      ...resolveLinked(w),
     })),
   };
 }

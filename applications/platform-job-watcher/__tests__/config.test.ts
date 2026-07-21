@@ -64,6 +64,47 @@ watchers:
     expect(() => loadConfig()).toThrow(/jobLabelKey/);
   });
 
+  it('parses a full linked-reconcile block', async () => {
+    fs.writeFileSync(configFile, `
+watchers:
+  - namespace: job-strategist
+    dbTable: pipeline_runs
+    linkedTable: job_applications
+    linkedVia: reference_id
+    linkedStatusColumn: kanban_status
+    linkedFromValue: analysing
+    linkedToValue: failed
+`);
+    const { loadConfig } = await import('../src/config.js');
+    const w = loadConfig().watchers[0];
+    expect(w.linkedTable).toBe('job_applications');
+    expect(w.linkedVia).toBe('reference_id');
+    expect(w.linkedStatusColumn).toBe('kanban_status');
+    expect(w.linkedFromValue).toBe('analysing');
+    expect(w.linkedToValue).toBe('failed');
+  });
+
+  it('rejects a partial linked-reconcile block (all-or-nothing)', async () => {
+    fs.writeFileSync(configFile, `
+watchers:
+  - namespace: job-strategist
+    dbTable: pipeline_runs
+    linkedTable: job_applications
+`);
+    const { loadConfig } = await import('../src/config.js');
+    expect(() => loadConfig()).toThrow(/linked/i);
+  });
+
+  it('leaves linked fields undefined when no linkedTable is set', async () => {
+    fs.writeFileSync(configFile, `
+watchers:
+  - namespace: resume-import
+    dbTable: resume_imports
+`);
+    const { loadConfig } = await import('../src/config.js');
+    expect(loadConfig().watchers[0].linkedTable).toBeUndefined();
+  });
+
   it('parses a repo_sync_state entry with custom column mapping', async () => {
     fs.writeFileSync(configFile, `
 watchers:

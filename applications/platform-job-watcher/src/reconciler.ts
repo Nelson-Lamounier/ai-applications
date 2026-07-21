@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import type { WatcherEntry } from './config.js';
+import { reconcileLinkedStatus } from './watcher.js';
 
 export async function runReconciliation(
   pool: Pool,
@@ -26,6 +27,10 @@ export async function runReconciliation(
           count: affected,
         });
       }
+      // Reconcile any denormalised linked status (e.g. job_applications.kanban_status)
+      // for rows this sweep — or an earlier event/sweep — left failed. Set-based
+      // (no primaryId): fixes every stuck linked row whose latest run has failed.
+      await reconcileLinkedStatus(pool, entry);
     } catch (err) {
       console.error('[reconciler] sweep failed', {
         table: entry.dbTable,
