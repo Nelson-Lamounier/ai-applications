@@ -14,6 +14,7 @@
 import { Pool, type QueryResult } from 'pg';
 
 import { buildCroissant, type CroissantDataset } from '../../rag/croissant.js';
+import { withDbConnectRetry } from '../withDbConnectRetry.js';
 import { COMMIT_HISTORY_PATH_PREFIX } from '../../repo-entities.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import type { KbQualityInput } from '../quality/computeKbQuality.js';
@@ -840,6 +841,18 @@ export class RdsVectorStore implements IVectorStore {
         sql: string,
         values: unknown[] = [],
     ): Promise<QueryResult<T>> {
-        return this.pool.query<T>(sql, values);
+        // Ride through a transient pooler blip (pgbouncer rolling, RDS failover):
+        // execute() only runs idempotent SELECT/DELETE statements, and a
+        // connection-class error means the statement never committed, so retrying
+        // is safe. Query-level errors are not retried — see withDbConnectRetry.
+        return withDbConnectRetry(() => this.pool.query<T>(sql, values), {
+            onRetry: ({ attempt, delayMs, err }) => {
+                console.warn(
+                    `[RdsVectorStore] transient DB connection error, retry ${attempt} in ${delayMs}ms: ${
+                        (err as { message?: string })?.message ?? String(err)
+                    }`,
+                );
+            },
+        });
     }
 }
