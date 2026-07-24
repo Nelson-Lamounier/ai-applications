@@ -4294,12 +4294,21 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@hono/node-server@npm:^1.14.1, @hono/node-server@npm:^1.19.9":
+"@hono/node-server@npm:^1.19.9":
   version: 1.19.14
   resolution: "@hono/node-server@npm:1.19.14"
   peerDependencies:
     hono: ^4
   checksum: 10c0/41a099bb3705d96aac44b7a8db8805f2a22ce8a0f767a27b6d10b74a9964925df01c5f35d3631e882f8bcdeee3518884c30f40588ac8c960d88bf71048ba0df3
+  languageName: node
+  linkType: hard
+
+"@hono/node-server@npm:^2.0.10":
+  version: 2.0.10
+  resolution: "@hono/node-server@npm:2.0.10"
+  peerDependencies:
+    hono: ^4
+  checksum: 10c0/a7428b134bfd6dbacb12e0cf66b3ac0c4d7fd136fa9aa47049f5ed98cf2dabd678e8239275d26885f285d192d040b41e01f526ac72f8a62e136067752159f0f7
   languageName: node
   linkType: hard
 
@@ -6596,7 +6605,7 @@ __metadata:
     "@aws-sdk/client-s3": "npm:^3.1001.0"
     "@aws-sdk/client-secrets-manager": "npm:^3.758.0"
     "@bedrock/shared": "workspace:*"
-    "@hono/node-server": "npm:^1.14.1"
+    "@hono/node-server": "npm:^2.0.10"
     "@types/node": "npm:^22.0.0"
     "@types/pg": "npm:^8.20.0"
     aws-sdk-client-mock: "npm:^4.1.0"
