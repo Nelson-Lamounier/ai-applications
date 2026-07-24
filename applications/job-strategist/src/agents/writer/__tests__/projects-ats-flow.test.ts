@@ -357,6 +357,48 @@ describe('deterministicProjects', () => {
     expect(entry.github).toBe('github.com/o/networker');
   });
 
+  it('supportLean: equal-coverage ties break towards diagnostic-verb bullets; builder order without the flag', () => {
+    const tiePool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'Tie',
+        pitch: 'a project with equally JD-relevant bullets',
+        repoUrls: ['github.com/o/tie'],
+        curated: [
+          { id: 'p0.b0', text: 'Built the deployment automation for staging releases' },
+          { id: 'p0.b1', text: 'Diagnosed a silent production failure in the deploy webhook and restored releases' },
+          { id: 'p0.b2', text: 'Designed the release dashboard for the platform team' },
+        ],
+        repoCurrent: [],
+      },
+    ];
+    // No targets: every bullet term-matches 0 -- a pure tie.
+    const plain = deterministicProjects(tiePool, []);
+    expect(plain[0]!.highlights[0]).toBe('Built the deployment automation for staging releases');
+    const lean = deterministicProjects(tiePool, [], true);
+    expect(lean[0]!.highlights[0]).toBe(
+      'Diagnosed a silent production failure in the deploy webhook and restored releases',
+    );
+  });
+
+  it('supportLean never outranks coverage: a builder bullet covering a target still beats a diagnostic bullet covering none', () => {
+    const coveragePool: ProjectPoolEntry[] = [
+      {
+        index: 0,
+        name: 'Coverage',
+        pitch: 'coverage beats verb framing',
+        repoUrls: ['github.com/o/coverage'],
+        curated: [
+          { id: 'p0.b0', text: 'Fixed a flaky test in the notification worker' },
+          { id: 'p0.b1', text: 'Built DNS resolution handling for internal services' },
+        ],
+        repoCurrent: [],
+      },
+    ];
+    const result = deterministicProjects(coveragePool, dnsTarget, true);
+    expect(result[0]!.highlights[0]).toBe('Built DNS resolution handling for internal services');
+  });
+
   it('Task 3: ranks a bullet to the lead position via TERM-MATCH, not exact phrase -- a bullet that '
     + 'never says "Linux systems engineering" verbatim still outranks unrelated bullets because it '
     + "demonstrates the target's distinctive core {linux} (experienceTermMatch semantics)", () => {

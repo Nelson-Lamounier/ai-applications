@@ -1,5 +1,6 @@
 /** @format */
 import type { AtsCheckResult } from './ats-check.schema.js';
+import { normalizeTerm } from '../matching/keyword-match.js';
 import { STANDARD_SECTIONS } from './parse-back.js';
 
 const REQUIRED_SECTIONS = ['Experience', 'Skills', 'Education'] as const;
@@ -36,6 +37,54 @@ type Coverage = AtsCheckResult['jdKeywordCoverage'];
 /** Rendered pages beyond this fail the check — industry-standard resume cap. */
 export const MAX_PDF_PAGES = 2;
 
+/** Significant tokens of a term (normalizeTerm strips qualifier noise), with
+ *  naive plural folding ("apis" -> "api") so "REST API" matches inside
+ *  "REST/SOAP APIs". */
+function significantTokens(s: string): Set<string> {
+    return new Set(
+        normalizeTerm(s)
+            .split(' ')
+            .filter((t) => t.length > 0)
+            .map((t) => (t.length > 3 && t.endsWith('s') ? t.slice(0, -1) : t)),
+    );
+}
+
+/**
+ * Membership of a coverage term in the JD's REQUIRED skills — DIRECTIONAL
+ * subset semantics: the term counts as required only when every one of its
+ * significant tokens appears in some required skill's tokens. So the
+ * inventory term "REST API" is claimed by the required phrase "REST/SOAP
+ * APIs", but "Server-Side JavaScript (SSJS)" is NOT claimed by required
+ * "JavaScript" — a specialised preferred-tier term never inherits required
+ * status from the atomic skill it contains (a bidirectional match would
+ * promote it, which is exactly the live SSJS false-fail). Alias mismatches
+ * ("Amazon Web Services" vs "AWS") resolve to not-required — fail-open: the
+ * term stays a visible coverage row but cannot flip `passed`.
+ */
+function isRequiredTerm(term: string, requiredSkills: readonly string[]): boolean {
+    const termTokens = significantTokens(term);
+    if (termTokens.size === 0) return false;
+    return requiredSkills.some((r) => {
+        const reqTokens = significantTokens(r);
+        return [...termTokens].every((tok) => reqTokens.has(tok));
+    });
+}
+
+/**
+ * A grounded-but-missing keyword blocks the pass ONLY when the JD lists it as
+ * REQUIRED. Preferred-tier terms (JD "desired / a plus") stay visible as
+ * coverage rows but never flip `passed` — the live Salesforce TSE run failed
+ * its ATS check solely on "Server-Side JavaScript (SSJS)", a preferred-not-
+ * required skill grounded via the JavaScript transfer family. With no
+ * requiredSkills supplied (legacy/test path) every grounded-missing term
+ * still raises an issue, as before.
+ */
+function groundedMissingIssues(coverage: Coverage, required: readonly string[]): string[] {
+    return coverage
+        .filter((k) => !k.present && k.grounded && (required.length === 0 || isRequiredTerm(k.term, required)))
+        .map((k) => `Grounded JD must-have "${k.term}" missing from resume.`);
+}
+
 /** Human-readable ATS issues derived from the computed check facts. */
 function deriveIssues(facts: {
     standardSectionsDetected: string[];
@@ -44,15 +93,14 @@ function deriveIssues(facts: {
     coverage: Coverage;
     parseBreakers: string[];
     pages?: number;
+    requiredSkills?: readonly string[];
 }): string[] {
     const issues: string[] = [];
     const missing = REQUIRED_SECTIONS.filter(s => !facts.standardSectionsDetected.includes(s));
     if (missing.length) issues.push(`Missing standard sections: ${missing.join(', ')}.`);
     if (!facts.nameFound) issues.push('Candidate name not found in document body.');
     if (!facts.emailFound) issues.push('Contact email not found in document body.');
-    for (const k of facts.coverage) {
-        if (!k.present && k.grounded) issues.push(`Grounded JD must-have "${k.term}" missing from resume.`);
-    }
+    issues.push(...groundedMissingIssues(facts.coverage, facts.requiredSkills ?? []));
     if (facts.parseBreakers.length) issues.push(`Parse-breaking elements detected: ${facts.parseBreakers.join(', ')}.`);
     if (typeof facts.pages === 'number' && facts.pages > MAX_PDF_PAGES) {
         issues.push(`Resume renders to ${facts.pages} pages — exceeds the ${MAX_PDF_PAGES}-page maximum.`);
@@ -153,7 +201,10 @@ export function buildAtsCheck(a: BuildAtsCheckArgs): AtsCheckResult {
     // classic tab-delimited multi-column artifact as a regression guard.
     const parseBreakers = /\t.+\t/.test(a.text) ? ['multi-column-tabs'] : [];
 
-    const issues = deriveIssues({ standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage, parseBreakers, pages: a.pages });
+    const issues = deriveIssues({
+        standardSectionsDetected, nameFound, emailFound, coverage: jdKeywordCoverage,
+        parseBreakers, pages: a.pages, requiredSkills: a.requiredSkills,
+    });
     const status = issues.length === 0 ? ('passed' as const) : ('issues' as const);
     // `attainablePassed` is not yet known here (the Skill Evidence Ledger
     // split runs later, in run-pipeline.ts, once the ledger is built), so

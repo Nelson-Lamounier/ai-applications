@@ -8,10 +8,27 @@
  * pass -- the previous draft plus the targets it missed.
  */
 import type { ProjectPoolEntry, RepoCurrentFact } from '../evidence/project-agent-inputs.js';
+import type { JdDimensionMix } from '@bedrock/shared';
 import type { ExperienceAtsTarget } from '../../ats/gate/experience-ats-targets.js';
 import { PROJECTS_MAX_BULLETS_PER_ENTRY } from './projects-provenance.js';
 import { OPERATIONS_THEMES } from '../evidence/operations-themes.js';
 import type { StyleFinding } from './projects-style.js';
+
+/** A JD whose combined customer-facing + support-operations emphasis crosses
+ *  this threshold reads as a SUPPORT role (TSE / customer engineering), not a
+ *  builder role -- the projects lane then prefers diagnostic-narrative bullets
+ *  (symptom -> investigation -> root cause -> resolution -> documentation)
+ *  over build/design bullets. 40 (of the ~100-point dimension mix) is the
+ *  live-run calibration: the Salesforce TSE JD scored customerFacing 35 +
+ *  supportOps 15 = 50, while pure builder JDs stay well under. */
+export const SUPPORT_LEAN_THRESHOLD = 40;
+
+/** True when the JD's dimension mix reads support-lean -- see
+ *  SUPPORT_LEAN_THRESHOLD. Deterministic and total: absent/zero dimensions
+ *  simply sum to 0. */
+export function isSupportLeanJd(mix: Pick<JdDimensionMix, 'customerFacing' | 'supportOps'>): boolean {
+  return mix.customerFacing + mix.supportOps > SUPPORT_LEAN_THRESHOLD;
+}
 
 /** Theme labels (operations-themes.ts) -- a repo-current fact whose `skill`
  *  is one of these came from `gatherOperationsEvidence`, not the JD-wide
@@ -31,6 +48,12 @@ export interface ProjectsMessageInput {
    *  above already fires (never a separate trigger). Empty/absent when there
    *  is nothing to repair. */
   readonly styleFindings?: readonly StyleFinding[];
+  /** True when the JD reads support-lean (`isSupportLeanJd` over the JD's
+   *  dimensionMix) -- adds the JD-orientation section instructing the model
+   *  to prefer diagnostic-narrative bullets over build/design bullets when
+   *  both honestly cover a target. Absent/false on builder JDs: the message
+   *  is byte-identical to the pre-supportLean shape. */
+  readonly supportLean?: boolean;
 }
 
 /** True when a repo-current fact's `skill` is an operations-theme label --
@@ -133,6 +156,27 @@ function narrativeContractSection(): string[] {
   ];
 }
 
+/** JD-orientation block -- only emitted on support-lean JDs (`supportLean`,
+ *  see `isSupportLeanJd`). Steers SELECTION and FRAMING only; it never relaxes
+ *  the provenance contract (curated bullets stay byte-fidelity quotes, composed
+ *  bullets stay grounded in cited pool facts). */
+function supportOrientationSection(m: ProjectsMessageInput): string[] {
+  if (m.supportLean !== true) return [];
+  return [
+    '',
+    '## JD orientation (support-weighted role)',
+    'This JD is weighted towards customer-facing support and support operations, not platform building. '
+      + 'The reader is a support hiring manager looking for troubleshooting depth.',
+    '- When two pool items honestly cover the same target, prefer the one narrating diagnostic work '
+      + '(a symptom investigated, a root cause found, a fix applied, documentation corrected) over one '
+      + 'narrating build/design/deploy work.',
+    '- Frame every COMPOSED bullet as a diagnostic narrative where the evidence supports it: the symptom, '
+      + 'the investigation, the root cause, the resolution, and any documentation or knowledge-base output.',
+    '- Bullets about knowledge bases, runbooks, or documentation authorship are HIGH value for this JD -- '
+      + 'never drop one in favour of a pure platform-engineering bullet.',
+  ];
+}
+
 /** Re-write pass block -- only emitted when there is a previous draft AND
  *  targets it missed. */
 function rewriteSection(m: ProjectsMessageInput): string[] {
@@ -175,6 +219,7 @@ export function buildProjectsMessage(m: ProjectsMessageInput): string {
     ...targetsSection(m.atsTargets),
     ...compositionRulesSection(),
     ...narrativeContractSection(),
+    ...supportOrientationSection(m),
     ...rewriteSection(m),
     ...styleRepairSection(m),
   ].join('\n');

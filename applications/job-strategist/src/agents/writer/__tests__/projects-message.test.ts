@@ -1,6 +1,6 @@
 /** @format */
 import { describe, it, expect } from '@jest/globals';
-import { buildProjectsMessage } from '../projects-message.js';
+import { buildProjectsMessage, isSupportLeanJd, SUPPORT_LEAN_THRESHOLD } from '../projects-message.js';
 
 const pool = [
   {
@@ -95,6 +95,17 @@ describe('buildProjectsMessage', () => {
     expect(msg).toContain('Prefer composing the clean version');
   });
 
+  it('adds the JD-orientation block only on support-lean JDs, leaving the base message byte-identical otherwise', () => {
+    const plain = buildProjectsMessage(base);
+    expect(plain).not.toContain('## JD orientation');
+    expect(buildProjectsMessage({ ...base, supportLean: false })).toBe(plain);
+    const lean = buildProjectsMessage({ ...base, supportLean: true });
+    expect(lean).toContain('## JD orientation (support-weighted role)');
+    expect(lean).toContain('diagnostic');
+    expect(lean).toContain('knowledge-base');
+    expect(lean).toContain('root cause');
+  });
+
   it('adds the style-repair block only when styleFindings is non-empty, listing kind + token', () => {
     expect(buildProjectsMessage(base)).not.toContain('## Style repair');
     const withFindings = buildProjectsMessage({
@@ -107,5 +118,14 @@ describe('buildProjectsMessage', () => {
     expect(withFindings).toContain('never touch curated quotes');
     const withEmptyFindings = buildProjectsMessage({ ...base, styleFindings: [] });
     expect(withEmptyFindings).not.toContain('## Style repair');
+  });
+});
+
+describe('isSupportLeanJd', () => {
+  it('is true strictly above the threshold and false at or below it', () => {
+    expect(isSupportLeanJd({ customerFacing: 35, supportOps: 15 })).toBe(true);  // Salesforce TSE live mix
+    expect(isSupportLeanJd({ customerFacing: SUPPORT_LEAN_THRESHOLD, supportOps: 0 })).toBe(false);
+    expect(isSupportLeanJd({ customerFacing: 10, supportOps: 10 })).toBe(false);
+    expect(isSupportLeanJd({ customerFacing: 0, supportOps: 41 })).toBe(true);
   });
 });

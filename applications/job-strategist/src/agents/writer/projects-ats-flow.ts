@@ -223,10 +223,27 @@ function countTermMatches(texts: readonly string[], targets: readonly Experience
   return scoreExperienceCoverage(texts.map((text) => ({ text, sources: [] })), targets).covered;
 }
 
+/** Leading diagnostic verb -- a curated bullet opening with one of these
+ *  narrates troubleshooting work (symptom -> root cause -> resolution), the
+ *  shape a support-lean JD hires for. Used ONLY as a ranking tie-break inside
+ *  `rankProjectEntry` when `supportLean` is set -- never a filter, so a
+ *  builder bullet that covers more targets still wins its slot. */
+const DIAGNOSTIC_LEAD_VERB =
+  /^(fixed|diagnosed|debugged|resolved|investigated|traced|root-caused|triaged|remediated|restored|corrected|patched)\b/i;
+
+/** 1 when the bullet leads with a diagnostic verb, else 0 -- numeric so it
+ *  slots directly into the sort comparator. */
+function diagnosticLead(text: string): number {
+  return DIAGNOSTIC_LEAD_VERB.test(text.trim()) ? 1 : 0;
+}
+
 /** Per-pool-entry deterministic fallback: rank curated bullets by ATS-target
  *  TERM-MATCH coverage (Task 3 term-rule v2 -- `experienceTermMatch`, not the
  *  old exact-adjacent-phrase `scoreSummaryCoverage`), stable on ties (i.e.
- *  original order), take at most `PROJECTS_MAX_BULLETS_PER_ENTRY`.
+ *  original order), take at most `PROJECTS_MAX_BULLETS_PER_ENTRY`. On a
+ *  support-lean JD (`supportLean`), equal-coverage ties break towards bullets
+ *  leading with a diagnostic verb (see `DIAGNOSTIC_LEAD_VERB`) before falling
+ *  back to original order.
  *  Description is the deterministic pitch stamp (`stampProjectDescription`,
  *  projects-description.ts, given both `pitch` and `tagline` -- the G3
  *  empty-pitch fallback) -- the SAME function the agent-success path uses
@@ -240,10 +257,16 @@ function countTermMatches(texts: readonly string[], targets: readonly Experience
 function rankProjectEntry(
   entry: ProjectPoolEntry,
   targets: readonly ExperienceAtsTarget[],
+  supportLean = false,
 ): { name: string; description: string; github?: string; highlights: string[]; coveredTargets: number } {
   const ranked = entry.curated
     .map((bullet, idx) => ({ bullet, idx, covered: countTermMatches([bullet.text], targets) }))
-    .sort((a, b) => b.covered - a.covered || a.idx - b.idx);
+    .sort(
+      (a, b) =>
+        b.covered - a.covered ||
+        (supportLean ? diagnosticLead(b.bullet.text) - diagnosticLead(a.bullet.text) : 0) ||
+        a.idx - b.idx,
+    );
   const highlights = ranked.slice(0, PROJECTS_MAX_BULLETS_PER_ENTRY).map((r) => r.bullet.text);
   const coveredTargets = countTermMatches(highlights, targets);
 
@@ -268,10 +291,11 @@ function rankProjectEntry(
 export function deterministicProjects(
   pool: readonly ProjectPoolEntry[],
   targets: readonly ExperienceAtsTarget[],
+  supportLean = false,
 ): Array<{ name: string; description: string; github?: string; highlights: string[] }> {
   return pool
     .filter((p) => p.curated.length > 0)
-    .map((p, idx) => ({ idx, entry: rankProjectEntry(p, targets) }))
+    .map((p, idx) => ({ idx, entry: rankProjectEntry(p, targets, supportLean) }))
     .sort((a, b) => b.entry.coveredTargets - a.entry.coveredTargets || a.idx - b.idx)
     .map(({ entry }) => {
       const { coveredTargets: _coveredTargets, ...rest } = entry;
