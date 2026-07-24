@@ -26,6 +26,10 @@ export const PROJECT_STATUS = ['active', 'stable', 'dormant', 'archived'] as con
 export const RESUME_BULLET_ANGLES = [
     'backend', 'frontend', 'infrastructure',
     'fullstack', 'data_ml', 'product_leadership',
+    // Diagnostic-narrative bullets (symptom -> investigation -> root cause ->
+    // resolution -> documentation) for support-weighted JDs -- migration 124
+    // widens the project_resume_bullets.angle CHECK to match.
+    'troubleshooting',
 ] as const;
 
 export const STACK_CATEGORIES = [

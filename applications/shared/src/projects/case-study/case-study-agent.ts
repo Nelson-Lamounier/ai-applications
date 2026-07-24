@@ -197,6 +197,15 @@ Rules:
      project most strongly evidences. Bullets are past-tense, quantified
      where possible, never longer than 250 characters. Omit angles that
      don't apply to this project.
+     The \`troubleshooting\` angle is a diagnostic narrative, not a
+     builder story: each bullet follows symptom -> investigation ->
+     root cause -> resolution, closing with any documentation or
+     knowledge-base output the fix produced. Lead with a diagnostic
+     verb (Diagnosed / Root-caused / Fixed / Resolved), name what was
+     broken and how it was found before what was changed. Emit this
+     set whenever the evidence shows real debugging arcs (an outage
+     traced, a silent failure root-caused, a production bug fixed) —
+     support-weighted roles select from it directly.
   8. \`architecture\` is a Mermaid graph (graph LR or graph TD).
      Rectangles for services, cylinders for datastores, clouds for
      external services. Keep it readable in 5 seconds. For a line break
@@ -491,7 +500,8 @@ export const CASE_STUDY_TOOL = {
             resumeBullets: {
                 // 3, not RESUME_BULLET_ANGLES.length: resumeBullets dominate
                 // output tokens, and a project rarely evidences more than 3
-                // angles. The Zod gate still accepts up to 6 (cached artefacts).
+                // angles. The Zod gate still accepts up to
+                // RESUME_BULLET_ANGLES.length (cached artefacts).
                 type: 'array',
                 minItems: 1, maxItems: 3,
                 items: RESUME_BULLET_SET_SCHEMA,
