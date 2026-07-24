@@ -38,9 +38,14 @@ describe('CaseStudySchema — depthMarkers optional (model no longer emits it)',
         expect(CaseStudySchema.safeParse(withDepth).success).toBe(true);
     });
 
-    it('keeps accepting 6 angle sets / 500-char bullets (cache tolerance; generation asks 3/250)', () => {
-        const six = RESUME_BULLET_ANGLES.map((angle) => ({ angle, bullets: ['x'.repeat(500)] }));
-        expect(CaseStudySchema.safeParse({ ...minimal, resumeBullets: six }).success).toBe(true);
+    it('keeps accepting one set per angle / 500-char bullets (cache tolerance; generation asks 3/250)', () => {
+        const all = RESUME_BULLET_ANGLES.map((angle) => ({ angle, bullets: ['x'.repeat(500)] }));
+        expect(CaseStudySchema.safeParse({ ...minimal, resumeBullets: all }).success).toBe(true);
+    });
+
+    it('accepts the troubleshooting angle (migration 124 widened the SQL CHECK to match)', () => {
+        const troubleshooting = [{ angle: 'troubleshooting', bullets: ['Diagnosed a silent production failure and restored service'] }];
+        expect(CaseStudySchema.safeParse({ ...minimal, resumeBullets: troubleshooting }).success).toBe(true);
     });
 });
 

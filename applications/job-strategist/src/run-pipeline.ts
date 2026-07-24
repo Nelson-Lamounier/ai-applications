@@ -76,6 +76,8 @@ import { selectSummaryAtsTargets, type SummaryAtsTarget } from './ats/gate/summa
 import { resolveSummaryAts, type SummaryAtsDiagnostics } from './agents/writer/summary-ats-flow.js';
 import { logSummaryAtsEvents, summaryAtsOutcome } from './agents/writer/summary-ats-diagnostics.js';
 import { selectExperienceAtsTargets, type ExperienceAtsTarget } from './ats/gate/experience-ats-targets.js';
+import { selectProjectsAtsTargets } from './ats/gate/projects-ats-targets.js';
+import { isSupportLeanJd } from './agents/writer/projects-message.js';
 import {
     resolveExperienceAts, stampExperienceCoverageFinal, experienceMutatedDownstream,
     routeExperienceRepairs as routeExperienceRepairsCore,
@@ -399,6 +401,27 @@ function stampProjectDescriptions<T extends { name: string; description: string 
     });
 }
 
+/**
+ * Projects-lane target routing + its Loki visibility line -- thin wrapper
+ * around `selectProjectsAtsTargets` so `main` carries no extra branch (the
+ * excluded-targets log fires only when routing actually removed something,
+ * mirroring how `unresolvedRepos` surfaces citation failures).
+ */
+function routeProjectsAtsTargets(
+    experienceAtsTargets: readonly ExperienceAtsTarget[],
+    ledger: readonly SkillEvidenceEntry[],
+    pipelineRunId: string,
+): ReturnType<typeof selectProjectsAtsTargets> {
+    const split = selectProjectsAtsTargets(experienceAtsTargets, ledger);
+    if (split.excluded.length > 0) {
+        log.info(
+            { pipelineRunId, excluded: split.excluded },
+            'projects_ats_targets_routed_to_experience_lane',
+        );
+    }
+    return split;
+}
+
 async function fillResumeProjects(
     ctx: StrategistPipelineContext,
     tailoredResumeData: StructuredResumeData | null,
@@ -406,13 +429,14 @@ async function fillResumeProjects(
     atsTargets: readonly ExperienceAtsTarget[],
     targetRole: string,
     themesDiag: ProjectsAgentDiagnostics['themes'],
+    supportLean: boolean,
     onFallback: (err: unknown) => void,
 ): Promise<ProjectsAgentDiagnostics | null> {
     if (!tailoredResumeData) return null;
     const { pool, unresolvedRepos } = projectAgentInputs;
     if (pool.every((p) => p.curated.length === 0)) return null;
 
-    const baseInput = { pool, atsTargets, targetRole };
+    const baseInput = { pool, atsTargets, targetRole, supportLean };
     // Sums the first draft's and any re-write's normalisedExtras (both go
     // through the same normalise-then-validate parse path in
     // executeProjectsAgent) -- captured here because resolveProjectsAts's
@@ -448,7 +472,7 @@ async function fillResumeProjects(
         };
     } catch (err) {
         // deterministicProjects stamps descriptions itself (rankProjectEntry).
-        (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets);
+        (tailoredResumeData as { projects: unknown }).projects = deterministicProjects(pool, atsTargets, supportLean);
         onFallback(err);
         return {
             targets: [...atsTargets],
@@ -1316,6 +1340,11 @@ async function runBatch1Agents(args: {
     researchData: StrategistResearchResult;
     careerEntries: readonly CareerEntry[];
     experienceAtsTargets: readonly ExperienceAtsTarget[];
+    /** Projects-lane subset of experienceAtsTargets (repo/project-coverable
+     *  only -- selectProjectsAtsTargets); the experience lane keeps the full set. */
+    projectsAtsTargets: readonly ExperienceAtsTarget[];
+    /** Support-lean JD flag (isSupportLeanJd) -- projects lane only. */
+    supportLean: boolean;
     groundedMetricsBlock: string;
     codeStackContext: string;
     projectAgentInputs: ProjectAgentInputs;
@@ -1327,6 +1356,7 @@ async function runBatch1Agents(args: {
 }): Promise<Batch1Result> {
     const {
         ctx, skeleton, analysisInput, researchData, careerEntries, experienceAtsTargets,
+        projectsAtsTargets, supportLean,
         groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
         skillEvidenceLedger, jdExtraction, pipelineRunId, themesDiag,
     } = args;
@@ -1337,7 +1367,7 @@ async function runBatch1Agents(args: {
             (err) => log.warn({ pipelineRunId, agent: 'strategist-experience', err: err instanceof Error ? err.message : String(err) }, 'experience_agent_failed_verbatim_fallback_used'),
         ),
         fillResumeProjects(
-            ctx, skeleton, projectAgentInputs, experienceAtsTargets, researchData.targetRole, themesDiag,
+            ctx, skeleton, projectAgentInputs, projectsAtsTargets, researchData.targetRole, themesDiag, supportLean,
             (err) => log.warn({ pipelineRunId, agent: 'strategist-projects', err: err instanceof Error ? err.message : String(err) }, 'projects_agent_failed_deterministic_fallback_used'),
         ),
         fillResumeSkills(
@@ -2537,6 +2567,14 @@ export async function main(): Promise<void> {
         const experienceAtsTargets = selectExperienceAtsTargets(
             skillEvidenceLedger, jdExtraction, indexCareerLines(careerEntries), 6,
         );
+        // Projects-lane routing: the projects agent only receives targets its
+        // repo/project evidence can honestly cover -- career-only targets
+        // (e.g. "Customer-facing support" on a support JD) stay with the
+        // experience lane, so they can never fire a doomed projects re-write.
+        const projectsAtsSplit = routeProjectsAtsTargets(experienceAtsTargets, skillEvidenceLedger, env.pipelineRunId);
+        // Support-lean JD (dimensionMix customerFacing+supportOps above the
+        // threshold): the projects lane prefers diagnostic-narrative bullets.
+        const supportLean = isSupportLeanJd(jdExtraction.dimensionMix);
         const summaryAtsTargets = selectSummaryAtsTargets(skillEvidenceLedger, { hardRequirements: jdExtraction.hardRequirements });
         const { projectAgentInputs, themesDiag } = await buildProjectAgentInputsWithOperationsEvidence({
             pool, userId: env.userId, verifiedMatches: researchData.verifiedMatches, jd: jdExtraction,
@@ -2560,6 +2598,7 @@ export async function main(): Promise<void> {
             ctx, skeleton: tailoredResumeData, analysisInput, researchData, careerEntries,
             experienceAtsTargets, groundedMetricsBlock, codeStackContext, projectAgentInputs, skillsInput,
             skillEvidenceLedger, jdExtraction, pipelineRunId: env.pipelineRunId, themesDiag,
+            projectsAtsTargets: projectsAtsSplit.targets, supportLean,
         }));
         const { analysis, experience, projectsAgentDiag, skillsAgentDiag } = batch1;
         recordBatch1Observability(batch1, { pipelineRunId: env.pipelineRunId, applicationId: env.applicationId }, violationLog);
@@ -2632,7 +2671,7 @@ export async function main(): Promise<void> {
             analysisSectionOrder(analysis.data),
             {
                 experience: () => verbatimExperienceFallback(careerEntries),
-                projects:   () => deterministicProjects(projectAgentInputs.pool, experienceAtsTargets),
+                projects:   () => deterministicProjects(projectAgentInputs.pool, projectsAtsSplit.targets, supportLean),
                 skills:     () => deterministicSkills(skillEvidenceLedger, jdExtraction),
             },
             env.pipelineRunId,

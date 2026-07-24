@@ -59,6 +59,50 @@ describe('buildAtsCheck', () => {
         ]));
     });
 
+    it('raises grounded-missing issues only for REQUIRED terms when requiredSkills are supplied', () => {
+        const r = buildAtsCheck({
+            text: TEXT,
+            sections: ['Experience', 'Skills', 'Education'],
+            profile: { name: 'Jane Doe', email: 'jane@example.com' },
+            coverage: [
+                // Preferred-tier term, grounded via transfer family, absent — must NOT block.
+                { term: 'Server-Side JavaScript (SSJS)', present: false, grounded: true, tier: 'none' },
+                { term: 'Kubernetes', present: true, grounded: true, tier: 'literal' },
+            ],
+            requiredSkills: ['Kubernetes', 'JavaScript'],
+        });
+        expect(r.issues).toEqual([]);
+        expect(r.passed).toBe(true);
+    });
+
+    it('still raises the issue when the grounded-missing term IS required', () => {
+        const r = buildAtsCheck({
+            text: TEXT,
+            sections: ['Experience', 'Skills', 'Education'],
+            profile: { name: 'Jane Doe', email: 'jane@example.com' },
+            coverage: [
+                { term: 'REST API', present: false, grounded: true, tier: 'none' },
+            ],
+            // Phrase form differs from the inventory term — matchTier1 bridges it.
+            requiredSkills: ['REST/SOAP APIs'],
+        });
+        expect(r.passed).toBe(false);
+        expect(r.issues.join(' ')).toContain('REST API');
+    });
+
+    it('keeps legacy behaviour (every grounded-missing term raises an issue) without requiredSkills', () => {
+        const r = buildAtsCheck({
+            text: TEXT,
+            sections: ['Experience', 'Skills', 'Education'],
+            profile: { name: 'Jane Doe', email: 'jane@example.com' },
+            coverage: [
+                { term: 'Terraform', present: false, grounded: true, tier: 'none' },
+            ],
+        });
+        expect(r.passed).toBe(false);
+        expect(r.issues.join(' ')).toContain('Terraform');
+    });
+
     it('flags issues when a required section is missing', () => {
         const r = buildAtsCheck({
             text: 'Jane Doe\njane@example.com\nExperience\nSRE',
