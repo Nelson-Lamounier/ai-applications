@@ -20,7 +20,7 @@
     "@aws-sdk/client-secrets-manager": "^3.758.0",
     "@bedrock/shared": "workspace:*",
     "@hono/node-server": "^1.14.1",
-    "hono": "^4.7.7",
+    "hono": "^4.13.5",
     "pg": "^8.20.0",
     "prom-client": "^15.1.3"
   },
